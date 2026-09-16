@@ -52,6 +52,55 @@ back to legacy sync, clear a cursor, or continue under a replacement account.
 
 ## Current candidate
 
+### Active continuation: encrypted receive retry jobs
+
+App checkpoint `f403006b9abac5d2943372fcd0b50d4c62dd3a56`, native source
+`9293a457c7f3c8bc476ec5341a2c39aa5caac116`, adds platform-
+encrypted inline receive seeds, original-source projection and a bounded raw
+protobuf equivalence checker. The seed commits with Message in ObjectBox before
+file staging; a local worker resumes stage/adopt/commit after restart. State0 is
+pending local materialization, state1 is exact local commit, never cloud-saved.
+No schema ID changed. The flag remains default-off and no APK/device change.
+
+- Current Dart integration passed 692 tests across 25 files, including the
+  real receive seam, seed retry/reopen/GC, finite worker rounds and one FaceTime
+  acceptance regression. Focused analysis is clean except existing service infos.
+- Hosted bridge run35099318119 passed for exact9293a457c: 737 app Rust,
+  321 rustpush, 11 Anisette and 40 protector tests. Generated artifact10447797443,
+  384,004 bytes, SHA256`827bba84a9182376e8534cceba25f5019d89edfb3354b5db53bcd274a0a07d07`
+  verified and all seven members byte-matched. Committed reproducibility was
+  intentionally skipped. Evidence: build-evidence/received-retry-seed-35099318119/verification.json.
+- Seed sealing itself can still fail before durable archival ownership. The
+  normal delivery fallback preserves the Message, not a completed archive. Do
+  not claim this protection/readiness failure is closed by file retry.
+  Raw outer-record extraction/identity binding, duplicate-aware admission and
+  independent-client/live proofs remain required. The raw checker is not wired
+  to a live lookup yet, and the projector is not an uploader.
+- FaceTime: parent reran six focused files, 63 tests pass. One acceptance
+  regression added, no new production call fix proven without fresh media logs.
+- Find My: the independent receive_message observer is rejected because the
+  key-cache path can trigger6005 re-registration. Revised single-pass value-free
+  tap is parent/peer source-reviewed, not native-tested/integrated. Preserved
+  app ref`agent/findmy-singlepass-review-20260916` at160356758, native ref with
+  the same name in active rustpush at9b09a541. Use this for the NEXT native batch;
+  main rustpush remains9ced48b. Historical fe9b9/576f466 did compile; only its
+  later uncommitted cache-only sketch lacked the proposed method.
+- All three helpers closed, verified not_found. Euclid's134MB worktree removed,
+  source retained atref`agent/received-raw-proof-review-20260916`/d16a55e6b.
+  FaceTime/Find My source is preserved, but cleanup guard blocked removal of
+  their342MB/137MB worktrees and 82 generated plugin symlinks. No bypass was
+  attempted; paths and shared caches remain. Manifests under
+  build-evidence/agent-cleanup-20260916-{raw-proof,sidecars}. Sessions/transcripts
+  remain because supported deletion is unavailable.
+- Native job/test/analyzer handles are terminal. C:27.86GiB. No active helpers,
+  paid GCE, fresh account traffic, messages, restart/install or Alpha changes.
+- **Next concrete implementation:** native read-only exact-record inspection
+  for a materialized received source, then wire Found to protected adoption or
+  reader reconciliation and NotFound to existing create-only/readback machinery.
+  Verify outer field presence/types and raw flags: the generic CloudMessage
+  decoder truncates unknown MessageFlags, so typed equality alone is insufficient.
+  Do not spend another iteration only adding comparator helpers.
+
 ### Active implementation checkpoint, September 16
 
 Received-source checkpoint is `cfc37e26a5b2d5350dfe709cead0fbeb67e097ba`,

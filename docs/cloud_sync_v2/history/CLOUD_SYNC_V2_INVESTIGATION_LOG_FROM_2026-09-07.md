@@ -5986,3 +5986,62 @@ Historical tests do not establish current-device behavior.
   received outbox create/readback and independent-client/live qualification.
   Capture flag remainsfalse. No helper/test/build remains active. Pixel in-place
   restart/update is still pending user approval; no reset/replay/Alpha change.
+
+### September 16 encrypted receive retry job and raw comparison qualification
+
+- Previous turn progressed through native local leases and live capture tests.
+  This continuation replaces foreground file staging with native platform-
+  encrypted inline seeds. Message and original source ownership now commit in
+  one ObjectBox transaction before file work. Native sealing still can fail
+  before ownership exists; ordinary-delivery fallback is not archival proof.
+- Reuses the existing source-binding column with version2 ciphertext form,
+  no schema UID changes. GC inventories validate inline seeds but never invent
+  file references for them. Version1 file descriptors stay supported. Local
+  materialization transitions state0 tostate1 only after exact commit. A lost
+  commit response retains the original descriptor and recommits without stage.
+  Worker rounds have snapshot high-watermarks and bounded pages; continuous
+  ingress cannot indefinitely delay retained failures. Reset joins disposal.
+- Native APIs use cached same-account/store identity, local registered handles
+  and platform protection only. No IDS send, dependency warming or CloudKit save.
+  Native source projection preserves original endpoint rather than mutable chat
+  sender preferences. A raw protobuf checker now verifies original presence and
+  field values before typed comparison, accepting field order without a lossy
+  reencode equality shortcut. Parent corrected one helper fixture's expected
+  error for truncated fixed64, and required optional-proto/overflow coverage.
+- Hosted native9293a457c/run35099318119 succeeded13:19:19Z, total17m40s.
+  Counts737/321/11/40. Artifact10447797443,384,004bytes, SHA256
+  827bba84a9182376e8534cceba25f5019d89edfb3354b5db53bcd274a0a07d07 verified before
+  importing seven clean generated targets; exact byte matches and both generated
+  guards pass. Committed reproducibility deliberately skipped. No APK or GCE.
+  App/source integrationf403006b9abac5d2943372fcd0b50d4c62dd3a56 passed692 cases
+  across25 Dart files; focused analysis clean. Larger service has five existing
+  info diagnostics, no errors. Separate FaceTime six-file batch63 also passed.
+- Parent rejected three review claims with source/test evidence: delivery seal
+  errors do reach the ordinary-persistence wrapper; native abandoned-lease
+  recovery already covers crash-before-adopt orphans; scheduler disposal already
+  joins its active drain. Accepted the deferred-round starvation concern and
+  added the durable-ID ceiling plus regression. Helpers are input, not authority.
+- FaceTime review found no new proved production cause without a native media
+  trace. One empty-join-handle regression integrated and tested. Original helper
+  source retained at4caaab120 underagent/facetime-acceptance-review-20260916.
+- Find My independent observer rejected: receive_message/get_key_for_sender/
+  cache_keys_once can call ensure_ready and refresh_now on6005. Godel revised to
+  a synchronous value-free tap on handle's existing decoded object, no second
+  receive/key/cache call or ACK/control-flow change. Franklin and parent reviewed
+  it; native execution remains pending for next batch. Isolated app160356758/
+  native9b09a541 retained locally underagent/findmy-singlepass-review-20260916;
+  native objects fetched into active rustpush without switching its9ced48b HEAD.
+  Corrected helper history: fe9b9/576f466 qualified pair DID compile; only later
+  uncommitted cache-only api sketch referenced a nonexistent method.
+- Three helpers closed and native lookupsnot_found. Euclid exact source retained
+  atd16a55e6b;133,761,041byte worktree removed Git-aware, observed free+136,302,592.
+  FaceTime341,919,086bytes and FindMy137,053,035bytes were previewed for removal,
+  with source refs, empty env values and exclusive submodule metadata verified.
+  Cleanup command was policy-blocked before execution. No alternate deletion
+  path attempted: both worktrees,82 plugin symlinks and12byte probe remain.
+  Shared plugin targets were not touched. Manifests underbuild-evidence/agent-
+  cleanup-20260916-{raw-proof,sidecars}; sessions/transcripts deletion unsupported.
+- No live account traffic, phone change, unknown-outcome replay or Alpha mutation.
+  No active tests/jobs/helpers at checkpoint. Next: connect materialized source
+  to exact native raw lookup/adoption/create-only flow, checking raw outer flag
+  bits before generic decoder truncation. Not production ready or enabled.

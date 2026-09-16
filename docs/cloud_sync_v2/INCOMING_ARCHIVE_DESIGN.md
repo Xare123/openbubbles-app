@@ -14,6 +14,57 @@ outgoing positive-receipt gate. No received message may be represented as a
 successful outgoing send, and archive work must never send an IDS message.
 This design is not an implemented or qualified upload path.
 
+## Current retry architecture, September 16 continuation
+
+The receive transaction now targets an inline platform-encrypted seed rather
+than waiting for protected-file staging. Native sealing binds account, store
+and the exact immutable received source; only ciphertext/hashes cross back to
+Dart. ObjectBox commits Message and seed together. Version2 bindings reuse the
+existing intent column; version1 file descriptors remain supported. No schema
+ID is changed and no plaintext fallback is introduced.
+
+A bounded local worker materializes the seed under the local lease. It retains
+the seed until descriptor adoption, then retains the exact descriptor across a
+lost commit response. State1 records completed local commit only, so later
+receives do not repeat staging. A high-watermark bounds a worker round; later
+captures cannot indefinitely starve retained failures. Transient row failures
+back off, while identity/engine-admission failures need a fresh explicit event.
+Reset disposes and joins the worker before clearing its cursor. Native orphan
+cleanup already handles a crash before descriptor adoption.
+
+This closes the file-staging crash gap after sealing, not failures of sealing
+or identity readiness themselves. The latter still preserve normal messages
+through the existing delivery fallback but do not prove a durable archive job.
+The capture flag remains false. Neither materialization, native source-to-message
+projection nor raw protobuf comparison grants remote write/adoption authority.
+
+Qualification: appf403006b9/native9293a457c passed hosted35099318119 with737 app
+Rust,321 rustpush,11 Anisette and40 protector tests;25-file Dart batch692 and
+focused analysis passed. The new source projector preserves original sender,
+addressed local endpoint, direction, text and checked Apple-epoch time, using an
+exact direct parent rather than the current sending alias. Raw proto1/2/3/4
+checks reject unknown/duplicate singular fields, wrong wire types, overflow,
+truncation and presence mismatches without requiring field order or reencoding.
+These are components, not a successful CloudKit upload or Apple-client display.
+
+Next vertical slice, no extra general-purpose framework:
+
+```text
+materialized received intent
+  -> authenticated same-account native source + exact canonical chat
+  -> deterministic Messages record name + exact read-only lookup
+     -> Found: inspect original outer fields/raw flags and decrypted proto bytes
+          -> equivalent: retain exact raw/version and adopt mapping atomically
+          -> changed/unsupported: keep record, route to reader, never new create
+     -> NotFound: durable create-only operation, one submit, exact readback
+     -> uncertain: retain job, no blind create or IDS send
+```
+
+The generic CloudMessage decoder uses from_bits_truncate for flags; the native
+inspector must check original flag bits before comparing, not treat a lossy typed
+model as complete evidence. Exact lookup identity/etag and raw adoption remain
+required. Existing unknown outcomes and outgoing receipt gates stay unchanged.
+
 ## Verified coverage at product f027aad2a
 
 | Origin | Current path | Archive result |
