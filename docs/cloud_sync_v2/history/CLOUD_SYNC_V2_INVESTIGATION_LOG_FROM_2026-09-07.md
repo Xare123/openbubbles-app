@@ -5792,3 +5792,44 @@ Historical tests do not establish current-device behavior.
   not_found. Their uncommitted worktrees and sessions remain protected; current
   tool discovery exposes no session deletion. No storage deletion, C:29.03GiB
   free, no active build/test, no paid cloud run or upstream PR.
+
+### September 16 native received-origin propagation
+
+- Previous goal turn made concrete progress (e65bee42e and qualified device
+  evidence), not a wait. Pixel restart/update still awaits explicit approval;
+  no new phone action was taken in this continuation.
+- Native rustpush9ced48bae256bcdd7d46db84eefb331bd9d86d88 preserves original
+  local tP independently of reply-device tokens in MessageInst. Existing local
+  constructors explicitly leave it unset. App0e9d2d2d089d67b7ef454e81ea7df978b2dbe9eb
+  mirrors it through FRB and keeps attachment/edit/unsend source validators from
+  interpreting receive-marked objects as local outgoing source. Existing protected
+  source serialization remains unchanged; old local envelopes reconstruct None.
+- Pushed only to Xare123 fork branches agent/cloudkit-v2-received-origin-20260916,
+  with skip-ci commits to avoid automatic APK builds. Manually dispatched the
+  existing GitHub-hosted bridge workflow with allow_generated_drift=true. No GCE,
+  signing changes, credentials, infrastructure, APK build or upstream PR.
+- Run35075169331 completed successfully08:53:55Z, started08:41:35Z (12m20s).
+  App Rust685, rustpush321, Anisette11 and protector40 tests passed. Four native
+  receive-origin cases ran; outgoing codec rejection cases also ran. Committed
+  generated-drift verification was intentionally skipped by this generation run.
+- Artifact10437743507 is380,187bytes with SHA256
+  2c554a5e4c5704375bd481bfab5feb93a236913fca914f4aa88ef1012718d695.
+  Verified before extraction; imported exactly seven generated members into
+  previously clean tracked paths. Only api.dart, frb_generated.dart and
+  frb_generated.rs materially differ. SSE and diagnostic normalization guards
+  pass locally. Evidence retained under build-evidence/received-origin-bridge-35075169331.
+- Dart changes require native recipient/context agreement and reject receive
+  metadata in outgoing text, reaction and mutation capture. Four regressions
+  failed before implementation; all288 cases in the five-file targeted batch
+  now pass. Focused analysis has no issues. The tested source does not enable
+  incoming CloudKit writes or change the frozen f027 APK.
+- Carver Muse/max is active in received-intent-journal-20260916 at basee65bee42e.
+  First journal draft was rejected for precomputed-identity drift and circular
+  first-save proof. Revised API captures from loaded persisted rows plus original
+  wire inside the caller's atomic persistence transaction. Parent also rejected
+  old-epoch reference omission from GC and a bounded scan that resets its offset
+  every call. Requires retain-all ownership and an explicit keyset continuation
+  with a multi-call starvation regression. No journal/schema integration yet.
+  Telephony dependency was initialized at its recorded commit using local Git
+  objects. Seven unrelated plugin registrant changes remain outside approved
+  integration scope. Keep the active agent and unique work; no cleanup deletion.

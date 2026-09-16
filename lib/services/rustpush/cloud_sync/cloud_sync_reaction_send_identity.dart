@@ -209,6 +209,7 @@ final class CloudSyncReactionSendIdentity {
     if (identity == null ||
         wire.verificationFailed ||
         wire.target != null ||
+        wire.receivedOnHandle != null ||
         wire.sender != chat.usingHandle) {
       return null;
     }

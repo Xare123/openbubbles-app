@@ -57,6 +57,10 @@ back to legacy sync, clear a cursor, or continue under a replacement account.
 This checkpoint supersedes older qualification history. Current product source is
 `f027aad2a17c131f7d68687ea68f58b334473e8f`; installed Pixel source remains
 `710003e7b`. Rustpush remains `5522fa0ced1c1fe7ed70262ac230261889ca06c5`.
+These are the frozen deployment candidate versions. The separate received-archive
+development now starts at app `0e9d2d2d089d67b7ef454e81ea7df978b2dbe9eb` /
+rustpush `9ced48bae256bcdd7d46db84eefb331bd9d86d88`; it is not an APK or a
+replacement for the ready f027 package.
 
 - **Media: live-proven for the failed HEIC.** The user confirmed download and
   reopen; production cache restoration verified the authenticated 2,302,773-byte
@@ -180,6 +184,31 @@ Current work handles after resume:
   is producing work and no build/test session remains. Unique worktrees and
   transcripts are retained. Do not treat the original isolated prototype as the
   reviewed main revision.
+- **New native boundary qualified:** hosted bridge run `35075169331` succeeded
+  for exact0e9d2d2d0/9ced48b in12m20s. Native tests passed685 app,321 rustpush,
+  11 Anisette and40 protector cases. Original IDS tP now survives in optional
+  MessageInst.received_on_handle, separately from reply tokens; local sends keep
+  it unset and outgoing native source codecs reject receive-marked values.
+  Artifact10437743507 SHA256
+  `2c554a5e4c5704375bd481bfab5feb93a236913fca914f4aa88ef1012718d695`
+  matched locally. Its seven generated files were imported after a clean-file
+  check, with only three files materially changed (20 insertions/four deletions).
+  Generation allowed drift intentionally; committed reproducibility was skipped,
+  not claimed passed. Native compilation and all listed suites did run.
+- Parent's Dart follow-up requires the native receivedOnHandle to match captured
+  context and rejects receive origins in local send/reaction/edit/unsend capture.
+  Four new regressions failed before the guards and passed afterward. Full five-
+  file targeted batch passes288; focused analysis is clean. No source envelope,
+  receive producer or remote received archive is enabled by these changes.
+- **Active Muse/max Carver:** `01a0a95a-f229-7c83-8d70-befba78d6012`, isolated
+  `agent-worktrees/received-intent-journal-20260916`, basee65bee42e. Owns the
+  additive received-intent entity, protected binding, journal and tests. Parent
+  required full wire revalidation inside atomic Message persistence/adoption,
+  retain-all GC ownership across epoch changes, and a genuinely resumable bounded
+  scan. The first metadata-only identity check and reset-to-zero scan were rejected.
+  No journal code/schema is integrated yet. Telephony submodule initialized from
+  existing local objects; generated plugin registrant churn is not approved for
+  integration. Keep this agent open while it produces the required revision.
 - Parent rejected both first sidecar patches as stale-base duplicate fixes;
   current main already handles empty People handles and exact call-timeout
   ownership. Agents were redirected to current-source native/tester boundaries.

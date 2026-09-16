@@ -21686,8 +21686,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   MessageInst dco_decode_message_inst(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 9)
-      throw Exception('unexpected arr length: expect 9 but see ${arr.length}');
+    if (arr.length != 10)
+      throw Exception('unexpected arr length: expect 10 but see ${arr.length}');
     return MessageInst(
       id: dco_decode_String(arr[0]),
       sender: dco_decode_opt_String(arr[1]),
@@ -21698,6 +21698,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       sendDelivered: dco_decode_bool(arr[6]),
       verificationFailed: dco_decode_bool(arr[7]),
       certifiedContext: dco_decode_opt_box_autoadd_certified_context(arr[8]),
+      receivedOnHandle: dco_decode_opt_String(arr[9]),
     );
   }
 
@@ -33369,6 +33370,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_certifiedContext = sse_decode_opt_box_autoadd_certified_context(
       deserializer,
     );
+    var var_receivedOnHandle = sse_decode_opt_String(deserializer);
     return MessageInst(
       id: var_id,
       sender: var_sender,
@@ -33379,6 +33381,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       sendDelivered: var_sendDelivered,
       verificationFailed: var_verificationFailed,
       certifiedContext: var_certifiedContext,
+      receivedOnHandle: var_receivedOnHandle,
     );
   }
 
@@ -45090,6 +45093,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       self.certifiedContext,
       serializer,
     );
+    sse_encode_opt_String(self.receivedOnHandle, serializer);
   }
 
   @protected

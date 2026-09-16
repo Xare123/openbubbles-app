@@ -179,7 +179,8 @@ final class CloudSyncReceivedArchiveIdentity {
     }
     final receivedOnHandle = liveContext.receivedOnHandle;
     if (receivedOnHandle.isEmpty ||
-        !liveContext.observedLocalHandles.contains(receivedOnHandle)) {
+        !liveContext.observedLocalHandles.contains(receivedOnHandle) ||
+        wire.receivedOnHandle != receivedOnHandle) {
       return const CloudSyncReceivedArchiveIneligible(reasonRecipient);
     }
 

@@ -468,6 +468,7 @@ final class CloudSyncLocalSendIdentity {
     if (identity == null ||
         wire.verificationFailed ||
         wire.target != null ||
+        wire.receivedOnHandle != null ||
         (identity._groupRoute == null &&
             (identity._usesProvisionalOrigin
                 ? wire.sender == null ||

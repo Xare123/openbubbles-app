@@ -18779,6 +18779,7 @@ const _: fn() = || {
         let _: bool = MessageInst.send_delivered;
         let _: bool = MessageInst.verification_failed;
         let _: Option<crate::api::api::CertifiedContext> = MessageInst.certified_context;
+        let _: Option<String> = MessageInst.received_on_handle;
     }
     match None::<crate::api::api::MessagePart>.unwrap() {
         crate::api::api::MessagePart::Text(field0, field1) => {
@@ -25785,6 +25786,7 @@ impl SseDecode for crate::api::api::MessageInst {
         let mut var_verificationFailed = <bool>::sse_decode(deserializer);
         let mut var_certifiedContext =
             <Option<crate::api::api::CertifiedContext>>::sse_decode(deserializer);
+        let mut var_receivedOnHandle = <Option<String>>::sse_decode(deserializer);
         return crate::api::api::MessageInst {
             id: var_id,
             sender: var_sender,
@@ -25795,6 +25797,7 @@ impl SseDecode for crate::api::api::MessageInst {
             send_delivered: var_sendDelivered,
             verification_failed: var_verificationFailed,
             certified_context: var_certifiedContext,
+            received_on_handle: var_receivedOnHandle,
         };
     }
 }
@@ -35580,6 +35583,7 @@ impl flutter_rust_bridge::IntoDart for FrbWrapper<crate::api::api::MessageInst> 
             self.0.send_delivered.into_into_dart().into_dart(),
             self.0.verification_failed.into_into_dart().into_dart(),
             self.0.certified_context.into_into_dart().into_dart(),
+            self.0.received_on_handle.into_into_dart().into_dart(),
         ]
         .into_dart()
     }
@@ -43008,6 +43012,7 @@ impl SseEncode for crate::api::api::MessageInst {
         <bool>::sse_encode(self.send_delivered, serializer);
         <bool>::sse_encode(self.verification_failed, serializer);
         <Option<crate::api::api::CertifiedContext>>::sse_encode(self.certified_context, serializer);
+        <Option<String>>::sse_encode(self.received_on_handle, serializer);
     }
 }
 

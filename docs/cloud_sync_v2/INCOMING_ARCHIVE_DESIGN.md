@@ -44,9 +44,11 @@ Current source contains an **unhooked eligibility component**:
 plain-text candidates without authorizing a save. It requires matching row,
 parent, wire, sender and original local recipient; preserves source identity
 across same-row canonical adoption and sender-preference changes; and rejects
-deleted chats and unsupported shapes. Thirty-six focused cases pass; the batch
-with existing send/mutation/chat tests passes 268 cases. There is no production
-receive hook, received journal, native capture or incoming uploader yet.
+deleted chats and unsupported shapes. Native receive-destination propagation
+and matching Dart guards are now implemented and test-qualified. The current
+five-file Dart batch passes288, including receive-origin rejection in outgoing
+send/reaction/edit/unsend capture. There is no production archive receive hook,
+integrated received journal, protected incoming source or incoming uploader yet.
 
 1. Define a separate received-archive origin and durable intent after incoming
    persistence succeeds. Preserve account/store provenance, the exact original
@@ -82,11 +84,15 @@ then group, media and mutation interplay before a full production claim.
 
 ## Native integration boundary
 
-- Capture `IDSRecvMessage.target` (`tP`) before `IMClient::process_msg` returns
-  its decoded message. `MessageInst.target` is instead an optional reply-device
+- Implemented: `IDSRecvMessage::to_message` now preserves `target` (`tP`) as
+  `MessageInst.received_on_handle`, carried through the regenerated bridge.
+  `MessageInst.target` is instead an optional reply-device
   token, including on iMessage. `certifiedContext.target` retains the local
   recipient only when all certified-delivery fields exist. The Dart candidate
-  requires that captured endpoint as input; it must not infer a missing one.
+  requires its captured endpoint to equal the native field; missing/mismatched
+  values fail, never borrow a current chat alias. Native tests cover certified,
+  uncertified, missing-target and locally composed origins. This metadata alone
+  is not an authentication capability or permission to archive.
 - Keep incoming sender and addressed local endpoint in protected source. For a
   mirrored own send, also preserve its original local sender. The legacy
   `Message.toCloud` assumes current chat.usingHandle, so it is not a reliable

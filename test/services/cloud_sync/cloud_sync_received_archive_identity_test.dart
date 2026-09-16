@@ -116,6 +116,7 @@ api.MessageInst _wire({
   int? sentAt,
   bool verificationFailed = false,
   List<api.MessageTarget>? target,
+  String? receivedOnHandle = _owner,
 }) {
   return api.MessageInst(
     id: id,
@@ -133,6 +134,7 @@ api.MessageInst _wire({
     target: target ?? [api.MessageTarget.token(Uint8List(32))],
     sendDelivered: false,
     verificationFailed: verificationFailed,
+    receivedOnHandle: receivedOnHandle,
   );
 }
 
@@ -772,6 +774,26 @@ void main() {
   });
 
   group('stored sender and counterpart binding', () {
+    test('caller context cannot invent or replace the native recipient', () {
+      for (final endpoint in <String?>[null, 'mailto:different@example.com']) {
+        final chat = _directChat();
+        expect(
+          _reason(
+            CloudSyncReceivedArchiveIdentity.capture(
+              message: _row(
+                chat: chat,
+                isFromMe: false,
+                handleAddress: _remote,
+              ),
+              chat: chat,
+              wire: _wire(receivedOnHandle: endpoint),
+              liveContext: _liveContext,
+            ),
+          ),
+          CloudSyncReceivedArchiveIdentity.reasonRecipient,
+        );
+      }
+    });
     test('recipient must be the captured local endpoint, never guessed', () {
       for (final endpoint in [
         '',
@@ -826,7 +848,7 @@ void main() {
             CloudSyncReceivedArchiveIdentity.capture(
               message: row,
               chat: chat,
-              wire: wire,
+              wire: _wire(receivedOnHandle: alternate),
               liveContext: const CloudSyncReceivedArchiveLiveContext(
                 observedViaLiveReceive: true,
                 observedLocalHandles: observedHandles,

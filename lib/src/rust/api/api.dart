@@ -7198,6 +7198,10 @@ class MessageInst {
   bool verificationFailed;
   CertifiedContext? certifiedContext;
 
+  /// Original local IDS receive destination, not the reply-device token.
+  /// This is receive metadata, not an outgoing send or CloudKit permission.
+  final String? receivedOnHandle;
+
   MessageInst({
     required this.id,
     this.sender,
@@ -7208,6 +7212,7 @@ class MessageInst {
     required this.sendDelivered,
     required this.verificationFailed,
     this.certifiedContext,
+    this.receivedOnHandle,
   });
 
   @override
@@ -7220,7 +7225,8 @@ class MessageInst {
       target.hashCode ^
       sendDelivered.hashCode ^
       verificationFailed.hashCode ^
-      certifiedContext.hashCode;
+      certifiedContext.hashCode ^
+      receivedOnHandle.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -7235,7 +7241,8 @@ class MessageInst {
           target == other.target &&
           sendDelivered == other.sendDelivered &&
           verificationFailed == other.verificationFailed &&
-          certifiedContext == other.certifiedContext;
+          certifiedContext == other.certifiedContext &&
+          receivedOnHandle == other.receivedOnHandle;
 }
 
 @freezed

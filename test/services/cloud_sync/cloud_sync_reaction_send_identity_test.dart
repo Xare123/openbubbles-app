@@ -84,6 +84,7 @@ api.MessageInst _wire({
   bool enable = true,
   bool verificationFailed = false,
   bool withTarget = false,
+  String? receivedOnHandle,
   api.Message? messageOverride,
 }) {
   return api.MessageInst(
@@ -113,6 +114,7 @@ api.MessageInst _wire({
     target: withTarget ? [const api.MessageTarget.uuid('target-guid')] : null,
     sendDelivered: false,
     verificationFailed: verificationFailed,
+    receivedOnHandle: receivedOnHandle,
   );
 }
 
@@ -408,6 +410,14 @@ void main() {
   });
 
   group('native wire agreement', () {
+    test('received origin cannot be captured as a fresh local reaction', () {
+      final chat = _directChat();
+      expect(CloudSyncReactionSendIdentity.captureWire(
+        _reactionRow(chat: chat),
+        chat,
+        _wire(receivedOnHandle: _sender),
+      ), isNull);
+    });
     test('accepts exact add and remove matches for the standard six', () {
       for (final base in _bases) {
         for (final enable in [true, false]) {

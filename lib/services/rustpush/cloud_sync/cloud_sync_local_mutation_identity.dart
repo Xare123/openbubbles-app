@@ -110,11 +110,12 @@ final class CloudSyncLocalMutationIdentity {
     api.MessageInst wire, {
     String? expectedSourceSha256,
   }) {
-    // Exactly the codec's three exclusions: staged targets, verification
-    // failures, and certified contexts never decode as a mutation source.
+    // Match the native codec: received origins, staged targets, verification
+    // failures, and certified contexts never decode as a local mutation source.
     // Any non-null target list (even empty) counts as a staged target.
     if (wire.target != null ||
         wire.certifiedContext != null ||
+        wire.receivedOnHandle != null ||
         wire.verificationFailed) {
       return null;
     }

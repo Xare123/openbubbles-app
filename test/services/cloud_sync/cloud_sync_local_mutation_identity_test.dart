@@ -42,7 +42,7 @@ api.IndexedMessagePart _textPart(
   );
 }
 
-api.MessageInst _baseEdit() {
+api.MessageInst _baseEdit({String? receivedOnHandle}) {
   return api.MessageInst(
     id: _mutationGuid,
     sender: _sender,
@@ -59,11 +59,12 @@ api.MessageInst _baseEdit() {
     sentTimestamp: 1700000000000,
     sendDelivered: false,
     verificationFailed: false,
+    receivedOnHandle: receivedOnHandle,
   );
 }
 
-api.MessageInst _baseUnsend() {
-  final wire = _baseEdit();
+api.MessageInst _baseUnsend({String? receivedOnHandle}) {
+  final wire = _baseEdit(receivedOnHandle: receivedOnHandle);
   wire.message = const api.Message.unsend(
     api.UnsendMessage(tuuid: _targetGuid, editPart: 2),
   );
@@ -98,6 +99,14 @@ void main() {
     expect(CloudSyncLocalMutationIdentity.captureWire(wire), isNotNull);
   });
   group('edit and unsend capture', () {
+    test('received origin cannot be captured as a fresh local mutation', () {
+      for (final wire in [
+        _baseEdit(receivedOnHandle: _sender),
+        _baseUnsend(receivedOnHandle: _sender),
+      ]) {
+        expect(CloudSyncLocalMutationIdentity.captureWire(wire), isNull);
+      }
+    });
     test('captures the edit wire with guid and source hashes', () {
       final identity = CloudSyncLocalMutationIdentity.captureWire(_baseEdit());
       expect(identity, isNotNull);

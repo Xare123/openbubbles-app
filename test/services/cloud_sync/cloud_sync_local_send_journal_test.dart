@@ -1545,6 +1545,12 @@ void main() {
     expect(actual.sourceSha256, _identity(message, chat, _guidA).sourceSha256);
   });
 
+  test('received origin cannot be captured as a fresh local send wire', () {
+    final message = _message(chat: chat);
+    final wire = _wire(chat, text: message.text!, receivedOnHandle: chat.usingHandle);
+    expect(CloudSyncLocalSendIdentity.captureWire(message, chat, wire), isNull);
+  });
+
   for (final change in <String, void Function(api.MessageInst)>{
     'text frozen before local edit': (wire) {
       (wire.message as api.Message_Message).field0.parts = _parts('old text');
@@ -2332,7 +2338,7 @@ api.MessageParts _parts(String text) => api.MessageParts(
   ],
 );
 
-api.MessageInst _wire(Chat chat, {String text = 'ordinary text'}) =>
+api.MessageInst _wire(Chat chat, {String text = 'ordinary text', String? receivedOnHandle}) =>
     api.MessageInst(
       id: _guidA,
       sender: chat.usingHandle,
@@ -2350,6 +2356,7 @@ api.MessageInst _wire(Chat chat, {String text = 'ordinary text'}) =>
       sentTimestamp: 0,
       sendDelivered: true,
       verificationFailed: false,
+      receivedOnHandle: receivedOnHandle,
     );
 
 CloudSyncLocalSendSourceBinding _protectedSource(
