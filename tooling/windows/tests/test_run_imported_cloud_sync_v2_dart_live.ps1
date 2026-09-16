@@ -226,6 +226,10 @@ try {
     $arguments = @($start.ArgumentList)
     Assert-Check 'child-writer-env-scrubbed' (
         -not $start.Environment.ContainsKey('OPENBUBBLES_CLOUDKIT_WRITER_OWNER'))
+    Assert-Check 'child-native-logging-bounded' (
+        $start.Environment['OPENBUBBLES_CLOUD_SYNC_V2_WINDOWS_HARNESS'] -ceq '1' -and
+        -not $start.Environment.ContainsKey('OPENBUBBLES_CLOUD_SYNC_V2_WINDOWS_VERBOSE_NATIVE_LOGS') -and
+        -not $start.Environment.ContainsKey('RUST_LOG'))
     Assert-Check 'child-run-once-bound' (
         $start.Environment['OPENBUBBLES_LIVE_HARNESS_OPERATION'] -ceq 'run-once' -and
         $start.Environment['OPENBUBBLES_LIVE_HARNESS_LAUNCH_ID'] -ceq ('b' * 32) -and
@@ -247,6 +251,10 @@ try {
         -Operation drain `
         -ReplayExcludedChats
     $drainArguments = @($drainStart.ArgumentList)
+    Assert-Check 'drain-native-logging-bounded' (
+        $drainStart.Environment['OPENBUBBLES_CLOUD_SYNC_V2_WINDOWS_HARNESS'] -ceq '1' -and
+        -not $drainStart.Environment.ContainsKey('OPENBUBBLES_CLOUD_SYNC_V2_WINDOWS_VERBOSE_NATIVE_LOGS') -and
+        -not $drainStart.Environment.ContainsKey('RUST_LOG'))
     Assert-Check 'child-drain-bound' (
         $drainStart.Environment['OPENBUBBLES_LIVE_HARNESS_OPERATION'] -ceq 'drain' -and
         $drainStart.Environment['OPENBUBBLES_LIVE_HARNESS_LAUNCH_ID'] -ceq ('c' * 32) -and

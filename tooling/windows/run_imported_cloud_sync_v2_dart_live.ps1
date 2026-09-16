@@ -388,6 +388,9 @@ function New-DartApplierStartInfo {
     }
     $start.Environment['OPENBUBBLES_RUN_LIVE_WINDOWS_HARNESS'] = '1'
     $start.Environment['OPENBUBBLES_CLOUD_SYNC_V2_TEST_HOST'] = '1'
+    # The native logger uses this separate flag, not the Dart test-host flag.
+    # Without it a full retained sweep serializes bulk records into debug logs.
+    $start.Environment['OPENBUBBLES_CLOUD_SYNC_V2_WINDOWS_HARNESS'] = '1'
     $start.Environment['OPENBUBBLES_LIVE_HARNESS_OPERATION'] = $Operation
     $start.Environment['OPENBUBBLES_LIVE_HARNESS_LAUNCH_ID'] = $LaunchId
     $start.Environment['OPENBUBBLES_TEST_NATIVE_LIBRARY'] = $NativeLibrary
