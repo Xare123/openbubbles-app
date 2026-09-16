@@ -6435,3 +6435,41 @@ Historical tests do not establish current-device behavior.
   Final cleanup recheck found0 deleted candidates present and0 protected-file
   metadata changes across10,825 preserved files. C:free31.1GiB at that check.
   The last interrupted native-test helper is now verifiednot_found.
+
+### September 16 completed full retained sweep after bounded-logging repair
+
+- After normal interlock expiry, source8e652804f/nativeaa953639a completed
+  drainb2a08181fd98c588ec06171c6a9db0a1 in one process pass. Remote feed drained;
+  retained projection incomplete. Final reportobcs2-semantic-1789599802849774
+  examined798 blocked message saves across25 windows and1011 attachment saves
+  across32 windows, plus one empty eligible-chat window. Zero further records
+  applied in the final sweep. This is a complete diagnostic sweep, not full sync.
+- Retained totals:chats94,messages5063,attachments1112,total6269. Compared with
+  the earlier6282 baseline,13 message records left the retained backlog during
+  these runs. The interrupted first sweep had no terminal summary, so no exact
+  per-record/UI restoration attribution is claimed. Known excluded saves3779
+  and tombstones681 remain separately counted;1809 saves still need repair or
+  exact classification, not necessarily1809 recoverable iMessages.
+- The complete sweep observed185 missing-chat references,68 current native
+  carrier exclusions rejected because their previous failure differed,178
+  message decoder dependencies,279 malformed message decodes and5 unsupported
+  services. Counts are diagnostic events and may overlap. Attachments included
+  810 ready decodes,195 malformed decodes and6 decoder dependencies; missing
+  parents dominate, but do not imply an excluded service without an exact join.
+- Outbox24before/after, remote writes disabled and no content exposed by the
+  retained result. stdout407,113bytes/stderr0, well below unchanged limits.
+  cleanup.json confirms processes stopped/raw output removed; parent independently
+  found no remaining dart/flutter_tester/native-compose-tests processes. Profile
+  and offline-Flutter window explicitly released to the independent task.
+- pass-1.json SHA2562d4b3900ba43ef6d9c2f9347fc6fa272473beaddf79fab024e5d5d540c0fea5c.
+  Evidence lives under the private profile's cloud-sync-v2/diagnostics/
+  dart-applier-live/b2a08181fd98c588ec06171c6a9db0a1. No new runtime/native/APK,
+  account reset, IDS send, remote mutation or paid GCE.
+- C:free29.3GiB at closeout. Main local build1,751,785,941bytes and.dart_tool
+  62,981,389bytes at the preceding check; active test output was not deleted.
+  Cleanup remains the reviewed5.635GiB purge, not the fluctuating later free-space
+  measurement. No active child; unique group draft/evidence/transcripts retained.
+- Next discriminating step is a bounded exact-owner dependency inspection,
+  not another unchanged full sweep. The remaining carrier-disposition mismatch
+  and absent logical parent links need separate evidence and regression cases.
+  Overall goal remains active; Windows read proof does not qualify production.

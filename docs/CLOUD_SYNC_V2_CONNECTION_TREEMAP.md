@@ -84,30 +84,30 @@ terminal, retained count unchanged and outbox24 unchanged. No remote writes or
 content exposure; process cleanup confirmed and raw stdout/stderr removed. The
 profile window is released. This does not prove Android lifecycle or full sync.
 
-Retained total6282 =3779 known out-of-scope saves +681 tombstones +811 message
-saves +1011 attachment saves still needing classification/repair. Do not call
-all6282 missing iMessages, or assume every remaining save is recoverable. Use
-the matched Windows read loop for the next bounded retained-record investigation.
-Compatible Dart-only fixes can reuse this native runtime without another build.
+**LIVE-PROVEN full Windows retained sweep:** sessionb2a08181fd98c588ec06171c6a9db0a1,
+Dart source8e652804f/nativeaa953639a, finished23:03:24Z. Remote head drained;
+all798 remaining blocked message saves and1011 attachment saves examined in58
+windows, with zero further applications in this final sweep. Outbox24 unchanged,
+no remote writes, cleanup confirmed. Retained total6269 =3779 known excluded
+saves +681 tombstones +1809 unresolved saves. Thirteen message records left
+the retained backlog across these runs; no independent UI proof is inferred.
 
-Bounded retained inspection `1dbbed6b1c3856122d6ead10bc606322` examined37 cases
-without changing durable state. Five sampled message dependencies now decode
-and each has one direct-chat candidate; eight attachment dependencies decode
-but have no parent row. Candidate presence alone is not ownership proof. Next:
-run the existing full retained repair sweep on this matched runtime before
-adding diagnostic infrastructure or changing projection rules. The independent
-task acknowledged an exclusive20-minute profile/Flutter window for that run.
-No copied-store replay helper was implemented. Missing attachment parents must
-not be classified as carrier-message exclusions without an exact current-version
-logical-to-physical join. See the latest investigation entry for evidence.
+Earlier37-case observation1dbbed6b found five decodable direct messages with
+one chat candidate each and eight decodable attachments with no parent row.
+The completed sweep now rules out merely skipping the tail of the backlog.
+Next: inspect a small remaining dependency set with exact current-generation
+logical-to-physical ownership, plus the68 native carrier exclusions rejected
+because their prior disposition differed. Missing parents do not prove carrier
+exclusion. Do not repeat a full sweep without new evidence/code, merge by title,
+or relax ownership checks. No copied-store replay helper exists yet.
 
-First full sweep5d98bacd stopped at dart_applier_output_overflow. It reached an
-empty remote head but no final projection report, so no sweep-complete claim.
-Launcher4759bf88e repairs the missing native bounded-logging flag;23 checks pass
-with two new failures reproduced before the fix. Retry2b06e810 then stopped at
-cloudkit_interlock_busy within five minutes of the earlier forced shutdown.
-Both launches cleaned up owned processes/raw output. Allow normal lease expiry
-before one retry; never clear the lease or change the output/sync safety gates.
+Launcher4759bf88e fixes a missing native bounded-logging flag. Its two regression
+assertions failed before and all23 launcher checks pass after. The first sweep
+hit the unchanged raw-output cap; the corrected complete run used407,113 stdout
+bytes and0 stderr bytes, then removed raw files. Normal five-minute interlock
+expiry after forced shutdown was respected, never cleared. Shared profile window
+released; no main live process remains. Compatible Dart/tooling repairs reuse the
+qualified runtime without another native build. Full sync/Pixel proof remains open.
 
 The offline copied-profile inspector left source data bytes unchanged and found
 701 chats,13,969 messages,2,516 attachments,24 confirmed outbox rows, no active
@@ -117,7 +117,8 @@ Pixel was absent from adb devices. FaceTime/Find My remains independently owned.
 User-requested purge removed22,588 regenerable Rust intermediate files totaling
 6,050,275,183bytes (5.635GiB). Every10,825 excluded file remained unchanged; no
 DLL/EXE/PDB/LIB/EXP, source, evidence, runtime, ObjectBox, signing material or
-credential was removed. C:free measured about34.8GiB after. Exact plan/results:
+credential was removed. C:free measured about34.8GiB immediately after cleanup,
+29.3GiB at the later test closeout. Exact plan/results:
 build-evidence/storage-purge-20260916-luna. Storage helperEinstein was reviewed
 and closed; group-route reviewerPopper was reviewed and closed. No child is
 needed now. Closed transcripts remain because supported deletion is unavailable.
