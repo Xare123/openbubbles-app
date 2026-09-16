@@ -6268,3 +6268,54 @@ Historical tests do not establish current-device behavior.
   files still match the verified native artifact. No helper, native CI or local
   test/analyzer session remains active. The next runtime must match this API;
   existing Windows native hosts are not silently rebound to the new bridge.
+
+### September 16 Windows qualification retry and selective cache purge
+
+- Pilot13f388527 changes only the Windows workflow's trusted branch from the
+  old update-seam to agent/cloudkit-v2-received-origin-20260916. Exact commit
+  validation remains. Main's missing android-smsmms submodule was initialized
+  at recorded36f34f48 for source preflight; no pointer changed. No GCP/secret/
+  variable/signing modification. Local ValidateOnly passed source31fc2613b.
+- Hosted Windows35152394873 failed before packaging:681 Dart tests passed,
+  one canonical-adapter edit/reopen fixture failed applied-vs-retryable. It
+  independently constructed a generation1 key despite a later generation.
+  Parent reproduced the failure, repaired only that fixture in aa953639a,
+  passed157/157 in that file, then the exact21-file Windows matrix682/682.
+  No production checks were relaxed and no artifact from the failed run was
+  imported. Corrected Windows35154038683 is active, watched by session42650.
+- One mutex-owned offline copied-profile inspection found701 chats,13,969
+  messages,2,516 attachments and24 confirmed outbox rows with no active leases.
+  All three semantic checkpoints remain generation1. Original data.mdb size
+  156,438,528bytes and before/after hash equality prove the source copy read
+  did not change that database. No Apple request, IDS restore or outbound send.
+- Windows profile reservations were exchanged with the independent Find My
+  task, then released while builds run. Its results remain in that task; no
+  stopped-sharing or key-delivery cause is inferred here. Pixel adb list empty.
+- Popper's bounded group review accepted: preserve directv1 source bytes;
+  add an explicit v2 received-group source, exact authenticated group-parent
+  proof and matching raw/readback routes. Canonical Chat GUID and CloudKit
+  group ID are distinct. Native/legacy current-sender shortcuts are rejected.
+  No group implementation claimed; note retained in the current run evidence.
+- User requested an agent purge unneeded project storage. Einstein's scoped
+  audit was reviewed; parent narrowed mixed Cargo trees to an exact per-file
+  manifest and rejected whole-tree deletion of DLL/EXE/PDB/LIB/EXP or evidence.
+  Script validates resolved cache-only paths, no reparse/Git/data.mdb, no native
+  builder, unchanged inventory and exclusive file opens before literal removal.
+  The agent executed the approved script once. Removed22,588 files,
+  6,050,275,183bytes (5.635GiB); observed free-space delta6,020,091,904bytes.
+  No failures; all10,825 preserved files unchanged. Parent independently
+  verified zero selected files remain and no preserved file-size changes.
+  No directory/worktree/session or live profile data was removed. Regeneration
+  from retained source/lockfiles is recovery; no new cache backup was created.
+- Cleanup manifest SHA256473ceaaf5f5c254421455fa8cf9ec57fba3b7eaf7d94a7a8357b9b33aa88b56f
+  and result are under build-evidence/storage-purge-20260916-luna. Live profile
+  native DLL/ObjectBox data remain at the correct APPDATA/OpenBubbles path;
+  the helper's shorter APPDATA path was corrected in parent verification.
+  C:about34.8GiB free. Completed helpers closed; supported transcript deletion
+  unavailable, so they remain protected. Native Windows run only remains active.
+- Next safe resume: follow35154038683, verify its artifact/provenance and only
+  then import exactsourceaa953639a and request a bounded shared-profile read
+  window. Documentation-only descendant HEAD may temporarily select that
+  committed candidate from a clean worktree for the exact-source importer,
+  then restore the original branch. Never overwrite dirty source or use a
+  mismatched existing DLL. Goal remains full production CloudKit, not complete.

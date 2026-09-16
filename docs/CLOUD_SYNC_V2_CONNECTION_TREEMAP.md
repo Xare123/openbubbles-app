@@ -52,6 +52,45 @@ back to legacy sync, clear a cursor, or continue under a replacement account.
 
 ## Current candidate
 
+### Active Windows qualification and storage checkpoint
+
+Product/native integration16430e0f2 is unchanged. Fixture-only source
+aa953639a3c7dfb5b6f40fcb742b3f60b9b81953 corrects a remaining generation1 key
+inside the edit/reopen test. Hosted Windows35152394873 failed681/682 on that
+fixture; parent reproduced it locally, changed no product behavior, then passed
+157 canonical-adapter cases and the exact21-file Windows batch682/682.
+
+Corrected Windows run35154038683 is ACTIVE, pilot13f388527237b82750824e1930bbc149fbdcc63d,
+native-test-host/read-only. Watch session42650. Do not start a duplicate while
+the run is active. Pilot change is only the trusted source-branch pin; no GCP,
+credentials, signing path or repository-variable change. Artifacts and exact
+resume instructions belong under build-evidence/windows-reader-35154038683.
+
+No new runtime is installed yet. Import must use exact sourceaa953639a and its
+verified artifact/pilot hashes. If documentation-only commits advance this
+worktree's HEAD, preserve a clean original branch and temporarily select that
+exact committed source for the strict importer, then restore the original
+branch. Never discard dirty work or relax the source guard. The Dart live
+launcher supports a newer documentation-only descendant with matching native
+boundaries. Request a new Windows profile window before import/live testing.
+
+The offline copied-profile inspector left source data bytes unchanged and found
+701 chats,13,969 messages,2,516 attachments,24 confirmed outbox rows, no active
+outbox leases and generation1 semantic checkpoints. It did not contact Apple.
+Pixel was absent from adb devices. FaceTime/Find My remains independently owned.
+
+User-requested purge removed22,588 regenerable Rust intermediate files totaling
+6,050,275,183bytes (5.635GiB). Every10,825 excluded file remained unchanged; no
+DLL/EXE/PDB/LIB/EXP, source, evidence, runtime, ObjectBox, signing material or
+credential was removed. C:free measured about34.8GiB after. Exact plan/results:
+build-evidence/storage-purge-20260916-luna. Storage helperEinstein was reviewed
+and closed; group-route reviewerPopper was reviewed and closed. No child is
+needed now. Closed transcripts remain because supported deletion is unavailable.
+
+The received-group review identifies a v2 source contract preserving v1 direct
+bytes plus authenticated group-parent projection/readback as the next feature
+gap. It is not implemented yet; no participant-count/title shortcut is accepted.
+
 ### Ownership and in-progress reader handoff, September 16
 
 User transferred FaceTime and Find My to task
