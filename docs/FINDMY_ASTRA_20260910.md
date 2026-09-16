@@ -3,13 +3,28 @@ type: build_runbook
 title: Find My current diagnosis and Windows test loop
 description: Verified live evidence, exact safe invocation, and remaining People, Devices, and Items gates.
 tags: [findmy, windows, diagnostics, recovery]
-timestamp: 2026-09-13
+timestamp: 2026-09-15
 ---
 
 # Current result
 
 Find My is **not production-qualified**. The Windows test loop works and now
 provides real account evidence without an APK rebuild.
+
+September 15 follow-up: current main already uses `projectFindMyPeople` and
+handles empty accepted-handle lists safely. Do not reapply the old `.first` UI
+fix from a stale tester checkout. The remaining gap is not that exception.
+
+The isolated IDS-242 shape observer (rustpush `576f466c`, app `fe9b9f306`,
+hosted bridge `35031241619`) is test-qualified but not in the installed runtime.
+Its Windows caller is also missing: the host performs roster/selected reads,
+not IDS receive dispatch. The observer currently sits inside `FindMyClient.handle`,
+which has ACK and share-mutation branches, including remote deletions. Calling
+that complete handler is not an acceptable read-only observation shortcut.
+A separate bounded observer ingress must preserve verified decryption and
+ordinary delivery without invoking those mutation branches. Until that boundary
+is reviewed and qualified, more synthetic observer tests do not demonstrate
+live People coordinates or Items inventory.
 
 - The user confirms exactly one person shares their location with this account,
   their spouse, and that sharing remains enabled.

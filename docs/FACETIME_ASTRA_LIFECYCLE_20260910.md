@@ -1,12 +1,32 @@
 ---
 type: Investigation
 title: FaceTime explicit-leave lifecycle repair
-description: Isolated candidate restoring intent-scoped native teardown, with offline regression evidence and remaining Android live gates.
+description: Current FaceTime runtime boundary and preserved historical explicit-leave repair evidence.
 tags: [facetime, android, lifecycle, regression]
-timestamp: 2026-09-12
+timestamp: 2026-09-15
 ---
 
-# Result
+# Current result (September 15)
+
+The explicit-leave and viewer-layout repairs are already in current main:
+`2c259fe0b`, `509aa1d34` and its import correction `9241d447e`. Main also has
+the exact-call timeout/cache guards. Do not apply the older isolated branch or
+port those fixes again. Successful two-way media remains unproved.
+
+The Windows app launches an external browser. Its policy/JVM/Node harnesses do
+not run Android's FaceTimeActivity, WebView permissions, injected getStats loop
+or native diagnostics writer. Their passing results cannot close that live gate.
+The retained older call observation reached the securing-media UI but did not
+prove advancing remote media; no fresh native trace is available.
+
+Next approved Android call: enable both developer mode and FaceTime diagnostics
+before setup, retain the two bounded `logs/facetime-native` generations plus
+WebView/build versions, and distinguish missing inbound reports, stalled bytes
+and changing peer identity. Do not infer remote hangup from an inactive snapshot.
+CloudKit's current engine-lifecycle candidate is tracked in the
+[connection treemap](CLOUD_SYNC_V2_CONNECTION_TREEMAP.md), not here.
+
+# Historical isolated candidate (September 12)
 
 Candidate only, not integrated, installed, or proven to fix the reported call.
 Base app `6c1a1c6e4b01b71b516e9df87a1cc3aef57cf0dd`; rustpush remains unpopulated

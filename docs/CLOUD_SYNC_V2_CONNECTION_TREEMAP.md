@@ -54,7 +54,7 @@ back to legacy sync, clear a cursor, or continue under a replacement account.
 
 ### Resume checkpoint: September 15, 22:20 PDT
 
-This checkpoint supersedes older qualification rows below. Current source is
+This checkpoint supersedes older qualification history. Current product source is
 `f027aad2a17c131f7d68687ea68f58b334473e8f`; installed Pixel source remains
 `710003e7b`. Rustpush remains `5522fa0ced1c1fe7ed70262ac230261889ca06c5`.
 
@@ -491,20 +491,13 @@ Detailed September 15 wire, installation, retained-record and media evidence is 
   qualification; do not stub the harness to satisfy compilation.
 - New projector failure literals require the exact reviewed vocabulary and
   safe-error tests. The Windows lane now includes these downstream checks.
-- Parent owns account operations and integration. Both b39 relationship audits
-  and the timestamp-compatibility audit were reviewed and closed; none edited
-  files or produced unique artifacts. Exact active agent/job handles belong in
-  the candidate table.
-- Current local live processes are closed. Cleanup for launches
-  `1cec35e558d6dc76a0040286129c59eb`,
-  `4842d0299701cd6b74748f714e04b894` and
-  `dd0cf181df5b3751342e8a2f78dc07ad` confirmed all four owned processes from
-  each launch stopped; raw stdout was removed. GCE app-Rust 34849044238,
-  Windows ARM64 34849043947 and Windows writer run 34926960736 are complete.
-  The four 07e live-chain processes exited, no Apple call remains active, and
-  the exact profile audit changed no database bytes. C: had 12.66 GiB free at
-  the latest checkpoint, so further full or repeated builds stay cloud-only.
-  Preserve the exact bundle, receipt, bounded aggregates and rollback evidence.
+- Parent owns account operations and integration. Current job and helper status
+  is in the resume checkpoint. Prior experiments and launch IDs are historical
+  evidence, not running work.
+- Windows session c936 is closed with process cleanup confirmed. The GitHub
+  build remains live; host watch session19890 observes that same run. Do not
+  dispatch a duplicate or weaken a source-compatibility check to reuse a DLL.
+  Preserve exact bundles, receipts, bounded aggregates and rollback evidence.
 - Preserve the qualified DLLs, source manifests and rollback evidence. Current
   generated bindings already include extensionMetadataJson; a metadata JSON
   schema change inside that string is not a new FRB ABI by itself.
