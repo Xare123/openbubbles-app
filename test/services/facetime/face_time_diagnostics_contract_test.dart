@@ -46,6 +46,24 @@ void main() {
     expect(source, contains('diagnostic: traceFaceTimeOutgoingSetup,'));
   });
 
+  test('acceptance verdict log is gated and carries no identity fields', () {
+    final source = File('lib/services/rustpush/rustpush_service.dart').readAsStringSync();
+    final anchor = source.indexOf("'facetime_accept verdict=");
+    expect(anchor, greaterThan(0));
+    final gate = source.substring(0, anchor).lastIndexOf('if (ss.settings.developerEnabled.value');
+    expect(gate, greaterThan(0));
+    expect(source.substring(gate, anchor),
+        contains('ss.settings.faceTimeDiagnosticsEnabled.value'));
+    final line = source.substring(anchor, anchor + 400);
+    expect(line, contains('verdict='));
+    expect(line, contains('active='));
+    expect(line, contains('total='));
+    for (final forbidden in ['handle', 'guid', 'link', 'metadata', 'uuid',
+      '.id', 'invokeMethod', 'await ']) {
+      expect(line.toLowerCase(), isNot(contains(forbidden)));
+    }
+  });
+
   test('setup observations bracket actual awaits including optional handles', () {
     final source = File('lib/services/rustpush/rustpush_service.dart').readAsStringSync();
     final start = source.indexOf('Future<void> placeOutgoingCall(');
