@@ -69,6 +69,33 @@ final class CloudSyncReceivedArchiveJournal {
 
   bool isBoundToStore(Store store) => identical(store, _store);
 
+  /// A live echo of our own journaled send must not acquire received origin.
+  bool hasOutgoingOrigin(String messageGuid) =>
+      _store.runInTransaction(TxMode.read, () {
+        _verifyOwnership();
+        return _hasOutgoingGuid(messageGuid);
+      });
+
+  bool _hasOutgoingGuid(String messageGuid) {
+    final query = _store
+        .box<CloudSyncLocalSendIntentEntity>()
+        .query(
+          CloudSyncLocalSendIntentEntity_.accountFingerprint
+              .equals(_binding.scope.accountFingerprint)
+              .and(
+                CloudSyncLocalSendIntentEntity_.messageGuidHash.equals(
+                  localSendGuidHashFor(messageGuid),
+                ),
+              ),
+        )
+        .build();
+    try {
+      return query.count() != 0;
+    } finally {
+      query.close();
+    }
+  }
+
   static String intentKeyFor({
     required String accountFingerprint,
     required String messageGuidHash,
@@ -121,6 +148,9 @@ final class CloudSyncReceivedArchiveJournal {
     }
     if (localChatId <= 0) {
       throw StateError('cloud_sync_received_archive_route_changed');
+    }
+    if (_hasOutgoingGuid(wire.id)) {
+      throw StateError('cloud_sync_received_archive_outgoing_overlap');
     }
     // The typed binding is not authentication proof; account/store must
     // agree before persisting. GUID/source agreement is proven after the

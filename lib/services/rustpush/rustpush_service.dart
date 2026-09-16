@@ -43,6 +43,11 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_android_back
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_dev_gate.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_composer_admission.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_send_journal.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_received_archive_identity.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_received_archive_journal.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_received_archive_source_binding.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_received_archive_staging.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_received_delivery.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_mutation_identity.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_mutation_journal.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_mutation_source_binding.dart';
@@ -6211,6 +6216,14 @@ class RustPushService extends GetxService {
     }
 
     var myMsg = (push as api.PushMessage_IMessage).field0;
+    // Bind the optional archive callback before async reflection/queueing, not
+    // when a later queue consumer happens to run under a replacement profile.
+    final receiveState = state;
+    final receivePath = statePath;
+    final receiveStore = CloudSyncDevGate.receivedArchiveCaptureEnabled ? Database.store : null;
+    bool receiveStillCurrent() => !loggingOut && !_cloudSyncV2OutboundQuiescing &&
+        identical(receiveState, state) && receivePath == statePath &&
+        receiveStore != null && !receiveStore.isClosed() && identical(receiveStore, Database.store);
     Logger.info("starting ${myMsg.id}");
     if (myMsg.message is api.Message_EnableSmsActivation) {
       if (myMsg.verificationFailed) return;
@@ -6689,6 +6702,35 @@ class RustPushService extends GetxService {
     if (reflected != null) {
       final queueStopwatch = Stopwatch()..start();
       final queueCompletion = Completer<void>();
+      IncomingMessagePersistence? receivedPersistence;
+      if (CloudSyncDevGate.receivedArchiveCaptureEnabled &&
+          CloudKitWriterOwnership.v2MutationsEnabled &&
+          _cloudSyncV2CanaryRuntimeAllowed && _cloudSyncV2DeveloperRuntimeAllowed &&
+          !ss.settings.cloudSyncingEnabled.value &&
+          myMsg.message is api.Message_Message && myMsg.receivedOnHandle != null &&
+          receiveState != null) {
+        try {
+          if (!receiveStillCurrent()) throw StateError('cloud_sync_received_archive_identity_changed');
+          final handles = await api.getHandles(state: receiveState.client);
+          if (!receiveStillCurrent()) throw StateError('cloud_sync_received_archive_identity_changed');
+          final shape = CloudSyncReceivedArchiveIdentity.preview(
+            message: reflected, chat: chat, wire: myMsg,
+            liveContext: CloudSyncReceivedArchiveLiveContext(
+              observedViaLiveReceive: true, observedLocalHandles: handles,
+              receivedOnHandle: myMsg.receivedOnHandle!),
+          );
+          // Unsupported media/groups/SMS keep the original queue/duplicate path.
+          // Eligibility is rechecked inside persistence; this is only routing.
+          if (shape is CloudSyncReceivedArchiveEligible) {
+            receivedPersistence = (resolvedChat, received, persist) =>
+                _trackCloudSyncV2ReceivedCapture(() => _persistCloudSyncV2ReceivedMessage(
+                    myMsg, resolvedChat, received, persist, receiveStillCurrent));
+          }
+        } catch (error) {
+          if (!receiveStillCurrent()) rethrow;
+          Logger.warn('Cloud Sync V2 received preflight deferred code=${cloudSyncV2SafeFailureCode(error)}');
+        }
+      }
       Logger.info(
           "rustpush_receive incoming_queue_enqueue id=$receiveId pending_count=${inq.items.length}");
       await inq.queue(IncomingItem(
@@ -6696,6 +6738,7 @@ class RustPushService extends GetxService {
         message: reflected,
         type: QueueType.newMessage,
         completer: queueCompletion,
+        persistReceivedMessage: receivedPersistence,
       ));
       await queueCompletion.future;
       Logger.info(
@@ -8075,6 +8118,7 @@ class RustPushService extends GetxService {
   bool _cloudSyncV2NativeReceiptReplayNeedsContinuation = false;
   bool _cloudSyncV2NativeReceiptReplayContinuationScheduled = false;
   bool _cloudSyncV2OutboundQuiescing = false;
+  final Set<Future<void>> _cloudSyncV2ReceivedCaptures = {};
   bool _cloudSyncV2AndroidBackgroundRegistered = false;
   static const _cloudSyncV2SemanticPullQuiescenceTimeout =
       Duration(seconds: 50);
@@ -8292,6 +8336,136 @@ class RustPushService extends GetxService {
       );
     }
     _cloudSyncV2LocalSendRuntime!.request(trigger);
+  }
+
+  /// Local-only receive capture at the real persistence seam. Never queues a
+  /// received CloudKit save or invents an outgoing IDS confirmation. Unsupported
+  /// shapes and disabled/unprepared profiles keep ordinary receive behavior.
+  Future<Message> _persistCloudSyncV2ReceivedMessage(
+      api.MessageInst wire, Chat chat, Message message,
+      Message Function() persistMessage, bool Function() receiveStillCurrent) async {
+    final receivedState = state;
+    final receivedStore = Database.store;
+    final receivedPath = statePath;
+    return persistReceivedMessageWithoutLoss(
+      message: message,
+      capture: () => _captureCloudSyncV2ReceivedMessage(wire, chat, message, persistMessage),
+      persistOrdinary: persistMessage,
+      sameReceiveIdentity: () => receiveStillCurrent() && identical(receivedState, state) &&
+          identical(receivedStore, Database.store) && !receivedStore.isClosed() &&
+          receivedPath == statePath,
+      findCommitted: () => Message.findOne(guid: wire.id),
+      isExpectedCommitted: (saved) => saved.chat.targetId == chat.id &&
+          saved.isFromMe == message.isFromMe && saved.handleId == message.handleId &&
+          saved.dateCreated == message.dateCreated,
+      onDeferred: (code, committed) => Logger.warn(
+          'Cloud Sync V2 received archive deferred code=$code messagePersisted=$committed'),
+    );
+  }
+
+  Future<Message> _trackCloudSyncV2ReceivedCapture(Future<Message> Function() action) {
+    if (loggingOut || _cloudSyncV2OutboundQuiescing) {
+      return Future.error(StateError('cloud_sync_received_archive_identity_changed'));
+    }
+    final result = Future<Message>.sync(action);
+    late final Future<void> completion;
+    completion = result.then<void>((_) {}, onError: (Object _, StackTrace __) {})
+        .whenComplete(() => _cloudSyncV2ReceivedCaptures.remove(completion));
+    _cloudSyncV2ReceivedCaptures.add(completion);
+    return result;
+  }
+
+  Future<void> _drainCloudSyncV2ReceivedCaptures() async {
+    while (_cloudSyncV2ReceivedCaptures.isNotEmpty) {
+      await Future.wait(_cloudSyncV2ReceivedCaptures.toList(growable: false));
+    }
+  }
+
+  Future<Message> _captureCloudSyncV2ReceivedMessage(
+      api.MessageInst wire, Chat chat, Message message,
+      Message Function() persistMessage) async {
+    if (!CloudSyncDevGate.receivedArchiveCaptureEnabled ||
+        !CloudKitWriterOwnership.v2MutationsEnabled ||
+        !_cloudSyncV2CanaryRuntimeAllowed || !_cloudSyncV2DeveloperRuntimeAllowed ||
+        loggingOut || ss.settings.cloudSyncingEnabled.value || statePath.isEmpty ||
+        wire.receivedOnHandle == null) {
+      return persistMessage();
+    }
+    final capturedState = state;
+    final client = capturedState?.icloudServices?.cloudMessagesClient;
+    if (capturedState == null || client == null) return persistMessage();
+    final objectBox = Database.store;
+    final storagePath = statePath;
+    bool stillCurrent() => !loggingOut && !_cloudSyncV2OutboundQuiescing &&
+        identical(capturedState, state) && identical(client, state?.icloudServices?.cloudMessagesClient) &&
+        !objectBox.isClosed() && identical(objectBox, Database.store) &&
+        storagePath == statePath && !ss.settings.cloudSyncingEnabled.value;
+    final localHandles = await api.getHandles(state: capturedState.client);
+    if (!stillCurrent()) throw StateError('cloud_sync_received_archive_identity_changed');
+    final live = CloudSyncReceivedArchiveLiveContext(
+      observedViaLiveReceive: true, observedLocalHandles: localHandles,
+      receivedOnHandle: wire.receivedOnHandle!,
+    );
+    final shape = CloudSyncReceivedArchiveIdentity.preview(
+      message: message, chat: chat, wire: wire, liveContext: live,
+    );
+    if (shape is CloudSyncReceivedArchiveIneligible) {
+      Logger.info('Cloud Sync V2 received source skipped code=${shape.reason}');
+      return persistMessage();
+    }
+    if (!stillCurrent()) throw StateError('cloud_sync_received_archive_identity_changed');
+    final metadata = await api.cloudSyncCaptureReceivedIdentity(state: capturedState);
+    if (!stillCurrent()) throw StateError('cloud_sync_received_archive_identity_changed');
+    final captured = CloudSyncNativeAuthSnapshot.fromNative(
+      nativeSessionId: metadata.nativeSessionId, accountFingerprint: metadata.accountFingerprint,
+      protectedStoreIdentity: metadata.protectedStoreIdentity, cloudMessagesClient: client,
+    );
+    final authority = ObjectBoxCloudKitWriterAuthority(store: objectBox);
+    final owner = authority.read(CloudKitWriterScope(accountFingerprint: captured.accountFingerprint));
+    if (owner == null || owner.owner != CloudKitWriterOwner.v2) return persistMessage();
+    final journal = CloudSyncReceivedArchiveJournal(
+      store: objectBox, authority: authority, authoritySnapshot: owner,
+    );
+    if (journal.hasOutgoingOrigin(wire.id)) return persistMessage();
+    final transport = NativeProtectedCloudSyncTransport(
+      cloudMessagesClient: client, storageDirectory: storagePath,
+      protectedStoreIdentity: captured.protectedStoreIdentity,
+    );
+    Future<void> validateCurrent() async {
+      if (!stillCurrent()) throw StateError('cloud_sync_received_archive_identity_changed');
+      final now = await api.cloudSyncCaptureReceivedIdentity(state: capturedState);
+      if (!stillCurrent() || now.accountFingerprint != captured.accountFingerprint ||
+          now.nativeSessionId != captured.nativeSessionId ||
+          now.protectedStoreIdentity != captured.protectedStoreIdentity) {
+        throw StateError('cloud_sync_received_archive_identity_changed');
+      }
+    }
+    Message? persisted;
+    try {
+      await CloudSyncReceivedArchiveStaging(
+        journal: journal, transport: transport, capturedIdentity: captured,
+        validateCurrentIdentity: validateCurrent, stillCurrent: stillCurrent,
+      ).persist(
+        wire: wire, liveContext: live, localChatId: chat.id!,
+        persistMessage: () {
+          persisted = persistMessage();
+          return persisted!.id!;
+        },
+        stageNative: () async => CloudSyncReceivedArchiveSourceBinding.fromNative(
+          await api.cloudSyncStageReceivedArchiveSource(
+            state: capturedState, expectedAuth: metadata, message: wire)),
+        clock: DateTime.now,
+      );
+      Logger.info('Cloud Sync V2 received source retained');
+      return persisted!;
+    } on StateError catch (error) {
+      // A local send may acquire its origin between the precheck and the
+      // capture transaction. Preserve normal reception, never duplicate it.
+      if (error.message == 'cloud_sync_received_archive_outgoing_overlap') return persistMessage();
+      rethrow;
+    } finally {
+      await transport.quiesceNativeOperations();
+    }
   }
 
   // Local intent capture only. This does not schedule or authorize a CloudKit
@@ -11064,6 +11238,11 @@ class RustPushService extends GetxService {
     _cloudSyncV2MessageUpdateRetryTimer = null;
     _cloudSyncV2MessageUpdateRetryDueUtc = null;
     try {
+      try {
+        await _drainCloudSyncV2ReceivedCaptures().timeout(_cloudSyncV2OutboundQuiescenceTimeout);
+      } on TimeoutException {
+        throw StateError('cloud_sync_received_archive_quiescence_timeout');
+      }
       final localSendRuntime = _cloudSyncV2LocalSendRuntime;
       if (localSendRuntime != null) {
         await localSendRuntime.dispose().timeout(_cloudSyncV2OutboundQuiescenceTimeout);

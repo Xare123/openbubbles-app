@@ -126,6 +126,18 @@ String cloudSyncFingerprintAccount({
   rawAccountIdentifier: rawAccountIdentifier,
 );
 
+Future<CloudSyncLocalStoreLease> cloudSyncAcquireLocalStoreLease({
+  required String storageDirectory,
+}) => RustLib.instance.api.crateApiApiCloudSyncAcquireLocalStoreLease(
+  storageDirectory: storageDirectory,
+);
+
+Future<void> cloudSyncReleaseLocalStoreLease({
+  required CloudSyncLocalStoreLease lease,
+}) => RustLib.instance.api.crateApiApiCloudSyncReleaseLocalStoreLease(
+  lease: lease,
+);
+
 /// Cached composition identity for local received-source capture. Unlike the
 /// writer snapshot, this does not require refreshed GSA SPD after restart.
 /// It proves only which persisted account/store owns local data, not current
@@ -2439,6 +2451,9 @@ abstract class CircleClientSessionDefaultAnisetteProvider
 // Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<CloudSyncAttachmentParentGroupProof>>
 abstract class CloudSyncAttachmentParentGroupProof
     implements RustOpaqueInterface {}
+
+// Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<CloudSyncLocalStoreLease>>
+abstract class CloudSyncLocalStoreLease implements RustOpaqueInterface {}
 
 // Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<CloudSyncPreparedAttachmentUploadHandle>>
 abstract class CloudSyncPreparedAttachmentUploadHandle

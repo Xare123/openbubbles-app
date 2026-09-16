@@ -46,52 +46,62 @@ final class CloudSyncReceivedArchiveStaging {
         _identity.protectedStoreIdentity) {
       throw StateError('cloud_sync_received_archive_identity_changed');
     }
-    // Do not acquire the network-wide CloudKit writer interlock for a live
-    // receive. The protected-store lock covers stage/adopt/commit against GC.
-    return _transport.runProtectedStoreExclusive(() async {
-      await _validateCurrent();
-      final existing = _journal.findProtectedSource(
-        messageGuid: wire.id,
-        localChatId: localChatId,
-        currentAuth: _identity,
+    final local = _transport;
+    if (local is! CloudProtectedLocalLifecycleTransport) {
+      throw StateError(
+        'cloud_sync_received_archive_store_exclusion_unavailable',
       );
-      final source = existing ?? await stageNative();
-      var owned = existing != null;
-      try {
-        await _validateCurrent();
-        final id = _journal.saveReceivedCapture(
-          wire: wire,
-          liveContext: liveContext,
-          localChatId: localChatId,
-          persistMessage: persistMessage,
-          source: source,
-          capturedAuth: _identity,
-          stillCurrent: _stillCurrent,
-          now: clock().toUtc(),
-        );
-        owned = true; // synchronous durable adoption, before the first await
-        await _transport.commitProtectedPageLease(source.leaseReference, {
-          source.protectedReference,
-        });
-        await _validateCurrent();
-        final retained = _journal.readProtectedSource(
-          intentId: id,
-          currentAuth: _identity,
-        );
-        if (retained.encode() != source.encode()) {
-          throw StateError('cloud_sync_received_archive_intent_changed');
-        }
-        return id;
-      } catch (_) {
-        if (!owned) {
+    }
+    // Native local-store ownership covers stage/adopt/commit against recovery
+    // and GC across engines. It is distinct from the network writer interlock.
+    return (local as CloudProtectedLocalLifecycleTransport)
+        .runLocalProtectedStoreExclusive(() async {
+          await _validateCurrent();
+          final existing = _journal.findProtectedSource(
+            messageGuid: wire.id,
+            localChatId: localChatId,
+            currentAuth: _identity,
+          );
+          final source = existing ?? await stageNative();
+          var owned = existing != null;
           try {
-            await _transport.rollbackProtectedPageLease(source.leaseReference);
+            await _validateCurrent();
+            final id = _journal.saveReceivedCapture(
+              wire: wire,
+              liveContext: liveContext,
+              localChatId: localChatId,
+              persistMessage: persistMessage,
+              source: source,
+              capturedAuth: _identity,
+              stillCurrent: _stillCurrent,
+              now: clock().toUtc(),
+            );
+            owned =
+                true; // synchronous durable adoption, before the first await
+            await _transport.commitProtectedPageLease(source.leaseReference, {
+              source.protectedReference,
+            });
+            await _validateCurrent();
+            final retained = _journal.readProtectedSource(
+              intentId: id,
+              currentAuth: _identity,
+            );
+            if (retained.encode() != source.encode()) {
+              throw StateError('cloud_sync_received_archive_intent_changed');
+            }
+            return id;
           } catch (_) {
-            // Unadopted orphan recovery owns cleanup; preserve the failure.
+            if (!owned) {
+              try {
+                await _transport.rollbackProtectedPageLease(
+                  source.leaseReference,
+                );
+              } catch (_) {
+                // Unadopted orphan recovery owns cleanup; preserve the failure.
+              }
+            }
+            rethrow;
           }
-        }
-        rethrow;
-      }
-    });
+        });
   }
 }

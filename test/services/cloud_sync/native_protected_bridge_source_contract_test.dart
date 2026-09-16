@@ -287,6 +287,32 @@ void main() {
     );
   });
 
+  test('received capture is independently gated and performs no upload', () {
+    final service = File('lib/services/rustpush/rustpush_service.dart').readAsStringSync();
+    final received = _section(service, 'Future<Message> _captureCloudSyncV2ReceivedMessage(',
+        '// Local intent capture only.');
+    for (final fence in [
+      '!CloudSyncDevGate.receivedArchiveCaptureEnabled',
+      '!CloudKitWriterOwnership.v2MutationsEnabled',
+      '!_cloudSyncV2CanaryRuntimeAllowed', '!_cloudSyncV2DeveloperRuntimeAllowed',
+      'ss.settings.cloudSyncingEnabled.value', 'wire.receivedOnHandle == null',
+      'owner.owner != CloudKitWriterOwner.v2', 'journal.hasOutgoingOrigin(wire.id)',
+      'CloudSyncReceivedArchiveStaging(', 'api.cloudSyncStageReceivedArchiveSource(',
+      'await transport.quiesceNativeOperations()',
+    ]) { expect(received, contains(fence)); }
+    expect(received, isNot(contains('pushOperations(')));
+    expect(received, isNot(contains('sendMsg(')));
+    expect(received, isNot(contains('CloudOutboxOperation(')));
+    final gate = File('lib/services/rustpush/cloud_sync/cloud_sync_dev_gate.dart').readAsStringSync();
+    expect(gate, matches(RegExp(
+        r"receivedArchiveCaptureEnabled = bool.fromEnvironment\(\s*'OPENBUBBLES_CLOUD_SYNC_V2_RECEIVED_CAPTURE',\s*defaultValue: false")));
+    final reset = _section(service, 'Future reset(bool hw, bool logout, bool setup)',
+        '_cloudSyncV2OutboundQuiescing = false;');
+    expect(reset.indexOf('_drainCloudSyncV2ReceivedCaptures()'), greaterThan(0));
+    expect(reset.indexOf('_drainCloudSyncV2ReceivedCaptures()'),
+        lessThan(reset.indexOf('_runCloudKitDestructiveReset(')));
+  });
+
   test('runtime transport is restricted to gated local IDS source leases', () {
     final service = File(
       'lib/services/rustpush/rustpush_service.dart',
@@ -368,9 +394,9 @@ void main() {
     );
     expect(
       RegExp(r'NativeProtectedCloudSyncTransport\(').allMatches(service).length,
-      3,
+      4,
       reason:
-          'attachment staging, mutation staging, and the receipt-bound conditional update are the only runtime compositions',
+          'attachment staging, mutation staging, receipt-bound conditional update, and independently gated local received capture are the reviewed runtime compositions',
     );
 
     expect(

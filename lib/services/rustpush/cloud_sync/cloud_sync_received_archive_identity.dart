@@ -172,6 +172,37 @@ final class CloudSyncReceivedArchiveIdentity {
     required api.MessageInst wire,
     required CloudSyncReceivedArchiveLiveContext liveContext,
     String? expectedSourceSha256,
+  }) => _capture(
+    message: message,
+    chat: chat,
+    wire: wire,
+    liveContext: liveContext,
+    expectedSourceSha256: expectedSourceSha256,
+    requirePersistedMessage: true,
+  );
+
+  /// Shape-only preflight before the receive persistence callback. This never
+  /// replaces capture on database-loaded rows inside journal adoption.
+  static CloudSyncReceivedArchiveCapture preview({
+    required Message message,
+    required Chat chat,
+    required api.MessageInst wire,
+    required CloudSyncReceivedArchiveLiveContext liveContext,
+  }) => _capture(
+    message: message,
+    chat: chat,
+    wire: wire,
+    liveContext: liveContext,
+    requirePersistedMessage: false,
+  );
+
+  static CloudSyncReceivedArchiveCapture _capture({
+    required Message message,
+    required Chat chat,
+    required api.MessageInst wire,
+    required CloudSyncReceivedArchiveLiveContext liveContext,
+    String? expectedSourceSha256,
+    required bool requirePersistedMessage,
   }) {
     if (!liveContext.observedViaLiveReceive ||
         liveContext.observedLocalHandles.isEmpty) {
@@ -206,8 +237,7 @@ final class CloudSyncReceivedArchiveIdentity {
       return const CloudSyncReceivedArchiveIneligible(reasonLegacyMapped);
     }
 
-    if (message.id == null ||
-        message.id! <= 0 ||
+    if ((requirePersistedMessage && (message.id == null || message.id! <= 0)) ||
         chat.id == null ||
         chat.id! <= 0) {
       return const CloudSyncReceivedArchiveIneligible(reasonUnpersisted);
@@ -290,7 +320,6 @@ final class CloudSyncReceivedArchiveIdentity {
         normal.linkMeta != null ||
         message.payloadData != null ||
         message.hasApplePayloadData ||
-        message.metadata != null ||
         message.amkSessionId != null ||
         message.messageSummaryInfo.isNotEmpty ||
         message.dateEdited != null ||
@@ -301,10 +330,13 @@ final class CloudSyncReceivedArchiveIdentity {
     }
 
     final bound = message.chat.target;
-    if (bound == null || chat.dateDeleted != null) {
+    if ((bound == null && (requirePersistedMessage || (message.id ?? 0) > 0)) ||
+        chat.dateDeleted != null) {
       return const CloudSyncReceivedArchiveIneligible(reasonRoute);
     }
-    if (!identical(bound, chat) && !_samePersistedChat(bound, chat)) {
+    if (bound != null &&
+        !identical(bound, chat) &&
+        !_samePersistedChat(bound, chat)) {
       return const CloudSyncReceivedArchiveIneligible(reasonRoute);
     }
     final participants = chat.handles.toList(growable: false);

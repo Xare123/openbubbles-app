@@ -1,6 +1,12 @@
 import 'cloud_sync_models.dart';
 import 'cloud_sync_store.dart';
 
+/// Cross-isolate/process exclusion for short LOCAL protected-store lifecycles.
+/// It is not a CloudKit writer permit and must not surround remote network I/O.
+abstract interface class CloudProtectedLocalLifecycleTransport {
+  Future<T> runLocalProtectedStoreExclusive<T>(Future<T> Function() action);
+}
+
 /// Optional, local-only receipt reconstruction under the protected-store lock.
 /// Implementations must validate the exact encrypted source against every claim
 /// field before reconstructing metadata. This never retries IDS, writes to

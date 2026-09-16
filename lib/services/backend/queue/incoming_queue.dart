@@ -18,7 +18,8 @@ class IncomingQueue extends Queue {
 
     switch (item.type) {
       case QueueType.newMessage:
-        await ah.handleNewMessage(item.chat, item.message, item.tempGuid);
+        await ah.handleNewMessage(item.chat, item.message, item.tempGuid,
+            persistReceivedMessage: item.persistReceivedMessage);
         break;
       case QueueType.updatedMessage:
         await ah.handleUpdatedMessage(item.chat, item.message, item.tempGuid);

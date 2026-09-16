@@ -36,6 +36,12 @@ abstract final class CloudSyncDevGate {
     defaultValue: false,
   );
 
+  /// Local-only received source qualification, independent from all uploads.
+  static const bool receivedArchiveCaptureEnabled = bool.fromEnvironment(
+    'OPENBUBBLES_CLOUD_SYNC_V2_RECEIVED_CAPTURE',
+    defaultValue: false,
+  );
+
   /// Independent read-only Android lifecycle gate. This never enables the
   /// outbound writer or ordinary-send consumer and is fenced to Canary again
   /// at runtime on both sides of the method channel.

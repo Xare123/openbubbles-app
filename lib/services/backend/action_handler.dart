@@ -589,7 +589,8 @@ class ActionHandler extends GetxService {
   }
 
   Future<void> handleNewMessage(Chat c, Message m, String? tempGuid,
-      {bool checkExisting = true}) async {
+      {bool checkExisting = true,
+      IncomingMessagePersistence? persistReceivedMessage}) async {
     final key = m.guid;
     final existingFlight = key == null ? null : _inFlightNewMessages[key];
     if (existingFlight != null) {
@@ -599,17 +600,23 @@ class ActionHandler extends GetxService {
         // A failed first attempt must not prevent a concurrent fallback from retrying.
       }
       if (checkExisting && Message.findOne(guid: tempGuid ?? m.guid) != null) {
+        if (persistReceivedMessage != null && tempGuid == null) {
+          final existing = Message.findOne(guid: m.guid)!;
+          await persistReceivedMessage(existing.chat.target ?? c, existing, () => existing);
+          return;
+        }
         return await handleUpdatedMessage(c, m, tempGuid, checkExisting: false);
       }
     }
 
     if (key == null) {
       return await _handleNewMessage(c, m, tempGuid,
-          checkExisting: checkExisting);
+          checkExisting: checkExisting, persistReceivedMessage: persistReceivedMessage);
     }
 
     final flight =
-        _handleNewMessage(c, m, tempGuid, checkExisting: checkExisting);
+        _handleNewMessage(c, m, tempGuid, checkExisting: checkExisting,
+            persistReceivedMessage: persistReceivedMessage);
     _inFlightNewMessages[key] = flight;
     try {
       await flight;
@@ -621,13 +628,21 @@ class ActionHandler extends GetxService {
   }
 
   Future<void> _handleNewMessage(Chat c, Message m, String? tempGuid,
-      {bool checkExisting = true}) async {
+      {bool checkExisting = true,
+      IncomingMessagePersistence? persistReceivedMessage}) async {
     Logger.info("handling new ${m.id}");
     // sanity check
     if (checkExisting) {
       final existing = Message.findOne(guid: tempGuid ?? m.guid);
       if (existing != null) {
         Logger.info("handling exsting ${m.id}");
+        if (persistReceivedMessage != null && tempGuid == null) {
+          // Duplicate native delivery can follow a committed Message whose
+          // protected lease response was lost. Reuse its exact row, never
+          // overwrite a later edit or generate another notification.
+          await persistReceivedMessage(existing.chat.target ?? c, existing, () => existing);
+          return;
+        }
         return await handleUpdatedMessage(c, m, tempGuid, checkExisting: false);
       }
     }
@@ -654,7 +669,8 @@ class ActionHandler extends GetxService {
           tag: "ActionHandler");
     }
 
-    await c.addMessage(m);
+    await c.addMessage(m, transactionalPersistence: persistReceivedMessage == null
+        ? null : (persist) => persistReceivedMessage(c, m, persist));
     await m.forwardIfNessesary(c, markFailed: true);
     // Persistence is complete before notification work begins. Notification
     // failures are isolated so they cannot make the transport drop the message.

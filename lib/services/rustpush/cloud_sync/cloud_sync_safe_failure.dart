@@ -8,6 +8,14 @@ import 'cloudkit_writer_authority.dart';
 /// wildcard prefix. These diagnostics do not change read/write admission.
 abstract final class CloudSyncV2ReceivedArchiveSafeFailureCodes {
   static const all = <String>{
+    'cloud_sync_local_store_lock_invalid_directory',
+    'cloud_sync_local_store_lock_unsafe_link',
+    'cloud_sync_local_store_lock_busy',
+    'cloud_sync_local_store_lock_unavailable',
+    'cloud_sync_local_store_lock_closed',
+    'protected_store_local_exclusion_unavailable',
+    'protected_store_local_scope_closed',
+    'protected_store_local_release_failed',
     'cloud_sync_received_archive_authority_store_mismatch',
     'cloud_sync_received_archive_body',
     'cloud_sync_received_archive_counterparts',
@@ -26,8 +34,10 @@ abstract final class CloudSyncV2ReceivedArchiveSafeFailureCodes {
     'cloud_sync_received_archive_not_ready',
     'cloud_sync_received_archive_owner_changed',
     'cloud_sync_received_archive_owner_invalid',
+    'cloud_sync_received_archive_outgoing_overlap',
     'cloud_sync_received_archive_protected_source_changed',
     'cloud_sync_received_archive_protected_source_invalid',
+    'cloud_sync_received_archive_quiescence_timeout',
     'cloud_sync_received_archive_reaction',
     'cloud_sync_received_archive_recipient',
     'cloud_sync_received_archive_reply',
@@ -40,6 +50,7 @@ abstract final class CloudSyncV2ReceivedArchiveSafeFailureCodes {
     'cloud_sync_received_archive_sms',
     'cloud_sync_received_archive_source_changed',
     'cloud_sync_received_archive_source_stage_failed',
+    'cloud_sync_received_archive_store_exclusion_unavailable',
     'cloud_sync_received_archive_system_message',
     'cloud_sync_received_archive_target',
     'cloud_sync_received_archive_temp_guid',

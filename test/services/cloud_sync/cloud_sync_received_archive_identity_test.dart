@@ -151,6 +151,60 @@ CloudSyncReceivedArchiveIdentity _eligible(
 }
 
 void main() {
+  test('shape preview is not persisted-message admission', () {
+    final chat = _directChat();
+    final row = _row(
+      chat: chat,
+      isFromMe: false,
+      handleAddress: _remote,
+      id: null,
+    );
+    row.chat.target = null;
+    expect(
+      CloudSyncReceivedArchiveIdentity.preview(
+        message: row,
+        chat: chat,
+        wire: _wire(),
+        liveContext: _liveContext,
+      ),
+      isA<CloudSyncReceivedArchiveEligible>(),
+    );
+    expect(
+      _reason(
+        CloudSyncReceivedArchiveIdentity.capture(
+          message: row,
+          chat: chat,
+          wire: _wire(),
+          liveContext: _liveContext,
+        ),
+      ),
+      CloudSyncReceivedArchiveIdentity.reasonUnpersisted,
+    );
+  });
+
+  test('derived URL metadata does not change the original source digest', () {
+    final chat = _directChat();
+    final row = _row(chat: chat, isFromMe: false, handleAddress: _remote);
+    final original = _eligible(
+      CloudSyncReceivedArchiveIdentity.capture(
+        message: row,
+        chat: chat,
+        wire: _wire(),
+        liveContext: _liveContext,
+      ),
+    );
+    row.metadata = {'title': 'synthetic preview'};
+    final withPreview = _eligible(
+      CloudSyncReceivedArchiveIdentity.capture(
+        message: row,
+        chat: chat,
+        wire: _wire(),
+        liveContext: _liveContext,
+      ),
+    );
+    expect(withPreview.sourceSha256, original.sourceSha256);
+  });
+
   test('native source golden digest contract', () {
     for (final vector in [
       (

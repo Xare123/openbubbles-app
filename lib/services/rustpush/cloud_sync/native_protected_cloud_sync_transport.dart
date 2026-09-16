@@ -72,7 +72,14 @@ final class _NativeProtectedStoreOperationQueue {
   int outstanding = 0;
 }
 
-/// One isolate-local, process-wide gate shared by every protected transport.
+final class _LocalProtectedStoreScope {
+  _LocalProtectedStoreScope(this.identity, this.directory);
+  final String identity;
+  final String directory;
+  bool active = true;
+}
+
+/// One isolate-local gate shared by every protected transport.
 ///
 /// The platform composition interlock remains responsible for cross-isolate
 /// and cross-process exclusion. This gate closes same-isolate overlap between
@@ -351,6 +358,13 @@ abstract interface class NativeProtectedCloudSyncBindings {
     required List<String> liveReferences,
     required bool liveReferenceEnumerationComplete,
   });
+}
+
+/// Native handle kept alive through inventory/capture plus adoption/cleanup.
+/// Object is opaque here so synthetic tests need not load the Rust library.
+abstract interface class NativeProtectedLocalStoreLockBindings {
+  Future<Object> acquireLocalStoreLease({required String storageDirectory});
+  Future<void> releaseLocalStoreLease(Object lease);
 }
 
 /// Optional generated-binding seam for reconstructing only local protected
@@ -712,6 +726,7 @@ final class NativeProtectedCloudSyncTransport
     implements
         CloudSyncTransport,
         CloudProtectedPageLeaseTransport,
+        CloudProtectedLocalLifecycleTransport,
         CloudProtectedMutationLeaseRepairTransport,
         CloudSyncOutboundChatStagingTransport,
         CloudSyncOutboundAttachmentParentStagingTransport,
@@ -782,6 +797,7 @@ final class NativeProtectedCloudSyncTransport
   Future<void>? _nativeQuiescence;
   bool _nativeAdmissionClosed = false;
   bool _preparedReleaseFailed = false;
+  bool _localStoreReleaseFailed = false;
   bool _mutationAdmissionPoisoned = false;
 
   @override
@@ -801,6 +817,67 @@ final class NativeProtectedCloudSyncTransport
   Future<T> runProtectedStoreExclusive<T>(Future<T> Function() action) =>
       _runProtectedStoreOperation(action);
 
+  static final Object _localLifecycleZoneKey = Object();
+
+  @override
+  Future<T> runLocalProtectedStoreExclusive<T>(Future<T> Function() action) {
+    // Do not queue behind the isolate gate: a history fetch holds that gate
+    // across network I/O. Local stage/adopt/commit must remain independent.
+    if (_nativeAdmissionClosed && !_hasLocalStoreScope()) {
+      return Future<T>.error(_localStorage('protected_store_operation_admission_closed'));
+    }
+    return _trackNativeOperation(() async {
+      final held = Zone.current[_localLifecycleZoneKey] as _LocalProtectedStoreScope?;
+      if (held != null) {
+        _requireLocalStoreScope(held);
+        return action();
+      }
+      final bindings = _bindings;
+      if (bindings is! NativeProtectedLocalStoreLockBindings) {
+        throw _localStorage('protected_store_local_exclusion_unavailable');
+      }
+      final locks = bindings as NativeProtectedLocalStoreLockBindings;
+      final lease = await locks.acquireLocalStoreLease(storageDirectory: _storageDirectory);
+      final scope = _LocalProtectedStoreScope(_protectedStoreIdentity, _storageDirectory);
+      try {
+        return await runZoned<Future<T>>(
+          () => Future<T>.sync(action), zoneValues: {_localLifecycleZoneKey: scope});
+      } finally {
+        scope.active = false;
+        try {
+          await locks.releaseLocalStoreLease(lease);
+        } catch (_) {
+          _localStoreReleaseFailed = true;
+          _nativeAdmissionClosed = true;
+          throw _localStorage('protected_store_local_release_failed');
+        }
+      }
+    });
+  }
+
+  bool _hasLocalStoreScope() {
+    final held = Zone.current[_localLifecycleZoneKey] as _LocalProtectedStoreScope?;
+    return held != null && held.active && held.identity == _protectedStoreIdentity &&
+        held.directory == _storageDirectory;
+  }
+
+  void _requireLocalStoreScope(_LocalProtectedStoreScope scope) {
+    if (!scope.active) throw _localStorage('protected_store_local_scope_closed');
+    if (scope.identity != _protectedStoreIdentity || scope.directory != _storageDirectory) {
+      throw _localStorage('protected_store_cross_identity_nesting');
+    }
+  }
+
+  // Only local lease/protector methods may bypass the network-lifecycle gate.
+  // Otherwise receive's commit would wait behind fetch, while fetch recovery
+  // waits for receive's local lease (inverted lock order).
+  Future<T> _runLocalProtectedStoreOperation<T>(FutureOr<T> Function() operation) {
+    final held = Zone.current[_localLifecycleZoneKey] as _LocalProtectedStoreScope?;
+    if (held == null) return _runProtectedStoreOperation(operation);
+    _requireLocalStoreScope(held);
+    return _trackNativeOperation(operation);
+  }
+
   Future<T> _runProtectedStoreOperation<T>(FutureOr<T> Function() operation) {
     if (_nativeAdmissionClosed &&
         !_protectedStoreOperationGate.isHeldByCurrentZone(
@@ -810,7 +887,7 @@ final class NativeProtectedCloudSyncTransport
         _localStorage('protected_store_operation_admission_closed'),
       );
     }
-    final nativeOperation = () async {
+    return _trackNativeOperation(() async {
       try {
         return await _protectedStoreOperationGate.run(
           _protectedStoreIdentity,
@@ -819,7 +896,11 @@ final class NativeProtectedCloudSyncTransport
       } on _NativeProtectedStoreOperationFailure catch (failure) {
         throw _localStorage(failure.safeCode);
       }
-    }();
+    });
+  }
+
+  Future<T> _trackNativeOperation<T>(FutureOr<T> Function() operation) {
+    final nativeOperation = Future<T>.sync(operation);
     late final Future<void> completion;
     completion = nativeOperation
         .then<void>((_) {}, onError: (Object _, StackTrace __) {})
@@ -838,6 +919,9 @@ final class NativeProtectedCloudSyncTransport
     // released. Preserve cleanup failure even after quiescence was memoized.
     if (_preparedReleaseFailed) {
       throw _localStorage('cloud_sync_prepared_release_failed');
+    }
+    if (_localStoreReleaseFailed) {
+      throw _localStorage('protected_store_local_release_failed');
     }
   }
 
@@ -2502,7 +2586,7 @@ final class NativeProtectedCloudSyncTransport
     _validateLiveReferenceSnapshot(liveReferences);
     final sorted = adoptedLeaseReferences.toList()..sort();
     final sortedLive = liveReferences.references.toList()..sort();
-    final result = await _runProtectedStoreOperation(
+    final result = await _runLocalProtectedStoreOperation(
       () => _bindings.recoverProtectedPageLeases(
         storageDirectory: _storageDirectory,
         adoptedLeaseReferences: sorted,
@@ -2557,7 +2641,7 @@ final class NativeProtectedCloudSyncTransport
     if (bindings is! NativeProtectedMutationLeaseRepairBindings) {
       throw _localStorage('protected_mutation_lease_repair_unavailable');
     }
-    final result = await _runProtectedStoreOperation(
+    final result = await _runLocalProtectedStoreOperation(
       () => (bindings as NativeProtectedMutationLeaseRepairBindings)
           .repairProtectedMutationLeaseReceipt(
             storageDirectory: _storageDirectory,
@@ -2588,7 +2672,7 @@ final class NativeProtectedCloudSyncTransport
       maximumCount: _maximumProtectedReferencesPerLease,
     );
     final sorted = retainedReferences.toList()..sort();
-    final result = await _runProtectedStoreOperation(
+    final result = await _runLocalProtectedStoreOperation(
       () => _bindings.commitProtectedPageLease(
         storageDirectory: _storageDirectory,
         leaseReference: leaseReference,
@@ -2602,7 +2686,7 @@ final class NativeProtectedCloudSyncTransport
   @override
   Future<void> acknowledgeCommittedPageLease(String leaseReference) async {
     _validateLeaseReference(leaseReference);
-    final result = await _runProtectedStoreOperation(
+    final result = await _runLocalProtectedStoreOperation(
       () => _bindings.acknowledgeCommittedPageLease(
         storageDirectory: _storageDirectory,
         leaseReference: leaseReference,
@@ -2615,7 +2699,7 @@ final class NativeProtectedCloudSyncTransport
   @override
   Future<void> rollbackProtectedPageLease(String leaseReference) async {
     _validateLeaseReference(leaseReference);
-    final result = await _runProtectedStoreOperation(
+    final result = await _runLocalProtectedStoreOperation(
       () => _bindings.rollbackProtectedPageLease(
         storageDirectory: _storageDirectory,
         leaseReference: leaseReference,
@@ -2633,7 +2717,7 @@ final class NativeProtectedCloudSyncTransport
     );
     if (references.isEmpty) return 0;
     final sorted = references.toList()..sort();
-    final result = await _runProtectedStoreOperation(
+    final result = await _runLocalProtectedStoreOperation(
       () => _bindings.retireProtectedReferences(
         storageDirectory: _storageDirectory,
         references: sorted,
@@ -2653,7 +2737,7 @@ final class NativeProtectedCloudSyncTransport
   ) async {
     _validateLiveReferenceSnapshot(liveReferences);
     final sorted = liveReferences.references.toList()..sort();
-    final result = await _runProtectedStoreOperation(
+    final result = await _runLocalProtectedStoreOperation(
       () => _bindings.collectProtectedGarbage(
         storageDirectory: _storageDirectory,
         liveReferences: sorted,
@@ -3548,6 +3632,7 @@ final class NativeProtectedCloudSyncTransport
 final class FrbNativeProtectedCloudSyncBindings
     implements
         NativeProtectedCloudSyncBindings,
+        NativeProtectedLocalStoreLockBindings,
         NativeProtectedMutationLeaseRepairBindings,
         NativeProtectedCloudSyncWriteBindings,
         NativeProtectedCloudSyncMessageCreateReadbackBindings,
@@ -3563,6 +3648,21 @@ final class FrbNativeProtectedCloudSyncBindings
     // ignore: invalid_use_of_internal_member
     : _api = api ?? RustLib.instance.api,
       _chat1DiscoveryWriterPauseToken = null;
+
+  @override
+  Future<Object> acquireLocalStoreLease({required String storageDirectory}) =>
+      _api.crateApiApiCloudSyncAcquireLocalStoreLease(storageDirectory: storageDirectory);
+
+  @override
+  Future<void> releaseLocalStoreLease(Object lease) async {
+    if (lease is! frb_api.CloudSyncLocalStoreLease) {
+      throw StateError('protected_store_local_exclusion_unavailable');
+    }
+    await _api.crateApiApiCloudSyncReleaseLocalStoreLease(lease: lease);
+    // Deterministic native release succeeded. Drop this Dart owner's handle
+    // now rather than accumulating opaque wrappers until GC.
+    lease.dispose();
+  }
 
   /// Test-host-only binding for the permit-bound raw Chat1 discovery lane.
   ///

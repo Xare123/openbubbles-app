@@ -419,6 +419,50 @@ void main() {
     },
   );
 
+  test('an own-send echo is rejected before received persistence', () {
+    const guid = 'own-send-echo';
+    expect(journal.hasOutgoingOrigin(guid), isFalse);
+    store.box<CloudSyncLocalSendIntentEntity>().put(
+      CloudSyncLocalSendIntentEntity(
+        intentKey: 'own-send-echo',
+        accountFingerprint: _account,
+        writerEpoch: snap.epoch,
+        localMessageId: 987,
+        messageGuidHash: CloudSyncReceivedArchiveJournal.localSendGuidHashFor(
+          guid,
+        ),
+        sourceSha256: _h64('b'),
+        createdAtMs: 1,
+        updatedAtMs: 1,
+      ),
+    );
+    expect(journal.hasOutgoingOrigin(guid), isTrue);
+    var persisted = false;
+    expect(
+      () => journal.saveReceivedCapture(
+        wire: _wire(
+          id: guid,
+          text: 'hello',
+          sentAt: _time(2).millisecondsSinceEpoch,
+        ),
+        liveContext: _live,
+        localChatId: chat.id!,
+        persistMessage: () {
+          persisted = true;
+          return 987;
+        },
+        source: _staged(guid, 'hello', chat),
+        capturedAuth: _auth(Object()),
+        stillCurrent: () => true,
+        now: _time(3),
+      ),
+      throwsA(_fails('cloud_sync_received_archive_outgoing_overlap')),
+    );
+    expect(persisted, isFalse);
+    expect(store.box<CloudSyncReceivedArchiveIntentEntity>().count(), 0);
+    expect(store.box<CloudOutboxOperationEntity>().count(), 0);
+  });
+
   test(
     'source mismatch before durable adoption rolls back only fresh lease',
     () async {
@@ -847,13 +891,19 @@ void main() {
   });
 }
 
-class _ReceivedLeaseTransport implements CloudProtectedPageLeaseTransport {
+class _ReceivedLeaseTransport
+    implements
+        CloudProtectedPageLeaseTransport,
+        CloudProtectedLocalLifecycleTransport {
   bool failCommit = false;
   bool held = false;
   final committed = <String>[];
   final rolledBack = <String>[];
   @override
   String get protectedPageLeaseRecoveryIdentity => _storeId;
+  @override
+  Future<T> runLocalProtectedStoreExclusive<T>(Future<T> Function() action) =>
+      runProtectedStoreExclusive(action);
   @override
   Future<T> runProtectedStoreExclusive<T>(Future<T> Function() action) async {
     expect(held, isFalse);

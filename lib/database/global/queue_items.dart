@@ -4,6 +4,11 @@ import 'package:bluebubbles/database/models.dart';
 
 enum QueueType {newMessage, updatedMessage, sendMessage, sendAttachment, sendMultipart}
 
+/// Optional live-receive persistence seam. Historical/fromMap queue entries do
+/// not carry it. The callback receives the final resolved Chat and Message.
+typedef IncomingMessagePersistence = Future<Message> Function(
+    Chat chat, Message message, Message Function() persistMessage);
+
 abstract class QueueItem {
   QueueType type;
   Completer<void>? completer;
@@ -16,12 +21,15 @@ class IncomingItem extends QueueItem {
   Message message;
   String? tempGuid;
 
+  IncomingMessagePersistence? persistReceivedMessage;
+
   IncomingItem({
     required super.type,
     super.completer,
     required this.chat,
     required this.message,
     this.tempGuid,
+    this.persistReceivedMessage,
   });
 
   factory IncomingItem.fromMap(QueueType t, Map<String, dynamic> m, [Completer<void>? c]) {

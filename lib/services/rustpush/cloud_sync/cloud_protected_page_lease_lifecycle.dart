@@ -5,9 +5,9 @@ import 'cloud_sync_transport.dart';
 /// Coordinates the native protected-file lease with the durable ObjectBox
 /// adoption marker.
 ///
-/// The static identity map serializes startup recovery across engines sharing
-/// one store. A failed recovery is removed so a later run may retry. A
-/// successful recovery is process-wide and precedes every subsequent fetch.
+/// The static identity map coalesces startup recovery within an isolate. The
+/// native local lifecycle lease excludes concurrent receive adoption in other
+/// engines/processes. A failed recovery is removed so a later run may retry.
 final class CloudProtectedPageLeaseLifecycle {
   CloudProtectedPageLeaseLifecycle({
     required this._store,
@@ -32,6 +32,16 @@ final class CloudProtectedPageLeaseLifecycle {
 
   Future<T> runProtectedStoreExclusive<T>(Future<T> Function() action) =>
       _transport.runProtectedStoreExclusive(action);
+
+  Future<T> _runMaintenanceExclusive<T>(Future<T> Function() action) {
+    final transport = _transport;
+    return runProtectedStoreExclusive(
+      () => transport is CloudProtectedLocalLifecycleTransport
+          ? (transport as CloudProtectedLocalLifecycleTransport)
+                .runLocalProtectedStoreExclusive(action)
+          : action(),
+    ); // non-native/in-memory transports
+  }
 
   /// Fetches may proceed when an outbound owner still names a native lease
   /// receipt that is already absent. The complete protected-reference
@@ -64,7 +74,7 @@ final class CloudProtectedPageLeaseLifecycle {
   }
 
   Future<void> _recover({required bool allowMissingOutboundReceipts}) =>
-      runProtectedStoreExclusive(
+      _runMaintenanceExclusive(
         () => _recoverWhileStoreExclusive(
           allowMissingOutboundReceipts: allowMissingOutboundReceipts,
         ),
@@ -321,7 +331,7 @@ final class CloudProtectedPageLeaseLifecycle {
     // CloudProtectedPageLeaseMaintenanceCaller. This primitive only owns the
     // protected-store recovery, liveness snapshot, and native store lock.
     await ensureRecoveredBeforeFetch();
-    return runProtectedStoreExclusive(
+    return _runMaintenanceExclusive(
       () async => _transport.collectProtectedGarbage(
         await _readCompleteLivenessSnapshot(),
       ),
