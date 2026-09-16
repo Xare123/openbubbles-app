@@ -101,7 +101,7 @@ env:
   GCP_RUNNER_NETWORK: ${{ vars.GCP_RUNNER_NETWORK }}
   GCP_RUNNER_SUBNET: ${{ vars.GCP_RUNNER_SUBNET }}
   GCP_RUNNER_ZONE: ${{ inputs.runner_zone || 'us-west1-b' }}
-  RUNNER_NAME: gce-${{ github.run_id }}-${{ github.run_attempt }}
+  GCE_RUNNER_NAME: gce-${{ github.run_id }}-${{ github.run_attempt }}
   MACHINE_TYPE: ${{ inputs.machine_type || 'n2d-standard-16' }}
   PROVISIONING_MODEL: ${{ inputs.provisioning_model || 'spot' }}
   DISK_TYPE: ${{ startsWith(inputs.machine_type || 'n2d-standard-16', 'c4d-') && 'hyperdisk-balanced' || startsWith(inputs.machine_type || 'n2d-standard-16', 't2d-') && 'pd-ssd' || 'pd-balanced' }}
@@ -219,7 +219,7 @@ jobs:
           echo "::add-mask::$registration_token"
 
           create_args=(
-            "$RUNNER_NAME"
+            "$GCE_RUNNER_NAME"
             --project "$GCP_PROJECT_ID"
             --zone "$GCP_RUNNER_ZONE"
             --machine-type "$MACHINE_TYPE"
@@ -233,7 +233,7 @@ jobs:
             --service-account "$GCP_RUNNER_SERVICE_ACCOUNT"
             --scopes cloud-platform
             --labels "type=github-runner,gh-runner=true,provisioning=${PROVISIONING_MODEL}"
-            --metadata "vmDnsSetting=ZonalOnly,block-project-ssh-keys=true,runner-name=${RUNNER_NAME},runner-repository=${GITHUB_REPOSITORY},runner-token=${registration_token},runner-version=latest,provisioning-model=${PROVISIONING_MODEL}"
+            --metadata "vmDnsSetting=ZonalOnly,block-project-ssh-keys=true,runner-name=${GCE_RUNNER_NAME},runner-repository=${GITHUB_REPOSITORY},runner-token=${registration_token},runner-version=latest,provisioning-model=${PROVISIONING_MODEL}"
             --metadata-from-file startup-script=tooling/ci/gce_spot_runner_bootstrap.sh
             --max-run-duration 75m
             --instance-termination-action DELETE
@@ -250,7 +250,7 @@ jobs:
 
           print_bootstrap_diagnostics() {
             echo 'Bounded VM serial-port diagnostics:' >&2
-            gcloud compute instances get-serial-port-output "$RUNNER_NAME" \
+            gcloud compute instances get-serial-port-output "$GCE_RUNNER_NAME" \
               --project "$GCP_PROJECT_ID" \
               --zone "$GCP_RUNNER_ZONE" \
               --port 1 \
@@ -261,7 +261,7 @@ jobs:
           vm_status=''
           for attempt in {1..30}; do
             vm_status="$(
-              gcloud compute instances describe "$RUNNER_NAME" \
+              gcloud compute instances describe "$GCE_RUNNER_NAME" \
                 --project "$GCP_PROJECT_ID" \
                 --zone "$GCP_RUNNER_ZONE" \
                 --format='value(status)' 2>/dev/null || true
@@ -280,7 +280,7 @@ jobs:
 
           if [[ "$PROVISIONING_MODEL" == 'spot' ]]; then
             actual_model="$(
-              gcloud compute instances describe "$RUNNER_NAME" \
+              gcloud compute instances describe "$GCE_RUNNER_NAME" \
                 --project "$GCP_PROJECT_ID" \
                 --zone "$GCP_RUNNER_ZONE" \
                 --format='value(scheduling.provisioningModel)'
@@ -302,7 +302,7 @@ jobs:
                 -H 'X-GitHub-Api-Version: 2022-11-28' \
                 "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/runners?per_page=100&page=${page}" \
                 --output "$response"
-              record="$(jq -c --arg name "$RUNNER_NAME" '.runners[] | select(.name == $name)' "$response")"
+              record="$(jq -c --arg name "$GCE_RUNNER_NAME" '.runners[] | select(.name == $name)' "$response")"
               count="$(jq -er '.runners | length' "$response")"
               rm -f "$response"
               if [[ -n "$record" ]]; then
@@ -326,7 +326,7 @@ jobs:
             if [[ "$runner_id" =~ ^[0-9]+$ && "$runner_status" == 'online' ]]; then
               break
             fi
-            if ! gcloud compute instances describe "$RUNNER_NAME" \
+            if ! gcloud compute instances describe "$GCE_RUNNER_NAME" \
               --project "$GCP_PROJECT_ID" \
               --zone "$GCP_RUNNER_ZONE" \
               --format='value(name)' >/dev/null 2>&1; then
@@ -345,14 +345,14 @@ jobs:
 
           # The token is one-time and short-lived. Remove it from metadata as
           # soon as registration succeeds so it is not retained for the job.
-          gcloud compute instances remove-metadata "$RUNNER_NAME" \
+          gcloud compute instances remove-metadata "$GCE_RUNNER_NAME" \
             --project "$GCP_PROJECT_ID" \
             --zone "$GCP_RUNNER_ZONE" \
             --keys runner-token \
             --quiet
 
           {
-            echo "label=$RUNNER_NAME"
+            echo "label=$GCE_RUNNER_NAME"
             echo "zone=$GCP_RUNNER_ZONE"
           } >> "$GITHUB_OUTPUT"
 
@@ -362,7 +362,7 @@ jobs:
           {
             echo '### Ephemeral runner'
             echo
-            echo "- Name: \`${RUNNER_NAME}\`"
+            echo "- Name: \`${GCE_RUNNER_NAME}\`"
             echo "- Lane: \`${RUNNER_LANE}\`"
             echo "- Zone: \`${{ steps.create.outputs.zone }}\`"
             echo "- Machine: \`${MACHINE_TYPE}\`"
@@ -1105,11 +1105,11 @@ jobs:
         run: |
           set -euo pipefail
 
-          if gcloud compute instances describe "$RUNNER_NAME" \
+          if gcloud compute instances describe "$GCE_RUNNER_NAME" \
             --project "$GCP_PROJECT_ID" \
             --zone "$GCP_RUNNER_ZONE" \
             --format='value(name)' >/dev/null 2>&1; then
-            gcloud compute instances delete "$RUNNER_NAME" \
+            gcloud compute instances delete "$GCE_RUNNER_NAME" \
               --project "$GCP_PROJECT_ID" \
               --zone "$GCP_RUNNER_ZONE" \
               --quiet
@@ -1126,7 +1126,7 @@ jobs:
                 -H 'X-GitHub-Api-Version: 2022-11-28' \
                 "https://api.github.com/repos/$GH_REPOSITORY/actions/runners?per_page=100&page=$page" \
                 -o "$response"
-              jq -r --arg name "$RUNNER_NAME" \
+              jq -r --arg name "$GCE_RUNNER_NAME" \
                 '.runners[] | select(.name == $name) | .id' "$response"
               count="$(jq -er '.runners | length' "$response")"
               rm -f "$response"
@@ -1147,11 +1147,11 @@ jobs:
               "https://api.github.com/repos/$GH_REPOSITORY/actions/runners/$runner_id"
           done
 
-          if gcloud compute instances describe "$RUNNER_NAME" \
+          if gcloud compute instances describe "$GCE_RUNNER_NAME" \
             --project "$GCP_PROJECT_ID" \
             --zone "$GCP_RUNNER_ZONE" \
             --format='value(name)' >/dev/null 2>&1; then
-            echo "Runner VM still exists: $RUNNER_NAME" >&2
+            echo "Runner VM still exists: $GCE_RUNNER_NAME" >&2
             exit 1
           fi
 
@@ -1165,7 +1165,7 @@ jobs:
             sleep 5
           done
           if [[ -n "$remaining" ]]; then
-            echo "Runner registration still exists after paginated cleanup: $RUNNER_NAME" >&2
+            echo "Runner registration still exists after paginated cleanup: $GCE_RUNNER_NAME" >&2
             exit 1
           fi
 
