@@ -52,9 +52,47 @@ back to legacy sync, clear a cursor, or continue under a replacement account.
 
 ## Current candidate
 
+### Active implementation checkpoint, September 16
+
+Received-source checkpoint is `cfc37e26a5b2d5350dfe709cead0fbeb67e097ba`,
+rustpush `9ced48bae256bcdd7d46db84eefb331bd9d86d88`. The actual receive queue
+now has a **component-tested, default-off** direct-text capture hook. No incoming
+uploader or new APK is enabled. The frozen f027 deployment candidate below is
+unchanged; the old Windows DLL must not be paired with these newer bindings.
+
+- The old Dart gate is isolate-local and covers long network fetches. Native
+  local leases now fence capture stage/adopt/commit against maintenance's full
+  inventory/cleanup. Maintenance retains the old gate; receive avoids it.
+  Tests prove both ordering directions, no stale-zone reuse, explicit release,
+  failure retention, and quiescence. A two-second native waiter timeout rejects
+  contention without taking another owner's lock. OS process-exit tests ran on
+  Linux, not Android/Windows live hardware.
+- Native checkpoint `df23a06d5` passed hosted run `35094043857`: 717 app Rust,
+  321 rustpush, 11 Anisette, 40 protector cases. Artifact10445637603, 383,023 bytes,
+  SHA256 `0ccbb8c6592fe5b0de83eb43417ea1d5b683cd2498788998f602d3487ccb8419`,
+  verified before importing all seven generated members. Committed
+  reproducibility was deliberately skipped, not claimed passed.
+- Current 23-file Dart regression batch passes 676. Focused analysis is clean;
+  larger pre-existing service files retain seven warnings/info, no errors.
+  Real ObjectBox callback rollback, duplicate delivery preserving edits, outgoing
+  overlap, old-model upgrades, source digests and capture/recovery tests pass.
+  Unsupported media/groups/SMS keep their existing queue path. Reset drains
+  active captures; the queued original account/store fence cannot be rebound.
+- **Next gate:** durable retry when capture fails before an encrypted source
+  exists, then raw-record duplicate/adoption proof and received outbox admission.
+  Current fallback preserves ordinary messaging but does not prove complete
+  archival. Keep the capture flag false until these gaps and live gates close.
+- Heisenberg is closed, verified not_found. Its reviewed 137 MB worktree was
+  removed with original source retained at ref `agent/protected-store-lease-review-20260916`.
+  Manifest `build-evidence/agent-cleanup-20260916-local-lease/manifest.json`.
+  No active helper/build/test remains; sessions/transcripts retained because
+  supported deletion is unavailable. C: about 28 GiB free; no paid GCE run.
+- Pixel restart/update approval remains pending. No phone change, account reset,
+  message send, unknown-outcome replay, Alpha mutation or upstream PR occurred.
+
 ### Resume checkpoint: September 16, post-build offline work
 
-This checkpoint supersedes older qualification history. Current product source is
+These are the frozen deployment versions, not the newer received-source checkpoint above. Product source is
 `f027aad2a17c131f7d68687ea68f58b334473e8f`; installed Pixel source remains
 `710003e7b`. Rustpush remains `5522fa0ced1c1fe7ed70262ac230261889ca06c5`.
 These are the frozen deployment candidate versions. The separate received-archive
@@ -124,7 +162,7 @@ Next: on Pixel reconnect, qualify detached-engine recovery and edit/unsend with
 the verified APK in one session, after safe installed-state preflight. Do not reset app data,
 enable Alpha uploads, replay the ambiguous outbox, or claim production readiness.
 
-Current work handles after resume:
+Historical component checkpoints (not current active work handles):
 
 - Parent integrated the four mutation-UI files and corrected cleanup when an
   error occurs before the dialog's first build. Ten focused tests pass, including

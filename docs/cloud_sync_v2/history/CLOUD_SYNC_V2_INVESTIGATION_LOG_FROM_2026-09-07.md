@@ -5915,3 +5915,74 @@ Historical tests do not establish current-device behavior.
   Observed free space increased147,750,912bytes. Main, source refs, user evidence,
   credentials and frozen APK verified retained. No transcript/session deletion.
   CI watch28863 and Dart batch60412 are terminal; no helper or build remains live.
+
+### September 16 live-receive hook and local lease, qualification pending
+
+- Parent added a default-off live receive persistence callback and delivery
+  fallback. Errors after durable adoption return the verified committed row;
+  precommit rollback restores the Dart object's ID before ordinary persistence.
+  Replacement-account fallback is forbidden. A pre-stage failure still lacks
+  durable original-source retry, so archival completeness is not claimed.
+- Review found the old Dart exclusion is isolate-local. Recovery could inventory
+  no receive reference, then delete a freshly staged source before adoption.
+  Heisenberg supplied a native per-directory task mutex plus OS-file lease;
+  parent added bounded registry and link/poison handling. The lease is local,
+  not a network writer permit. Current Dart maintenance and staging integration
+  and new opaque APIs are unqualified; generated bindings are not yet refreshed.
+- After automatic compaction, source/agent/test state was reconciled before new
+  implementation. HEAD a79119ca2 has dirty hook/lease changes. Test84412 passed57
+  before final lease integration; analyzer16714 ended with existing diagnostics.
+  No active test/build remains. Heisenberg is reused for read-only main-path
+  review, with its worktree retained. C:28.49GiB free. No device mutation or GCE.
+
+### September 16 live-capture component qualification complete, uploader still off
+
+- Native local-store lease checkpointdf23a06d58deda16286c5ca5f0d38ff940bbad63
+  passed GitHub-hosted35094043857 (12:07:35Z to12:25:16Z). Native counts:
+  717 app Rust,321 rustpush,11 remote Anisette,40 protector. Tests include actual
+  child-process lock contention/exit, task exclusion, bounded waiter rejection,
+  no owner takeover, path/link rejection and idempotent release. Linux evidence
+  does not establish native Windows/Android runtime behavior.
+- Artifact10445637603,383,023bytes, SHA256
+  0ccbb8c6592fe5b0de83eb43417ea1d5b683cd2498788998f602d3487ccb8419 matched before
+  extraction/import. All seven generated members remain byte-identical; SSE
+  and diagnostic guards pass. allow_generated_drift=true intentionally skipped
+  committed reproduction. No APK build, GCE launch or production credentials.
+- Parent separated the local capture lease from the old isolate gate, which
+  surrounds network fetches. Maintenance retains old-gate then local-lease order;
+  receive uses the local lease only. Its commit/rollback bypass cannot invert
+  that order. New tests prove receive can finish during a held fetch gate,
+  maintenance inventories after capture adoption, and maintenance still waits
+  for a preexisting fetched-page lifecycle. Closed zone reuse is rejected and
+  quiescence joins explicit release, retaining release failures.
+- Live queue hook is default-off and direct-text only. New persistence callback
+  exercises the real ActionHandler/Chat/ObjectBox seam. Rollback preserves no
+  partial row; duplicate capture keeps a later edit and emits no new notification.
+  Source/row checks, own-send overlap rejection, and account/store fences remain.
+  Queued identity is pinned before async work. Reset drains captures. Unsupported
+  shapes retain their original queue path. Optional preflight failure preserves
+  ordinary messaging but does not create durable archival retry ownership.
+- Parent first omitted ObjectBox DLL PATH, causing harness-only error126; fixed
+  the process PATH and documented it in AGENTS. A fault-injection closure inferred
+  Never was rejected by ObjectBox before execution; corrected the test to perform
+  a runtime-injected failure and prove in-transaction save plus rollback. Broader
+  testing found four stale old-model fixtures retaining new entity36 and a stale
+  three-composition source expectation. Fixtures now omit later tables, retain
+  predecessor counters/bindings and actually reopen stored synthetic content.
+  New received composition is checked for its independent default-off fences.
+- Final23-file batch passed676 (session12327, terminal). Focused14-file analysis
+  passed; larger action/service files retain seven existing warnings/info and no
+  errors. App/source plus generated bridge committedcfc37e26a5b2d5350dfe709cead0fbeb67e097ba.
+  This remains component qualification, not incoming uploads or live Pixel proof.
+- Heisenberg closed, verified not_found. Original source retained locally at
+  refagent/protected-store-lease-review-20260916 /055f3cd6b22704cc712ac2c881add153f2ab811c.
+  Final follow-up had no final report, so it is not counted as extra sign-off.
+  Exact clean helper136,957,706bytes removed with Git-aware worktree removal after
+  exclusive submodule/no-process checks. Observed C:free gain143,134,720bytes;
+  main, source refs, private device evidence and signed f027 APK verified retained.
+  Manifest: build-evidence/agent-cleanup-20260916-local-lease/manifest.json.
+  Sessions/transcripts retained because supported deletion is unavailable.
+- Remaining: durable pre-source capture retry, raw duplicate/adoption evidence,
+  received outbox create/readback and independent-client/live qualification.
+  Capture flag remainsfalse. No helper/test/build remains active. Pixel in-place
+  restart/update is still pending user approval; no reset/replay/Alpha change.

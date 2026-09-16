@@ -22,6 +22,11 @@ parallel agents without useful independent work.
   `C:/Codex/Toolchains/rustup/toolchains/stable-aarch64-pc-windows-msvc/bin/rustfmt.exe`.
   PATH absence does not mean the toolchain is missing. A separate worktree may
   still need its own dependency resolution; do not mislabel that as no SDK.
+- Before local Flutter/ObjectBox tests, prepend the process PATH with
+  `C:/Codex/Toolchains/objectbox-windows-arm64-v5.3.2/lib`. Otherwise the tests
+  fail with objectbox.dll error126 before exercising product code. Use
+  `flutter.bat test --no-pub --concurrency=2` for an already-resolved targeted
+  batch; do not copy DLLs or real credentials into helper worktrees.
 - Use apply_patch with exact absolute forward-slash paths for isolated edits.
   If the routed tool rejects the path, return the patch to the parent. Do not
   create Desktop probe files or bypass the editing rule with shell file writes.

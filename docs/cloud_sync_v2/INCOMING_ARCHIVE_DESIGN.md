@@ -39,17 +39,17 @@ presence check. The 6,252 retained records must not be ignored in that diagnosis
 
 ## Minimum implementation sequence
 
-Current source contains an **unhooked eligibility component**:
+Current source contains a **default-off live capture hook and eligibility component**:
 `CloudSyncReceivedArchiveIdentity`. It distinguishes incoming/mirrored direct
 plain-text candidates without authorizing a save. It requires matching row,
 parent, wire, sender and original local recipient; preserves source identity
 across same-row canonical adoption and sender-preference changes; and rejects
 deleted chats and unsupported shapes. Native receive-destination propagation
-and matching Dart guards are now implemented and test-qualified. The current
-ten-file Dart batch passes446, including receive-origin rejection in outgoing
+and matching Dart guards are now implemented and test-qualified. The earlier
+ten-file Dart batch passed446, including receive-origin rejection in outgoing
 send/reaction/edit/unsend capture, received journal restart/rollback, production
 reference inventories and forward schema upgrade. There is no enabled production
-archive receive hook or incoming uploader; the native source candidate is below.
+archive receive hook or incoming uploader; the qualified local source is below.
 
 The received journal is integrated but unenabled. Its synchronous persistence
 callback and full wire/row validation share one ObjectBox transaction. The source
@@ -81,12 +81,43 @@ actual live-receive provenance and revalidate its current state at adoption.
 Do not equate IDS delegate profile IDs with CloudKit DSIDs: they are separately
 named protocol inputs, not an established cross-component assertion.
 
-The Dart staging coordinator holds the existing protected-store lock around
-stage, atomic journal adoption and lease commit. It does not take the network-wide
-CloudKit writer lock. Before adoption, failures may roll back the fresh lease;
+The first Dart staging coordinator used an isolate-local protected-store lock
+around stage, atomic journal adoption and lease commit. Review found that this
+does not exclude recovery in another isolate. The current default-off candidate
+adds a native local-store lease and requires it for capture plus maintenance
+inventory/cleanup; generated bindings and component qualification now pass. It
+does not take the network-wide CloudKit writer lock. Before adoption, failures
+may roll back the fresh lease;
 after adoption, failures retain the exact source for recommit/restart recovery.
 Local tests cover a lost commit response, changed source and post-commit identity
 loss without creating an outbox operation. No production receive hook is enabled.
+
+The live queue hook is now present behind an independent default-false capture
+flag. Its delivery fallback preserves ordinary receive and reuses a verified
+committed row after a lost response, but never persists into a changed account.
+Failure before a protected source exists still lacks durable capture retry.
+Neither this hook nor the local lease is an enabled incoming uploader.
+
+Checkpointcfc37e26a now wires only eligible direct text into the real incoming
+queue persistence callback. Unsupported media/groups/SMS keep the prior queue
+path. Account/store identity is captured before queueing and checked before
+fallback; reset closes admission and drains active captures before teardown.
+The new native local lease is independent of the long network gate; maintenance
+still takes both gates, and only local protector methods bypass the network
+gate under an active local scope. Expired scopes and failed release cannot claim
+successful quiescence. Native contention rejects a waiter after two seconds,
+never steals the owner's lock, and OS process-exit release is tested on Linux.
+
+Hosted run35094043857 passed717 app Rust,321 rustpush,11 Anisette and40 protector
+tests, with a hash-verified generated artifact. The23-file Dart batch passes676;
+focused analysis is clean. Older migration fixtures now correctly omit the new
+table when constructing their historical models; no existing model ID changed.
+This proves source/lifecycle components, not Android delivery or remote archive.
+
+Next discriminating work: persist retry ownership when native capture fails
+before creating its encrypted source, then validate exact raw CloudKit record
+presence/identity and unknown fields before duplicate-aware admission. A failed
+capture's ordinary-delivery fallback must not be described as a completed backup.
 
 The pure existing-record comparator can recognize direct plain text, including
 standard plain NSAttributedString structural metadata and mirrored own messages.
