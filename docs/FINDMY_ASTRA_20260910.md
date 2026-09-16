@@ -241,3 +241,4 @@ Windows host never dispatches. Next split: whether the Android app (which
 does dispatch IDS) shows her location.
 
 September 16 dispatch-split verification (no live use): production daemon rust/src/api/api.rs recv_wait dispatches APS to fmfd.handle at line 13235, before FaceTime at 13296 and iMessage at 13306, so the full app on either platform elicits the IDS-242 handshake. The bounded Windows probe host and its binding use roster and selected reads only and never dispatch IDS receive. New source contract tooling/findmy/probe_daemon_dispatch_contract.test.mjs pins both sides, ruling out reading probe absence as daemon absence.
+September 16: exclusive Windows shared-profile window granted to the CloudKit task for its bounded read/projection (up to 20 minutes); this lane runs no profile or credential operations until its release is announced.
