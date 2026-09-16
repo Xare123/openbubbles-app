@@ -239,3 +239,5 @@ chance); user confirms Apple shows her live, so the gap is client-side
 elicitation. Prime lead now: secure handshake over IDS receive, which the
 Windows host never dispatches. Next split: whether the Android app (which
 does dispatch IDS) shows her location.
+
+September 16 dispatch-split verification (no live use): production daemon rust/src/api/api.rs recv_wait dispatches APS to fmfd.handle at line 13235, before FaceTime at 13296 and iMessage at 13306, so the full app on either platform elicits the IDS-242 handshake. The bounded Windows probe host and its binding use roster and selected reads only and never dispatch IDS receive. New source contract tooling/findmy/probe_daemon_dispatch_contract.test.mjs pins both sides, ruling out reading probe absence as daemon absence.
