@@ -1684,6 +1684,32 @@ class CloudSyncV2WindowsHarnessState extends State<CloudSyncV2WindowsHarness> {
                 } finally {
                   chats.close();
                 }
+                final messages = Database.store.box<Message>()
+                    .query(Message_.guid.equals(payload.canonicalGuid)).build()
+                  ..limit = 2;
+                try {
+                  final candidates = messages.find();
+                  item['canonical_message_candidates'] = candidates.length;
+                  if (candidates.length == 1) {
+                    final message = candidates.single;
+                    final messageChat = message.chat.target;
+                    item.addAll({
+                      'canonical_date_present': message.dateCreated != null,
+                      'canonical_date_exact': message.dateCreated?.toUtc() == payload.createdAt?.toUtc(),
+                      'canonical_date_same_millis': message.dateCreated?.millisecondsSinceEpoch == payload.createdAt?.millisecondsSinceEpoch,
+                      'canonical_from_me_matches': message.isFromMe == payload.knownFlags?.fromMe,
+                      'canonical_chat_matches': messageChat?.guid == payload.chatIdentifier || messageChat?.chatIdentifier == payload.chatIdentifier,
+                      'canonical_has_association': message.associatedMessageGuid != null || message.associatedMessagePart != null || message.associatedMessageType != null,
+                    });
+                  }
+                } finally {
+                  messages.close();
+                }
+                item.addAll({
+                  'semantic_parent_declared': decoded.snapshot?.parentLogicalKeyHash != null,
+                  'extension_parent_declared': payload.extensionParentLogicalKeyHash != null,
+                  'association_parent_declared': payload.associationParentLogicalKeyHash != null,
+                });
                 // Reuse the production read-only ownership proof inside a
                 // read transaction. It may reject a missing canonical Message
                 // after resolving its Chat; neither outcome admits/mutates it.
