@@ -6173,12 +6173,13 @@ mod tests {
         let record = readback_record_fixture();
         // A valid noncanonical field order must survive retention. Typed
         // decode/reencode would silently change this evidence.
-        let mut original = rustpush::cloudkit_proto::Record {
+        let etag_wire = rustpush::cloudkit_proto::Record {
             etag: record.etag.clone(), ..Default::default()
         }.encode_to_vec();
         let mut rest = record.clone();
         rest.etag = None;
-        original.extend(rest.encode_to_vec());
+        let mut original = rest.encode_to_vec();
+        original.extend(etag_wire); // ETag is tag1: append it last, not first.
         assert_ne!(original, record.encode_to_vec());
         let staged = cloud_sync_stage_protected_received_record_readback(
             directory.path().to_path_buf(), account.clone(), 7, &record, &original
