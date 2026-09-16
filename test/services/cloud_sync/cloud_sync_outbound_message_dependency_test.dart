@@ -52,6 +52,19 @@ void main() {
     expect(proof.source.payloadSha256,isNotEmpty);
   });
 
+  test('journal-pinned Chat proof survives removal of the local Message row', () {
+    final before = requireCloudSyncRestoredDirectChatProof(
+      store: f.db, messageScope: f.messageScope, message: f.parent);
+    f.db.box<Message>().remove(f.parentId);
+    final after = requireCloudSyncRestoredDirectChatProofForId(
+      store: f.db, messageScope: f.messageScope, chatId: f.chatId);
+    expect(after.binding, before.binding);
+    expect(after.source, before.source);
+    f.db.box<Chat>().remove(f.chatId);
+    expect(() => requireCloudSyncRestoredDirectChatProofForId(
+      store: f.db, messageScope: f.messageScope, chatId: f.chatId), _blocked);
+  });
+
   test('plaintext keeps the exact v1 chat binding and validator', () {
     final plaintext = Message(
       guid: '11111111-1111-4111-8111-111111111111',

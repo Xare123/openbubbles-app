@@ -135,6 +135,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       wire.rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncPreparedReceivedInspection;
 
   CrossPlatformFinalizerArg
+  get rust_arc_decrement_strong_count_CloudSyncReceivedArchiveCreateProofPtr =>
+      wire.rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncReceivedArchiveCreateProof;
+
+  CrossPlatformFinalizerArg
   get rust_arc_decrement_strong_count_ConversationLinkPtr => wire
       .rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerConversationLink;
 
@@ -413,6 +417,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   CloudSyncPreparedReceivedInspection
   dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncPreparedReceivedInspection(
+    dynamic raw,
+  );
+
+  @protected
+  CloudSyncReceivedArchiveCreateProof
+  dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncReceivedArchiveCreateProof(
     dynamic raw,
   );
 
@@ -1160,6 +1170,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  CloudSyncReceivedArchiveCreateProof
+  dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncReceivedArchiveCreateProof(
+    dynamic raw,
+  );
+
+  @protected
   ConversationLink
   dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerConversationLink(
     dynamic raw,
@@ -1453,6 +1469,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   CloudSyncPreparedMessageCreateHandle
   dco_decode_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncPreparedMessageCreateHandle(
+    dynamic raw,
+  );
+
+  @protected
+  CloudSyncReceivedArchiveCreateProof
+  dco_decode_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncReceivedArchiveCreateProof(
     dynamic raw,
   );
 
@@ -3079,6 +3101,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  CloudSyncReceivedArchiveCreateProof?
+  dco_decode_opt_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncReceivedArchiveCreateProof(
+    dynamic raw,
+  );
+
+  @protected
   ConversationLink?
   dco_decode_opt_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerConversationLink(
     dynamic raw,
@@ -4187,6 +4215,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  CloudSyncReceivedArchiveCreateProof
+  sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncReceivedArchiveCreateProof(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   ConversationLink
   sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerConversationLink(
     SseDeserializer deserializer,
@@ -4954,6 +4988,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  CloudSyncReceivedArchiveCreateProof
+  sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncReceivedArchiveCreateProof(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   ConversationLink
   sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerConversationLink(
     SseDeserializer deserializer,
@@ -5255,6 +5295,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   CloudSyncPreparedMessageCreateHandle
   sse_decode_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncPreparedMessageCreateHandle(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  CloudSyncReceivedArchiveCreateProof
+  sse_decode_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncReceivedArchiveCreateProof(
     SseDeserializer deserializer,
   );
 
@@ -7237,6 +7283,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  CloudSyncReceivedArchiveCreateProof?
+  sse_decode_opt_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncReceivedArchiveCreateProof(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   ConversationLink?
   sse_decode_opt_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerConversationLink(
     SseDeserializer deserializer,
@@ -8561,6 +8613,13 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void
+  sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncReceivedArchiveCreateProof(
+    CloudSyncReceivedArchiveCreateProof self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void
   sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerConversationLink(
     ConversationLink self,
     SseSerializer serializer,
@@ -9460,6 +9519,13 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void
+  sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncReceivedArchiveCreateProof(
+    CloudSyncReceivedArchiveCreateProof self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void
   sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerConversationLink(
     ConversationLink self,
     SseSerializer serializer,
@@ -9813,6 +9879,13 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void
   sse_encode_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncPreparedMessageCreateHandle(
     CloudSyncPreparedMessageCreateHandle self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void
+  sse_encode_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncReceivedArchiveCreateProof(
+    CloudSyncReceivedArchiveCreateProof self,
     SseSerializer serializer,
   );
 
@@ -12147,6 +12220,13 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void
+  sse_encode_opt_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncReceivedArchiveCreateProof(
+    CloudSyncReceivedArchiveCreateProof? self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void
   sse_encode_opt_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerConversationLink(
     ConversationLink? self,
     SseSerializer serializer,
@@ -13906,6 +13986,22 @@ class RustLibWire implements BaseWire {
       );
 
   void
+  rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncReceivedArchiveCreateProof(
+    int ptr,
+  ) => wasmModule
+      .rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncReceivedArchiveCreateProof(
+        ptr,
+      );
+
+  void
+  rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncReceivedArchiveCreateProof(
+    int ptr,
+  ) => wasmModule
+      .rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncReceivedArchiveCreateProof(
+        ptr,
+      );
+
+  void
   rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerConversationLink(
     int ptr,
   ) => wasmModule
@@ -14637,6 +14733,16 @@ extension type RustLibWasmModule._(JSObject _) implements JSObject {
 
   external void
   rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncPreparedReceivedInspection(
+    int ptr,
+  );
+
+  external void
+  rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncReceivedArchiveCreateProof(
+    int ptr,
+  );
+
+  external void
+  rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncReceivedArchiveCreateProof(
     int ptr,
   );
 

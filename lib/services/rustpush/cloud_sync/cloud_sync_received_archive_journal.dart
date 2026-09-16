@@ -9,6 +9,9 @@ import 'cloud_sync_manual_shadow_sampler.dart';
 import 'cloud_sync_received_archive_identity.dart';
 import 'cloud_sync_received_archive_source_binding.dart';
 import 'cloud_sync_received_record_observation.dart';
+import 'cloud_operation_identity.dart';
+import 'cloud_sync_models.dart';
+import 'cloud_sync_outbound_chat_binding.dart';
 import 'package:bluebubbles/src/rust/api/api.dart' as api;
 import 'cloudkit_writer_authority.dart';
 import 'cloudkit_writer_ownership.dart';
@@ -34,11 +37,10 @@ import 'cloudkit_writer_ownership.dart';
 /// It is never upload authority. Record-map/snapshot dedup against Apple
 /// records requires existing native canonical key hashes at separate
 /// admission and is explicitly gated here, never guessed from the
-/// lane-local received hash. This journal never creates, mutates, or reads
-/// [CloudOutboxOperationEntity]; separate admission (caller-owned atomic
-/// outbox transition) is intentionally absent here. There is no upload or
-/// outbox-adoption API in this step, and no automatic rollback of an
-/// adopted source: a failed re-capture preserves the existing row.
+/// lane-local received hash. The distinct received admission now binds an
+/// existing native absent-only stage to the caller's atomic outbox transaction.
+/// It never produces a local-send receipt or sends IDS traffic. No automatic
+/// rollback of an adopted source occurs: failed retries retain exact evidence.
 ///
 /// Crash-gap closure: the caller persists the incoming Message via the
 /// synchronous [persistMessage] callback inside this journal transaction,
@@ -70,6 +72,192 @@ final class CloudSyncReceivedArchiveJournal {
   final CloudKitWriterAuthoritySnapshot _binding;
 
   bool isBoundToStore(Store store) => identical(store, _store);
+
+  List<CloudSyncReceivedArchiveAdmissionSource> readCreateCandidates({
+    required CloudSyncNativeAuthSnapshot currentAuth, int limit = 5,
+  }) => _store.runInTransaction(TxMode.read, () {
+    _verifyOwnership();
+    if (limit < 1 || limit > 20) throw ArgumentError('cloud_sync_received_archive_limit_invalid');
+    final query = _store.box<CloudSyncReceivedArchiveIntentEntity>().query(
+      CloudSyncReceivedArchiveIntentEntity_.accountFingerprint.equals(_binding.scope.accountFingerprint)
+        .and(CloudSyncReceivedArchiveIntentEntity_.writerEpoch.equals(_binding.epoch))
+        .and(CloudSyncReceivedArchiveIntentEntity_.state.equals(2))
+        .and(CloudSyncReceivedArchiveIntentEntity_.recordObservationBinding
+          .startsWith('[1,${CloudSyncReceivedRecordState.absent.index},')))
+        .order(CloudSyncReceivedArchiveIntentEntity_.updatedAtMs)
+        .order(CloudSyncReceivedArchiveIntentEntity_.id).build()..limit = limit;
+    try {
+      return query.find().where((row) {
+        final source = CloudSyncReceivedArchiveSourceBinding.decode(row.protectedSourceBinding);
+        return _observationFor(row, source)?.state == CloudSyncReceivedRecordState.absent &&
+            _isReady(row, currentAuth);
+      }).map((row) => readForCreateAdmission(intentId: row.id, currentAuth: currentAuth)).toList(growable: false);
+    } finally { query.close(); }
+  });
+
+  /// Metadata snapshot for one absent direct-text origin. A cached absence is
+  /// NOT enough: the caller must obtain a fresh native absent-only stage before
+  /// invoking the transactional outbox admission below.
+  CloudSyncReceivedArchiveAdmissionSource readForCreateAdmission({
+    required int intentId,
+    required CloudSyncNativeAuthSnapshot currentAuth,
+  }) => _store.runInTransaction(TxMode.read, () {
+    final (intent, _, source) = readMaterializedForInspection(
+      intentId: intentId, currentAuth: currentAuth);
+    final observation = readRecordObservation(intentId: intentId, currentAuth: currentAuth);
+    if (intent.state != 2 || intent.admittedOperationId != null ||
+        intent.admittedBinding != null ||
+        observation?.state != CloudSyncReceivedRecordState.absent) {
+      throw StateError('cloud_sync_received_archive_not_absent');
+    }
+    return CloudSyncReceivedArchiveAdmissionSource._(intent, source, observation!);
+  });
+
+  void validateCreateAdmission({
+    required Store transactionStore,
+    required CloudSyncScope scope,
+    required CloudSyncReceivedArchiveAdmissionSource expected,
+    required CloudSyncNativeAuthSnapshot currentAuth,
+    required bool Function() stillCurrent,
+  }) {
+    if (!identical(transactionStore, _store) ||
+        scope.container != 'com.apple.messages.cloud' || scope.database != 'private' ||
+        scope.zone != 'messageManateeZone' ||
+        scope.persistenceLane != CloudSyncPersistenceLane.semantic ||
+        scope.accountFingerprint != _binding.scope.accountFingerprint || !stillCurrent()) {
+      throw StateError('cloud_sync_received_archive_admission_changed');
+    }
+    final current = readForCreateAdmission(intentId: expected.intentId, currentAuth: currentAuth);
+    if (!current.sameSourceAs(expected)) {
+      throw StateError('cloud_sync_received_archive_admission_changed');
+    }
+    final message = _store.box<Message>().get(expected.localMessageId)!;
+    if (message.dateEdited != null || message.messageSummaryInfo.isNotEmpty) {
+      // Until received mutation chaining exists, never archive a stale original
+      // after learning that it was edited or retracted on another device.
+      throw StateError('cloud_sync_received_archive_admitted_source_changed');
+    }
+    if (requireCloudSyncRestoredDirectChat(store: _store, messageScope: scope,
+        message: message) != expected.observation.parentBinding || !stillCurrent()) {
+      throw StateError('cloud_sync_received_archive_parent_changed');
+    }
+  }
+
+  /// A fresh exact read can supersede an earlier Absent. Only that no-raw
+  /// predecessor is replaceable; retained Found evidence is never overwritten.
+  void replaceAbsenceWithFound({
+    required CloudSyncReceivedArchiveAdmissionSource expected,
+    required CloudSyncReceivedRecordObservation found,
+    required CloudSyncNativeAuthSnapshot currentAuth,
+    required bool Function() stillCurrent,
+    required void Function() validateParent,
+  }) => _store.runInTransaction(TxMode.write, () {
+    final current = readForCreateAdmission(intentId: expected.intentId, currentAuth: currentAuth);
+    found.requireSource(expected.source);
+    if (!stillCurrent() || !current.sameSourceAs(expected) || found.rawReference == null ||
+        found.generation != expected.observation.generation ||
+        found.parentBinding != expected.observation.parentBinding ||
+        found.logicalEntityKeyHash != expected.observation.logicalEntityKeyHash ||
+        found.serverRecordIdHash != expected.observation.serverRecordIdHash) {
+      throw StateError('cloud_sync_received_archive_observation_changed');
+    }
+    validateParent();
+    if (!stillCurrent()) throw StateError('cloud_sync_received_archive_identity_changed');
+    final row = _readBoundIntent(expected.intentId)
+      ..recordObservationBinding = found.encode()
+      ..state = 1;
+    _store.box<CloudSyncReceivedArchiveIntentEntity>().put(row);
+  });
+
+  /// Runs inside the outbox Store's synchronous write transaction. A throw
+  /// rolls back the outbox, record map and received ownership together.
+  void adoptInOutboxTransaction({
+    required Store transactionStore,
+    required CloudSyncReceivedArchiveAdmissionSource expected,
+    required CloudSyncNativeAuthSnapshot currentAuth,
+    required bool Function() stillCurrent,
+    required CloudOutboxOperation operation,
+  }) {
+    validateCreateAdmission(transactionStore: transactionStore, scope: operation.scope,
+      expected: expected, currentAuth: currentAuth, stillCurrent: stillCurrent);
+    if (operation.action != CloudOutboxAction.save ||
+        operation.payloadVersion != cloudSyncOutboundPayloadVersion ||
+        operation.status != CloudOutboxStatus.pending || operation.attemptCount != 0 ||
+        operation.appleRequestUuid != null || operation.appleOperationUuid != null ||
+        operation.logicalEntityKeyHash != expected.observation.logicalEntityKeyHash ||
+        operation.serverRecordIdHash != expected.observation.serverRecordIdHash ||
+        operation.checkpointGeneration != expected.observation.generation ||
+        operation.createdAt.millisecondsSinceEpoch != expected.createdAtMs ||
+        operation.operationId != CloudOperationIdentity.forInitialCreate(scope: operation.scope,
+          logicalEntityKeyHash: operation.logicalEntityKeyHash, payloadVersion: operation.payloadVersion)) {
+      throw StateError('cloud_sync_received_archive_admission_changed');
+    }
+    final intent = _readBoundIntent(expected.intentId);
+    intent
+      ..state = 3
+      ..admittedOperationId = operation.operationId
+      ..admittedBinding = _admittedOperationBinding(operation, intent);
+    _store.box<CloudSyncReceivedArchiveIntentEntity>().put(intent);
+  }
+
+  /// Source for prepare/readback, not permission to dispatch. In particular,
+  /// an unknown outcome can still read back after the local UI row changed.
+  CloudSyncReceivedArchiveAdmissionSource? readAdoptedSource({
+    required Store transactionStore,
+    required CloudOutboxOperation operation,
+  }) {
+    if (!identical(transactionStore, _store)) {
+      throw StateError('cloud_sync_received_archive_admission_changed');
+    }
+    _verifyOwnership();
+    final intent = _readUnique(_store.box<CloudSyncReceivedArchiveIntentEntity>().query(
+      CloudSyncReceivedArchiveIntentEntity_.admittedOperationId.equals(operation.operationId)));
+    if (intent == null) return null;
+    final bound = _readBoundIntent(intent.id);
+    final source = CloudSyncReceivedArchiveSourceBinding.decode(bound.protectedSourceBinding);
+    final observation = _observationFor(bound, source);
+    if (bound.state != 3 || observation == null ||
+        observation.state != CloudSyncReceivedRecordState.absent ||
+        operation.scope.accountFingerprint != bound.accountFingerprint ||
+        operation.scope.container != 'com.apple.messages.cloud' ||
+        operation.scope.database != 'private' || operation.scope.zone != 'messageManateeZone' ||
+        operation.scope.persistenceLane != CloudSyncPersistenceLane.semantic ||
+        bound.admittedBinding != _admittedOperationBinding(operation, bound)) {
+      throw StateError('cloud_sync_received_archive_admitted_operation_changed');
+    }
+    return CloudSyncReceivedArchiveAdmissionSource._(bound, source, observation);
+  }
+
+  void requireAdoptedDispatch({
+    required Store transactionStore, required CloudOutboxOperation operation,
+  }) {
+    final source = readAdoptedSource(transactionStore: transactionStore, operation: operation);
+    if (source == null) throw StateError('cloud_sync_received_archive_admitted_operation_changed');
+    final intent = _readBoundIntent(source.intentId);
+    final message = _store.box<Message>().get(source.localMessageId);
+    final chat = _store.box<Chat>().get(source.localChatId);
+    if (message == null || chat == null || message.dateDeleted != null || chat.dateDeleted != null ||
+        message.dateEdited != null || message.messageSummaryInfo.isNotEmpty ||
+        message.chat.targetId != source.localChatId || message.guid == null ||
+        guidHashFor(message.guid!) != source.source.messageGuidHash ||
+        message.isFromMe != (intent.origin == CloudSyncReceivedArchiveOrigin.mirrored.index) ||
+        _hasOutgoingOverlap(intent, message.guid!)) {
+      throw StateError('cloud_sync_received_archive_admitted_source_changed');
+    }
+    requireCloudSyncAdoptedChatDependency(store: _store, messageScope: operation.scope,
+      binding: source.observation.parentBinding, expectedChatId: source.localChatId);
+  }
+
+  static String _admittedOperationBinding(CloudOutboxOperation operation,
+      CloudSyncReceivedArchiveIntentEntity intent) => _digest([
+    'received-create-admission-v1', operation.scope.storageKey, operation.operationId,
+    operation.logicalEntityKeyHash, operation.serverRecordIdHash, operation.checkpointGeneration,
+    operation.action.name, operation.payloadVersion, operation.mutationRevision,
+    operation.encryptedPayloadReference, operation.payloadSha256,
+    operation.createdAt.millisecondsSinceEpoch,
+    intent.writerEpoch, intent.localMessageId, intent.localChatId,
+    intent.protectedSourceBinding, intent.recordObservationBinding,
+  ]);
 
   void adoptRecordObservation({
     required int intentId,
@@ -647,7 +835,7 @@ final class CloudSyncReceivedArchiveJournal {
           throw StateError('cloud_sync_received_archive_time_invalid');
         }
         final intent = _readBoundIntent(intentId);
-        if (intent.state != 0 && intent.state != 1) {
+        if (intent.state < 0 || intent.state > 2) {
           throw StateError('cloud_sync_received_archive_not_ready');
         }
         final observed = now.millisecondsSinceEpoch;
@@ -886,7 +1074,7 @@ final class CloudSyncReceivedArchiveJournal {
     if (intent == null ||
         intent.accountFingerprint != _binding.scope.accountFingerprint ||
         intent.writerEpoch != _binding.epoch ||
-        (intent.state < 0 || intent.state > 2) ||
+        (intent.state < 0 || intent.state > 3) ||
         (intent.origin != CloudSyncReceivedArchiveOrigin.incoming.index &&
             intent.origin != CloudSyncReceivedArchiveOrigin.mirrored.index) ||
         intent.intentKey !=
@@ -909,9 +1097,14 @@ final class CloudSyncReceivedArchiveJournal {
       );
       if (intent.state >= 1 && source.isSeed) return false;
       final observation = _observationFor(intent, source);
-      if (intent.state == 2 &&
+      if (intent.state >= 2 &&
           (observation == null ||
               observation.state == CloudSyncReceivedRecordState.unresolved)) {
+        return false;
+      }
+      if (intent.state == 3 &&
+          (intent.admittedOperationId == null || intent.admittedBinding == null ||
+              observation?.state != CloudSyncReceivedRecordState.absent)) {
         return false;
       }
       source.requireOrigin(
@@ -1003,6 +1196,29 @@ final class CloudSyncReceivedArchiveJournal {
       ]),
     ),
   );
+}
+
+/// Immutable metadata passed from source validation to the same-store outbox
+/// transaction. The original protected source, not a mutable Message, encodes
+/// the archive body. No local-send receipt is synthesized by this snapshot.
+final class CloudSyncReceivedArchiveAdmissionSource {
+  CloudSyncReceivedArchiveAdmissionSource._(
+    CloudSyncReceivedArchiveIntentEntity intent, this.source, this.observation,
+  ) : intentId = intent.id, localMessageId = intent.localMessageId,
+      localChatId = intent.localChatId, writerEpoch = intent.writerEpoch,
+      createdAtMs = intent.createdAtMs, admittedOperationId = intent.admittedOperationId;
+
+  final int intentId, localMessageId, localChatId, writerEpoch, createdAtMs;
+  final String? admittedOperationId;
+  final CloudSyncReceivedArchiveSourceBinding source;
+  final CloudSyncReceivedRecordObservation observation;
+  bool sameSourceAs(CloudSyncReceivedArchiveAdmissionSource other) =>
+    intentId == other.intentId && localMessageId == other.localMessageId &&
+    localChatId == other.localChatId && writerEpoch == other.writerEpoch &&
+    createdAtMs == other.createdAtMs && admittedOperationId == other.admittedOperationId &&
+    source.encode() == other.source.encode() && observation.encode() == other.observation.encode();
+  @override
+  String toString() => 'CloudSyncReceivedArchiveAdmissionSource(redacted)';
 }
 
 /// Bounded read-only page from

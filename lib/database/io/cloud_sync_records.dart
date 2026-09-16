@@ -130,9 +130,16 @@ class CloudSyncReceivedArchiveIntentEntity {
   /// or permission to create from a stale NotFound result.
   String? recordObservationBinding;
 
+  /// Exact create-only outbox ownership, never an IDS send receipt. The
+  /// protected source remains retained through unknown-outcome readback.
+  @Index(type: IndexType.hash64)
+  String? admittedOperationId;
+  String? admittedBinding;
+
   /// Stable codes: 0 captured, source materialization pending; 1 exact native
   /// source lease committed (inspection may need recommit); 2 local observation
-  /// and its raw lease committed. No state means admitted or cloud-saved.
+  /// and its raw lease committed; 3 adopted by the create-only outbox.
+  /// No state alone means a CloudKit save was confirmed.
   @Index()
   int state;
 
@@ -151,6 +158,8 @@ class CloudSyncReceivedArchiveIntentEntity {
     required this.origin,
     required this.protectedSourceBinding,
     this.recordObservationBinding,
+    this.admittedOperationId,
+    this.admittedBinding,
     this.state = 0,
     required this.createdAtMs,
     required this.updatedAtMs,

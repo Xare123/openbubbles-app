@@ -18,9 +18,10 @@ void main() {
         (e) => e['name'] == 'CloudSyncReceivedArchiveIntentEntity',
       );
       (entity['properties'] as List).removeWhere(
-        (p) => p['name'] == 'recordObservationBinding',
+        (p) => ['recordObservationBinding', 'admittedOperationId', 'admittedBinding'].contains(p['name']),
       );
       entity['lastPropertyId'] = '13:3733844521104586883';
+      previousMap['lastIndexId'] = '103:3376337646296598667';
       final previous = obx_internal.ModelDefinition(
         obx_internal.ModelInfo.fromMap(previousMap),
         current.bindings,
@@ -56,6 +57,8 @@ void main() {
         expect(restored.protectedSourceBinding, 'unchanged-original-binding');
         expect(restored.state, 1);
         expect(restored.recordObservationBinding, isNull);
+        expect(restored.admittedOperationId, isNull);
+        expect(restored.admittedBinding, isNull);
       } finally {
         if (store != null && !store.isClosed()) store.close();
         expect(directory.parent.absolute.path, root.absolute.path);

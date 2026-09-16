@@ -596,6 +596,10 @@ typedef CloudSyncAttachmentParentGroupProofReader =
       String operationId,
     );
 
+typedef CloudSyncReceivedArchiveProofReader =
+    Future<frb_api.CloudSyncReceivedArchiveCreateProof?> Function(
+      CloudSyncScope scope, String operationId);
+
 enum _CreatePreflightDisposition { absent, alreadyPresent }
 
 final class _NativeCloudSyncPreparedSubmission
@@ -750,6 +754,7 @@ final class NativeProtectedCloudSyncTransport
     this._retainConfirmedReceiptsForReplay = false,
     this.readAttachmentParentContext,
     this.readAttachmentParentGroupProof,
+    this.readReceivedArchiveProof,
   }) : _storageDirectory = storageDirectory,
        _protectedStoreIdentity = protectedStoreIdentity,
        _nativeWriterPauseToken = nativeWriterPauseToken,
@@ -793,6 +798,7 @@ final class NativeProtectedCloudSyncTransport
   /// Null means direct parent: native inputs stay proof-free.
   final CloudSyncAttachmentParentGroupProofReader?
   readAttachmentParentGroupProof;
+  final CloudSyncReceivedArchiveProofReader? readReceivedArchiveProof;
   final Set<Future<void>> _activeNativeOperations = {};
   Future<void>? _nativeQuiescence;
   bool _nativeAdmissionClosed = false;
@@ -1661,6 +1667,9 @@ final class NativeProtectedCloudSyncTransport
               operation.operationId,
               parentContext,
             ),
+            receivedArchiveProof: scope.zone == 'messageManateeZone'
+                ? await readReceivedArchiveProof?.call(scope, operation.operationId)
+                : null,
           ),
         );
       }
@@ -1964,6 +1973,7 @@ final class NativeProtectedCloudSyncTransport
     required CloudOutboxSubmissionIdentity submissionIdentity,
     frb_api.CloudSyncNativeSendReceiptContext? attachmentParentContext,
     frb_api.CloudSyncAttachmentParentGroupProof? attachmentParentGroupProof,
+    frb_api.CloudSyncReceivedArchiveCreateProof? receivedArchiveProof,
   }) => frb_api.CloudSyncPreparedMessageCreateInput(
     localOperationId: operation.operationId,
     logicalEntityKeyHash: operation.logicalEntityKeyHash,
@@ -1976,6 +1986,7 @@ final class NativeProtectedCloudSyncTransport
         submissionIdentity.operationUuids[operation.operationId]!,
     attachmentParentContext: attachmentParentContext,
     attachmentParentGroupProof: attachmentParentGroupProof,
+    receivedArchiveProof: receivedArchiveProof,
   );
 
   /// Journal-owned parent context for one message-zone prepare/reconcile
@@ -3492,6 +3503,9 @@ final class NativeProtectedCloudSyncTransport
           operation.operationId,
           parentContext,
         ),
+        receivedArchiveProof: scope.zone == 'messageManateeZone'
+            ? await readReceivedArchiveProof?.call(scope, operation.operationId)
+            : null,
       );
       if (scope.zone == 'chatManateeZone') {
         return _requireChatWriteBindings().reconcileChatCreate(

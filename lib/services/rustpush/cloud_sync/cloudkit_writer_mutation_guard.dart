@@ -227,6 +227,7 @@ final class CloudKitWriterMutationGuard
     CloudKitWriterReconciliationBinding? reconciliationBinding,
     this.readAttachmentParentContext,
     this.readAttachmentParentGroupProof,
+    this.readReceivedArchiveProof,
     DateTime Function()? clock,
   }) : _store = store,
        _readActiveClient = readActiveClient,
@@ -254,6 +255,7 @@ final class CloudKitWriterMutationGuard
     CloudKitWriterReconciliationBinding? reconciliationBinding,
     this.readAttachmentParentContext,
     this.readAttachmentParentGroupProof,
+    this.readReceivedArchiveProof,
     DateTime Function()? clock,
   }) : _store = store,
        _readActiveClient = readActiveClient,
@@ -291,6 +293,9 @@ final class CloudKitWriterMutationGuard
     CloudOutboxOperation operation,
   )?
   readAttachmentParentGroupProof;
+  final Future<frb_api.CloudSyncReceivedArchiveCreateProof?> Function(
+    CloudOutboxOperation operation,
+  )? readReceivedArchiveProof;
   final ObjectBoxCloudKitWriterAuthority _authority;
   final DateTime Function() _clock;
 
@@ -680,7 +685,12 @@ final class CloudKitWriterMutationGuard
     }
     // Opening a retained group proof may await. Recheck account and mutation
     // authority before using it, without clearing the unknown-outcome fence.
-    if (groupProof != null) {
+    final receivedProof = isChat || isAttachment ? null
+        : await readReceivedArchiveProof?.call(operation);
+    if (receivedProof != null && (groupProof != null || parentContext != null)) {
+      throw const CloudKitWriterAuthorityFailure('cloud_sync_received_archive_admission_changed');
+    }
+    if (groupProof != null || receivedProof != null) {
       await requireReconciliationAllowed(
         owner: owner,
         expectedClient: expectedClient,
@@ -724,6 +734,7 @@ final class CloudKitWriterMutationGuard
         appleOperationUuid: operation.appleOperationUuid!,
         attachmentParentContext: parentContext,
         attachmentParentGroupProof: groupProof,
+        receivedArchiveProof: receivedProof,
       ),
     );
     CloudKitOperationInterlock.requireActive(CloudKitOperationKind.v2ReadWrite);

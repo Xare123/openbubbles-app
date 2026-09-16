@@ -24,6 +24,7 @@ void main() {
 
   NativeProtectedCloudSyncTransport buildTransport({
     bool retainConfirmedReceiptsForReplay = false,
+    CloudSyncReceivedArchiveProofReader? receivedReader,
   }) => NativeProtectedCloudSyncTransport(
     cloudMessagesClient: activeClient,
     storageDirectory: 'private-storage',
@@ -31,6 +32,7 @@ void main() {
     bindings: bindings,
     readCheckpointGeneration: (_) async => activeCheckpointGeneration,
     retainConfirmedReceiptsForReplay: retainConfirmedReceiptsForReplay,
+    readReceivedArchiveProof: receivedReader,
     writerMutationGuard: CloudKitWriterMutationGuard.forTest(
       store: writerStore,
       readActiveClient: () => activeClient,
@@ -40,6 +42,8 @@ void main() {
         protectedStoreIdentity: _storeIdentity,
       ),
       reconciliationBinding: bindings,
+      readReceivedArchiveProof: receivedReader == null ? null
+          : (operation) => receivedReader(operation.scope, operation.operationId),
       buildDecision: const CloudKitWriterOwnershipDecision(
         owner: CloudKitWriterOwner.v2,
         configurationValid: true,
@@ -1949,6 +1953,38 @@ void main() {
         expect(bindings.consumeCalls, 0);
       },
     );
+  });
+
+  test('received proof is reopened for preflight and unknown readback without IDS context', () async {
+    bindings = _ReceivedBindings();
+    scope = _semanticScope();
+    final proofs = <_FakeReceivedProof>[];
+    transport = buildTransport(receivedReader: (target, operationId) async {
+      expect(target, scope);
+      final proof = _FakeReceivedProof();
+      proofs.add(proof);
+      return proof;
+    });
+    final operation = _writeOperation(scope);
+    bindings.prepareResult = frb_api.CloudSyncPreparedMessageCreateResult(
+      handle: _FakePreparedHandle(), handleBindingSha256: _preparedHandleBindingSha256);
+    bindings.reconcileResult = frb_api.CloudSyncOutboundReconcileResult(
+      disposition: frb_api.CloudSyncOutboundReconcileDisposition.notApplied,
+      protectedProofReference: operation.encryptedPayloadReference);
+    final prepared = await runV2(() => transport.prepareSubmission(scope,
+      submissionIdentity: _submissionIdentity(operation.operationId),
+      operations: [_protectedWriteOperation(operation)]));
+    expect(proofs, hasLength(1));
+    expect(bindings.preparedInputs.single.receivedArchiveProof, same(proofs.first));
+    expect(bindings.reconcileInput!.receivedArchiveProof, same(proofs.first));
+    expect(bindings.preparedInputs.single.attachmentParentContext, isNull);
+    expect(bindings.preparedInputs.single.attachmentParentGroupProof, isNull);
+    await transport.releasePreparedSubmission(prepared);
+    await runV2(() => transport.reconcileUnknownOutcome(scope, operation: _unknownOutcomeOperation(scope)));
+    expect(proofs, hasLength(2));
+    expect(bindings.reconcileInput!.receivedArchiveProof, same(proofs.last));
+    expect(bindings.reconcileInput!.attachmentParentContext, isNull);
+    expect(bindings.consumeCalls, 0);
   });
 
   test('protected writer forwards one exact prepared create binding', () async {
@@ -4956,6 +4992,16 @@ final class _FakeBindings
     rollbackCalls++;
     return const NativeProtectedLeaseResult();
   }
+}
+
+final class _FakeReceivedProof implements frb_api.CloudSyncReceivedArchiveCreateProof {
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+final class _ReceivedBindings extends _FakeBindings implements NativeProtectedPreparedReleaseBindings {
+  @override
+  Future<bool> releasePreparedMessageCreate({required frb_api.CloudSyncPreparedMessageCreateHandle handle}) async => true;
 }
 
 final class _FakePreparedHandle

@@ -358,6 +358,35 @@ void main() {
         isNot(contains('.await')));
   });
 
+  test('received uploads require native absence and never an IDS receipt', () {
+    final native = File('rust/src/api/api.rs').readAsStringSync();
+    final stage = _section(native, 'pub async fn cloud_sync_stage_received_archive_create(',
+        'pub async fn cloud_sync_open_received_archive_create_proof(');
+    for (final required in ['pending.lock().await.take()',
+        'CloudSyncReceivedRecordDisposition::Absent', 'pending.raw_found.is_some()',
+        'pending.prepared_at.elapsed()', 'cloud_sync_validate_received_create_proof(',
+        'stage_received_message(']) {
+      expect(stage, contains(required));
+    }
+    for (final forbidden in ['send_message', 'sendMsg', 'positiveIdsReceipt',
+        'prepare_message_save_submission', 'consume_once', 'source_binding: None']) {
+      expect(stage, isNot(contains(forbidden)));
+    }
+    final open = _section(native, 'fn cloud_sync_open_message_create_bound(',
+        'mod cloud_sync_attachment_parent_create_tests');
+    expect(open, contains('input.received_archive_proof'));
+    expect(open, contains('open_staged_received_message('));
+    expect(open, contains('verify_deterministic_message_record_name('));
+    final adapter = File('lib/services/rustpush/cloud_sync/cloud_sync_received_create_adapter.dart').readAsStringSync();
+    expect(adapter, contains('!CloudSyncDevGate.receivedArchiveUploadsEnabled'));
+    expect(adapter, contains('cloudSyncPrepareReceivedArchiveInspection('));
+    expect(adapter, contains('cloudSyncStageReceivedArchiveCreate('));
+    expect(adapter, contains('replaceAbsenceWithFound('));
+    expect(adapter, contains('runLocalProtectedStoreExclusive('));
+    expect(adapter, isNot(contains('CloudSyncNativeSendReceiptContext(')));
+    expect(adapter, isNot(contains('sendMsg(')));
+  });
+
   test('runtime transport is restricted to gated local IDS source leases', () {
     final service = File(
       'lib/services/rustpush/rustpush_service.dart',

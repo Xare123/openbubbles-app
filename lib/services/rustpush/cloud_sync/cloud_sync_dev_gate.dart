@@ -47,6 +47,12 @@ abstract final class CloudSyncDevGate {
     'OPENBUBBLES_CLOUD_SYNC_V2_RECEIVED_INSPECTION', defaultValue: false,
   );
 
+  /// Incoming direct text archive, never an IDS sender. Requires local capture,
+  /// strict inspection and the separately provisioned V2 writer to be enabled.
+  static const bool receivedArchiveUploadsEnabled = bool.fromEnvironment(
+    'OPENBUBBLES_CLOUD_SYNC_V2_RECEIVED_UPLOADS', defaultValue: false,
+  );
+
   /// Independent read-only Android lifecycle gate. This never enables the
   /// outbound writer or ordinary-send consumer and is fenced to Canary again
   /// at runtime on both sides of the method channel.

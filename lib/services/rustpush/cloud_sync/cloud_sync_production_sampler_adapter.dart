@@ -22,6 +22,9 @@ import 'cloud_sync_dev_gate.dart';
 import 'cloud_sync_local_send_consumer.dart';
 import 'cloud_sync_local_send_recovery.dart';
 import 'cloud_sync_local_send_journal.dart';
+import 'cloud_sync_received_archive_journal.dart';
+import 'cloud_sync_received_create_adapter.dart';
+import 'cloud_sync_safe_failure.dart';
 import 'cloud_sync_attachment_upload_journal.dart';
 import 'cloud_sync_attachment_plan_coordinator.dart';
 import 'cloud_sync_attachment_parent_coordinator.dart';
@@ -858,6 +861,8 @@ final class CloudSyncProductionLocalSendAdapter {
       checkpointGeneration: attachmentCheckpoint.generation, currentAuth: auth,
     );
     final existingHistoryDiagnostics = CloudSyncSemanticDiagnosticCollector();
+    final receivedJournal = CloudSyncReceivedArchiveJournal(
+      store: objectBox, authority: authority, authoritySnapshot: owner);
     // Ephemeral per pass. Admission changes the read-set revision; refresh
     // against the ORIGINAL staged operation before lease, including restart.
     final chatEvidence = <String, CloudSyncChatIdentityEvidence>{};
@@ -865,6 +870,7 @@ final class CloudSyncProductionLocalSendAdapter {
       store: objectBox,
       protector: protector,
       localSendJournal: journal,
+      receivedArchiveJournal: receivedJournal,
       attachmentUploadJournal: uploads,
       readChatIdentityEvidence: (operation) => chatEvidence[operation.operationId],
       recordExistingHistoryDiagnostic: existingHistoryDiagnostics.record,
@@ -891,6 +897,7 @@ final class CloudSyncProductionLocalSendAdapter {
         storageDirectory: _privateStorageDirectory);
     late final Future<frb_api.CloudSyncAttachmentParentGroupProof?> Function(
         CloudSyncScope, String) readParentGroupProof;
+    late final CloudSyncReceivedCreateAdapter receivedCreates;
     frb_api.CloudSyncNativeSendReceiptContext? readParentContext(
       CloudSyncScope target, String operationId,
     ) {
@@ -910,6 +917,8 @@ final class CloudSyncProductionLocalSendAdapter {
           readParentContext(operation.scope, operation.operationId),
       readAttachmentParentGroupProof: (operation) =>
           readParentGroupProof(operation.scope, operation.operationId),
+      readReceivedArchiveProof: (operation) =>
+          receivedCreates.openProof(operation.scope, operation.operationId),
     );
     final transport = NativeProtectedCloudSyncTransport(
       cloudMessagesClient: auth.cloudMessagesClient,
@@ -919,6 +928,7 @@ final class CloudSyncProductionLocalSendAdapter {
       readAttachmentParentContext: readParentContext,
       readAttachmentParentGroupProof: (target, operationId) =>
           readParentGroupProof(target, operationId),
+      readReceivedArchiveProof: (target, operationId) => receivedCreates.openProof(target, operationId),
       readCheckpointGeneration: (scope) async =>
           (await durable.readCheckpoint(scope)).generation,
       retainConfirmedReceiptsForReplay: true,
@@ -956,6 +966,13 @@ final class CloudSyncProductionLocalSendAdapter {
       warmReadAuthentication: (token) => FrbCloudSyncNativeAuthBinding()
           .warmReadAuthenticationUnderWriterPause(
             cloudMessagesClient: auth.cloudMessagesClient, pauseToken: token),
+    );
+    receivedCreates = CloudSyncReceivedCreateAdapter(
+      store: objectBox, durable: durable, journal: receivedJournal, transport: transport,
+      auth: auth, storageDirectory: _privateStorageDirectory, readSession: identitySession,
+      validate: () => fence.run(() {}, accountFingerprint: scope.accountFingerprint),
+      stillCurrent: () => _stillCurrent() && !objectBox.isClosed() &&
+          identical(objectBox, Database.store) && identical(auth.cloudMessagesClient, _readActiveClient()),
     );
     Future<(frb_api.CloudSyncAttachmentParentGroupProof, String)?> openParentGroup(
       CloudSyncRestoredGroupChatProof? Function() capture,
@@ -1435,12 +1452,46 @@ final class CloudSyncProductionLocalSendAdapter {
           : await consumer.runExactIntent(
               intentId: selection.intentId, validateSelection: validateSelection,
             );
+      var receivedAdmitted = 0;
+      var receivedDeferred = 0;
+      var receivedBlocked = false;
+      var receivedMore = false;
+      final receivedReasons = <String, int>{};
+      if (selection == null && !result.outboxBlocked &&
+          CloudSyncDevGate.receivedArchiveUploadsEnabled &&
+          CloudSyncDevGate.receivedArchiveCaptureEnabled &&
+          CloudSyncDevGate.receivedArchiveInspectionEnabled) {
+        await interlock.runExclusive(kind: CloudKitOperationKind.v2ReadWrite, action: () async {
+          await fence.run(() {}, accountFingerprint: scope.accountFingerprint);
+          if (!await drainExisting()) { receivedBlocked = true; return; }
+          final candidates = receivedJournal.readCreateCandidates(currentAuth: auth, limit: 5);
+          receivedMore = candidates.length == 5;
+          for (final candidate in candidates) {
+            await fence.run(() => receivedJournal.markReadConsidered(
+                intentId: candidate.intentId, now: DateTime.now().toUtc()),
+              accountFingerprint: scope.accountFingerprint);
+            try {
+              await receivedCreates.admit(scope, candidate.intentId);
+              receivedAdmitted++;
+            } catch (error) {
+              receivedDeferred++;
+              final code = cloudSyncV2SafeFailureCode(error);
+              receivedReasons.update(code, (count) => count + 1, ifAbsent: () => 1);
+            }
+            await fence.run(() {}, accountFingerprint: scope.accountFingerprint);
+            if (!await drainExisting()) { receivedBlocked = true; break; }
+          }
+        });
+      }
       return CloudSyncLocalSendConsumerResult(
-        admitted: result.admitted, deferred: result.deferred,
-        outboxBlocked: result.outboxBlocked,
-        candidateLimitReached: result.candidateLimitReached,
+        admitted: result.admitted + receivedAdmitted, deferred: result.deferred + receivedDeferred,
+        outboxBlocked: result.outboxBlocked || receivedBlocked,
+        candidateLimitReached: result.candidateLimitReached || receivedMore,
         chatReadbackPending: chatReadbackPending && !result.outboxBlocked,
-        deferredReasons: result.deferredReasons,
+        deferredReasons: {
+          for (final key in {...result.deferredReasons.keys, ...receivedReasons.keys})
+            key: (result.deferredReasons[key] ?? 0) + (receivedReasons[key] ?? 0),
+        },
         existingHistoryDiagnostics: existingHistoryDiagnostics.snapshot(),
       );
       },

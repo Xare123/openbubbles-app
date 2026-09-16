@@ -9,6 +9,7 @@ import 'cloud_shadow_journal_budget.dart';
 import 'cloud_sync_local_send_journal.dart';
 import 'cloud_sync_local_send_source_binding.dart';
 import 'cloud_sync_received_archive_source_binding.dart';
+import 'cloud_sync_received_archive_journal.dart';
 import 'cloud_sync_received_record_observation.dart';
 import 'cloud_sync_local_mutation_journal.dart';
 import 'cloud_sync_attachment_upload_journal.dart';
@@ -54,12 +55,14 @@ class ObjectBoxCloudSyncStore
     required this._protector,
     DateTime Function()? clock,
     CloudSyncLocalSendJournal? localSendJournal,
+    CloudSyncReceivedArchiveJournal? receivedArchiveJournal,
     CloudSyncLocalMutationJournal? localMutationJournal,
     CloudSyncAttachmentUploadJournal? attachmentUploadJournal,
     this._readChatIdentityEvidence,
     CloudSyncSemanticDiagnosticRecorder? recordExistingHistoryDiagnostic,
   }) : _store = store,
        _localSendJournal = localSendJournal,
+       _receivedArchiveJournal = receivedArchiveJournal,
        _localMutationJournal = localMutationJournal,
        // Keep the public named parameter stable while the field stays private.
        // ignore: prefer_initializing_formals
@@ -81,6 +84,9 @@ class ObjectBoxCloudSyncStore
        _runs = store.box<CloudSyncRunEntity>() {
     if (localSendJournal != null && !localSendJournal.isBoundToStore(store)) {
       throw StateError('cloud_sync_local_send_adoption_store_mismatch');
+    }
+    if (receivedArchiveJournal != null && !receivedArchiveJournal.isBoundToStore(store)) {
+      throw StateError('cloud_sync_received_archive_admission_changed');
     }
     if (localMutationJournal != null &&
         !localMutationJournal.isBoundToStore(store)) {
@@ -130,6 +136,7 @@ class ObjectBoxCloudSyncStore
   // Explicitly scoped by the production local-send session. Generic/legacy
   // stores never infer local origin or relax their existing projection gate.
   final CloudSyncLocalSendJournal? _localSendJournal;
+  final CloudSyncReceivedArchiveJournal? _receivedArchiveJournal;
   final CloudSyncLocalMutationJournal? _localMutationJournal;
   final CloudSyncAttachmentUploadJournal? _attachmentUploadJournal;
   final CloudSyncProtector _protector;
@@ -2016,6 +2023,26 @@ class ObjectBoxCloudSyncStore
     required CloudRecordMapEntry recordMapping,
   }) async => _admitProtectedOutboundCreate(draft, recordMapping);
 
+  /// Received origin is distinct from local-send success. The caller holds a
+  /// fresh absent-only native stage; this transaction pins its original source,
+  /// parent, generation and operation while retaining all unknown outcomes.
+  CloudOutboxOperation admitProtectedReceivedCreate({
+    required CloudOutboxDraft draft,
+    required CloudRecordMapEntry recordMapping,
+    required CloudSyncReceivedArchiveJournal journal,
+    required CloudSyncReceivedArchiveAdmissionSource source,
+    required CloudSyncNativeAuthSnapshot currentAuth,
+    required bool Function() stillCurrent,
+  }) => _admitProtectedOutboundCreate(draft, recordMapping,
+    receivedArchiveSource: source,
+    validateFreshDependency: () => journal.validateCreateAdmission(
+      transactionStore: _store, scope: draft.scope, expected: source,
+      currentAuth: currentAuth, stillCurrent: stillCurrent),
+    onAdopt: (operation) => journal.adoptInOutboxTransaction(
+      transactionStore: _store, expected: source, currentAuth: currentAuth,
+      stillCurrent: stillCurrent, operation: operation),
+  );
+
   /// Atomically consumes one reflected local edit/unsend into a protected
   /// conditional-update outbox row. The mapped predecessor is re-read inside
   /// this exact transaction; a changed ETag, raw record, generation, identity,
@@ -2663,6 +2690,7 @@ class ObjectBoxCloudSyncStore
     void Function(CloudOutboxOperation)? onAdopt,
     CloudSyncLocalSendAdmissionSource? localSendSource,
     void Function()? validateFreshDependency,
+    CloudSyncReceivedArchiveAdmissionSource? receivedArchiveSource,
     CloudSyncOutboundChatOrigin? chatOrigin,
     CloudSyncLocalSendAdmissionSource? chatLocalSendSource,
     CloudSyncChatIdentityEvidence? chatIdentityEvidence,
@@ -2827,6 +2855,13 @@ class ObjectBoxCloudSyncStore
           allowRetainedForFreshCreate: true,
           freshRecordIdHash: draft.serverRecordIdHash,
         );
+      } else if (receivedArchiveSource != null) {
+        if (_receivedArchiveJournal == null || validateFreshDependency == null) {
+          throw StateError('cloud_sync_received_archive_journal_required');
+        }
+        validateFreshDependency();
+        _requireMessagesCloudAccountProjectionReadyLocked(draft.scope,
+          allowRetainedForFreshCreate: true, freshRecordIdHash: draft.serverRecordIdHash);
       } else if (isAttachmentCreate) {
         // Only the completed-upload journal reaches this branch. Its fresh,
         // IDS-confirmed source has the same retained-history treatment as a
@@ -4220,6 +4255,42 @@ class ObjectBoxCloudSyncStore
     });
   }
 
+  CloudSyncReceivedArchiveIntentEntity? _readReceivedIntentForOperation(String operationId) {
+    final query = _store.box<CloudSyncReceivedArchiveIntentEntity>()
+        .query(CloudSyncReceivedArchiveIntentEntity_.admittedOperationId.equals(operationId))
+        .build()..limit = 2;
+    try {
+      final values = query.find();
+      if (values.length > 1) throw StateError('cloud_sync_received_archive_admitted_operation_changed');
+      return values.isEmpty ? null : values.single;
+    } finally { query.close(); }
+  }
+
+  CloudOutboxOperation? readReceivedArchiveOperation(CloudSyncScope scope, String operationId) =>
+      _store.runInTransaction(TxMode.read, () {
+    final intent = _readReceivedIntentForOperation(operationId);
+    if (intent == null) return null;
+    final entity = _findOutboxByOperationIdLocked(operationId);
+    final journal = _receivedArchiveJournal;
+    if (entity == null || journal == null) {
+      throw StateError('cloud_sync_received_archive_admitted_operation_changed');
+    }
+    final operation = _outboxFromEntity(scope, entity);
+    if (journal.readAdoptedSource(transactionStore: _store, operation: operation) == null) {
+      throw StateError('cloud_sync_received_archive_admitted_operation_changed');
+    }
+    final checkpoint = _findCheckpointByKeyLocked(_scopeKey(scope));
+    final map = cloudSyncFindRecordMap(store: _store, scope: scope,
+      generation: operation.checkpointGeneration, logicalEntityKeyHash: operation.logicalEntityKeyHash,
+      serverRecordIdHash: operation.serverRecordIdHash);
+    if (checkpoint?.generation != operation.checkpointGeneration || map == null ||
+        ((operation.status != CloudOutboxStatus.confirmed || operation.protectedLeaseReference != null) &&
+            map.encryptedServerRecordId != operation.encryptedPayloadReference)) {
+      throw StateError('cloud_sync_received_archive_admitted_operation_changed');
+    }
+    return operation;
+  });
+
   /// Exact indexed lookup for an already-adopted local send. This neither
   /// leases nor restages the operation, regardless of its current outcome.
   CloudOutboxOperation readAdoptedLocalSendOperation(
@@ -5435,6 +5506,17 @@ class ObjectBoxCloudSyncStore
     CloudOutboxOperationEntity entity,
   ) {
     final operation = _outboxFromEntity(scope, entity);
+    if (scope.zone == 'messageManateeZone') {
+      final received = _readReceivedIntentForOperation(operation.operationId);
+      if (received != null) {
+        final journal = _receivedArchiveJournal;
+        if (journal == null) throw StateError('cloud_sync_received_archive_journal_required');
+        journal.requireAdoptedDispatch(transactionStore: _store, operation: operation);
+        _requireMessagesCloudAccountProjectionReadyLocked(scope,
+          allowRetainedForFreshCreate: true, freshRecordIdHash: operation.serverRecordIdHash);
+        return;
+      }
+    }
     if (_isMessagesCloudSemanticScope(scope) &&
         scope.zone == 'messageManateeZone' &&
         operation.payloadVersion == cloudSyncMessageUpdatePayloadVersion) {

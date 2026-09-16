@@ -8465,6 +8465,10 @@ class RustPushService extends GetxService {
               _cloudSyncV2ReceivedPassDeferred = true;
             }
             Logger.info('Cloud Sync V2 received record observation=${observation.state.name}');
+            if (CloudSyncDevGate.receivedArchiveUploadsEnabled &&
+                observation.state == CloudSyncReceivedRecordState.absent) {
+              _queueCloudSyncV2LocalSends(CloudSyncTrigger.localOutbox);
+            }
           }
         } catch (error) {
           if (!stillCurrent()) rethrow;

@@ -1,7 +1,12 @@
 import 'dart:io';
 import 'dart:typed_data';
 import 'package:bluebubbles/database/models.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_operation_identity.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_manual_shadow_sampler.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_models.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_outbound_chat_binding.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_persistent_keys.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_protector.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_received_archive_identity.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_received_archive_journal.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_received_archive_source_binding.dart';
@@ -11,8 +16,12 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_received_ins
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_received_record_observation.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_writer_authority.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_writer_ownership.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/objectbox_cloud_sync_store.dart';
 import 'package:bluebubbles/src/rust/api/api.dart' as api;
 import 'package:flutter_test/flutter_test.dart';
+
+import 'cloud_sync_restored_chat_test_fixture.dart';
+import 'cloud_sync_test_helpers.dart' show testSubmissionIdentity;
 
 String _a43(String c) => List.filled(43, c).join();
 String _h64(String c) => List.filled(64, c).join();
@@ -1172,6 +1181,629 @@ void main() {
     expect(store.box<CloudOutboxOperationEntity>().count(), 0);
   });
 
+  group('received create admission', () {
+    late ObjectBoxCloudSyncStore durable;
+    late CloudSyncNativeAuthSnapshot auth;
+    late int intentId;
+    late CloudSyncReceivedArchiveSourceBinding originalSource;
+    late CloudSyncReceivedRecordObservation observation;
+    const guid = 'received-create-original';
+
+    CloudSyncScope scopeFor(String zone) => CloudSyncScope(
+      accountFingerprint: _account,
+      container: 'com.apple.messages.cloud',
+      database: 'private',
+      zone: zone,
+      persistenceLane: CloudSyncPersistenceLane.semantic,
+    );
+    final scope = scopeFor('messageManateeZone');
+
+    ObjectBoxCloudSyncStore bindDurable() => ObjectBoxCloudSyncStore(
+      store: store,
+      protector: _ReceivedTestProtector(),
+      receivedArchiveJournal: journal,
+      clock: () => _time(4),
+    );
+
+    Future<void> completeAccount(ObjectBoxCloudSyncStore target) async {
+      for (final zone in const [
+        'chatManateeZone',
+        'messageManateeZone',
+        'attachmentManateeZone',
+      ]) {
+        await target.recordPullSuccess(scopeFor(zone), now: _time(1));
+      }
+    }
+
+    setUp(() async {
+      auth = _auth(Object());
+      durable = bindDurable();
+      await completeAccount(durable);
+      final chatScope = scopeFor('chatManateeZone');
+      final applied = await seedSyntheticRestoredChatAppliedSource(
+        objectBox: store,
+        store: durable,
+        chatScope: chatScope,
+        now: _time(1),
+      );
+      await seedSyntheticRestoredChatProof(
+        objectBox: store,
+        store: durable,
+        chatScope: chatScope,
+        chat: chat,
+        appliedSource: applied,
+        now: _time(1),
+      );
+    });
+
+    Future<void> seedOrigin({
+      CloudSyncReceivedRecordState disposition =
+          CloudSyncReceivedRecordState.absent,
+    }) async {
+      originalSource = _staged(guid, 'original', chat);
+      intentId = journal.saveReceivedCapture(
+        wire: _wire(
+          id: guid,
+          text: 'original',
+          sentAt: _time(2).millisecondsSinceEpoch,
+        ),
+        liveContext: _live,
+        localChatId: chat.id!,
+        persistMessage: () =>
+            store.box<Message>().put(_fresh(guid, 'original', chat)),
+        source: originalSource,
+        capturedAuth: auth,
+        stillCurrent: () => true,
+        now: _time(3),
+      );
+      journal.markSourceMaterialized(
+        intentId: intentId,
+        source: originalSource,
+        currentAuth: auth,
+        stillCurrent: () => true,
+      );
+      final found = const {
+        CloudSyncReceivedRecordState.equivalent,
+        CloudSyncReceivedRecordState.needsProjection,
+        CloudSyncReceivedRecordState.conflictingIdentity,
+      }.contains(disposition);
+      observation = CloudSyncReceivedRecordObservation(
+        state: disposition,
+        accountFingerprint: _account,
+        protectedStoreIdentity: _storeId,
+        messageGuidHash: originalSource.messageGuidHash,
+        sourceSha256: originalSource.sourceSha256,
+        logicalEntityKeyHash: _a43('L'),
+        serverRecordIdHash: _a43('M'),
+        generation: (await durable.readCheckpoint(scope)).generation,
+        parentBinding: requireCloudSyncRestoredDirectChat(
+          store: store,
+          messageScope: scope,
+          message: _byGuid(guid)!,
+        ),
+        observedAtMs: _time(4).millisecondsSinceEpoch,
+        etagHash: found ? _a43('E') : null,
+        rawReference: found ? 'obcs2.ref.${_a43('W')}' : null,
+        rawLeaseReference: found ? _lease('f') : null,
+      );
+      await CloudSyncReceivedInspectionCoordinator(
+        journal: journal,
+        transport: _ReceivedLeaseTransport(),
+        auth: auth,
+        validate: () async {},
+        stillCurrent: () => true,
+      ).inspect<int>(
+        intentId: intentId,
+        prepareNative: (_) async => 7,
+        stageNative: (_) async => observation,
+        validateParent: () {},
+        expectedGeneration: observation.generation,
+        expectedParentBinding: observation.parentBinding,
+      );
+    }
+
+    CloudSyncReceivedArchiveIntentEntity intent() =>
+        store.box<CloudSyncReceivedArchiveIntentEntity>().get(intentId)!;
+
+    CloudSyncReceivedArchiveAdmissionSource admissionSource() =>
+        journal.readForCreateAdmission(intentId: intentId, currentAuth: auth);
+
+    CloudOutboxDraft draft({String? recordHash}) => CloudOutboxDraft(
+      scope: scope,
+      logicalEntityKeyHash: observation.logicalEntityKeyHash,
+      action: CloudOutboxAction.save,
+      payloadVersion: cloudSyncOutboundPayloadVersion,
+      dependencyOperationIds: const {},
+      createdAt: _time(3),
+      encryptedPayloadReference: 'obcs2.ref.${_a43('V')}',
+      payloadSha256: _h64('c'),
+      serverRecordIdHash: recordHash ?? observation.serverRecordIdHash,
+      protectedLeaseReference: _lease('d'),
+    );
+
+    CloudRecordMapEntry mapping(CloudOutboxDraft value) => CloudRecordMapEntry(
+      scope: value.scope,
+      logicalEntityKeyHash: value.logicalEntityKeyHash,
+      serverRecordIdHash: value.serverRecordIdHash!,
+      encryptedServerRecordId: value.encryptedPayloadReference!,
+      updatedAt: value.createdAt,
+    );
+
+    CloudOutboxOperation admit({
+      CloudSyncReceivedArchiveAdmissionSource? source,
+      CloudOutboxDraft? value,
+      CloudSyncNativeAuthSnapshot? currentAuth,
+      bool Function()? stillCurrent,
+    }) {
+      final candidate = value ?? draft();
+      return durable.admitProtectedReceivedCreate(
+        draft: candidate,
+        recordMapping: mapping(candidate),
+        journal: journal,
+        source: source ?? admissionSource(),
+        currentAuth: currentAuth ?? auth,
+        stillCurrent: stillCurrent ?? () => true,
+      );
+    }
+
+    void expectUnadopted() {
+      expect(intent().state, 2);
+      expect(intent().admittedOperationId, isNull);
+      expect(intent().admittedBinding, isNull);
+      expect(store.box<CloudOutboxOperationEntity>().count(), 0);
+      expect(recordMapCountForZone(store, scope.zone), 0);
+      expect(recordMapCountForZone(store, 'chatManateeZone'), 1);
+    }
+
+    void addOutgoingOverlap({required bool byGuid}) {
+      store.box<CloudSyncLocalSendIntentEntity>().put(
+        CloudSyncLocalSendIntentEntity(
+          intentKey: 'received-create-outgoing-overlap',
+          accountFingerprint: _account,
+          writerEpoch: snap.epoch,
+          localMessageId: intent().localMessageId + (byGuid ? 999 : 0),
+          messageGuidHash: byGuid
+              ? CloudSyncReceivedArchiveJournal.localSendGuidHashFor(guid)
+              : _h64('e'),
+          sourceSha256: _h64('a'),
+          createdAtMs: _time(3).millisecondsSinceEpoch,
+          updatedAtMs: _time(3).millisecondsSinceEpoch,
+        ),
+      );
+    }
+
+    test('atomically owns source and outbox without forging local send success',
+        () async {
+      await seedOrigin();
+      final received = _byGuid(guid)!..dateRead = _time(5);
+      store.box<Message>().put(received);
+      final source = admissionSource();
+      final operation = admit(source: source);
+      expect(operation.operationId, CloudOperationIdentity.forInitialCreate(
+        scope: scope,
+        logicalEntityKeyHash: observation.logicalEntityKeyHash,
+        payloadVersion: cloudSyncOutboundPayloadVersion,
+      ));
+      expect(intent().state, 3);
+      expect(intent().admittedOperationId, operation.operationId);
+      expect(intent().admittedBinding, isNotEmpty);
+      expect(intent().protectedSourceBinding, originalSource.encode());
+      expect(intent().recordObservationBinding, observation.encode());
+      expect((await durable.readOutboxEntries(scope)).single
+          .sameDurableSnapshotAs(operation), isTrue);
+      final messageMap = store.box<CloudRecordMapEntity>().getAll()
+          .singleWhere((row) => row.zone == scope.zone);
+      expect(messageMap.serverRecordIdHash, observation.serverRecordIdHash);
+      expect(messageMap.encryptedServerRecordId, draft().encryptedPayloadReference);
+      expect(messageMap.generation, observation.generation);
+      store.runInTransaction(TxMode.read, () {
+        journal.requireAdoptedDispatch(transactionStore: store, operation: operation);
+        expect(journal.readAdoptedSource(transactionStore: store, operation: operation)!
+            .source.encode(), originalSource.encode());
+      });
+      final retained = _byGuid(guid)!;
+      expect(retained.text, 'original');
+      expect(retained.attributedBody.single.string, 'original');
+      expect(retained.dateRead?.toUtc(), _time(5));
+      expect(retained.dateEdited, isNull);
+      expect(retained.isFromMe, isFalse);
+      expect(retained.dateCreated?.toUtc(), _time(2));
+      expect(retained.sendingServiceId, isNull);
+      expect(retained.ckRecordId, isNull);
+      expect(store.box<CloudSyncLocalSendIntentEntity>().count(), 0);
+    });
+
+    for (final afterAdoption in [false, true]) {
+      test('rolls back outbox, map and ownership ${afterAdoption ? 'after' : 'before'} journal adoption',
+          () async {
+        await seedOrigin();
+        final source = admissionSource();
+        final revision = (await durable.readCheckpoint(scope)).mutationRevisionCounter;
+        var sawTentativeWrites = false;
+        if (afterAdoption) {
+          // ObjectBox rejects Never-returning callbacks before opening a
+          // transaction. Explicit void makes the injected abort run only
+          // after the actual outbox, map and ownership writes below.
+          void abortAfterAdoption() {
+            admit(source: source);
+            expect(intent().state, 3);
+            expect(store.box<CloudOutboxOperationEntity>().count(), 1);
+            expect(recordMapCountForZone(store, scope.zone), 1);
+            sawTentativeWrites = true;
+            throw StateError('abort caller transaction');
+          }
+          expect(() => store.runInTransaction<void>(
+            TxMode.write, abortAfterAdoption,
+          ), throwsA(_fails('abort caller transaction')));
+        } else {
+          expect(() => admit(source: source, stillCurrent: () {
+            if (store.box<CloudOutboxOperationEntity>().count() == 1) {
+              expect(recordMapCountForZone(store, scope.zone), 1);
+              expect(intent().state, 2);
+              sawTentativeWrites = true;
+              return false;
+            }
+            return true;
+          }), throwsA(_fails('cloud_sync_received_archive_admission_changed')));
+        }
+        expect(sawTentativeWrites, isTrue);
+        expectUnadopted();
+        expect(intent().protectedSourceBinding, originalSource.encode());
+        expect(intent().recordObservationBinding, observation.encode());
+        expect((await durable.readCheckpoint(scope)).mutationRevisionCounter, revision);
+        // The same protected envelope remains usable after rollback; no new
+        // operation identity or source is needed to recover this local failure.
+        final operation = admit(source: source);
+        expect(operation.mutationRevision, revision + 1);
+        expect(intent().admittedOperationId, operation.operationId);
+      });
+    }
+
+    test('rejects ownership adoption through a different Store', () async {
+      await seedOrigin();
+      final source = admissionSource();
+      final other = await openStore(directory: '${directory.path}/other-store');
+      try {
+        expect(() => ObjectBoxCloudSyncStore(
+          store: other,
+          protector: _ReceivedTestProtector(),
+          receivedArchiveJournal: journal,
+        ), throwsA(_fails('cloud_sync_received_archive_admission_changed')));
+        final otherAuthority = ObjectBoxCloudKitWriterAuthority.forTest(
+          store: other,
+          buildDecision: CloudKitWriterOwnership.resolve('v2'),
+        );
+        final disabled = otherAuthority.initializeDisabled(_scope, now: _time(0));
+        final otherOwner = otherAuthority.provisionInitialOwner(
+          _scope,
+          owner: CloudKitWriterOwner.v2,
+          expectedEpoch: disabled.epoch,
+          evidence: _evidence,
+          now: _time(1),
+        );
+        final otherJournal = CloudSyncReceivedArchiveJournal(
+          store: other,
+          authority: otherAuthority,
+          authoritySnapshot: otherOwner,
+        );
+        final otherDurable = ObjectBoxCloudSyncStore(
+          store: other,
+          protector: _ReceivedTestProtector(),
+          receivedArchiveJournal: otherJournal,
+        );
+        await completeAccount(otherDurable);
+        final value = draft();
+        expect(() => otherDurable.admitProtectedReceivedCreate(
+          draft: value,
+          recordMapping: mapping(value),
+          journal: journal,
+          source: source,
+          currentAuth: auth,
+          stillCurrent: () => true,
+        ), throwsA(_fails('cloud_sync_received_archive_admission_changed')));
+        expect(other.box<CloudOutboxOperationEntity>().count(), 0);
+        expect(other.box<CloudRecordMapEntity>().count(), 0);
+        expect((await otherDurable.readCheckpoint(scope)).mutationRevisionCounter, 0);
+        expectUnadopted();
+        expect(intent().protectedSourceBinding, originalSource.encode());
+      } finally {
+        other.close();
+      }
+    });
+
+    for (final disposition in [
+      CloudSyncReceivedRecordState.equivalent,
+      CloudSyncReceivedRecordState.needsProjection,
+      CloudSyncReceivedRecordState.conflictingIdentity,
+      CloudSyncReceivedRecordState.unresolved,
+    ]) {
+      test('${disposition.name} never acquires create ownership', () async {
+        await seedOrigin(disposition: disposition);
+        final before = intent().recordObservationBinding;
+        expect(() => admit(), throwsA(_fails('cloud_sync_received_archive_not_absent')));
+        expect(intent().state,
+            disposition == CloudSyncReceivedRecordState.unresolved ? 1 : 2);
+        expect(intent().admittedOperationId, isNull);
+        expect(intent().recordObservationBinding, before);
+        expect(intent().protectedSourceBinding, originalSource.encode());
+        expect(store.box<CloudOutboxOperationEntity>().count(), 0);
+        expect(recordMapCountForZone(store, scope.zone), 0);
+        expect(journal.readCreateCandidates(currentAuth: auth), isEmpty);
+        if (observation.rawReference != null) {
+          expect(journal.readLiveReceivedArchiveReferences(maximumCount: 10),
+              contains(observation.rawReference));
+        }
+      });
+    }
+
+    for (final change in [
+      'account', 'protected store', 'source', 'generation', 'parent',
+      'outgoing row', 'outgoing GUID', 'record identity', 'edit', 'unsend',
+    ]) {
+      test('rejects changed $change without consuming source or revision', () async {
+        await seedOrigin();
+        final source = admissionSource();
+        var currentAuth = auth;
+        var value = draft();
+        Matcher failure = _fails('cloud_sync_received_archive_not_ready');
+        switch (change) {
+          case 'account':
+          case 'protected store':
+            currentAuth = CloudSyncNativeAuthSnapshot.fromNative(
+              nativeSessionId: auth.nativeSessionId,
+              accountFingerprint: change == 'account' ? _a43('B') : _account,
+              protectedStoreIdentity: change == 'protected store'
+                  ? 'obcs2.store.${_a43('X')}' : _storeId,
+              cloudMessagesClient: Object(),
+            );
+          case 'source':
+            final replacement = _staged(guid, 'original', chat, ref: 'Q', lease: 'b');
+            final row = intent()..protectedSourceBinding = replacement.encode();
+            store.box<CloudSyncReceivedArchiveIntentEntity>().put(row);
+            failure = _fails('cloud_sync_received_archive_admission_changed');
+          case 'generation':
+            final row = store.box<CloudSyncCheckpointEntity>().getAll()
+                .singleWhere((row) => row.checkpointKey == cloudSyncPersistentScopeKey(scope));
+            row.generation++;
+            store.box<CloudSyncCheckpointEntity>().put(row);
+            failure = _fails('cloud_sync_received_archive_admission_changed');
+          case 'parent':
+            final row = store.box<CloudRecordMapEntity>().getAll()
+                .singleWhere((row) => row.zone == 'chatManateeZone');
+            row.etagHash = _a43('X');
+            store.box<CloudRecordMapEntity>().put(row);
+            failure = isA<CloudSyncFailure>().having((error) => error.safeCode,
+                'safeCode', 'cloud_sync_local_send_chat_not_ready');
+          case 'outgoing row':
+          case 'outgoing GUID':
+            addOutgoingOverlap(byGuid: change == 'outgoing GUID');
+          case 'record identity':
+            value = draft(recordHash: _a43('X'));
+            failure = _fails('cloud_sync_received_archive_admission_changed');
+          case 'edit':
+          case 'unsend':
+            final message = _byGuid(guid)!;
+            if (change == 'edit') {
+              message
+                ..text = 'received edit'
+                ..attributedBody = [AttributedBody.raw('received edit')]
+                ..dateEdited = _time(5);
+            } else {
+              message.messageSummaryInfo = [
+                MessageSummaryInfo.empty()..retractedParts.add(0),
+              ];
+            }
+            store.box<Message>().put(message);
+            failure = _fails('cloud_sync_received_archive_admitted_source_changed');
+        }
+        final bindingBefore = intent().protectedSourceBinding;
+        final revision = (await durable.readCheckpoint(scope)).mutationRevisionCounter;
+        expect(() => admit(source: source, value: value, currentAuth: currentAuth),
+            throwsA(failure));
+        expectUnadopted();
+        expect(intent().protectedSourceBinding, bindingBefore);
+        expect(intent().recordObservationBinding, observation.encode());
+        expect((await durable.readCheckpoint(scope)).mutationRevisionCounter, revision);
+      });
+    }
+
+    test('fresh Found retires cached Absent and survives lost raw commit across reopen',
+        () async {
+      await seedOrigin();
+      final absent = journal.readCreateCandidates(currentAuth: auth).single;
+      final originalUpdatedAt = intent().updatedAtMs;
+      journal.markReadConsidered(intentId: intentId, now: _time(5));
+      expect(intent().updatedAtMs, greaterThan(originalUpdatedAt));
+      final found = CloudSyncReceivedRecordObservation(
+        state: CloudSyncReceivedRecordState.equivalent,
+        accountFingerprint: _account,
+        protectedStoreIdentity: _storeId,
+        messageGuidHash: originalSource.messageGuidHash,
+        sourceSha256: originalSource.sourceSha256,
+        logicalEntityKeyHash: observation.logicalEntityKeyHash,
+        serverRecordIdHash: observation.serverRecordIdHash,
+        generation: observation.generation,
+        parentBinding: observation.parentBinding,
+        observedAtMs: _time(6).millisecondsSinceEpoch,
+        etagHash: _a43('E'),
+        rawReference: 'obcs2.ref.${_a43('W')}',
+        rawLeaseReference: _lease('f'),
+      );
+      final transport = _ReceivedLeaseTransport()..failCommit = true;
+      await expectLater(transport.runLocalProtectedStoreExclusive(() async {
+        journal.replaceAbsenceWithFound(
+          expected: absent,
+          found: found,
+          currentAuth: auth,
+          stillCurrent: () => true,
+          validateParent: () {},
+        );
+        await transport.commitProtectedPageLease(found.rawLeaseReference!, {
+          found.rawReference!,
+        });
+      }), throwsA(_fails('synthetic lost commit response')));
+      expect(intent().state, 1);
+      expect(intent().recordObservationBinding, found.encode());
+      expect(journal.readCreateCandidates(currentAuth: auth), isEmpty);
+      expect(journal.readReadyPage(currentAuth: auth).ready.single.id, intentId);
+      expect(() => admit(source: absent),
+          throwsA(_fails('cloud_sync_received_archive_not_absent')));
+      expect(store.box<CloudOutboxOperationEntity>().count(), 0);
+      await reopen();
+      durable = bindDurable();
+      final resumedTransport = _ReceivedLeaseTransport();
+      final recovered = await CloudSyncReceivedInspectionCoordinator(
+        journal: journal,
+        transport: resumedTransport,
+        auth: auth,
+        validate: () async {},
+        stillCurrent: () => true,
+      ).inspect<int>(
+        intentId: intentId,
+        prepareNative: (_) async => fail('retained Found must not re-prepare'),
+        stageNative: (_) async => fail('retained Found must not restage'),
+        validateParent: () {},
+        expectedGeneration: found.generation,
+        expectedParentBinding: found.parentBinding,
+      );
+      expect(recovered.encode(), found.encode());
+      expect(resumedTransport.committed, [found.rawLeaseReference]);
+      expect(resumedTransport.commitSawLocalHeld, [true]);
+      expect(resumedTransport.rolledBack, isEmpty);
+      expect(intent().state, 2);
+      expect(journal.readCreateCandidates(currentAuth: auth), isEmpty);
+      expect(() => journal.replaceAbsenceWithFound(
+        expected: absent,
+        found: found,
+        currentAuth: auth,
+        stillCurrent: () => true,
+        validateParent: () {},
+      ), throwsA(_fails('cloud_sync_received_archive_not_absent')));
+      expect(intent().recordObservationBinding, found.encode());
+      expect(journal.readLiveReceivedArchiveReferences(maximumCount: 10),
+          containsAll([originalSource.protectedReference, found.rawReference]));
+      expect(store.box<CloudOutboxOperationEntity>().count(), 0);
+      expect(recordMapCountForZone(store, scope.zone), 0);
+    });
+
+    for (final unknown in [false, true]) {
+      test('restart preserves exact ${unknown ? 'unknownOutcome' : 'pending'} operation for source readback',
+          () async {
+        await seedOrigin();
+        final source = admissionSource();
+        var operation = admit(source: source);
+        if (unknown) {
+          final leased = await durable.leaseEligibleOutbox(scope,
+            now: _time(5), limit: 1, leaseId: 'received-submit',
+            leaseDuration: const Duration(minutes: 1),
+            allowedActions: const {CloudOutboxAction.save});
+          expect(leased.single.operationId, operation.operationId);
+          operation = (await durable.markOutboxSubmissionStarted(scope,
+            leaseId: 'received-submit',
+            submissionIdentity: testSubmissionIdentity([operation.operationId]),
+            now: _time(6))).single;
+          expect(operation.status, CloudOutboxStatus.unknownOutcome);
+        }
+        // Persisted leases expose their expiry but not the caller's plaintext
+        // lease ID, so compare the durable snapshot without that session hint.
+        final expected = operation.copyWith(clearLeaseId: true);
+        final admittedBinding = intent().admittedBinding;
+        final display = _byGuid(guid)!..dateRead = _time(7);
+        if (unknown) {
+          // A lost remote outcome must still be readable after local deletion.
+          display
+            ..text = 'edited after admission'
+            ..attributedBody = [AttributedBody.raw('edited after admission')]
+            ..dateEdited = _time(7)
+            ..dateDeleted = _time(8);
+          final parent = store.box<Chat>().get(intent().localChatId)!
+            ..dateDeleted = _time(8);
+          store.box<Chat>().put(parent);
+        }
+        store.box<Message>().put(display);
+        await reopen();
+        durable = bindDurable();
+        final recovered = (await durable.readOutboxEntries(scope)).single;
+        expect(recovered.sameDurableSnapshotAs(expected), isTrue);
+        final retained = store.runInTransaction(TxMode.read, () =>
+            journal.readAdoptedSource(transactionStore: store, operation: recovered))!;
+        expect(retained.source.encode(), originalSource.encode());
+        expect(retained.observation.encode(), observation.encode());
+        expect(retained.admittedOperationId, expected.operationId);
+        expect(intent().admittedBinding, admittedBinding);
+        expect(journal.readReadyPage(currentAuth: auth).ready, isEmpty);
+        expect(() => admissionSource(),
+            throwsA(_fails('cloud_sync_received_archive_not_ready')));
+        if (unknown) {
+          expect(() => store.runInTransaction(TxMode.read, () =>
+              journal.requireAdoptedDispatch(transactionStore: store, operation: recovered)),
+              throwsA(_fails('cloud_sync_received_archive_admitted_source_changed')));
+          expect(await durable.leaseEligibleOutbox(scope,
+            now: _time(130), limit: 1, leaseId: 'must-not-resubmit',
+            leaseDuration: const Duration(minutes: 1),
+            allowedActions: const {CloudOutboxAction.save}), isEmpty);
+          final readback = (await durable.leaseUnknownOutcomes(scope,
+            now: _time(130), limit: 1, leaseId: 'received-readback',
+            leaseDuration: const Duration(minutes: 1))).single;
+          expect(readback.status, CloudOutboxStatus.unknownOutcome);
+          expect(readback.operationId, expected.operationId);
+          expect(readback.appleRequestUuid, expected.appleRequestUuid);
+          expect(readback.appleOperationUuid, expected.appleOperationUuid);
+          expect(readback.encryptedPayloadReference, expected.encryptedPayloadReference);
+          expect(readback.payloadSha256, expected.payloadSha256);
+          expect(readback.protectedLeaseReference, expected.protectedLeaseReference);
+          expect(journal.readAdoptedSource(transactionStore: store, operation: readback)!
+              .source.encode(), originalSource.encode());
+        } else {
+          final leased = await durable.leaseEligibleOutbox(scope,
+            now: _time(9), limit: 1, leaseId: 'received-resume',
+            leaseDuration: const Duration(minutes: 1),
+            allowedActions: const {CloudOutboxAction.save});
+          expect(leased.single.operationId, expected.operationId);
+          expect(leased.single.encryptedPayloadReference, expected.encryptedPayloadReference);
+        }
+        expect(_byGuid(guid)!.text, unknown ? 'edited after admission' : 'original');
+        expect(_byGuid(guid)!.dateRead?.toUtc(), _time(7));
+        expect(store.box<CloudOutboxOperationEntity>().count(), 1);
+        expect(recordMapCountForZone(store, scope.zone), 1);
+        expect(store.box<CloudSyncLocalSendIntentEntity>().count(), 0);
+        expect(await durable.readLiveProtectedOutboundLeaseReferences(maximumCount: 20),
+            containsAll([originalSource.leaseReference, expected.protectedLeaseReference]));
+      });
+    }
+
+    for (final change in ['outgoing overlap', 'edit', 'unsend']) {
+      test('late $change blocks leasing but preserves adopted readback source',
+          () async {
+        await seedOrigin();
+        final operation = admit();
+        if (change == 'outgoing overlap') {
+          addOutgoingOverlap(byGuid: true);
+        } else {
+          final message = _byGuid(guid)!;
+          if (change == 'edit') {
+            message.dateEdited = _time(5);
+          } else {
+            message.messageSummaryInfo = [
+              MessageSummaryInfo.empty()..retractedParts.add(0),
+            ];
+          }
+          store.box<Message>().put(message);
+        }
+        await expectLater(durable.leaseEligibleOutbox(scope,
+          now: _time(5), limit: 1, leaseId: 'late-change-must-not-send',
+          leaseDuration: const Duration(minutes: 1),
+          allowedActions: const {CloudOutboxAction.save}),
+          throwsA(_fails('cloud_sync_received_archive_admitted_source_changed')));
+        expect((await durable.readOutboxEntries(scope)).single
+            .sameDurableSnapshotAs(operation), isTrue);
+        expect(journal.readAdoptedSource(transactionStore: store, operation: operation)!
+            .source.encode(), originalSource.encode());
+        expect(intent().admittedOperationId, operation.operationId);
+      });
+    }
+  });
+
   test('body drift rolls back both message and intent', () {
     const guid = 'recv-guid-1002';
     final src = _staged(guid, 'staged body', chat);
@@ -1525,6 +2157,35 @@ void main() {
       throwsStateError,
     );
   });
+}
+
+/// Synthetic token protection for the restored-chat fixture. No native keys
+/// or platform protection are involved in these ObjectBox transaction tests.
+class _ReceivedTestProtector implements CloudSyncProtector {
+  String _prefix(CloudSyncScope scope, CloudSyncProtectedValueKind kind) =>
+      'received-test:${scope.storageKey}:${kind.name}:';
+
+  @override
+  Future<String> protect({
+    required CloudSyncScope scope,
+    required CloudSyncProtectedValueKind kind,
+    required String plaintext,
+  }) async => '${_prefix(scope, kind)}$plaintext';
+
+  @override
+  Future<String> unprotect({
+    required CloudSyncScope scope,
+    required CloudSyncProtectedValueKind kind,
+    required String ciphertext,
+  }) async {
+    final prefix = _prefix(scope, kind);
+    if (!ciphertext.startsWith(prefix)) throw StateError('test token scope changed');
+    return ciphertext.substring(prefix.length);
+  }
+
+  @override
+  Future<String> fingerprintAccount(String rawAccountIdentifier) =>
+      throw StateError('unexpected account lookup in received test');
 }
 
 class _ReceivedLeaseTransport

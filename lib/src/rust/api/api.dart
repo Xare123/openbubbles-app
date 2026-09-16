@@ -187,6 +187,16 @@ cloudSyncStageReceivedArchiveSeed({
   seed: seed,
 );
 
+/// Metadata-only peek for the adapter to route a fresh Found back to normal
+/// projection instead of repeatedly treating its older cached Absent as current.
+Future<CloudSyncReceivedRecordDisposition>
+cloudSyncReceivedArchiveInspectionDisposition({
+  required CloudSyncPreparedReceivedInspection prepared,
+}) => RustLib.instance.api
+    .crateApiApiCloudSyncReceivedArchiveInspectionDisposition(
+      prepared: prepared,
+    );
+
 /// Exact native read for a materialized received intent. All network work
 /// finishes here, before the short local stage/adopt/commit lease. Parent, PCS,
 /// identity and lookup use one pinned restored-read permit. No file staging,
@@ -232,6 +242,44 @@ Future<void> cloudSyncDiscardReceivedArchiveInspection({
   required CloudSyncPreparedReceivedInspection prepared,
 }) => RustLib.instance.api.crateApiApiCloudSyncDiscardReceivedArchiveInspection(
   prepared: prepared,
+);
+
+/// Stage a received create ONLY from a fresh native exact NotFound. Caller
+/// holds the local protected-store lease through atomic outbox adoption/commit.
+/// A Found/uncertain observation cannot reach the encoder; no remote I/O here.
+Future<CloudSyncProtectedOutboundStage> cloudSyncStageReceivedArchiveCreate({
+  required CloudSyncPreparedReceivedInspection prepared,
+  required BigInt nativeWriterPauseToken,
+  required String parentBindingSha256,
+}) => RustLib.instance.api.crateApiApiCloudSyncStageReceivedArchiveCreate(
+  prepared: prepared,
+  nativeWriterPauseToken: nativeWriterPauseToken,
+  parentBindingSha256: parentBindingSha256,
+);
+
+/// Reopen source + current exact direct Chat for prepare/reconciliation. This
+/// does not establish remote absence, create files or change remote state.
+Future<CloudSyncReceivedArchiveCreateProof>
+cloudSyncOpenReceivedArchiveCreateProof({
+  required ArcCloudMessagesClientDefaultAnisetteProvider cloudMessagesClient,
+  required BigInt nativeWriterPauseToken,
+  required String storageDirectory,
+  required CloudSyncNativeAuthMetadata expectedAuth,
+  required CloudSyncNativeReceivedArchiveSourceBinding receivedSource,
+  required BigInt chatGeneration,
+  required String chatLogicalEntityKeyHash,
+  required CloudSyncChatIdentitySourceInput chatSource,
+  required String parentBindingSha256,
+}) => RustLib.instance.api.crateApiApiCloudSyncOpenReceivedArchiveCreateProof(
+  cloudMessagesClient: cloudMessagesClient,
+  nativeWriterPauseToken: nativeWriterPauseToken,
+  storageDirectory: storageDirectory,
+  expectedAuth: expectedAuth,
+  receivedSource: receivedSource,
+  chatGeneration: chatGeneration,
+  chatLogicalEntityKeyHash: chatLogicalEntityKeyHash,
+  chatSource: chatSource,
+  parentBindingSha256: parentBindingSha256,
 );
 
 Future<CloudSyncNativeSendReceiptPage> cloudSyncReplayNativeSendReceipts({
@@ -2537,6 +2585,10 @@ abstract class CloudSyncPreparedMessageCreateHandle
 abstract class CloudSyncPreparedReceivedInspection
     implements RustOpaqueInterface {}
 
+// Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<CloudSyncReceivedArchiveCreateProof>>
+abstract class CloudSyncReceivedArchiveCreateProof
+    implements RustOpaqueInterface {}
+
 // Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<ConversationLink>>
 abstract class ConversationLink implements RustOpaqueInterface {}
 
@@ -4369,6 +4421,7 @@ class CloudSyncPreparedMessageCreateInput {
 
   /// Ephemeral retained-Chat authority, required only for group attachment parents.
   final CloudSyncAttachmentParentGroupProof? attachmentParentGroupProof;
+  final CloudSyncReceivedArchiveCreateProof? receivedArchiveProof;
 
   const CloudSyncPreparedMessageCreateInput({
     required this.localOperationId,
@@ -4381,6 +4434,7 @@ class CloudSyncPreparedMessageCreateInput {
     required this.appleOperationUuid,
     this.attachmentParentContext,
     this.attachmentParentGroupProof,
+    this.receivedArchiveProof,
   });
 
   @override
@@ -4394,7 +4448,8 @@ class CloudSyncPreparedMessageCreateInput {
       serverRecordIdHash.hashCode ^
       appleOperationUuid.hashCode ^
       attachmentParentContext.hashCode ^
-      attachmentParentGroupProof.hashCode;
+      attachmentParentGroupProof.hashCode ^
+      receivedArchiveProof.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -4411,7 +4466,8 @@ class CloudSyncPreparedMessageCreateInput {
           serverRecordIdHash == other.serverRecordIdHash &&
           appleOperationUuid == other.appleOperationUuid &&
           attachmentParentContext == other.attachmentParentContext &&
-          attachmentParentGroupProof == other.attachmentParentGroupProof;
+          attachmentParentGroupProof == other.attachmentParentGroupProof &&
+          receivedArchiveProof == other.receivedArchiveProof;
 }
 
 class CloudSyncPreparedMessageCreateResult {

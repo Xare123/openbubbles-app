@@ -45,11 +45,19 @@ CloudSyncRestoredDirectChatProof requireCloudSyncRestoredDirectChatProof({
   required Store store,
   required CloudSyncScope messageScope,
   required Message message,
+}) => requireCloudSyncRestoredDirectChatProofForId(
+  store: store, messageScope: messageScope, chatId: message.chat.targetId);
+
+/// Reconciliation may outlive a local Message row. Its journal-pinned Chat ID
+/// still needs the exact canonical owner and latest-applied source, never an
+/// inferred peer or a synthetic Message inserted into the database.
+CloudSyncRestoredDirectChatProof requireCloudSyncRestoredDirectChatProofForId({
+  required Store store, required CloudSyncScope messageScope, required int chatId,
 }) => store.runInTransaction(TxMode.read, () {
-  final binding = requireCloudSyncRestoredDirectChat(
+  final binding = _requireRestoredChatById(
     store: store,
     messageScope: messageScope,
-    message: message,
+    chatId: chatId,
   );
   final fields = jsonDecode(binding) as List;
   final scopeKey = fields[1] as String;
