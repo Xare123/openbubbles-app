@@ -189,6 +189,16 @@ semantic-pull and sampler gates and a truthful source identifier. Native writer
 flags are unnecessary for these two read operations. Hold the existing profile
 launcher mutex and keep other Windows app/test processes out of that profile.
 
+The guarded `run_imported_cloud_sync_v2_dart_live.ps1` launcher must set the
+native `OPENBUBBLES_CLOUD_SYNC_V2_WINDOWS_HARNESS=1` flag after scrubbing inherited
+environment values. The Dart test-host flag alone does not select bounded native
+logging. A full retained sweep exposed that omission on September16 by hitting
+the unchanged raw-output cap. Launcher commit4759bf88e adds the flag; both new
+single-pass/drain assertions failed before and all23 launcher checks passed
+afterward. Never raise the output cap to accommodate bulk record logging.
+After a forced tester shutdown, allow the normal five-minute durable interlock
+lease to expire; do not delete or bypass its fence to retry.
+
 Prepend the qualified runtime folder to PATH for the test process so ObjectBox
 5.3.2 ARM64 is found. The initial missing-path attempt failed with error 126 before
 the account operation. After correcting PATH, local projection startup passed in

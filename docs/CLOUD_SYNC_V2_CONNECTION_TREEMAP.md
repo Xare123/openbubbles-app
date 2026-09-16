@@ -101,6 +101,14 @@ No copied-store replay helper was implemented. Missing attachment parents must
 not be classified as carrier-message exclusions without an exact current-version
 logical-to-physical join. See the latest investigation entry for evidence.
 
+First full sweep5d98bacd stopped at dart_applier_output_overflow. It reached an
+empty remote head but no final projection report, so no sweep-complete claim.
+Launcher4759bf88e repairs the missing native bounded-logging flag;23 checks pass
+with two new failures reproduced before the fix. Retry2b06e810 then stopped at
+cloudkit_interlock_busy within five minutes of the earlier forced shutdown.
+Both launches cleaned up owned processes/raw output. Allow normal lease expiry
+before one retry; never clear the lease or change the output/sync safety gates.
+
 The offline copied-profile inspector left source data bytes unchanged and found
 701 chats,13,969 messages,2,516 attachments,24 confirmed outbox rows, no active
 outbox leases and generation1 semantic checkpoints. It did not contact Apple.

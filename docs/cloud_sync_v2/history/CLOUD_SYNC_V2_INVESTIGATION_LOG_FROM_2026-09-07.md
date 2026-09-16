@@ -6409,3 +6409,29 @@ Historical tests do not establish current-device behavior.
   The remaining idle native-test helper was already superseded by parent tests;
   shutdown requested after confirming its interrupted state. Its transcript is
   retained because supported deletion is unavailable. No repeated cache purge.
+
+### September 16 full-sweep launcher logging correction
+
+- Source34b049f32/nativeaa953639a launched drain5d98bacd921f51902a06f3db1b4c2964.
+  The remote report obcs2-semantic-1789599164467798 records an empty terminal
+  read in all zones and outbox unchanged. During the retained sweep the launcher
+  stopped at dart_applier_output_overflow. No terminal sweep report exists;
+  partial projection is not a completion claim. Owned processes stopped and
+  raw temporary output was removed, confirmed by cleanup.json and process check.
+- Cause found in New-DartApplierStartInfo: it scrubs OPENBUBBLES_* and RUST_LOG
+  but omitted the distinct native WINDOWS_HARNESS flag. Native init_logger
+  therefore selected full debug logging instead of the existing bounded filter.
+  A metadata-only log scan counted33,867 INFO lines in the current rotated
+  native log, without printing message content.
+- Commit4759bf88e sets the missing native harness flag after scrubbing. No
+  native/ABI, authentication, projection or output-limit change. New assertions
+  failed21pass/2fail before the fix and passed23/23 afterward; diff check passed.
+  Same qualified DLL remains usable. No APK or native rebuild is necessary.
+- Retry2b06e810300b630e9cf4ffff013eff20 safely returned cloudkit_interlock_busy
+  before sweep. It occurred within the documented five-minute durable lease
+  after forced shutdown. No remaining owned tester processes; cleanup verified.
+  Wait for normal expiry, not manual lease deletion or a bypass, before retry.
+- Independent task was informed and still holds off Flutter/live profile access.
+  Final cleanup recheck found0 deleted candidates present and0 protected-file
+  metadata changes across10,825 preserved files. C:free31.1GiB at that check.
+  The last interrupted native-test helper is now verifiednot_found.
