@@ -629,12 +629,23 @@ struct CloudSyncReceivedInspectionPending {
     chat_source: super::cloud_sync_chat_identity::CloudSyncChatIdentitySourceInput,
     observation: CloudSyncReceivedRecordObservation,
     raw_found: Option<(rustpush::cloudkit_proto::Record, Vec<u8>)>,
+    route: crate::cloud_sync_canonical_dto::CloudCanonicalChatPayload,
+    prepared_at: std::time::Instant,
 }
 
 impl std::fmt::Debug for CloudSyncPreparedReceivedInspection {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("CloudSyncPreparedReceivedInspection(redacted)")
     }
+}
+
+/// Metadata-only peek for the adapter to route a fresh Found back to normal
+/// projection instead of repeatedly treating its older cached Absent as current.
+pub async fn cloud_sync_received_archive_inspection_disposition(
+    prepared: &CloudSyncPreparedReceivedInspection,
+) -> anyhow::Result<CloudSyncReceivedRecordDisposition> {
+    prepared.pending.lock().await.as_ref().map(|value| value.observation.disposition)
+        .ok_or_else(|| anyhow!("cloud_sync_received_archive_inspection_consumed"))
 }
 
 /// Exact native read for a materialized received intent. All network work
@@ -764,6 +775,8 @@ pub async fn cloud_sync_prepare_received_archive_inspection(
             chat_source,
             observation: result,
             raw_found,
+            route: (**chat).clone(),
+            prepared_at: std::time::Instant::now(),
         })),
     })
 }
@@ -826,6 +839,161 @@ pub async fn cloud_sync_discard_received_archive_inspection(
     prepared: &CloudSyncPreparedReceivedInspection,
 ) {
     prepared.pending.lock().await.take();
+}
+
+/// Ephemeral native source and protected-parent binding, never an outgoing IDS
+/// receipt. Every restarted prepare/readback reopens the durable source and
+/// current parent under a restored read session. Plaintext remains native.
+#[frb(opaque)]
+#[derive(Clone)]
+pub struct CloudSyncReceivedArchiveCreateProof {
+    storage_directory: String,
+    auth: Arc<CloudSyncNativeAuthMetadata>,
+    source: crate::cloud_sync_received_source_stage::NativeReceivedArchiveStage,
+    chat_generation: u64,
+    chat_source: super::cloud_sync_chat_identity::CloudSyncChatIdentitySourceInput,
+    request: crate::cloud_sync_transient_bridge::CloudTransientDecodeRequest,
+    route: crate::cloud_sync_canonical_dto::CloudCanonicalChatPayload,
+    parent_binding_sha256: String,
+    expires_at: std::time::Instant,
+}
+
+impl std::fmt::Debug for CloudSyncReceivedArchiveCreateProof {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("CloudSyncReceivedArchiveCreateProof(redacted)")
+    }
+}
+
+/// Stage a received create ONLY from a fresh native exact NotFound. Caller
+/// holds the local protected-store lease through atomic outbox adoption/commit.
+/// A Found/uncertain observation cannot reach the encoder; no remote I/O here.
+pub async fn cloud_sync_stage_received_archive_create(
+    prepared: &CloudSyncPreparedReceivedInspection,
+    native_writer_pause_token: u64,
+    parent_binding_sha256: String,
+) -> anyhow::Result<CloudSyncProtectedOutboundStage> {
+    let pending = prepared.pending.lock().await.take()
+        .ok_or_else(|| anyhow!("cloud_sync_received_archive_inspection_consumed"))?;
+    if pending.observation.disposition != CloudSyncReceivedRecordDisposition::Absent ||
+        pending.raw_found.is_some() || pending.prepared_at.elapsed() > Duration::from_secs(60) ||
+        !is_cloud_sync_hex_digest(&parent_binding_sha256) {
+        return Err(anyhow!("cloud_sync_received_archive_not_absent"));
+    }
+    let permit = acquire_cloudkit_read_authentication(native_writer_pause_token)
+        .map_err(|_| anyhow!("cloud_sync_received_archive_read_permit"))?;
+    let auth = cloud_sync_capture_auth_snapshot(&pending.cloud_messages_client,
+        pending.storage_directory.clone()).await?;
+    cloud_sync_require_received_auth(&pending.auth, &auth)?;
+    let container = pending.cloud_messages_client.get_cached_container_for_read_authentication(&permit).await
+        .map_err(|_| anyhow!("cloud_sync_received_archive_identity_changed"))?;
+    if !Arc::ptr_eq(&pending.container, &container) {
+        return Err(anyhow!("cloud_sync_received_archive_identity_changed"));
+    }
+    let request = cloud_sync_attachment_group_decode_request(&pending.storage_directory,
+        &auth, pending.chat_generation, &pending.chat_source)
+        .map_err(|_| anyhow!("cloud_sync_received_archive_parent_changed"))?;
+    let proof = CloudSyncReceivedArchiveCreateProof {
+        storage_directory: pending.storage_directory.clone(), auth: Arc::new(auth),
+        source: pending.source, chat_generation: pending.chat_generation,
+        chat_source: pending.chat_source, request, route: pending.route,
+        parent_binding_sha256, expires_at: std::time::Instant::now() + Duration::from_secs(300),
+    };
+    let source = cloud_sync_validate_received_create_proof(&proof.storage_directory, &proof.auth, &proof)
+        .map_err(|_| anyhow!("cloud_sync_received_archive_source_changed"))?;
+    let stage = crate::cloud_sync_outbound::received::stage_received_message(
+        PathBuf::from(&proof.storage_directory), proof.auth.account_fingerprint.clone(),
+        &container.user_id, &source, &proof.route, &proof.parent_binding_sha256)
+        .map_err(|_| anyhow!("cloud_sync_received_archive_source_stage_failed"))?;
+    Ok(cloud_sync_bridge_stage(stage))
+}
+
+/// Reopen source + current exact direct Chat for prepare/reconciliation. This
+/// does not establish remote absence, create files or change remote state.
+#[allow(clippy::too_many_arguments)]
+pub async fn cloud_sync_open_received_archive_create_proof(
+    cloud_messages_client: &Arc<CloudMessagesClient<DefaultAnisetteProvider>>,
+    native_writer_pause_token: u64,
+    storage_directory: String,
+    expected_auth: CloudSyncNativeAuthMetadata,
+    received_source: CloudSyncNativeReceivedArchiveSourceBinding,
+    chat_generation: u64,
+    chat_logical_entity_key_hash: String,
+    chat_source: super::cloud_sync_chat_identity::CloudSyncChatIdentitySourceInput,
+    parent_binding_sha256: String,
+) -> anyhow::Result<CloudSyncReceivedArchiveCreateProof> {
+    use crate::cloud_sync_canonical_dto::CloudCanonicalPayload;
+    use crate::cloud_sync_transient_bridge::{cloud_sync_decode_transient_record_cached_only,
+        CloudTransientDecodeOutcome};
+    if !is_cloud_sync_hex_digest(&parent_binding_sha256) || chat_generation == 0 ||
+        received_source.account_fingerprint != expected_auth.account_fingerprint ||
+        received_source.protected_store_identity != expected_auth.protected_store_identity {
+        return Err(anyhow!("cloud_sync_received_archive_identity_changed"));
+    }
+    let permit = acquire_cloudkit_read_authentication(native_writer_pause_token)
+        .map_err(|_| anyhow!("cloud_sync_received_archive_read_permit"))?;
+    let before = cloud_sync_capture_auth_snapshot(cloud_messages_client, storage_directory.clone()).await?;
+    cloud_sync_require_received_auth(&expected_auth, &before)?;
+    let request = cloud_sync_attachment_group_decode_request(&storage_directory, &before,
+        chat_generation, &chat_source)
+        .map_err(|_| anyhow!("cloud_sync_received_archive_parent_changed"))?;
+    let decoded = match cloud_sync_decode_transient_record_cached_only(cloud_messages_client,
+        &permit, request.clone()).await {
+        CloudTransientDecodeOutcome::Ready(value) => value,
+        _ => return Err(anyhow!("cloud_sync_received_archive_parent_not_ready")),
+    };
+    if decoded.envelope().generation() != chat_generation ||
+        decoded.envelope().logical_entity_key_hash().value() != chat_logical_entity_key_hash {
+        return Err(anyhow!("cloud_sync_received_archive_parent_changed"));
+    }
+    let Some(CloudCanonicalPayload::Chat(chat)) = decoded.payload() else {
+        return Err(anyhow!("cloud_sync_received_archive_parent_not_ready"));
+    };
+    let after = cloud_sync_capture_auth_snapshot(cloud_messages_client, storage_directory.clone()).await?;
+    cloud_sync_require_received_auth(&expected_auth, &after)?;
+    let proof = CloudSyncReceivedArchiveCreateProof {
+        storage_directory, auth: Arc::new(after),
+        source: crate::cloud_sync_received_source_stage::NativeReceivedArchiveStage {
+            message_guid_hash: received_source.message_guid_hash,
+            source_sha256: received_source.source_sha256,
+            protected_reference: received_source.protected_reference,
+            lease_reference: received_source.lease_reference,
+            payload_sha256: received_source.payload_sha256,
+            payload_length: received_source.payload_length,
+        },
+        chat_generation, chat_source, request, route: (**chat).clone(), parent_binding_sha256,
+        expires_at: std::time::Instant::now() + Duration::from_secs(300),
+    };
+    cloud_sync_validate_received_create_proof(&proof.storage_directory, &proof.auth, &proof)
+        .map_err(|_| anyhow!("cloud_sync_received_archive_source_changed"))?;
+    Ok(proof)
+}
+
+#[frb(ignore)]
+fn cloud_sync_validate_received_create_proof(
+    storage: &str, auth: &CloudSyncNativeAuthMetadata, proof: &CloudSyncReceivedArchiveCreateProof,
+) -> Result<crate::cloud_sync_received_source::ReceivedArchiveSource, CloudSyncOutboundSafeCode> {
+    use crate::cloud_sync_native_fetch::{cloud_sync_unprotect_raw_envelope,
+        CloudNativeProtectionScope, CloudNativeStream};
+    if proof.storage_directory != storage || std::time::Instant::now() >= proof.expires_at ||
+        !cloud_sync_auth_identity_remains_exact(&proof.auth, auth,
+            &auth.account_fingerprint, &auth.protected_store_identity) {
+        return Err(CloudSyncOutboundSafeCode::InvalidScope);
+    }
+    let scope = CloudNativeProtectionScope::new(auth.account_fingerprint.clone(), CloudNativeStream::Chats)
+        .map_err(|_| CloudSyncOutboundSafeCode::InvalidScope)?;
+    let parent = cloud_sync_unprotect_raw_envelope(PathBuf::from(storage), &scope,
+        CloudNativeStream::Chats, proof.chat_generation, &proof.chat_source.protected_raw_envelope_reference)
+        .map_err(|_| CloudSyncOutboundSafeCode::ProtectedStorage)?;
+    let hasher = crate::cloud_sync_protector::semantic_identifier_hasher(storage.to_owned())
+        .map_err(|_| CloudSyncOutboundSafeCode::ProtectedStorage)?;
+    crate::cloud_sync_transient_bridge::bind_envelope(&proof.request, &parent, &hasher)
+        .map_err(|_| CloudSyncOutboundSafeCode::BindingMismatch)?;
+    let source = crate::cloud_sync_received_source_stage::open_received_archive_source(
+        PathBuf::from(storage), auth.account_fingerprint.clone(), &proof.source)
+        .map_err(map_cloud_sync_outbound_failure)?;
+    crate::cloud_sync_received_projection::project_received_plain_text(&source, &proof.route)
+        .map_err(map_cloud_sync_outbound_failure)?;
+    Ok(source)
 }
 
 /// Content-free context for making one successful native SendJob completion
@@ -3025,6 +3193,7 @@ pub struct CloudSyncPreparedMessageCreateInput {
     pub attachment_parent_context: Option<CloudSyncNativeSendReceiptContext>,
     /// Ephemeral retained-Chat authority, required only for group attachment parents.
     pub attachment_parent_group_proof: Option<CloudSyncAttachmentParentGroupProof>,
+    pub received_archive_proof: Option<CloudSyncReceivedArchiveCreateProof>,
 }
 
 /// Cached-only decode result, not caller-authored route data or write authority.
@@ -3261,6 +3430,7 @@ enum CloudSyncPreparedMessageCreateOwner {
             DefaultAnisetteProvider,
         >,
         attachment_parent_group_proofs: Vec<CloudSyncAttachmentParentGroupProof>,
+        received_archive_proofs: Vec<CloudSyncReceivedArchiveCreateProof>,
     },
     #[cfg(test)]
     Test {
@@ -3287,6 +3457,7 @@ impl CloudSyncPreparedMessageCreateOwner {
                 cloud_messages_client,
                 writer_binding,
                 attachment_parent_group_proofs,
+                received_archive_proofs,
             } => {
                 cloud_messages_client
                     .validate_writer_preparation_binding(&writer_binding)
@@ -3307,6 +3478,14 @@ impl CloudSyncPreparedMessageCreateOwner {
                             &auth,
                             bound,
                         )?;
+                    }
+                }
+                if let Some(proof) = received_archive_proofs.first() {
+                    let auth = cloud_sync_capture_auth_snapshot(&cloud_messages_client,
+                        proof.storage_directory.clone()).await
+                        .map_err(|_| CloudSyncOutboundSafeCode::NativeAuthUnavailable)?;
+                    for bound in &received_archive_proofs {
+                        cloud_sync_validate_received_create_proof(&proof.storage_directory, &auth, bound)?;
                     }
                 }
                 let outcomes = native_writer_permit
@@ -4362,13 +4541,15 @@ pub async fn cloud_sync_prepare_message_create(
         };
     let attachment_parent_inputs: Vec<_> = inputs
         .iter()
-        .filter(|input| input.attachment_parent_context.is_some())
+        .filter(|input| input.attachment_parent_context.is_some() || input.received_archive_proof.is_some())
         .cloned()
         .collect();
     let attachment_parent_group_proofs = inputs
         .iter()
         .filter_map(|input| input.attachment_parent_group_proof.clone())
         .collect();
+    let received_archive_proofs = inputs.iter()
+        .filter_map(|input| input.received_archive_proof.clone()).collect();
     let mut messages = Vec::with_capacity(inputs.len());
     for input in inputs {
         let opened = match cloud_sync_open_message_create_bound(
@@ -4453,6 +4634,7 @@ pub async fn cloud_sync_prepare_message_create(
                             cloud_messages_client: cloud_messages_client.clone(),
                             writer_binding,
                             attachment_parent_group_proofs,
+                            received_archive_proofs,
                         },
                     )),
                     storage_directory,
@@ -4648,6 +4830,7 @@ pub async fn cloud_sync_prepare_chat_create(
                             cloud_messages_client: cloud_messages_client.clone(),
                             writer_binding,
                             attachment_parent_group_proofs: vec![],
+                            received_archive_proofs: vec![],
                         },
                     )),
                     storage_directory,
@@ -4671,6 +4854,7 @@ fn is_valid_cloud_sync_attachment_create_input(
 ) -> bool {
     input.attachment_parent_context.is_none()
         && input.attachment_parent_group_proof.is_none()
+        && input.received_archive_proof.is_none()
         && is_cloud_sync_operation_id(&input.local_operation_id)
         && crate::cloud_sync_outbound_attachment::initial_attachment_create_operation_id(
             expected_account_fingerprint,
@@ -4803,6 +4987,9 @@ fn cloud_sync_open_attachment_parent_source(
 // still use the exact existing validators; parent messages always retain the
 // source and original envelope together for readback.
 enum CloudSyncOpenedMessageCreate {
+    ReceivedArchive {
+        received: crate::cloud_sync_outbound::received::NativeOpenedReceivedMessage,
+    },
     Ordinary {
         message: CloudMessage,
         record_name: String,
@@ -4817,12 +5004,14 @@ impl CloudSyncOpenedMessageCreate {
         match self {
             Self::Ordinary { message, .. } => message,
             Self::AttachmentParent { parent, .. } => parent.message(),
+            Self::ReceivedArchive { received } => received.message(),
         }
     }
     fn record_name(&self) -> &str {
         match self {
             Self::Ordinary { record_name, .. } => record_name,
             Self::AttachmentParent { parent, .. } => parent.server_record_name(),
+            Self::ReceivedArchive { received } => received.server_record_name(),
         }
     }
     fn verify_readback(
@@ -4845,6 +5034,8 @@ impl CloudSyncOpenedMessageCreate {
                     actual, parent, digest, source,
                 )
             }
+            // Received readback requires the strict raw inspector below.
+            Self::ReceivedArchive { .. } => Err(crate::cloud_sync_outbound::CloudSyncOutboundFailure::BindingMismatch),
         }
     }
 }
@@ -4858,6 +5049,10 @@ fn cloud_sync_open_message_create_bound(
 ) -> Result<CloudSyncOpenedMessageCreate, CloudSyncOutboundSafeCode> {
     use crate::cloud_sync_canonical_dto::CloudCanonicalEntityKind;
     let storage = PathBuf::from(storage_directory);
+    if input.received_archive_proof.is_some() &&
+        (input.attachment_parent_context.is_some() || input.attachment_parent_group_proof.is_some()) {
+        return Err(CloudSyncOutboundSafeCode::InvalidRequest);
+    }
     if input.attachment_parent_context.is_none() && input.attachment_parent_group_proof.is_some() {
         return Err(CloudSyncOutboundSafeCode::InvalidRequest);
     }
@@ -4870,7 +5065,14 @@ fn cloud_sync_open_message_create_bound(
         std::slice::from_ref(&input.protected_payload_reference),
     )
     .map_err(|_| CloudSyncOutboundSafeCode::ProtectedStorage)?;
-    let (opened, kind) = match &input.attachment_parent_context {
+    let (opened, kind) = if let Some(proof) = &input.received_archive_proof {
+        let source = cloud_sync_validate_received_create_proof(storage_directory, auth, proof)?;
+        let received = crate::cloud_sync_outbound::received::open_staged_received_message(
+            storage.clone(), auth.account_fingerprint.clone(), &input.protected_payload_reference,
+            &input.payload_sha256, &source, &proof.route, &proof.parent_binding_sha256)
+            .map_err(map_cloud_sync_outbound_failure)?;
+        (CloudSyncOpenedMessageCreate::ReceivedArchive { received }, CloudCanonicalEntityKind::Message)
+    } else { match &input.attachment_parent_context {
         Some(context) => {
             let source =
                 cloud_sync_open_attachment_parent_source(storage_directory, auth, context)?;
@@ -4920,7 +5122,7 @@ fn cloud_sync_open_message_create_bound(
                 kind,
             )
         }
-    };
+    }};
     let hasher =
         crate::cloud_sync_protector::semantic_identifier_hasher(storage_directory.to_owned())
             .map_err(|_| CloudSyncOutboundSafeCode::ProtectedStorage)?;
@@ -5163,6 +5365,7 @@ mod cloud_sync_attachment_parent_create_tests {
             apple_operation_uuid: "AAAAAAAA-BBBB-4CCC-8DDD-000000000001".into(),
             attachment_parent_context: None,
             attachment_parent_group_proof: Some(proof.clone()),
+            received_archive_proof: None,
         };
         let request = "11111111-2222-4ABC-8DEF-555555555555";
         assert!(matches!(
@@ -5273,6 +5476,7 @@ mod cloud_sync_attachment_parent_create_tests {
             apple_operation_uuid: "AAAAAAAA-BBBB-4CCC-8DDD-000000000001".to_owned(),
             attachment_parent_context: Some(context.clone()),
             attachment_parent_group_proof: None,
+            received_archive_proof: None,
         };
         assert!(
             cloud_sync_open_message_create_bound(&storage, &auth, "container-user", &input)
@@ -5582,6 +5786,7 @@ pub async fn cloud_sync_prepare_attachment_create(
                             cloud_messages_client: cloud_messages_client.clone(),
                             writer_binding,
                             attachment_parent_group_proofs: vec![],
+                            received_archive_proofs: vec![],
                         },
                     )),
                     storage_directory,
@@ -6344,6 +6549,7 @@ fn is_valid_cloud_sync_chat_create_input(
 ) -> bool {
     input.attachment_parent_context.is_none()
         && input.attachment_parent_group_proof.is_none()
+        && input.received_archive_proof.is_none()
         && is_cloud_sync_operation_id(&input.local_operation_id)
         && crate::cloud_sync_outbound_chat::initial_chat_create_operation_id(
             expected_account_fingerprint,
@@ -6661,10 +6867,13 @@ async fn cloud_sync_reconcile_message_create_inner(
         };
     use rustpush::cloud_messages::CloudMessageRecordVersionLookup;
     let mut committed_raw_record = None;
-    let observation = match cloud_messages_client
-        .lookup_message_record_version(&writer_binding, &server_record_name)
-        .await
-    {
+    let received_origin = matches!(&opened, CloudSyncOpenedMessageCreate::ReceivedArchive { .. });
+    let lookup = if received_origin {
+        cloud_messages_client.lookup_received_message_record_for_writer(&writer_binding, &server_record_name).await
+    } else {
+        cloud_messages_client.lookup_message_record_version(&writer_binding, &server_record_name).await
+    };
+    let observation = match lookup {
         Ok(CloudMessageRecordVersionLookup::Found(record, receipt)) => {
             let raw_record = match record.get_raw_record() {
                 Ok(record) => record.clone(),
@@ -6674,27 +6883,29 @@ async fn cloud_sync_reconcile_message_create_inner(
                     )
                 }
             };
-            let message = match cloud_messages_client
-                .decode_message_record_version(&writer_binding, &record)
-                .await
-            {
-                Ok(message) => message,
-                Err(_) => {
-                    return cloud_sync_reconcile_failure(
-                        CloudSyncOutboundSafeCode::NativePrepareFailed,
-                    )
-                }
+            let verified_digest = match &opened {
+                CloudSyncOpenedMessageCreate::ReceivedArchive { received } => {
+                    let view = match cloud_messages_client.inspect_received_message_record(&writer_binding, &record).await {
+                        Ok(view) => view,
+                        Err(_) => return cloud_sync_reconcile_failure(CloudSyncOutboundSafeCode::NativePrepareFailed),
+                    };
+                    if record.original_record_wire().is_none() {
+                        return cloud_sync_reconcile_failure(CloudSyncOutboundSafeCode::MalformedMessage);
+                    }
+                    crate::cloud_sync_outbound::received::verify_received_readback(received, &view, &input.payload_sha256)
+                },
+                _ => {
+                    let message = match cloud_messages_client.decode_message_record_version(&writer_binding, &record).await {
+                        Ok(message) => message,
+                        Err(_) => return cloud_sync_reconcile_failure(CloudSyncOutboundSafeCode::NativePrepareFailed),
+                    };
+                    let differences = crate::cloud_sync_outbound::message_readback_differences(expected_message, &message);
+                    if !differences.is_empty() {
+                        warn!("Cloud Sync message readback differing_fields={}", differences.join(","));
+                    }
+                    opened.verify_readback(message, &input.payload_sha256)
+                },
             };
-            let differences = crate::cloud_sync_outbound::message_readback_differences(
-                &expected_message,
-                &message,
-            );
-            if !differences.is_empty() {
-                warn!(
-                    "Cloud Sync message readback differing_fields={}",
-                    differences.join(",")
-                );
-            }
             let receipt_server_record_id_hash = hasher.server_record_id_hash(receipt.record_name());
             let receipt_etag_hash = hasher
                 .canonical_etag_hash(receipt.etag())
@@ -6703,12 +6914,13 @@ async fn cloud_sync_reconcile_message_create_inner(
                 CloudSyncReconcileObservation::DivergedRecord
             } else {
                 match (
-                    opened.verify_readback(message, &input.payload_sha256),
+                    verified_digest,
                     receipt_etag_hash,
                 ) {
                     (Ok(payload_sha256), Ok(etag_hash)) => {
                         if raw_generation.is_some() {
-                            committed_raw_record = Some(raw_record);
+                            committed_raw_record = Some((raw_record,
+                                if received_origin { record.original_record_wire().map(|value| value.to_vec()) } else { None }));
                         }
                         CloudSyncReconcileObservation::FoundPayloadDigest {
                             payload_sha256,
@@ -6750,11 +6962,11 @@ async fn cloud_sync_reconcile_message_create_inner(
         return cloud_sync_reconcile_failure(CloudSyncOutboundSafeCode::InvalidScope);
     }
     // Even NotFound cannot release a replay proof after source/context loss.
-    if let Some(context) = &input.attachment_parent_context {
+    if input.attachment_parent_context.is_some() || input.received_archive_proof.is_some() {
         // Its storage_directory was compared to the passed directory before
         // lookup and the immutable context has not changed across that await.
         if let Err(code) = cloud_sync_open_message_create_bound(
-            &context.storage_directory,
+            &storage_directory,
             &auth_after_lookup,
             &container_scoped_user_id,
             &input,
@@ -6769,15 +6981,16 @@ async fn cloud_sync_reconcile_message_create_inner(
     );
     if result.disposition == Some(CloudSyncOutboundReconcileDisposition::Committed) {
         if let Some(generation) = raw_generation {
-            let Some(raw_record) = committed_raw_record else {
+            let Some((raw_record, original_wire)) = committed_raw_record else {
                 return cloud_sync_reconcile_failure(CloudSyncOutboundSafeCode::MalformedMessage);
             };
-            let protected = match crate::cloud_sync_native_fetch::cloud_sync_stage_protected_message_record_readback(
-                PathBuf::from(storage_directory),
-                auth_after_lookup.account_fingerprint,
-                generation,
-                &raw_record,
-            ) {
+            let retained = match original_wire {
+                Some(wire) => crate::cloud_sync_native_fetch::cloud_sync_stage_protected_received_record_readback(
+                    PathBuf::from(storage_directory), auth_after_lookup.account_fingerprint, generation, &raw_record, &wire),
+                None => crate::cloud_sync_native_fetch::cloud_sync_stage_protected_message_record_readback(
+                    PathBuf::from(storage_directory), auth_after_lookup.account_fingerprint, generation, &raw_record),
+            };
+            let protected = match retained {
                 Ok(protected) => protected,
                 Err(failure) => {
                     return cloud_sync_reconcile_failure(
@@ -7212,6 +7425,7 @@ mod cloud_sync_outbound_reconcile_contract_tests {
             apple_operation_uuid: OPERATION_UUID.to_owned(),
             attachment_parent_context: None,
             attachment_parent_group_proof: None,
+            received_archive_proof: None,
         }
     }
 
@@ -19181,6 +19395,7 @@ pub async fn cloud_sync_prepare_message_update_submission(
                 cloud_messages_client: cloud_messages_client.clone(),
                 writer_binding,
                 attachment_parent_group_proofs: vec![],
+                received_archive_proofs: vec![],
             })),
             storage_directory,
             expected_account_fingerprint,

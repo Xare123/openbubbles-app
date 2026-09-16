@@ -36,6 +36,9 @@ mod wire {
 
 use wire::CloudSyncOutboundMessageV1;
 
+#[path = "cloud_sync_received_outbound.rs"]
+pub(crate) mod received;
+
 // Version 1 staged random UUID record names and is permanently ineligible for
 // replay. Version 2 binds the protected envelope to Apple's deterministic
 // container-user-ID/GUID HMAC record identity.
