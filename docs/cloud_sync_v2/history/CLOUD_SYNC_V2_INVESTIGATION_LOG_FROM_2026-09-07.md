@@ -5872,3 +5872,46 @@ Historical tests do not establish current-device behavior.
   main/submodule, private evidence and verified APK remain intact. Observed free
   space increased396,410,880bytes; C:28.48GiB. Manifest records both initial
   refusal and successful reviewed cleanup. No session/transcript deletion.
+
+### September 16 protected receive source and typed duplicate comparison
+
+- Previous goal turn was progress (native destination propagation, atomic journal
+  and forward schema proof), not a wait. This continuation adds native source
+  serialization/protection under idsReceivedArchiveSource, plus cached capture-only
+  identity and staging APIs. The original writer snapshot still validates current
+  GSA; capture-only cached identity is explicitly not remote authentication.
+- Source codec preserves exact sender/recipient/direction/text/time/conversation
+  identity, excluding reply routing tokens and certification receipts. Unicode/
+  control-character source/GUID digest vectors agree with the Dart v1 contract.
+  Staging requires exact committed lease before reopen, rejects tampered descriptor,
+  wrong account and wrong purpose, and performs no Apple request or send.
+- Dart coordinator stages, atomically persists Message+intent, then commits under
+  protected-store exclusion. Lost commit response preserves journal ownership;
+  restart reuses and recommits the original lease with one native stage total.
+  A fresh pre-adoption failure rolls back only its own lease; post-adoption auth
+  drift retains the source. No network-wide writer interlock was added to capture.
+- Fermat's typed comparator received parent corrections: ordinary part-zero and
+  false-formatting attributes allowed, text-only records allowed, timestamp
+  comparison respects millisecond precision, redundant direct groupId is not a
+  group, unsupported expectations fail before comparison, no caller-bool adoption
+  gate, and the decoder shares one bounded implementation. Parent further fixed
+  mirrored empty-sender shape and the WAS_DATA_DETECTED flag distinction.
+  Comparator is not raw-record/adoption proof, and every Found result forbids
+  duplicate create. Raw unknown-protobuf validation remains a real open gate.
+- App089b87fa26243d5f231f44cf9e8d96361e611c74 pushed only to the fork branch.
+  Hosted run35086913808 succeeded11:05:19Z after17m18s. Native counts708/321/11/40;
+  no APK or GCE. Generated artifact10442727024 has381,798bytes and SHA256
+  7c9facdf6f52bb02323156f998a08f0e7fe9264aaf72630a96f5c0d8a26d01fe, verified before
+  importing seven clean targets. SSE/diagnostic guards pass. Committed generated
+  reproducibility was intentionally skipped by allow_generated_drift=true.
+- Native descriptor conversion and exact safe failure vocabulary are integrated.
+  ArgumentError exposes only an allowlisted message code, not invalidValue/name.
+  Eleven-file Dart batch passes480; focused analysis clean. No live received
+  producer, outbox admission, native raw equivalence/adoption or incoming uploader
+  is enabled. No phone installation/restart, account action or upstream PR.
+- Fermat closed, native handle missing. Original helper source preserved at
+  d9f5674c57 under agent/received-record-match-review-20260916. Its136,857,020byte
+  clean dedicated worktree was removed Git-aware after submodule ownership checks.
+  Observed free space increased147,750,912bytes. Main, source refs, user evidence,
+  credentials and frozen APK verified retained. No transcript/session deletion.
+  CI watch28863 and Dart batch60412 are terminal; no helper or build remains live.

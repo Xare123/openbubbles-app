@@ -126,6 +126,32 @@ String cloudSyncFingerprintAccount({
   rawAccountIdentifier: rawAccountIdentifier,
 );
 
+/// Cached composition identity for local received-source capture. Unlike the
+/// writer snapshot, this does not require refreshed GSA SPD after restart.
+/// It proves only which persisted account/store owns local data, not current
+/// CloudKit authentication or permission to perform an external operation.
+Future<CloudSyncNativeAuthMetadata> cloudSyncCaptureReceivedIdentity({
+  required SharedPushState state,
+}) => RustLib.instance.api.crateApiApiCloudSyncCaptureReceivedIdentity(
+  state: state,
+);
+
+/// Protects an observed receive using one configured SharedPushState. Uses
+/// cached account validation and registered handles only: no dependency warm,
+/// keychain sync, IDS directory query, re-registration, send or CloudKit save.
+/// The caller must retain its live receive provenance and revalidate state at
+/// journal adoption; shape-valid MessageInst metadata is not authentication.
+Future<CloudSyncNativeReceivedArchiveSourceBinding>
+cloudSyncStageReceivedArchiveSource({
+  required SharedPushState state,
+  required CloudSyncNativeAuthMetadata expectedAuth,
+  required MessageInst message,
+}) => RustLib.instance.api.crateApiApiCloudSyncStageReceivedArchiveSource(
+  state: state,
+  expectedAuth: expectedAuth,
+  message: message,
+);
+
 Future<CloudSyncNativeSendReceiptPage> cloudSyncReplayNativeSendReceipts({
   required String storageDirectory,
   required String expectedAccountFingerprint,
@@ -3795,6 +3821,55 @@ class CloudSyncNativeAuthMetadata {
           nativeSessionId == other.nativeSessionId &&
           accountFingerprint == other.accountFingerprint &&
           protectedStoreIdentity == other.protectedStoreIdentity;
+}
+
+/// Opaque local ownership of a received source. This is neither an IDS send
+/// receipt nor permission to save a CloudKit record. No message content returns.
+class CloudSyncNativeReceivedArchiveSourceBinding {
+  final String accountFingerprint;
+  final String protectedStoreIdentity;
+  final String messageGuidHash;
+  final String sourceSha256;
+  final String protectedReference;
+  final String leaseReference;
+  final String payloadSha256;
+  final int payloadLength;
+
+  const CloudSyncNativeReceivedArchiveSourceBinding({
+    required this.accountFingerprint,
+    required this.protectedStoreIdentity,
+    required this.messageGuidHash,
+    required this.sourceSha256,
+    required this.protectedReference,
+    required this.leaseReference,
+    required this.payloadSha256,
+    required this.payloadLength,
+  });
+
+  @override
+  int get hashCode =>
+      accountFingerprint.hashCode ^
+      protectedStoreIdentity.hashCode ^
+      messageGuidHash.hashCode ^
+      sourceSha256.hashCode ^
+      protectedReference.hashCode ^
+      leaseReference.hashCode ^
+      payloadSha256.hashCode ^
+      payloadLength.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is CloudSyncNativeReceivedArchiveSourceBinding &&
+          runtimeType == other.runtimeType &&
+          accountFingerprint == other.accountFingerprint &&
+          protectedStoreIdentity == other.protectedStoreIdentity &&
+          messageGuidHash == other.messageGuidHash &&
+          sourceSha256 == other.sourceSha256 &&
+          protectedReference == other.protectedReference &&
+          leaseReference == other.leaseReference &&
+          payloadSha256 == other.payloadSha256 &&
+          payloadLength == other.payloadLength;
 }
 
 /// Opaque durable receipt identity plus the two content-free values needed to

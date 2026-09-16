@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_received_archive_source_binding.dart';
+import 'package:bluebubbles/src/rust/api/api.dart' as api;
 import 'package:flutter_test/flutter_test.dart';
 
 String _a43(String c) => List.filled(43, c).join();
@@ -24,6 +25,22 @@ void main() {
     expect(
       original.toString(),
       'CloudSyncReceivedArchiveSourceBinding(redacted)',
+    );
+  });
+  test('native bridge descriptor keeps every bound field', () {
+    final native = api.CloudSyncNativeReceivedArchiveSourceBinding(
+      accountFingerprint: original.accountFingerprint,
+      protectedStoreIdentity: original.protectedStoreIdentity,
+      messageGuidHash: original.messageGuidHash,
+      sourceSha256: original.sourceSha256,
+      protectedReference: original.protectedReference,
+      leaseReference: original.leaseReference,
+      payloadSha256: original.payloadSha256,
+      payloadLength: original.payloadLength,
+    );
+    expect(
+      CloudSyncReceivedArchiveSourceBinding.fromNative(native).encode(),
+      original.encode(),
     );
   });
   test('received binding rejects local-send tag', () {

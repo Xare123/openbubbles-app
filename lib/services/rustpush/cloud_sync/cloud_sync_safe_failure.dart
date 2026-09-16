@@ -4,6 +4,52 @@ import 'cloud_sync_semantic_pull_report_file.dart';
 import 'cloudkit_operation_interlock.dart';
 import 'cloudkit_writer_authority.dart';
 
+/// Exact reviewed receive-capture failures only, never exception text or a
+/// wildcard prefix. These diagnostics do not change read/write admission.
+abstract final class CloudSyncV2ReceivedArchiveSafeFailureCodes {
+  static const all = <String>{
+    'cloud_sync_received_archive_authority_store_mismatch',
+    'cloud_sync_received_archive_body',
+    'cloud_sync_received_archive_counterparts',
+    'cloud_sync_received_archive_cursor_invalid',
+    'cloud_sync_received_archive_direction_mismatch',
+    'cloud_sync_received_archive_group',
+    'cloud_sync_received_archive_guid_mismatch',
+    'cloud_sync_received_archive_identity_changed',
+    'cloud_sync_received_archive_identity_unavailable',
+    'cloud_sync_received_archive_intent_changed',
+    'cloud_sync_received_archive_legacy_mapped',
+    'cloud_sync_received_archive_limit_invalid',
+    'cloud_sync_received_archive_media',
+    'cloud_sync_received_archive_not_imessage',
+    'cloud_sync_received_archive_not_live_receive',
+    'cloud_sync_received_archive_not_ready',
+    'cloud_sync_received_archive_owner_changed',
+    'cloud_sync_received_archive_owner_invalid',
+    'cloud_sync_received_archive_protected_source_changed',
+    'cloud_sync_received_archive_protected_source_invalid',
+    'cloud_sync_received_archive_reaction',
+    'cloud_sync_received_archive_recipient',
+    'cloud_sync_received_archive_reply',
+    'cloud_sync_received_archive_rich_payload',
+    'cloud_sync_received_archive_route',
+    'cloud_sync_received_archive_route_changed',
+    'cloud_sync_received_archive_scheduled',
+    'cloud_sync_received_archive_send_state',
+    'cloud_sync_received_archive_sender',
+    'cloud_sync_received_archive_sms',
+    'cloud_sync_received_archive_source_changed',
+    'cloud_sync_received_archive_source_stage_failed',
+    'cloud_sync_received_archive_system_message',
+    'cloud_sync_received_archive_target',
+    'cloud_sync_received_archive_temp_guid',
+    'cloud_sync_received_archive_time_invalid',
+    'cloud_sync_received_archive_unpersisted',
+    'cloud_sync_received_archive_verification_failed',
+    'cloud_sync_received_archive_wire_body_mismatch',
+  };
+}
+
 abstract final class CloudSyncV2DecoderSafeFailureCodes {
   // Fixed codes only: never place record identifiers or message content here.
   static const attachmentShapeUnsupported =
@@ -447,6 +493,7 @@ const _cloudSyncV2SafeFailureCodes = <String>{
   'cloud_sync_outbound_correlation_mismatch',
   'cloud_sync_outbound_mutation_capability_invalid',
   ...CloudSyncV2DecoderSafeFailureCodes.all,
+  ...CloudSyncV2ReceivedArchiveSafeFailureCodes.all,
   ...CloudSyncV2OutOfScopeServiceSafeFailureCodes.all,
   ...CloudSyncV2ProtectedTransportSafeFailureCodes.all,
   ...CloudSyncV2CanonicalProjectionSafeFailureCodes.all,
@@ -824,6 +871,8 @@ String cloudSyncV2SafeFailureCode(Object error) {
     CloudKitOperationInterlockException() => error.safeCode,
     CloudKitWriterAuthorityFailure() => error.safeCode,
     StateError() => error.message.toString(),
+    // Never stringify ArgumentError: its invalidValue/name may be private.
+    ArgumentError() => error.message is String ? error.message as String : null,
     _ => null,
   };
   return cloudSyncV2SafeFailureCodeForCandidate(candidate);

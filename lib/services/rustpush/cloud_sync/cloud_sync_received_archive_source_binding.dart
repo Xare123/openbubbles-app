@@ -1,5 +1,7 @@
 import 'dart:convert';
 
+import 'package:bluebubbles/src/rust/api/api.dart' as api;
+
 /// Content-free ownership of the exact native protected incoming source.
 ///
 /// This is not an IDS send receipt, upload permission, authentication proof,
@@ -9,6 +11,19 @@ import 'dart:convert';
 /// staging, commit, and rollback; this type only validates the immutable
 /// reference the journal durably owns.
 final class CloudSyncReceivedArchiveSourceBinding {
+  factory CloudSyncReceivedArchiveSourceBinding.fromNative(
+    api.CloudSyncNativeReceivedArchiveSourceBinding value,
+  ) => CloudSyncReceivedArchiveSourceBinding(
+    accountFingerprint: value.accountFingerprint,
+    protectedStoreIdentity: value.protectedStoreIdentity,
+    messageGuidHash: value.messageGuidHash,
+    sourceSha256: value.sourceSha256,
+    protectedReference: value.protectedReference,
+    leaseReference: value.leaseReference,
+    payloadSha256: value.payloadSha256,
+    payloadLength: value.payloadLength,
+  );
+
   CloudSyncReceivedArchiveSourceBinding({
     required this.accountFingerprint,
     required this.protectedStoreIdentity,

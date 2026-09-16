@@ -48,8 +48,8 @@ deleted chats and unsupported shapes. Native receive-destination propagation
 and matching Dart guards are now implemented and test-qualified. The current
 ten-file Dart batch passes446, including receive-origin rejection in outgoing
 send/reaction/edit/unsend capture, received journal restart/rollback, production
-reference inventories and forward schema upgrade. There is no production archive
-receive hook, native protected incoming source or incoming uploader yet.
+reference inventories and forward schema upgrade. There is no enabled production
+archive receive hook or incoming uploader; the native source candidate is below.
 
 The received journal is integrated but unenabled. Its synchronous persistence
 callback and full wire/row validation share one ObjectBox transaction. The source
@@ -59,6 +59,50 @@ and callers must continue until exhausted. Metadata readiness is not proof of
 current message-body equality or remote absence. GC includes every retained
 received reference, including old epochs and unknown states. Admission, terminal
 retirement and Apple-first semantic equivalence are still separate work.
+
+### Native source candidate, component-qualified
+
+App089b87fa2 adds a bounded native received-source codec and a distinct
+`idsReceivedArchiveSource` protection purpose. The source retains the original
+sender, local recipient, direction, peer, timestamp, plain text and conversation
+identity. Reply-device tokens and delivery receipts are not copied into archive
+material. Source and GUID digests use the existing Dart v1 contract, with frozen
+cross-language vectors including Unicode and control-character encoding.
+
+`cloud_sync_capture_received_identity` checks cached native CloudKit/keychain
+composition without demanding refreshed GSA SPD after process restart. This is
+local data ownership, not CloudKit authentication or write permission. The
+existing full writer snapshot still performs its original current-GSA validation.
+`cloud_sync_stage_received_archive_source` takes one configured SharedPushState,
+checks registered handles and identity across waits, protects locally, and returns
+only bound hashes/references. No dependency warming, keychain sync, IDS query,
+re-registration, send or record save is introduced. A caller must still supply
+actual live-receive provenance and revalidate its current state at adoption.
+Do not equate IDS delegate profile IDs with CloudKit DSIDs: they are separately
+named protocol inputs, not an established cross-component assertion.
+
+The Dart staging coordinator holds the existing protected-store lock around
+stage, atomic journal adoption and lease commit. It does not take the network-wide
+CloudKit writer lock. Before adoption, failures may roll back the fresh lease;
+after adoption, failures retain the exact source for recommit/restart recovery.
+Local tests cover a lost commit response, changed source and post-commit identity
+loss without creating an outbox operation. No production receive hook is enabled.
+
+The pure existing-record comparator can recognize direct plain text, including
+standard plain NSAttributedString structural metadata and mirrored own messages.
+It accounts for the receive path's millisecond precision rather than demanding
+invented nanoseconds. Every Found outcome blocks a duplicate create. Its typed
+comparison is **not adoption proof**: raw record identity/presence, unknown
+protobuf fields and protected parent/source linkage remain caller requirements.
+There is no boolean shortcut granting that proof. Edited, rich or otherwise
+unproven records require projection/reconciliation, never overwrite.
+
+Hosted run35086913808 passed native compilation and708 app Rust,321 rustpush,
+11 Anisette and40 protector tests. The generated artifact hash was checked before
+import. Current Dart qualification passes480 cases across11 files. These prove
+the named component boundaries, not actual delivery, a production receive hook,
+remote admission, raw-record equivalence, or independent Apple-client display.
+The generation run deliberately skipped committed reproducibility checking.
 
 1. Define a separate received-archive origin and durable intent after incoming
    persistence succeeds. Preserve account/store provenance, the exact original

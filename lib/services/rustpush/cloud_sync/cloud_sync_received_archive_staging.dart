@@ -1,3 +1,6 @@
+// Keep public named parameters while the stored fields stay private.
+// ignore_for_file: prefer_initializing_formals
+
 import 'package:bluebubbles/src/rust/api/api.dart' as api;
 
 import 'cloud_sync_manual_shadow_sampler.dart';

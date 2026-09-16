@@ -224,6 +224,41 @@ Current work handles after resume:
   to28.48GiB. Main, device evidence, APK and retained source ref verified intact.
   Sessions/transcripts remain because supported deletion is unavailable. No
   helper, native test job or parent test session remains active.
+- **Protected received-source candidate qualified:** app089b87fa26243d5f231f44cf9e8d96361e611c74
+  / rustpush9ced48b passed hosted bridge run35086913808 in17m18s:708 app Rust,
+  321 rustpush,11 Anisette,40 protector tests. Native source and GUID hashes match
+  frozen Dart vectors (including Unicode/control characters). Exact lease commit,
+  descriptor tampering, wrong account and wrong-purpose reopen tests pass. Native
+  APIs use cached local identity and protection, not writer warming or GSA refresh.
+  The full writer snapshot's current-GSA validation remains unchanged.
+- Artifact10442727024 (381,798bytes), SHA256
+  `7c9facdf6f52bb02323156f998a08f0e7fe9264aaf72630a96f5c0d8a26d01fe`, verified
+  before import. Seven generated members imported from clean targets; most
+  generated diff is bridge call-index movement for the new APIs. This generation
+  run allowed drift, so committed reproducibility was skipped, not proven.
+  Evidence: `build-evidence/received-source-bridge-35086913808/verification.json`.
+- Dart stage/adopt/commit handoff reuses a journal-owned source after a lost
+  response and rolls back only an unadopted lease. Protected-store exclusion is
+  local; it does not acquire the network-wide writer interlock. New exact failure
+  codes are allowlisted without exception text/private ArgumentError values.
+  Current11-file Dart batch passes480; focused analysis is clean.
+- Existing-record matching is typed, direct plain-text comparison only. It
+  handles standard part-zero/false-format attributes, millisecond timestamp
+  precision, redundant direct proto4 groupId and mirrored empty-sender shape.
+  Every Found outcome blocks duplicate creation. Raw presence/unknown-protobuf
+  validation and exact protected parent/mapping adoption remain unimplemented
+  requirements; a matching typed value is not permission to adopt or write.
+- **Next required implementation:** connect the protected capture to actual live
+  receive persistence, then implement duplicate-aware received outbox admission
+  with exact raw-record proof. No live producer or received uploader is enabled.
+  Do not declare full two-way sync from source/journal/component qualification.
+- Fermat `01a0a99f-34db-7ce1-b0fa-43176f1c1ed2` is closed after parent corrections
+  and hosted verification. Its original reviewed source is retained at local
+  ref`agent/received-record-match-review-20260916`/`d9f5674c57`. Dedicated clean
+  worktree136,857,020bytes removed Git-aware after exclusive submodule checks;
+  observed free-space increase147,750,912bytes. Manifest:
+  `build-evidence/agent-cleanup-20260916-record-match/manifest.json`.
+  Sessions, shared repositories, private evidence and frozen f027 APK remain.
 - Parent rejected both first sidecar patches as stale-base duplicate fixes;
   current main already handles empty People handles and exact call-timeout
   ownership. Agents were redirected to current-source native/tester boundaries.
@@ -254,7 +289,7 @@ Older qualification rows are preserved in the [September 15 archive](cloud_sync_
 | History read | Fresh Canary visibly restores chats/messages. | Terminal ingestion, actionable retained repair or explained unavailability, repeat/incremental/restart proof. |
 | Media/documents/reactions read | Earlier representative live results; current materialization/filtering implemented. | Current Pixel photos, video, transcript GIFs, documents and incremental updates. GIFs need not appear in profile media. |
 | Direct writes | Fresh exact-source Windows parent send, edit, unsend and new-process no-submit replay, plus earlier reaction and image protocol results. | Ordinary Pixel composition, restart recovery, group/media cases and independent client display. |
-| Incoming/mirrored archival | Local receive persistence works; no V2 automatic archive producer exists. | Separate durable received origin, archive identity/deduplication, protected create/readback and independent-client proof. |
+| Incoming/mirrored archival | Original recipient preservation, encrypted native source, atomic received journal and restart/GC components tested; no live producer enabled. | Actual receive hook, raw-record duplicate/adoption proof, received create/readback, groups/media/mutations and independent-client proof. |
 | Groups | Restored-group binding implemented/tested. | Approved two-recipient text, attachments, reactions and supported mutations. No personal group substitution. |
 | Edits/deletes | Direct single-part Windows send/edit/unsend, exact CloudKit confirmation/local reflection, terminal retraction and zero-submit restart replay. | Pixel, groups, conflicts, independent display, supported tombstones and mid-flight recovery. |
 | Lifecycle | Identity/reset fences and bounded Android worker implemented/tested. | Current background/lock, reconnect, process death, token expiry and account repair. |

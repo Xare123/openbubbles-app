@@ -1601,6 +1601,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  CloudSyncNativeAuthMetadata
+  dco_decode_box_autoadd_cloud_sync_native_auth_metadata(dynamic raw);
+
+  @protected
   CloudSyncNativeSendReceipt
   dco_decode_box_autoadd_cloud_sync_native_send_receipt(dynamic raw);
 
@@ -2149,6 +2153,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   CloudSyncNativeAuthMetadata dco_decode_cloud_sync_native_auth_metadata(
     dynamic raw,
   );
+
+  @protected
+  CloudSyncNativeReceivedArchiveSourceBinding
+  dco_decode_cloud_sync_native_received_archive_source_binding(dynamic raw);
 
   @protected
   CloudSyncNativeSendReceipt dco_decode_cloud_sync_native_send_receipt(
@@ -5359,6 +5367,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  CloudSyncNativeAuthMetadata
+  sse_decode_box_autoadd_cloud_sync_native_auth_metadata(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   CloudSyncNativeSendReceipt
   sse_decode_box_autoadd_cloud_sync_native_send_receipt(
     SseDeserializer deserializer,
@@ -6083,6 +6097,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   CloudSyncNativeAuthMetadata sse_decode_cloud_sync_native_auth_metadata(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  CloudSyncNativeReceivedArchiveSourceBinding
+  sse_decode_cloud_sync_native_received_archive_source_binding(
     SseDeserializer deserializer,
   );
 
@@ -9870,6 +9890,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_box_autoadd_cloud_sync_native_auth_metadata(
+    CloudSyncNativeAuthMetadata self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_box_autoadd_cloud_sync_native_send_receipt(
     CloudSyncNativeSendReceipt self,
     SseSerializer serializer,
@@ -10722,6 +10748,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_cloud_sync_native_auth_metadata(
     CloudSyncNativeAuthMetadata self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_cloud_sync_native_received_archive_source_binding(
+    CloudSyncNativeReceivedArchiveSourceBinding self,
     SseSerializer serializer,
   );
 

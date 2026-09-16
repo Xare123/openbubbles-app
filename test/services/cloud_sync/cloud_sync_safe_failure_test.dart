@@ -11,6 +11,26 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_writer_authori
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('received archive diagnostics are exact and content-free', () {
+    final paths = [
+      'lib/services/rustpush/cloud_sync/cloud_sync_received_archive_identity.dart',
+      'lib/services/rustpush/cloud_sync/cloud_sync_received_archive_journal.dart',
+      'lib/services/rustpush/cloud_sync/cloud_sync_received_archive_source_binding.dart',
+      'lib/services/rustpush/cloud_sync/cloud_sync_received_archive_staging.dart',
+    ];
+    final codes = paths.expand((path) => RegExp(
+      r"'(cloud_sync_received_archive_[a-z_]+)'",
+    ).allMatches(File(path).readAsStringSync()).map((m) => m[1]!)).toSet();
+    expect(codes.length, greaterThan(30));
+    expect(CloudSyncV2ReceivedArchiveSafeFailureCodes.all.containsAll(codes), isTrue);
+    for (final code in CloudSyncV2ReceivedArchiveSafeFailureCodes.all) {
+      expect(cloudSyncV2SafeFailureCodeForCandidate(code), code);
+      expect(cloudSyncV2SafeFailureCode(StateError(code)), code);
+      expect(cloudSyncV2SafeFailureCode(ArgumentError.value('private data', 'private name', code)), code);
+      expect(cloudSyncV2SafeFailureCode(StateError('$code private body')), 'cloud_sync_unknown_failure');
+      expect(cloudSyncV2SafeFailureCodeForCandidate('${code}_unreviewed'), 'cloud_sync_unknown_failure');
+    }
+  });
   test('missing outbound receipt remains a specific bounded storage failure', () {
     expect(cloudSyncV2SafeFailureCode(CloudSyncFailure(
       category: CloudFailureCategory.localStorage,
