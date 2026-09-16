@@ -214,9 +214,16 @@ Current work handles after resume:
   reopens successfully. This is forward-upgrade proof, not a live-data migration
   or a supported downgrade/rollback claim. No device schema was changed.
 - Carver `01a0a95a-f229-7c83-8d70-befba78d6012` is closed, confirmed by missing
-  native handle. Original isolated helper snapshot is being preserved separately
-  from parent corrections before Git-aware worktree cleanup. No other helper,
-  native test job or parent test session remains active.
+  native handle. Original helper source is preserved at local ref
+  `agent/received-intent-journal-review-20260916` / `ea4a3cc589`; corrected source
+  is app `cd77ec55560c4c898102d13a5886620b73cc91f8` on the fork received-origin
+  branch. The dedicated clean worktree/cache was removed Git-aware after verifying
+  its submodule metadata was exclusive. Manifest:
+  `build-evidence/agent-cleanup-20260916-received/manifest.json`.
+  Logical bytes391,223,213 removed; observed C:free increased396,410,880bytes
+  to28.48GiB. Main, device evidence, APK and retained source ref verified intact.
+  Sessions/transcripts remain because supported deletion is unavailable. No
+  helper, native test job or parent test session remains active.
 - Parent rejected both first sidecar patches as stale-base duplicate fixes;
   current main already handles empty People handles and exact call-timeout
   ownership. Agents were redirected to current-source native/tester boundaries.

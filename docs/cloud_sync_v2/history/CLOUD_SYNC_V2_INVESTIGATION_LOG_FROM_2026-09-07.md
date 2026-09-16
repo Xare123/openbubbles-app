@@ -5861,3 +5861,14 @@ Historical tests do not establish current-device behavior.
   not_found. Its frozen original source is retained for provenance until a clean
   Git snapshot is recorded and supported worktree cleanup is verified. Main
   retains the corrected implementation. Raw sessions/transcripts are not deleted.
+- Corrected journal/GC/schema work committed ascd77ec555 and pushed only to the
+  fork's received-origin branch. Original helper snapshot committed locally as
+  ea4a3cc589 on agent/received-intent-journal-review-20260916 for provenance, not
+  deployment. Dedicated worktree measured391,223,213bytes/1,986files, clean,
+  no running build/test, with only unset test environment values. Standard Git
+  removal refused its initialized submodule. Parent verified that submodule's
+  clean Git metadata belonged exclusively to this helper (distinct from main),
+  then used exact-target Git-aware forced removal. Target gone; retained ref,
+  main/submodule, private evidence and verified APK remain intact. Observed free
+  space increased396,410,880bytes; C:28.48GiB. Manifest records both initial
+  refusal and successful reviewed cleanup. No session/transcript deletion.
