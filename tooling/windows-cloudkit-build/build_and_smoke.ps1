@@ -119,7 +119,15 @@ $nativeDiagnosticCases = @(
     'cloud_sync_transient_bridge::tests::message_extension_diagnostics_never_return_provider_values',
     'cloud_sync_transient_bridge::tests::retained_reply_diagnostics_are_bounded_and_value_free',
     'tests::native_logger_handle_outlives_initialization',
-    'desktop_native_logging::tests::findmy_probe_cannot_enable_broad_native_debug'
+    'desktop_native_logging::tests::findmy_probe_cannot_enable_broad_native_debug',
+    'api::cloud_sync_dependency::tests::extension_update_selects_true_message_session_not_balloon_uuid',
+    'api::cloud_sync_dependency::tests::ordinary_message_and_extension_base_do_not_invent_parent',
+    'api::cloud_sync_dependency::tests::reply_and_reaction_add_remove_select_declared_message_parent',
+    'api::cloud_sync_dependency::tests::owned_attachment_selects_message_owner_and_unowned_attachment_rejects',
+    'api::cloud_sync_dependency::tests::wrong_malformed_or_stale_install_expected_hash_cannot_select_a_parent',
+    'api::cloud_sync_dependency::tests::substituted_declared_parent_hash_fails_even_when_caller_repeats_it',
+    'api::cloud_sync_dependency::tests::parent_guid_case_is_preserved_through_logical_and_physical_keying',
+    'api::cloud_sync_dependency::tests::locator_source_keeps_cached_read_and_final_protected_child_rebind'
 )
 $nativeDiscoveryCases = @(
     'cloud_sync_native_fetch::tests::chat1_discovery_is_disjoint_from_semantic_fetch_and_requires_permit',
@@ -237,6 +245,7 @@ if ($ArtifactMode -eq 'native-test-host') {
     foreach ($case in $nativeDiagnosticCases) {
         $relativeSource = if ($case.StartsWith('tests::')) { 'rust/src/lib.rs' }
             elseif ($case.StartsWith('desktop_native_logging::')) { 'rust/src/desktop_native_logging.rs' }
+            elseif ($case.StartsWith('api::cloud_sync_dependency::')) { 'rust/src/api/cloud_sync_dependency_tests.rs' }
             else { 'rust/src/cloud_sync_transient_bridge.rs' }
         $diagnosticSource = Get-Content -LiteralPath (Join-Path $source $relativeSource) -Raw
         if (-not $diagnosticSource.Contains('fn ' + ($case -split '::')[-1] + '(')) {
@@ -364,6 +373,10 @@ $sourceInputPaths = @(
     'rust/Cargo.toml', 'rust/Cargo.lock', 'pubspec.lock',
     'rust/src/frb_generated.rs', 'rust/src/frb_generated.io.rs',
     'lib/src/rust/api/api.dart', 'lib/src/rust/frb_generated.dart', 'lib/src/rust/frb_generated.io.dart',
+    'lib/src/rust/api/cloud_sync_dependency.dart',
+    'rust/src/api/mod.rs', 'rust/src/api/cloud_sync_dependency.rs', 'rust/src/api/cloud_sync_dependency_tests.rs',
+    'lib/cloud_sync_v2_windows_parent_observation.dart',
+    'test/services/cloud_sync/cloud_sync_v2_windows_parent_observation_test.dart',
     'rust/src/api/api.rs', 'rust/src/cloud_sync_message_update_compose.rs',
     'rust/src/cloud_sync_message_update_stage.rs',
     'rust/src/cloud_sync_transient_bridge.rs',
@@ -552,6 +565,7 @@ try {
         'test/services/cloud_sync/cloud_sync_windows_mutation_target_test.dart',
         'test/services/cloud_sync/native_protected_message_update_transport_test.dart',
         'test/services/cloud_sync/cloud_sync_v2_windows_harness_test.dart',
+        'test/services/cloud_sync/cloud_sync_v2_windows_parent_observation_test.dart',
         'test/services/cloud_sync/cloud_sync_windows_dev_profile_test.dart',
         'test/services/cloud_sync/cloud_sync_windows_local_write_test.dart',
         'test/services/cloud_sync/objectbox_own_writer_precision_recovery_test.dart',
