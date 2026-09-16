@@ -37,6 +37,8 @@ import 'package:get/get.dart';
 import 'package:tuple/tuple.dart';
 import 'package:universal_io/io.dart';
 import 'package:bluebubbles/services/network/backend_service.dart';
+import 'package:bluebubbles/app/layouts/conversation_view/widgets/message/mutation_feedback.dart';
+import 'package:bluebubbles/utils/logger/logger.dart';
 
 class MessageHolder extends CustomStateful<MessageWidgetController> {
   MessageHolder({
@@ -161,43 +163,84 @@ class _MessageHolderState
     return bubbleColors;
   }
 
+  final MutationUiGate _editGate = MutationUiGate();
+
   void completeEdit(AttributedBody newEdit, int part) async {
-    widget.cvController.stopEditing(message.guid!, part);
-    if (newEdit.string.isNotEmpty &&
-        jsonEncode(newEdit.toMap()) !=
-            jsonEncode(message.attributedBody.first.toMap())) {
+    // Double-tap protection: ignore re-entrant submits while one edit is in flight.
+    if (!mounted || _editGate.isBusy) return;
+    // Capture everything the async continuation needs before any await, so
+    // post-await code never touches widget.* on a disposed State.
+    final cvController = widget.cvController;
+    final target = message;
+    final targetChat = chat;
+    final editGuid = target.guid;
+    if (newEdit.string.isEmpty ||
+        jsonEncode(newEdit.toMap()) ==
+            jsonEncode(target.attributedBody.first.toMap())) {
+      cvController.stopEditing(editGuid!, part);
+      cvController.dismissKeyboard();
+      return;
+    }
+    if (!_editGate.tryAcquire()) return;
+    final editDialog = OwnedDialog();
+    bool succeeded = false;
+    try {
+      // The editing entry (draft) is intentionally kept until the backend
+      // preparation succeeds, so a failed attempt loses nothing.
+      if (!mounted) return;
       showDialog(
           context: context,
-          builder: (BuildContext context) {
+          builder: (BuildContext dialogContext) {
+            // Own exactly this route; cleanup removes only it.
+            editDialog.capture(dialogContext);
             return AlertDialog(
-              backgroundColor: context.theme.colorScheme.properSurface,
+              backgroundColor: dialogContext.theme.colorScheme.properSurface,
               title: Text(
                 "Editing message...",
-                style: context.theme.textTheme.titleLarge,
+                style: dialogContext.theme.textTheme.titleLarge,
               ),
               content: Container(
                 height: 70,
                 child: Center(
                   child: CircularProgressIndicator(
-                    backgroundColor: context.theme.colorScheme.properSurface,
+                    backgroundColor: dialogContext.theme.colorScheme.properSurface,
                     valueColor: AlwaysStoppedAnimation<Color>(
-                        context.theme.colorScheme.primary),
+                        dialogContext.theme.colorScheme.primary),
                   ),
                 ),
               ),
             );
           });
-      final updatedMessage = await backend.edit(message, newEdit, part);
+      final updatedMessage = await backend.edit(target, newEdit, part);
+      succeeded = true;
       if (updatedMessage != null) {
-        await ah.handleUpdatedMessage(chat, updatedMessage, null);
+        try {
+          await ah.handleUpdatedMessage(targetChat, updatedMessage, null);
+        } catch (error) {
+          Logger.warn(
+              "Edit reflection stopped safely code=${mutationSafeCode(error)}");
+        }
       }
-      if (ns.isTabletMode(context)) {
-        Get.close(1);
-      } else {
-        Navigator.of(context).pop();
+    } catch (error) {
+      // Outcome unknown (a failure can surface after dispatch): keep the
+      // draft and the original message, report busy vs generic with
+      // content-free copy. No retry/resend.
+      final feedback = mutationFailureFeedback(error, isEdit: true);
+      Logger.warn(
+          "Edit not confirmed code=${mutationSafeCode(error)}");
+      showSnackbar(feedback.title, feedback.message);
+    } finally {
+      _editGate.release();
+      // Owned-route cleanup only: safe after disposal, never touches an
+      // unrelated route or the disposed widget context.
+      editDialog.close();
+      // Captured controller only, and only while live: on failure the editing
+      // entry stays so the draft keeps its controls.
+      if (succeeded && mounted) {
+        cvController.stopEditing(editGuid!, part);
+        cvController.dismissKeyboard();
       }
     }
-    widget.cvController.dismissKeyboard();
   }
 
   @override

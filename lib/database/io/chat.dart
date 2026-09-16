@@ -2135,7 +2135,7 @@ class Chat {
     return results.firstWhereOrNull((res) => res.handles.length == 1);
   }
 
-  static Chat? findByRustGuid(String guid) {
+  static Chat? findByRustGuid(String guid, {bool includeCloudAliases = true}) {
     final direct = Chat.findOne(guid: guid);
     if (direct != null) return direct;
 
@@ -2148,7 +2148,17 @@ class Chat {
       // we found one!
       return results[0];
     }
-    return null;
+    if (!includeCloudAliases || guid.trim().isEmpty) return null;
+
+    // A restored chat can retain the IDS sender GUID in its cloud identity
+    // rather than Chat.guid. Reuse only a unique, exact eligible owner before
+    // participant/name fallback can create a second conversation. Do not
+    // normalize, merge existing rows, or move their messages here.
+    final cloudMatches = findEligibleCloudMessageChatMatches(
+      [guid],
+      expandCandidates: false,
+    );
+    return cloudMatches.length == 1 ? cloudMatches.single : null;
   }
 
   // if soft is false, return is never null
@@ -2160,20 +2170,11 @@ class Chat {
     }
 
     if (data.senderGuid != null) {
-      // first find by direct GUID
-      final direct = Chat.findOne(guid: data.senderGuid);
-      if (direct != null) return direct;
-
-      // prioritize finding by related GUID
-      final query = Database.chats
-          .query(Chat_.guidRefs.containsElement(data.senderGuid!))
-          .build();
-      final results = query.find();
-      query.close();
-      if (results.isNotEmpty) {
-        // we found one!
-        return results[0];
-      }
+      final identified = findByRustGuid(
+        data.senderGuid!,
+        includeCloudAliases: service == 'iMessage' && !routingStub,
+      );
+      if (identified != null) return identified;
     }
 
     var (mine, dartParticipants) =

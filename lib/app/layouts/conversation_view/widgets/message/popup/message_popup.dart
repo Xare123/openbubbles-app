@@ -15,6 +15,7 @@ import 'package:bluebubbles/app/layouts/findmy/findmy_pin_clipper.dart';
 import 'package:bluebubbles/app/wrappers/theme_switcher.dart';
 import 'package:bluebubbles/helpers/helpers.dart';
 import 'package:bluebubbles/app/layouts/conversation_view/pages/conversation_view.dart';
+import 'package:bluebubbles/app/layouts/conversation_view/widgets/message/mutation_feedback.dart';
 import 'package:bluebubbles/app/layouts/conversation_view/widgets/message/reply/reply_thread_popup.dart';
 import 'package:bluebubbles/app/wrappers/titlebar_wrapper.dart';
 import 'package:bluebubbles/app/wrappers/stateful_boilerplate.dart';
@@ -1425,13 +1426,46 @@ class _MessagePopupState extends OptimizedState<MessagePopup>
     }
   }
 
+  final MutationUiGate _unsendGate = MutationUiGate();
+
   void unsend() async {
-    popDetails();
-    final updatedMessage = await backend.unsend(message, part);
-    if (updatedMessage == null) {
-      return;
+    // Double-tap protection: one unsend attempt at a time. Existing gating
+    // (canEditUnsend, ownership, temp/scheduled guards in _allActions) is
+    // unchanged. No retry/resend or IDS-only fallback.
+    if (_unsendGate.isBusy) return;
+    if (!_unsendGate.tryAcquire()) return;
+    // Capture before any await: popDetails disposes this popup, so post-await
+    // code must not touch widget.*.
+    final target = message;
+    final targetPart = part;
+    final targetChat = chat;
+    try {
+      // Inside try so a popDetails throw still releases the gate in finally.
+      popDetails();
+      final updatedMessage = await backend.unsend(target, targetPart);
+      if (updatedMessage != null) {
+        try {
+          await ah.handleUpdatedMessage(targetChat, updatedMessage, null);
+        } catch (error) {
+          Logger.warn(
+              "Unsend reflection stopped safely code=${mutationSafeCode(error)}");
+        }
+      }
+      // A null result is the receipt-driven success path (durable local
+      // reflection happens in the receipt callback), not a failure.
+    } catch (error) {
+      // Outcome unknown (a failure can surface after dispatch). Report busy
+      // vs generic with content-free copy.
+      final feedback = mutationFailureFeedback(error, isEdit: false);
+      Logger.warn(
+          "Unsend not confirmed code=${mutationSafeCode(error)}");
+      // showSnackbar uses the global overlay (no widget context), so it is
+      // safe even though popDetails already disposed this popup. No
+      // setState or context navigation happens after the await.
+      showSnackbar(feedback.title, feedback.message);
+    } finally {
+      _unsendGate.release();
     }
-    ah.handleUpdatedMessage(chat, updatedMessage, null);
   }
 
   void edit() async {
