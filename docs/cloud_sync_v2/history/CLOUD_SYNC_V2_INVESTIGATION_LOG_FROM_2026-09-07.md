@@ -6473,3 +6473,51 @@ Historical tests do not establish current-device behavior.
   not another unchanged full sweep. The remaining carrier-disposition mismatch
   and absent logical parent links need separate evidence and regression cases.
   Overall goal remains active; Windows read proof does not qualify production.
+
+### September 16 post-sweep ownership investigation and context repair
+
+- Previous goal turn was progress: qualified full sweep and corrected bounded
+  logging. This turn reused one Muse Contributor helper for a bounded carrier
+  disposition review while the parent inspected the remaining dependency path.
+  OpenAI's delegation/test-calibration guidance was refreshed; no standing pool,
+  new worktree, native build or broad repeated matrix was created.
+- Fresh observation `bf3b650c5abcb120fd716f2ad4cb1da7` still finds the same five
+  ready direct-message candidates after the full sweep. Inspector-only commits
+  `737f9e4e9` and `09c2a5b1d` add a production read-only ownership proof and
+  local-row/parent booleans. Observations `4e4930890561653c8dc10a48df1b2d60` and
+  `f6241fb42aaf4e483736b8705da94572` each pass 37 cases. Native remains aa953639a.
+- All five resolve one eligible Chat with exact durable ownership. None has
+  a local Message row; every one has a declared extension-session parent and
+  no association parent. Thus the diagnostic legacy-row mismatch is expected,
+  not evidence of a timestamp mismatch. Actual parent row/proof availability
+  still needs a targeted join; a missing remote base is not yet established.
+  Eight sampled attachments have no local owner. Do not loosen Chat rules.
+- Checkpoints/outbox and selected inbox status/retry/time/digest stayed unchanged;
+  these checks are not a complete bytewise database audit. Raw output was removed
+  and owned-process cleanup confirmed. The Windows/Flutter window was released.
+  A separate orphan tester PID24668 belonged to the independent task's stopped
+  offline suite, proven by its package/config paths and absent parent. Parent
+  left it untouched; that task verified ownership, stopped it, and confirmed gone.
+- Popper's classification review was checked against the native envelope binder,
+  Dart result validation and ObjectBox commit. Fresh carrier decode binds exact
+  retained bytes but not necessarily the latest remote version. A bare service
+  enum does not authorize discarding previous dependency evidence. Its proposed
+  bound classification/history receipt remains unimplemented; existing rejection
+  stays intact. Reviewed helper closed and verified not_found.
+- A separate concrete defect was reproduced: the early carrier-disposition catch
+  bypassed the normal post-decode active-scope revalidator. Three tests covering
+  previous unsupported-service, malformed and dependency failures all completed
+  incorrectly before the fix. Parent added the existing authorization check
+  before classification/retry metadata changes in commit `ea8d86b8b`. No category eligibility expanded.
+  The affected two-file batch passed 152 tests, including all three regressions;
+  analysis found no issues. No native/ABI/schema or remote-write change.
+- The GCE pilot task reported its own explicitly user-approved paid infrastructure
+  run. It confirmed this is not current CloudKit qualification and will make no
+  additional paid run without approval. Main CloudKit neither launched that run
+  nor adopted its older source/signing/infrastructure changes.
+- Next: exact parent snapshot/map/latest-inbox correlation, followed only if
+  necessary by a bounded authenticated-child-derived remote lookup design. Do
+  not repeat the unchanged full sweep or fake writer/received-source authority.
+  Received-group draft, full write/receive, Pixel lifecycle and independent-client
+  display gates remain open. No main live/test process or active helper remains;
+  C: free approximately 29 GiB at the last checkpoint. No additional deletion.

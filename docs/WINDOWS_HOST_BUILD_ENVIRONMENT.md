@@ -199,6 +199,14 @@ afterward. Never raise the output cap to accommodate bulk record logging.
 After a forced tester shutdown, allow the normal five-minute durable interlock
 lease to expire; do not delete or bypass its fence to retry.
 
+The retained-record inspector can also call the production legacy ownership
+proof inside an ObjectBox read transaction. Its result is diagnostic only:
+`legacy_ownership_canonical_row_mismatch` is expected when the selected Message
+does not exist, even if its Chat resolves correctly. Read the accompanying
+candidate counts and parent flags before inferring a Chat or timestamp defect.
+This probe never admits a row or supplies authority to mutate it. Checkpoint,
+outbox and sampled-inbox checks are not a byte-for-byte whole-database comparison.
+
 Prepend the qualified runtime folder to PATH for the test process so ObjectBox
 5.3.2 ARM64 is found. The initial missing-path attempt failed with error 126 before
 the account operation. After correcting PATH, local projection startup passed in

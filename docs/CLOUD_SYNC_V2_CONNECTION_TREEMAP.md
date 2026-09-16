@@ -92,14 +92,29 @@ no remote writes, cleanup confirmed. Retained total6269 =3779 known excluded
 saves +681 tombstones +1809 unresolved saves. Thirteen message records left
 the retained backlog across these runs; no independent UI proof is inferred.
 
-Earlier37-case observation1dbbed6b found five decodable direct messages with
-one chat candidate each and eight decodable attachments with no parent row.
-The completed sweep now rules out merely skipping the tail of the backlog.
-Next: inspect a small remaining dependency set with exact current-generation
-logical-to-physical ownership, plus the68 native carrier exclusions rejected
-because their prior disposition differed. Missing parents do not prove carrier
-exclusion. Do not repeat a full sweep without new evidence/code, merge by title,
-or relax ownership checks. No copied-store replay helper exists yet.
+Post-sweep observations `bf3b650c`, `4e493089`, and `f6241fb4` each examined
+37 cases without checkpoint/outbox or sampled-inbox changes. All five sampled
+ready messages resolve their Chat through exact production ownership. They have
+no local Message row and declare an extension-session parent. The read-only
+legacy-row proof therefore reports an expected missing-row mismatch; it does
+not establish a timestamp or Chat bug. Their session-base dependency is the
+next discriminator. Eight sampled attachments still have no local Message owner.
+
+Next: inspect each selected parent's exact current-generation snapshot/map and
+latest physical inbox version. Determine whether its source is retained,
+unsupported, tombstoned, or unobserved. If the local journal cannot answer,
+design one bounded read-only exact lookup derived from the authenticated child,
+then feed Found records through the ordinary reader. Never fabricate a received
+intent or outgoing receipt to borrow a writer lookup. No new lookup API or
+copied-store replay helper exists yet; remote absence remains unproven.
+
+The 68 carrier dispositions with an older dependency failure remain retained.
+Popper's reviewed report rejects blindly overwriting that history. Parent fixed
+a concrete early-return race: carrier classification now revalidates the active
+scope after decode, before any metadata mutation (commit `ea8d86b8b`). Three new cases failed before
+the fix; the full affected applier/gateway batch passed 152 cases afterward, and
+analysis is clean. This Dart-only repair is not yet Pixel-qualified. Do not repeat
+an unchanged full sweep, merge by title, or relax ownership/classification checks.
 
 Launcher4759bf88e fixes a missing native bounded-logging flag. Its two regression
 assertions failed before and all23 launcher checks pass after. The first sweep
