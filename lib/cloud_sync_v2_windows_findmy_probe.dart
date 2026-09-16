@@ -471,8 +471,8 @@ Future<Map<String, Object?>> runWindowsFindMyProbe({
             final matches = rows.where((row) => row.id == id).toList();
             return {
               'selected_match': matches.length == 1,
-              'location_found':
-                  matches.length == 1 && matches.single.lastLocation != null,
+              'location_found': matches.length == 1 &&
+                  _hasUsableFindMyCoordinates(matches.single.lastLocation),
               ..._people(
                 matches.length == 1 ? matches : <api.Follow>[],
                 clock(),
@@ -508,7 +508,7 @@ Future<Map<String, Object?>> runWindowsFindMyProbe({
     'mode': 'bounded-findmy-read-only-probe',
     'live_reads_admitted': reads != null,
     'location_meaning':
-        'native_view_after_request_not_proof_of_new_location_sample',
+        'native_view_after_request_not_proof_of_new_location_sample;selected_location_found_requires_usable_coordinates',
     'sharing_meaning':
         'native_fields_only_absence_does_not_establish_stopped_sharing',
     'freshness_meaning': 'native_timestamp_ms_age_bucket_not_live_tracking',
@@ -538,6 +538,20 @@ Map<String, Object?> _people(List<api.Follow> rows, DateTime now) => {
       .length,
 };
 
+/// Coordinate-usability rule shared by aggregate counts and selected-location
+/// evidence. Mirrors hasFindMyLocation in
+/// lib/app/layouts/findmy/findmy_refresh.dart: a present native location with
+/// unusable coordinates (sentinel, non-finite, or out of range) is unavailable,
+/// never found. Sharing state is never inferred here.
+bool _hasUsableFindMyCoordinates(api.Location? row) {
+  if (row == null) return false;
+  return row.latitude.isFinite &&
+      row.longitude.isFinite &&
+      row.latitude.abs() <= 90 &&
+      row.longitude.abs() <= 180 &&
+      (row.latitude != 0 || row.longitude != 0);
+}
+
 Map<String, Object?> _locations(Iterable<api.Location?> rows, DateTime now) {
   final buckets = <String, int>{
     'absent': 0,
@@ -553,11 +567,7 @@ Map<String, Object?> _locations(Iterable<api.Location?> rows, DateTime now) {
     var bucket = 'absent';
     if (row != null) {
       present++;
-      if (row.latitude.isFinite &&
-          row.longitude.isFinite &&
-          row.latitude.abs() <= 90 &&
-          row.longitude.abs() <= 180 &&
-          (row.latitude != 0 || row.longitude != 0)) {
+      if (_hasUsableFindMyCoordinates(row)) {
         valid++;
       }
       if (row.isOld == true) nativeOld++;

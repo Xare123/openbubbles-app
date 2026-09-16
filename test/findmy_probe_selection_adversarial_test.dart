@@ -301,6 +301,41 @@ void main() {
     );
   });
 
+  test('present-but-sentinel coordinates are unavailable, not found', () async {
+    const handle = 'shared@example.test';
+    final row = person(
+      id: 'native-row-1',
+      accepted: const [handle],
+      location: api.Location(
+        altitude: 0,
+        floorLevel: 0,
+        horizontalAccuracy: 10,
+        isInaccurate: false,
+        latitude: 0,
+        longitude: 0,
+        secureLocationTs: msAgo(60000),
+        timestamp: msAgo(60000),
+        verticalAccuracy: 10,
+      ),
+    );
+    final report = await run(
+      request: const FindMyProbeRequest(selectedHandle: handle),
+      probeReads: reads(
+        devices: deviceReader([]),
+        following: followReader([row]),
+        select: selectReader([row]),
+      ),
+    );
+    final selected = report['selected']! as Map;
+    expect(selected['selected_match'], isTrue);
+    expect(selected['location_found'], isFalse);
+    expect((selected['location_age_buckets'] as Map)['within_5_minutes'], 1);
+    expect(
+      selected['selected_identity_digest'],
+      expectedDigest('handle:$handle'),
+    );
+  });
+
   test('people failure does not erase devices or invent binding', () async {
     const handle = 'shared@example.test';
     final report = await run(

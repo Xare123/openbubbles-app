@@ -788,4 +788,48 @@ void main() {
       );
     },
   );
+
+  test(
+    'present-but-unusable selected coordinates are unavailable, not found',
+    () async {
+      api.Location unusable(
+              {required double latitude, required double longitude}) =>
+          api.Location(
+            altitude: 0,
+            floorLevel: 0,
+            horizontalAccuracy: 1,
+            isInaccurate: false,
+            latitude: latitude,
+            longitude: longitude,
+            secureLocationTs: 0,
+            timestamp: instant.millisecondsSinceEpoch,
+            verticalAccuracy: 1,
+          );
+      for (final point in [
+        unusable(latitude: 0, longitude: 0),
+        unusable(latitude: 91, longitude: 1),
+        unusable(latitude: 1, longitude: 200),
+        unusable(latitude: double.nan, longitude: 1),
+      ]) {
+        final report = await probe(
+          select: true,
+          callbacks: reads(
+            people: () async => fresh([person()]),
+            select: (_) async => fresh([person(point: point)]),
+          ),
+        );
+        expect(section(report, 'selected')['selected_match'], true);
+        expect(section(report, 'selected')['location_found'], false);
+        expect(
+          section(report, 'selected')['valid_coordinate_pair_count'],
+          0,
+        );
+        expect(
+          (section(report, 'selected')['location_age_buckets']
+              as Map)['within_5_minutes'],
+          1,
+        );
+      }
+    },
+  );
 }
