@@ -402,6 +402,7 @@ mod tests {
             target: None,
             verification_failed: false,
             certified_context: None,
+            received_on_handle: None,
         }
     }
 

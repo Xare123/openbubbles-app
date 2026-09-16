@@ -348,6 +348,7 @@ pub(crate) fn message_inst_from_decoded_source(
         send_delivered: decoded.send_delivered,
         verification_failed: false,
         certified_context: None,
+        received_on_handle: None,
     };
     Ok((msg, decoded.attachment_guids.clone()))
 }
@@ -755,7 +756,7 @@ fn build_dto(msg: &MessageInst, attachment_guids: &[String]) -> Result<SourceDto
     if msg.target.is_some() {
         return Err(Failure::UnsupportedMessage);
     }
-    if msg.certified_context.is_some() {
+    if msg.certified_context.is_some() || msg.received_on_handle.is_some() {
         return Err(Failure::UnsupportedMessage);
     }
     if msg.verification_failed {
@@ -1223,6 +1224,7 @@ mod tests {
             send_delivered: true,
             verification_failed: false,
             certified_context: None,
+            received_on_handle: None,
         };
         (msg, vec!["ATTACH-GUID-0001".to_owned()])
     }
@@ -1241,6 +1243,7 @@ mod tests {
             send_delivered: false,
             verification_failed: false,
             certified_context: None,
+            received_on_handle: None,
         };
         (
             msg,
@@ -1563,6 +1566,12 @@ mod tests {
         ));
         let mut bad = msg.clone();
         bad.verification_failed = true;
+        assert!(matches!(
+            encode_ids_attachment_source(&bad, &guids),
+            Err(Failure::UnsupportedMessage)
+        ));
+        let mut bad = msg.clone();
+        bad.received_on_handle = Some("mailto:owner@example.com".into());
         assert!(matches!(
             encode_ids_attachment_source(&bad, &guids),
             Err(Failure::UnsupportedMessage)

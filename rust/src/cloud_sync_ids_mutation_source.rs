@@ -127,6 +127,7 @@ impl OpenedMutationSource {
             target: None,
             verification_failed: false,
             certified_context: None,
+            received_on_handle: None,
         })
     }
 }
@@ -214,6 +215,7 @@ pub(crate) fn validate_prepared_mutation_source(
 fn intent_from_message(message: &MessageInst) -> Result<Intent, Failure> {
     if message.target.is_some()
         || message.certified_context.is_some()
+        || message.received_on_handle.is_some()
         || message.verification_failed
     {
         return Err(Failure::UnsupportedMessage);
@@ -371,6 +373,7 @@ mod tests {
             target: None,
             verification_failed: false,
             certified_context: None,
+            received_on_handle: None,
         }
     }
 
@@ -579,6 +582,11 @@ mod tests {
 
     #[test]
     fn unsupported_or_oversized_edits_never_flatten_into_plaintext() {
+        for unsend in [false, true] {
+            let mut received = original(unsend);
+            received.received_on_handle = Some("mailto:owner@example.com".into());
+            assert_eq!(intent_from_message(&received).err().unwrap(), Failure::UnsupportedMessage);
+        }
         for bad in 0..10 {
             let mut message = original(false);
             let expected = match bad {

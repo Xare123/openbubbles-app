@@ -13568,6 +13568,7 @@ mod cloud_sync_mutation_send_tests {
             target: None,
             verification_failed: false,
             certified_context: None,
+            received_on_handle: None,
         }
     }
 
@@ -14137,6 +14138,7 @@ mod cloud_sync_windows_sender_tests {
             send_delivered: false,
             verification_failed: false,
             certified_context: None,
+            received_on_handle: None,
         };
         let stage = crate::cloud_sync_ids_attachment_source::stage_ids_attachment_source(
             directory.path().to_path_buf(),
@@ -19499,6 +19501,7 @@ mod cloud_sync_message_update_prepare_tests {
             target: None,
             verification_failed: false,
             certified_context: None,
+            received_on_handle: None,
         }
     }
 

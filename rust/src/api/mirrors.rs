@@ -1459,6 +1459,9 @@ pub struct DartIMessage {
     pub verification_failed: bool,
     #[frb(non_final)]
     pub certified_context: Option<CertifiedContext>,
+    /// Original local IDS receive destination, not the reply-device token.
+    /// This is receive metadata, not an outgoing send or CloudKit permission.
+    pub received_on_handle: Option<String>,
 }
 
 #[repr(C)]
