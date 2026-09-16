@@ -841,6 +841,83 @@ pub async fn cloud_sync_discard_received_archive_inspection(
     prepared.pending.lock().await.take();
 }
 
+/// One exact lookup handed to the semantic reader. Deliberately has no zone
+/// cursor, continuation token, complete-page bit or remote-write capability.
+pub struct CloudSyncReceivedFoundProjection {
+    pub message_guid_hash: String,
+    pub source_sha256: String,
+    pub generation: u64,
+    pub batch_id: String,
+    pub lease_reference: String,
+    pub change: CloudSyncProtectedChange,
+}
+
+/// Fresh supported-identity Found -> normal protected reader input. No remote
+/// mutation and no direct Message/record-map update. Caller owns local exclusion
+/// through journal adoption and lease commit, then uses the normal projector.
+pub async fn cloud_sync_stage_received_found_projection(
+    prepared: &CloudSyncPreparedReceivedInspection,
+    native_writer_pause_token: u64,
+) -> anyhow::Result<CloudSyncReceivedFoundProjection> {
+    use crate::cloud_sync_transient_bridge::bind_envelope;
+    use crate::cloud_sync_native_fetch::{cloud_sync_unprotect_raw_envelope,
+        CloudNativeProtectionScope, CloudNativeStream};
+    let mut pending = prepared.pending.lock().await.take()
+        .ok_or_else(|| anyhow!("cloud_sync_received_archive_inspection_consumed"))?;
+    if !matches!(pending.observation.disposition,
+        CloudSyncReceivedRecordDisposition::Equivalent | CloudSyncReceivedRecordDisposition::NeedsProjection) {
+        return Err(anyhow!("cloud_sync_received_archive_found_projection_not_ready"));
+    }
+    if pending.prepared_at.elapsed() > std::time::Duration::from_secs(120) {
+        return Err(anyhow!("cloud_sync_received_archive_inspection_expired"));
+    }
+    let permit = acquire_cloudkit_read_authentication(native_writer_pause_token)
+        .map_err(|_| anyhow!("cloud_sync_received_archive_read_permit"))?;
+    let auth = cloud_sync_capture_auth_snapshot(&pending.cloud_messages_client,
+        pending.storage_directory.clone()).await?;
+    cloud_sync_require_received_auth(&pending.auth, &auth)?;
+    let container = pending.cloud_messages_client.get_cached_container_for_read_authentication(&permit).await
+        .map_err(|_| anyhow!("cloud_sync_received_archive_identity_changed"))?;
+    if !Arc::ptr_eq(&pending.container, &container) {
+        return Err(anyhow!("cloud_sync_received_archive_identity_changed"));
+    }
+    crate::cloud_sync_received_source_stage::open_received_archive_source(
+        PathBuf::from(&pending.storage_directory), auth.account_fingerprint.clone(), &pending.source)
+        .map_err(|_| anyhow!("cloud_sync_received_archive_protected_source_changed"))?;
+    let request = cloud_sync_attachment_group_decode_request(&pending.storage_directory, &auth,
+        pending.chat_generation, &pending.chat_source)
+        .map_err(|_| anyhow!("cloud_sync_received_archive_parent_changed"))?;
+    let scope = CloudNativeProtectionScope::new(auth.account_fingerprint.clone(), CloudNativeStream::Chats)
+        .map_err(|_| anyhow!("cloud_sync_received_archive_parent_changed"))?;
+    let parent = cloud_sync_unprotect_raw_envelope(PathBuf::from(&pending.storage_directory), &scope,
+        CloudNativeStream::Chats, pending.chat_generation, &pending.chat_source.protected_raw_envelope_reference)
+        .map_err(|_| anyhow!("cloud_sync_received_archive_parent_changed"))?;
+    let hasher = crate::cloud_sync_protector::semantic_identifier_hasher(pending.storage_directory.clone())
+        .map_err(|_| anyhow!("cloud_sync_received_archive_identity_unavailable"))?;
+    bind_envelope(&request, &parent, &hasher)
+        .map_err(|_| anyhow!("cloud_sync_received_archive_parent_changed"))?;
+    let (record, raw) = pending.raw_found.take()
+        .ok_or_else(|| anyhow!("cloud_sync_received_archive_found_projection_not_ready"))?;
+    let page = crate::cloud_sync_native_fetch::cloud_sync_stage_received_found_projection(
+        PathBuf::from(&pending.storage_directory), auth.account_fingerprint,
+        pending.observation.raw_generation, &record, &raw)
+        .map_err(|_| anyhow!("cloud_sync_received_archive_readback_stage_failed"))?;
+    if page.changes().len() != 1 || page.protected_next_checkpoint_reference().is_some() ||
+        page.changes()[0].record_id_hash() != pending.observation.server_record_id_hash ||
+        page.changes()[0].etag_hash() != pending.observation.etag_hash.as_deref() {
+        let _ = crate::cloud_sync_native_fetch::cloud_sync_rollback_protected_page(
+            PathBuf::from(&pending.storage_directory), &page);
+        return Err(anyhow!("cloud_sync_received_archive_record_mismatch"));
+    }
+    Ok(CloudSyncReceivedFoundProjection {
+        message_guid_hash: pending.source.message_guid_hash,
+        source_sha256: pending.source.source_sha256,
+        generation: page.generation(), batch_id: page.batch_id().to_owned(),
+        lease_reference: page.page_lease_reference().to_owned(),
+        change: map_cloud_sync_protected_change(&page.changes()[0]),
+    })
+}
+
 /// Ephemeral native source and protected-parent binding, never an outgoing IDS
 /// receipt. Every restarted prepare/readback reopens the durable source and
 /// current parent under a restored read session. Plaintext remains native.
