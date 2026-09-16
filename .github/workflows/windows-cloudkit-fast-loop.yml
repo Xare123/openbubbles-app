@@ -44,7 +44,7 @@ env:
   SOURCE_REF: ${{ inputs.source_ref }}
   BUILD_VARIANT: ${{ inputs.build_variant }}
   ARTIFACT_MODE: ${{ inputs.artifact_mode }}
-  TRUSTED_SOURCE_BRANCH: agent/cloudkit-v2-update-seam
+  TRUSTED_SOURCE_BRANCH: agent/cloudkit-v2-received-origin-20260916
 
 jobs:
   register:
