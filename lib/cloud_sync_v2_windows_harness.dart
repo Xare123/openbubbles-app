@@ -50,6 +50,7 @@ import 'package:path/path.dart' as path;
 import 'cloud_sync_v2_windows_local_write.dart';
 import 'cloud_sync_v2_windows_feed_probe.dart';
 import 'cloud_sync_v2_windows_findmy_probe.dart';
+import 'cloud_sync_v2_windows_parent_observation.dart';
 
 Future<void> main(List<String> arguments) async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -1810,6 +1811,48 @@ class CloudSyncV2WindowsHarnessState extends State<CloudSyncV2WindowsHarness> {
                 });
               } else {
                 item['kind'] = 'other';
+              }
+              final (parentHash, parentGuid) = switch (payload) {
+                CloudMessageEntityPayload value => (
+                  value.semanticParentLogicalKeyHash,
+                  value.extensionParentCanonicalGuid ?? value.replyParentCanonicalGuid,
+                ),
+                CloudReactionEntityPayload value => (
+                  value.parentLogicalKeyHash, value.parentCanonicalGuid,
+                ),
+                CloudAttachmentEntityPayload value => (
+                  value.ownerLogicalKeyHash, value.ownerCanonicalGuid,
+                ),
+                _ => (null, null),
+              };
+              if (parentHash != null && parentGuid != null) {
+                final parentScope = CloudSyncScope(
+                  accountFingerprint: auth.accountFingerprint,
+                  container: scope.container,
+                  database: scope.database,
+                  zone: 'messageManateeZone',
+                  persistenceLane: CloudSyncPersistenceLane.semantic,
+                );
+                final parentCheckpointQuery = Database.store
+                    .box<CloudSyncCheckpointEntity>()
+                    .query(CloudSyncCheckpointEntity_.checkpointKey.equals(
+                      cloudSyncPersistentScopeKey(parentScope),
+                    )).build();
+                try {
+                  final parentCheckpoint = parentCheckpointQuery.findUnique();
+                  if (parentCheckpoint == null) {
+                    throw StateError('cloud_sync_windows_dev_observation_checkpoint_missing');
+                  }
+                  item.addAll(observeCloudSyncRetainedMessageParent(
+                    store: Database.store,
+                    scope: parentScope,
+                    generation: parentCheckpoint.generation,
+                    logicalParentHash: parentHash,
+                    canonicalParentGuid: parentGuid,
+                  ));
+                } finally {
+                  parentCheckpointQuery.close();
+                }
               }
             } on CloudSemanticDecodeFailure catch (failure, stack) {
               final code = failure.safeCode;
