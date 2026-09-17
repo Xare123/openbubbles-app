@@ -127,7 +127,11 @@ $nativeDiagnosticCases = @(
     'api::cloud_sync_dependency::tests::wrong_malformed_or_stale_install_expected_hash_cannot_select_a_parent',
     'api::cloud_sync_dependency::tests::substituted_declared_parent_hash_fails_even_when_caller_repeats_it',
     'api::cloud_sync_dependency::tests::parent_guid_case_is_preserved_through_logical_and_physical_keying',
-    'api::cloud_sync_dependency::tests::locator_source_keeps_cached_read_and_final_protected_child_rebind'
+    'api::cloud_sync_dependency::tests::locator_source_keeps_cached_read_and_final_protected_child_rebind',
+    'cloud_sync_transient_bridge::tests::heading_identity_tests::heading_identity_uses_own_message_hash_for_nonself_self_and_absent_links',
+    'cloud_sync_transient_bridge::tests::heading_identity_tests::heading_identity_rejects_linked_hash_from_wrong_identifier_and_wrong_account',
+    'cloud_sync_transient_bridge::tests::heading_identity_tests::heading_identity_rejects_wrong_envelope_logical_hash',
+    'cloud_sync_transient_bridge::tests::heading_identity_tests::heading_identity_keeps_ordinary_causal_reply_validated'
 )
 $nativeDiscoveryCases = @(
     'cloud_sync_native_fetch::tests::chat1_discovery_is_disjoint_from_semantic_fetch_and_requires_permit',
@@ -160,6 +164,8 @@ $nativeConverterSpotCases = @(
     'cloud_sync_canonical_converter::tests::multipart_numeric_reply_keeps_its_exact_parent_dependency'
     'cloud_sync_canonical_converter::tests::attachment_created_date_converts_apple_nanos_to_unix_millis'
     'cloud_sync_canonical_converter::tests::attachment_created_date_zero_and_negative_map_to_apple_epoch_millis'
+    'cloud_sync_canonical_converter::tests::heading_tests::heading_nonself_link_preserves_message_identity_across_outer_message_family'
+    'cloud_sync_canonical_converter::tests::heading_tests::heading_own_reply_is_causal_while_its_navigation_link_is_not'
 )
 $nativeDtoSpotCases = @(
     'cloud_sync_canonical_dto::tests::every_payload_and_metadata_debug_path_is_redacted',
@@ -223,6 +229,8 @@ $requiredFiles = @(
     'test/services/cloud_sync/objectbox_canonical_semantic_entity_adapter_test.dart',
     'test/services/cloud_sync/rust_cloud_semantic_decoder_test.dart',
     'rust/src/cloud_sync_message_update_compose.rs',
+    'rust/src/cloud_sync_heading_tests.rs',
+    'rust/src/cloud_sync_heading_identity_tests.rs',
     'rust/src/cloud_sync_transient_bridge.rs',
     'rust/src/cloud_sync_canonical_converter.rs',
     'rust/src/cloud_sync_canonical_dto.rs',
@@ -246,6 +254,7 @@ if ($ArtifactMode -eq 'native-test-host') {
         $relativeSource = if ($case.StartsWith('tests::')) { 'rust/src/lib.rs' }
             elseif ($case.StartsWith('desktop_native_logging::')) { 'rust/src/desktop_native_logging.rs' }
             elseif ($case.StartsWith('api::cloud_sync_dependency::')) { 'rust/src/api/cloud_sync_dependency_tests.rs' }
+            elseif ($case.StartsWith('cloud_sync_transient_bridge::tests::heading_identity_tests::')) { 'rust/src/cloud_sync_heading_identity_tests.rs' }
             else { 'rust/src/cloud_sync_transient_bridge.rs' }
         $diagnosticSource = Get-Content -LiteralPath (Join-Path $source $relativeSource) -Raw
         if (-not $diagnosticSource.Contains('fn ' + ($case -split '::')[-1] + '(')) {
@@ -254,6 +263,7 @@ if ($ArtifactMode -eq 'native-test-host') {
     }
     foreach ($case in @($nativeExtensionSpotCases + $nativeConverterSpotCases + $nativeDtoSpotCases + $nativeRepairDigestCases + $nativeSystemEventCases + $nativeDiscoveryCases)) {
         $extensionSource = if ($case.StartsWith('cloud_sync_extension_payload::')) { 'rust/src/cloud_sync_extension_payload.rs' }
+            elseif ($case.StartsWith('cloud_sync_canonical_converter::tests::heading_tests::')) { 'rust/src/cloud_sync_heading_tests.rs' }
             elseif ($case.StartsWith('cloud_sync_canonical_converter::')) { 'rust/src/cloud_sync_canonical_converter.rs' }
             elseif ($case.StartsWith('cloud_sync_canonical_dto::')) { 'rust/src/cloud_sync_canonical_dto.rs' }
             elseif ($case.StartsWith('api::api::')) { 'rust/src/api/api.rs' }
@@ -379,6 +389,8 @@ $sourceInputPaths = @(
     'test/services/cloud_sync/cloud_sync_v2_windows_parent_observation_test.dart',
     'rust/src/api/api.rs', 'rust/src/cloud_sync_message_update_compose.rs',
     'rust/src/cloud_sync_message_update_stage.rs',
+    'rust/src/cloud_sync_heading_tests.rs',
+    'rust/src/cloud_sync_heading_identity_tests.rs',
     'rust/src/cloud_sync_transient_bridge.rs',
     'rust/src/cloud_sync_canonical_converter.rs',
     'rust/src/cloud_sync_canonical_dto.rs',
@@ -392,6 +404,7 @@ $sourceInputPaths = @(
     'lib/services/rustpush/cloud_sync/transient_cloud_canonical_identity_registry.dart',
     'lib/services/rustpush/cloud_sync/cloudkit_quarantine_repair.dart',
     'lib/services/ui/extension_service.dart',
+    'test/services/cloud_sync/transient_cloud_canonical_identity_registry_test.dart',
     'test/services/ui/extension_service_cache_test.dart',
     'test/services/cloud_sync/objectbox_canonical_semantic_entity_adapter_test.dart',
     'test/services/cloud_sync/rust_cloud_semantic_decoder_test.dart',
