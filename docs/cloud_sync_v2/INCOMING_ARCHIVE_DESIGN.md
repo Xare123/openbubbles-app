@@ -4,7 +4,7 @@ title: CloudKit incoming-message archival gap and implementation boundary
 description: Source-backed coverage gap and minimum separate archival path required before claiming complete two-way sync.
 resource: openbubbles-app
 tags: [cloudkit, receive, archive, production-gate]
-timestamp: 2026-09-16
+timestamp: 2026-09-17
 ---
 
 # Decision
@@ -47,6 +47,33 @@ and generation2. Native run35149164355 passed745 app tests. All received flags
 stay off.
 
 ## Exact lookup and local ownership, current continuation
+
+### Proposed Found-read separation, not implemented
+
+Source inspection at appf43919ba3 shows `cloud_sync_prepare_received_archive_inspection`
+in `rust/src/api/api.rs` decodes a canonical Chat and projects the expected message
+before deriving its lookup name from only the received GUID and container user ID.
+The location lookup itself does not need that parent selection. This is a candidate
+way to discover already-existing group records without guessing an owner.
+
+It is **not** safe to remove the current parent check in isolation. The raw/typed
+comparison needs that expected projection; native Found staging revalidates the
+Chat source; the Dart reader adapter requires restored-direct-Chat proof before
+and after awaits. Reusing those paths with a dummy parent would bypass a boundary.
+
+The smallest candidate separation is an authenticated, source-bound GUID lookup
+with no write capability, followed by ordinary reader ingress for exact Found
+bytes. Bind account/session/store, protected source, container, generation,
+record name, ETag and original bytes. Discovery alone must not mark a captured
+message equivalent, archived or projected, or reparent a local row. Normal reader
+ownership/conflict gates still decide whether it can be applied. Test GUID/core
+identity collisions, ambiguous original-group aliases, stale bindings, duplicate
+ingress and failed projection before enabling this path. NotFound-to-create keeps
+its separate exact parent/unique-owner proof; group capture/write flags remain off.
+
+This is a reviewed design question, not completed group support. The lookup
+independence is source-backed; safe adoption without the existing direct-parent
+dependency still requires a concrete implementation and proof.
 
 An opt-in inspection adapter now takes a materialized source and the latest
 applied protected direct-chat parent to one native exact record lookup. It

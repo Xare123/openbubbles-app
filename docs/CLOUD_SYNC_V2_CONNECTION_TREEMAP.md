@@ -4,7 +4,7 @@ title: Cloud Sync V2 Current Connection Treemap
 description: Current source of truth for CloudKit V2 architecture, safety boundaries, qualification state, and next gates.
 resource: openbubbles-app
 tags: [openbubbles, cloudkit, messages-in-icloud, architecture, recovery, canary]
-timestamp: 2026-09-16
+timestamp: 2026-09-17
 ---
 
 # Cloud Sync V2 current connection treemap
@@ -68,6 +68,14 @@ back to legacy sync, clear a cursor, or continue under a replacement account.
   Next: qualify matching native host, reserve the relay, re-observe the8 attachment
   malformed-record cases without projection, then repair the observed cause.
   No APK, live mutation, new profile or destructive cleanup is needed for this step.
+- Active exact-source jobs: Windows35192422648 onf21 and GCE35192463601 onfab604fc7,
+  both appf43919ba3cbf18599be8d1270924293cae339aae. Source gates passed; do not
+  dispatch duplicates or use installedb9 for changed native code. GCE owner
+  01a0ac53 monitors terminal cleanup/cost. No current live account reservation.
+- All current helpers are closed/verified. Sartre's source-backed lookup-location
+  observation is retained in INCOMING_ARCHIVE_DESIGN.md as a proposed separation,
+  not implemented group support. Parent rejected the broad "safe split" claim:
+  raw comparison, native staging and Dart adoption still require parent proof.
 
 ### Immediate handoff: missing optional extension labels proved, September 16
 

@@ -7054,3 +7054,16 @@ Historical tests do not establish current-device behavior.
   C:about20.5GiB, previous scoped cache audit still applies; no deletion performed.
   Plan: one source-only GCE qualification plus matching Windows host, then the
   existing cached-only observer. Do not weaken parsing before observing detail.
+- Exact sourcef43919ba3cbf18599be8d1270924293cae339aae dispatched once to
+  Windows35192422648(pilotf21) and GCE35192463601(correctedfab604fc7). Both exact
+  source gates passed. GCE is source-only/no APK and owner retains cleanup/cost
+  responsibility. No live account/device/projection activity in this iteration.
+- Sartre reviewed the received lookup/adoption chain without edits or live data.
+  Parent confirmed location derivation uses received GUID plus container user ID,
+  although preparation currently requires a direct Chat first. Accepted that
+  coupling inventory, not the broad safe/preferred split claim: raw comparison
+  needs a chat-derived expectation, native Found staging revalidates chatSource,
+  and Dart adoption still checks a restored direct parent twice. Captured a
+  proposed read-only Found discovery/ordinary-reader ingress design with no
+  equivalence/create authority; group capture and NotFound write rules unchanged.
+  No implementation enabled. Helper closed; no unique files/worktree created.
