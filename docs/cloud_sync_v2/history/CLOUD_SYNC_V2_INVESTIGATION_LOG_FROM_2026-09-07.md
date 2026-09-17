@@ -6842,3 +6842,44 @@ Historical tests do not establish current-device behavior.
   runtime; do not weaken the fast-loop compatibility guard to reuse66658. No
   APK/paid GCE run, no local Cargo build, C:about24.17GiB free. Commits use skip-ci
   to prevent unrelated APK builds; only explicit hosted qualification is planned.
+- Committed handoff5fdefad3a and pushed the fork-only trusted source branch.
+  Windows35181742445 dispatched once through unchangedf21 sidecar; exact source
+  and source-contract preflights passed. No APK, signing changes or profile use.
+- User explicitly renewed GCE approval for the new system. Its owner verified
+  workflowd5533dd1e does not yet allow the current source branch and has no
+  combined no-APK test mode. Parent authorized the smallest isolated workflow
+  patch for review before push/dispatch, preserving lifetime/cost/cleanup gates.
+  No GCP/IAM/secret/infrastructure changes; no paid run as of this checkpoint.
+- Native source inspection found pretty_env_logger writes stderr, but the
+  Windows aggregate collector inspected stdout alone. Commit99495e3ba accepts
+  both bounded streams and persists fixed classifications only.25 PowerShell
+  checks passed, including stderr-only output and private-content rejection.
+  The private retained wrapper now saves native-diagnostics.json before its
+  existing raw stream cleanup; syntax check has zero errors. This is a real
+  observability fix, not additional restored-message or runtime proof.
+- GCE owner implemented14c2a16ce in its isolated pilot: allow this trusted source
+  branch, combine binding/app-Rust/Dart/PowerShell qualification, and explicitly
+  skip Android/APK/signing for the new mode. Parent reviewed the diff, selectors,
+  source gate and outcome requirements, then authorized one16-vCPU Spot run.
+  35182317779 started at exact app5f; source checkout/verification and cargo-check
+  passed, selected suites active. Owner retains lifecycle and cost responsibility.
+- Final source-specific audit found inherited generated-file lists omitted
+  cloud_sync_dependency.dart and cloud_sync_chat_identity.dart. Parent sent a
+  hold, but dispatch had already occurred. The running job remains useful for
+  Rust/Dart, not complete current binding reproduction. No cancellation that
+  could orphan cleanup and no duplicate full run. Parent rejected a dependency-
+  only correction, reviewed whole-tree correctionc46ba12, and approved publishing
+  identical tree0e219e811798a792d03e486661f9787e6231eb11 with skip-ci message.
+  Published pilotfab604fc7119b7d489caf39e96619d59d3c3e697 is a fast-forward from14c2.
+  It guards/uploads all lib/src/rust and three Rust generated outputs. Synthetic
+  tracked-module modifications and a new untracked module were all detected;
+  fixture restored and Git-aware temporary worktree cleanup verified by owner.
+- Main756121b21 mirrors full-tree drift detection, including untracked outputs.
+  Parent actionlint exit0, diff-check clean. Historical strict-generation claims
+  are limited to their explicitly enumerated output lists; do not promote them
+  to full-tree proof. Future actual native repair builds will use the correction.
+  Windows35181742445 remains active, watch60611, no runtime imported yet.
+- USB disappeared, wireless192.168.68.50:38787 remains connected with PID8013.
+  User restart/private activation staging still pending; no secret provision,
+  account mutation or message deletion. C:24.29GiB free; scoped local compiler
+  cache32,094,223bytes. All main child agents closed/verified, evidence retained.

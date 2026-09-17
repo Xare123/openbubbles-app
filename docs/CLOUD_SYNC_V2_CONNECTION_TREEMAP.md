@@ -90,9 +90,12 @@ back to legacy sync, clear a cursor, or continue under a replacement account.
   an async timeout. Verify host through normal UI; user continues Apple sign-in.
   Ohm's read-only review is accepted; closed and verified not_found. All helpers
   closed; supported session deletion unavailable, transcripts retained.
+  USB is now disconnected; paired wireless ADB192.168.68.50:38787 remains online,
+  with the same Canary PID. No private provisioning has been applied.
 - Independent FaceTime/Find My task acknowledged exclusive Pixel/relay ownership
-  for this provisioning. No Windows live calls, new APK, or paid GCE run planned.
-  C:24.04GiB free. Prior denied cleanup remains zero removed; preserved snapshots,
+  for this provisioning. No Windows live calls or new APK planned. User renewed
+  GCE authorization on September16; source-only qualification is active.
+  C:24.29GiB free. Prior denied cleanup remains zero removed; preserved snapshots,
   credentials, rollback archives and transcripts are not cleanup candidates.
 - **TEST-PROVEN source, not installed:** db1fe6d76 detects missing build relay
   access before HTTP/native calls to the official origin and reports401/403 as
@@ -107,6 +110,28 @@ back to legacy sync, clear a cursor, or continue under a replacement account.
   passed. Native test and refreshed Windows host remain pending. Do not run this
   new native boundary against the installed66658 DLL. No APK is needed for this
   next discriminating observation. All child agents are closed.
+- **Active Windows job35181742445:** exact app5fdefad3a2e047a50ef32c59467c609da58c59a9,
+  unchanged isolated pilotf21cf9631, native-test-host/read-only. Exact-head and
+  source-contract checks passed; build/test is active, watch60611. Independent
+  GCE task01a0ac53 owns active run35182317779, exact same app5f and workflow14c2,
+  n2d-standard-16 Spot/primary,75m maximum, cloudkit-qualification/no APK. Source
+  checkout and cargo-check passed; selected suites active. No duplicate run.
+  Owner must confirm terminal cleanup, runner deregistration, inventory and cost.
+  Original Windows pilot remains untouched.
+- **TEST-PROVEN collection repair99495e3ba:** native diagnostics were read only
+  from stdout even though pretty_env_logger emits to stderr. The collector now
+  consumes both bounded streams and persists only closed aggregates. All25
+  PowerShell checks pass, including stderr-only and content-rejection cases.
+  Private retained-inspection wrapper also writes the aggregate before existing
+  raw-output cleanup; its syntax passes. Native boundary unchanged from5fdefad3a.
+- **CI proof correction:** old generated-binding guards listed only some Dart
+  outputs. Earlier reproducibility claims cover those listed files, not every
+  generated API module. Main756121b21 and reviewed pilotfab604fc7 now guard and
+  upload the complete lib/src/rust subtree plus three Rust outputs. A synthetic
+  source5f fixture detected modified chat_identity/dependency and a new module;
+  actionlint passes. The running GCE job started before this correction and must
+  not count as full-tree binding proof. Keep its real Rust/Dart evidence; do not
+  rerun a full build just for this. Apply corrected gate to the next native repair.
 
 ### Previous handoff: heading qualification and relay isolation
 

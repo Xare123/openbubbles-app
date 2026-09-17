@@ -39,14 +39,25 @@ Windows run35174173364 uses dedicated pilot
 (previously13) and includes both heading test modules in source provenance.
 It passed full qualification and import. Use explicit
 `-ExpectedNativeDiagnosticTestCount 17` during bundle verification/import.
-The shared GCE pilot branch and pre-existing local asset_graph deletion were
-not modified. No paid GCE run is authorized by this handoff.
+That Windows update did not modify the shared GCE pilot branch or pre-existing
+local asset_graph deletion. On September16 the user separately renewed GCE
+authorization; its owner now runs source-only qualification35182317779.
 
 Read-only observation b0e626b0a5a3e252c4ef2d5fc3130900 exercised37 retained
 cases with durable state unchanged. Five cached heading parents advanced to
 extension Name/Malformed, not restored. Candidate b03c7bc16 adds bounded,
 content-free field-shape diagnostics and requires a new matched native host;
 do not run it against66658. Pure Windows aggregate schema4 tests pass24.
+Windows35181742445 is qualifying exact source5fdefad3a with the same sidecar
+and expected17 diagnostic cases. Its native boundary equals diagnosticb03c7bc16.
+Collector99495e3ba additionally reads stderr, where native pretty_env_logger
+writes, and persists only schema4 aggregates;25 PowerShell regressions pass.
+No broad raw-log retention is required for the next retained-record observation.
+Main756121b21 and published GCE pilotfab604fc7 replace partial binding file lists
+with the whole generated Dart tree plus all three Rust outputs. Existing GCE
+35182317779 started on14c2, so its listed-files check is not full-tree proof;
+keep actual Rust/Dart results separate. No duplicate full run is needed solely
+for this correction. The next native repair qualification uses the new guard.
 Canary private provisioning is pending a user restart after the execution guard
 blocked the agent restart. Keep shared relay live calls paused until released.
 
