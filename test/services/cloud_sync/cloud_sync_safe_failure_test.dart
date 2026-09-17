@@ -11,6 +11,30 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_writer_authori
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('native quarantine reasons are exact reporting codes, not retry permission', () {
+    const suffixes = [
+      'malformed_required_identity', 'field_presence_mismatch',
+      'unsupported_service', 'unsupported_chat_style', 'unsupported_message_type',
+      'unsupported_association_type', 'malformed_parent', 'ambiguous_reply',
+      'malformed_attributed_body', 'malformed_message_summary',
+      'conflicting_edit_and_retraction', 'oversized_content',
+      'invalid_canonical_payload', 'malformed_record',
+    ];
+    for (final suffix in suffixes) {
+      final code = 'native_quarantined_$suffix';
+      expect(CloudSyncSemanticDiagnosticCodes.isReviewed(code), isTrue);
+      expect(cloudSyncV2SafeFailureCodeForCandidate(code), code);
+      expect(cloudSyncV2SafeFailureCodeForCandidate('$code private body'),
+          'cloud_sync_unknown_failure');
+      expect(cloudSyncV2SafeFailureCodeForCandidate('${code}_unreviewed'),
+          'cloud_sync_unknown_failure');
+      expect(CloudSyncV2DecoderSafeFailureCodes
+          .readOnlyCanaryRetainableDependencies.contains(code), isFalse);
+    }
+    expect(cloudSyncV2SafeFailureCodeForCandidate('native_quarantined_private_value'),
+        'cloud_sync_unknown_failure');
+  });
+
   test('received archive diagnostics are exact and content-free', () {
     final paths = [
       'lib/services/rustpush/cloud_sync/cloud_sync_received_archive_identity.dart',

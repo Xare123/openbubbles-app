@@ -449,7 +449,7 @@ final class RustCloudSemanticDecoder implements CloudSemanticDecoder {
         safeCode: _deferredSafeCode(deferredReason),
       );
     }
-    if (result.quarantineReason != null) {
+    if (result.quarantineReason case final quarantineReason?) {
       if (result.quarantineDiagnosticSafeCode case final diagnostic?) {
         _recordDiagnostic(
           CloudSyncSemanticDiagnosticCodes.isReviewed(diagnostic)
@@ -457,11 +457,16 @@ final class RustCloudSemanticDecoder implements CloudSemanticDecoder {
               : 'diagnostic_code_invalid',
         );
       }
-      throw CloudSemanticDecodeFailure(switch (result.quarantineReason!) {
-        frb_api.CloudSyncTransientQuarantineReason.unsupportedService =>
-          CloudFailureCategory.unsupportedService,
-        _ => CloudFailureCategory.malformedRecord,
-      });
+      throw CloudSemanticDecodeFailure(
+        switch (quarantineReason) {
+          frb_api.CloudSyncTransientQuarantineReason.unsupportedService =>
+            CloudFailureCategory.unsupportedService,
+          _ => CloudFailureCategory.malformedRecord,
+        },
+        // Preserve the typed, content-free native reason, not arbitrary detail.
+        // This changes reporting only; quarantine and retry policy stay intact.
+        safeCode: 'native_quarantined_${_safeCodeSegment(quarantineReason.name)}',
+      );
     }
 
     if (result.changeId != entry.change.changeId ||

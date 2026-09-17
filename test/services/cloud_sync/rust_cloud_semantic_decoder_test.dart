@@ -679,7 +679,40 @@ void main() {
       );
     }
 
-    for (final reason in frb.CloudSyncTransientQuarantineReason.values) {
+    const quarantineSafeCodes = <frb.CloudSyncTransientQuarantineReason, String>{
+      frb.CloudSyncTransientQuarantineReason.malformedRequiredIdentity:
+          'native_quarantined_malformed_required_identity',
+      frb.CloudSyncTransientQuarantineReason.fieldPresenceMismatch:
+          'native_quarantined_field_presence_mismatch',
+      frb.CloudSyncTransientQuarantineReason.unsupportedService:
+          'native_quarantined_unsupported_service',
+      frb.CloudSyncTransientQuarantineReason.unsupportedChatStyle:
+          'native_quarantined_unsupported_chat_style',
+      frb.CloudSyncTransientQuarantineReason.unsupportedMessageType:
+          'native_quarantined_unsupported_message_type',
+      frb.CloudSyncTransientQuarantineReason.unsupportedAssociationType:
+          'native_quarantined_unsupported_association_type',
+      frb.CloudSyncTransientQuarantineReason.malformedParent:
+          'native_quarantined_malformed_parent',
+      frb.CloudSyncTransientQuarantineReason.ambiguousReply:
+          'native_quarantined_ambiguous_reply',
+      frb.CloudSyncTransientQuarantineReason.malformedAttributedBody:
+          'native_quarantined_malformed_attributed_body',
+      frb.CloudSyncTransientQuarantineReason.malformedMessageSummary:
+          'native_quarantined_malformed_message_summary',
+      frb.CloudSyncTransientQuarantineReason.conflictingEditAndRetraction:
+          'native_quarantined_conflicting_edit_and_retraction',
+      frb.CloudSyncTransientQuarantineReason.oversizedContent:
+          'native_quarantined_oversized_content',
+      frb.CloudSyncTransientQuarantineReason.invalidCanonicalPayload:
+          'native_quarantined_invalid_canonical_payload',
+      frb.CloudSyncTransientQuarantineReason.malformedRecord:
+          'native_quarantined_malformed_record',
+    };
+    expect(quarantineSafeCodes.keys.toSet(),
+        frb.CloudSyncTransientQuarantineReason.values.toSet());
+    for (final item in quarantineSafeCodes.entries) {
+      final reason = item.key;
       bindings.result = frb.CloudSyncTransientDecodeResult(
         protectedSourceReference: _sourceReference,
         generation: BigInt.from(entry.generation),
@@ -690,7 +723,11 @@ void main() {
         reason == frb.CloudSyncTransientQuarantineReason.unsupportedService
             ? CloudFailureCategory.unsupportedService
             : CloudFailureCategory.malformedRecord,
+        safeCode: item.value,
       );
+      expect(cloudSyncV2SafeFailureCodeForCandidate(item.value), item.value);
+      expect(CloudSyncV2DecoderSafeFailureCodes
+          .readOnlyCanaryRetainableDependencies.contains(item.value), isFalse);
     }
     expect(CloudFailureCategory.unsupportedService.isRetryable, isFalse);
   });
