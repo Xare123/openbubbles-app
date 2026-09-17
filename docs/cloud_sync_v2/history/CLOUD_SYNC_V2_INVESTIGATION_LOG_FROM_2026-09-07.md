@@ -6883,3 +6883,63 @@ Historical tests do not establish current-device behavior.
   User restart/private activation staging still pending; no secret provision,
   account mutation or message deletion. C:24.29GiB free; scoped local compiler
   cache32,094,223bytes. All main child agents closed/verified, evidence retained.
+
+### September 16 optional extension-name failure proved in the matched Windows loop
+
+- Windows35181742445 passed in24m15s. Artifact10480214202 outer SHA256
+  `8a89578ef025b6a603d9e9d0cbe0b513e71d72d4c6cac19a064816b9f08a5080`;
+  exact16-member safe inventory extracted. Inner archive
+  `541ab4925f36f3c5ce2c146e512f3df81343a7c639bfcce34093276dccc4d307`,
+  provenance `343e3b02222ac0a24ecca70c3bac7f6ddcda5d5302a3938362c0bc1391185169`.
+  Verified64 Git source inputs(2raw/62WindowsEOL),6 recursive pins,13 actual log
+  hashes,3 ARM64 binaries. Logs prove704 Dart,51 real-DLL encoders and33 extension
+  cases including the new shape test;17 diagnostic cases passed. No missing
+  success marker inferred from an incompatible log reporter: native codec log is
+  JSON testDone/done, Dart qualification log reports704 directly.
+- Imported source5f using existing signer, source checkout temporarily pinned
+  then restored to27f719d70. Signed DLL14d421aba82c292c01e9f3bc8175e295d598e115ce32e604b5f0b841625e8f3e,
+  testEXE8a9d24168437ef08750b02c0be59589ddf2e255cf3cd902b26ebf0e8760a1553.
+  All15 checked account/keychain/database hashes unchanged. One exact installed
+  native shape test and one actual-DLL Flutter encoder smoke passed; processes
+  exited. Original vendor ObjectBox not signed, previous66658 archive retained.
+- GCE35182317779 completed successfully at immutable app5f/workflow14c2. App Rust,
+  full Flutter and existing PowerShell outbox contracts passed. Native generation
+  and cargo-check passed; only the inherited enumerated-files drift check ran.
+  Do not call it full-tree reproduction proof. No APK/Android JVM/signing step.
+  Owner verified VM lifetime16m07.729s, delete response and zero GCE instances;
+  parent verified cleanup job success and repository runner count0. Estimated
+  compute$0.0769(about$0.08), not invoiced total. No duplicate run dispatched.
+- With a newly acknowledged exclusive relay/profile window and fresh Canary
+  setup_finished=false/auth_ready=false/idle preflight, ran one cached-only
+  retained observer.5cb1823cf2aeb48811b03bf37a8fb434 returned37 cases with unchanged
+  durable state/no remote writes. Captured stderr aggregates prove all7 extension
+  Name failures: absent name, NSURL URL, absent app ID, string display/layout,
+  NSDictionary userInfo. This is missing optional display data, not evidence of
+  bad account encryption. Five are cached parents of extension children. Raw
+  streams removed and owned processes gone; reservation released back to the
+  Canary-setup hold. No phone registration or message mutation.
+- Parent implemented optional native app display name and sparse template text
+  labels. No fake title, identity/session default, unsupported layout acceptance
+  or malformed-present-value coercion. JSON v1/v2 stays unchanged, using existing
+  empty-label strings; original presence stays in the protected archive. Tests
+  cover sparse fields, bad types, missing URL and layout/userInfo pairing. Removed
+  old test assumption that all six template captions were mandatory. Native
+  execution pending; Rustfmt and targeted Dart analysis pass. Ampere is reviewing
+  exactly this delta, no broad audit or local Cargo/APK build.
+- find-docs/Context7 retrieved Apple's [template layout](https://developer.apple.com/documentation/messages/msmessagetemplatelayout),
+  [caption](https://developer.apple.com/documentation/messages/msmessagetemplatelayout/caption),
+  [image subtitle](https://developer.apple.com/documentation/messages/msmessagetemplatelayout/imagesubtitle)
+  and trailing-caption APIs: display properties are optional/nil. This informs
+  omission handling only. It does not document private CloudKit field names or
+  prove those exact seven archives' remaining layout fields. Current keys come
+  from the existing rustpush/parser schema. Real re-decode is still required.
+- Storage audit found build/test_cache2,620,715,360bytes, .dart_tool62,981,389bytes;
+  C:about20.86GiB free. No deletions; do not infer that all concurrent disk usage
+  belongs to this task. Keep full suites on the approved ephemeral cloud runner.
+- Ampere independently reviewed the exact decoder/test diff and redacted shape
+  aggregate, with no data/network/device access or execution. No blocker found;
+  parent accepted review, verified no loss of class/type/identity/budget checks,
+  and committeda7911bd7a837ef2f007e8c8ba10d78f8e1b1c2c7. Helper closed/not_found,
+  no dedicated worktree or files; supported session deletion unavailable. New
+  source remains unqualified until GCE and matched Windows execution, not a
+  restored-message claim. No further live window currently reserved for Windows.

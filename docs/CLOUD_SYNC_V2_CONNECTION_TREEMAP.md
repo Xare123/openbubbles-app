@@ -52,22 +52,37 @@ back to legacy sync, clear a cursor, or continue under a replacement account.
 
 ## Current candidate
 
-### Immediate handoff: Windows decode advanced; Canary provisioning, September 16
+### Immediate handoff: missing optional extension labels proved, September 16
 
-- **TEST-PROVEN:** Linux35173960820 and Windows35174173364 both passed for
-  source66658db67. The installed Windows native is now66658, signed DLL SHA256
-  `c04cc711008999a3871cd7ef13306c2bb48e334c04215fdae34d10c6b0dbb377`.
-  Windows704 Dart tests,51 native encoders,17 native diagnostics and10 heading
-  converters passed. Source/provenance and binary hashes were verified before
-  import;15 local native cases plus one actual-DLL encoder case passed. The two
-  frozen digest vectors passed independently in Rust and Dart. Prior3c bundle
-  remains rollback material. The older handoff below is historical, not current.
+- **TEST-PROVEN and installed:** Windows35181742445 passed in24m15s for app5fdefad3a,
+  native-test-host/read-only and pilotf21. Installed signed DLL SHA256
+  `14d421aba82c292c01e9f3bc8175e295d598e115ce32e604b5f0b841625e8f3e`.
+  Verified64 source inputs,6 recursive pins,13 log hashes and3 ARM64 binaries.
+  Hosted704 Dart,51 DLL encoder,17 native diagnostic and33 extension cases passed.
+  Local exact shape test and actual-DLL smoke each passed once; all15 checked
+  account/database files unchanged. No app/account launch during import. Previous
+  66658 bundle is rollback material; qualification record is under
+  `build-evidence/windows-name-shapes-35181742445/verification.json`.
 - **LIVE-PROVEN partial, not restored:** exclusive read-only Windows observation
   b0e626b0a5a3e252c4ef2d5fc3130900 completed37 retained cases with durable state
   unchanged. Five cached heading parents advanced beyond unsupported association
   to extension decode `Name/Malformed`. No new restored messages or remote writes
-  were claimed. Next protocol work: establish the actual CloudKit extension name
-  shape or decouple independent heading text from balloon parsing without guessing.
+  were claimed. New observation5cb1823cf2aeb48811b03bf37a8fb434 completed the same37
+  cases and proved all7 Name failures have absent `an`, NSURL URL, display/layout
+  strings and NSDictionary userInfo. Durable state unchanged, no remote writes,
+  raw output removed and process cleanup confirmed. Read-test reservation released.
+- **SOURCE-IMPLEMENTED, not qualified:** optional-display repaira7911bd7a was
+  reviewed by Ampere01a0adc7, accepted and closed/not_found. No child remains.
+  The name is display data, not message/session identity. Its
+  absence maps to the existing empty-label renderer value. Template display
+  labels can be omitted; present wrong types, required URL/class/layout pairing,
+  session/bundle identity and every archive budget stay enforced. Raw source is
+  retained. Apple documents optional template text; private key names remain the
+  existing parser's mapping, not public CloudKit schema evidence. Native tests
+  cover sparse labels, bad present types, missing URL and incomplete structure;
+  Dart test checks content and wire identity. Rustfmt/Dart analysis pass, execution
+  pending GCE plus a matched new Windows host. Do not load changed native source
+  against installed5f or claim those seven records restored yet.
 - **Canary registration blocker:** installed710003e7b APK SHA256
   `8d87ec693bbbcbb9d31b0ab886e254cc2ef5c1a9253c3fc7acac9dc3233ad90b`
   omits the relay application token from its developer build. The same verified
@@ -95,7 +110,9 @@ back to legacy sync, clear a cursor, or continue under a replacement account.
 - Independent FaceTime/Find My task acknowledged exclusive Pixel/relay ownership
   for this provisioning. No Windows live calls or new APK planned. User renewed
   GCE authorization on September16; source-only qualification is active.
-  C:24.29GiB free. Prior denied cleanup remains zero removed; preserved snapshots,
+  C:about20.86GiB free. Scoped audit: build/test_cache2.62GB, .dart_tool63MB;
+  no attribution made for other concurrent disk usage. Prior denied cleanup remains
+  zero removed; preserved snapshots,
   credentials, rollback archives and transcripts are not cleanup candidates.
 - **TEST-PROVEN source, not installed:** db1fe6d76 detects missing build relay
   access before HTTP/native calls to the official origin and reports401/403 as
@@ -103,21 +120,19 @@ back to legacy sync, clear a cursor, or continue under a replacement account.
   HTTPS port/case handling and custom origins are covered. Sixteen validator and
   four secret-exclusion tests passed; targeted analysis clean. No token or build
   secret changed. Epicurus reviewed/integrated/closed, shutdown verified.
-- **Pending native qualification:** b03c7bc16 adds closed type/presence labels for
+- **TEST-PROVEN diagnostic source:** b03c7bc16 adds closed type/presence labels for
   six known extension fields on a Name failure. Decoder acceptance is unchanged;
   no archive values, arbitrary keys or class names are exposed. Windows aggregate
   schema4 parser passed24 tests, including injected-content rejection; Rustfmt
-  passed. Native test and refreshed Windows host remain pending. Do not run this
-  new native boundary against the installed66658 DLL. No APK is needed for this
-  next discriminating observation. All child agents are closed.
-- **Active Windows job35181742445:** exact app5fdefad3a2e047a50ef32c59467c609da58c59a9,
-  unchanged isolated pilotf21cf9631, native-test-host/read-only. Exact-head and
-  source-contract checks passed; build/test is active, watch60611. Independent
-  GCE task01a0ac53 owns active run35182317779, exact same app5f and workflow14c2,
-  n2d-standard-16 Spot/primary,75m maximum, cloudkit-qualification/no APK. Source
-  checkout and cargo-check passed; selected suites active. No duplicate run.
-  Owner must confirm terminal cleanup, runner deregistration, inventory and cost.
-  Original Windows pilot remains untouched.
+  passed. This is now qualified in installed5f and the discriminator ran live;
+  no extra APK. Its parser acceptance remained unchanged until the pending repair.
+- **GCE35182317779 completed successfully:** exact app5f, workflow14c2,
+  n2d-standard-16 Spot/primary, cloudkit-qualification/no APK. App Rust and full
+  Dart/PowerShell passed; inherited binding-list proof is limited as noted below.
+  Owner verified deleted VM and zero remaining instances; parent independently
+  checked successful cleanup job and zero GitHub runners. Lifetime16m07.729s,
+  estimated compute cost$0.08, not a final invoice. Windows watch60611, local
+  smoke59507 and live observer36185 are terminal. Original Windows pilot unchanged.
 - **TEST-PROVEN collection repair99495e3ba:** native diagnostics were read only
   from stdout even though pretty_env_logger emits to stderr. The collector now
   consumes both bounded streams and persists only closed aggregates. All25

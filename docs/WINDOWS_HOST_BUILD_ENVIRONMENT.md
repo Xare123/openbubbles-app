@@ -26,15 +26,16 @@ It uses a process-local secret environment variable, never a committed code.
 The signed installed3c780a8d7 DLL and matching generated API passed; eight
 protected files retained their hashes. No hardware/profile mutation occurred.
 The heading candidate d1734c01d failed native compile in35171127739; corrected
-66658db67 passed Linux35173960820 and Windows35174173364. Windows66658 is now
-installed, signed DLL SHA256
-`c04cc711008999a3871cd7ef13306c2bb48e334c04215fdae34d10c6b0dbb377`.
+66658db67 passed Linux35173960820 and Windows35174173364. That installed heading
+host has now been replaced by qualified diagnostic source5fdefad3a, Windows run
+35181742445, signed DLL SHA256
+`14d421aba82c292c01e9f3bc8175e295d598e115ce32e604b5f0b841625e8f3e`.
 Three ARM64 binaries,64 source inputs,six recursive pins and13 test-log hashes
 were verified. Fifteen local native cases plus one actual-DLL encoder test passed.
 Profile data was unchanged during import. The prior3c bundle remains rollback.
 
-Current build source is `66658db67a67d300bbadda75b4ff0ccde8f216f7`.
-Windows run35174173364 uses dedicated pilot
+Current installed build source is `5fdefad3a2e047a50ef32c59467c609da58c59a9`.
+Windows run35181742445 uses dedicated pilot
 `f21cf96314ad86a5c039aa5d9fc7880057f995ec`, which selects17 diagnostic cases
 (previously13) and includes both heading test modules in source provenance.
 It passed full qualification and import. Use explicit
@@ -48,7 +49,7 @@ cases with durable state unchanged. Five cached heading parents advanced to
 extension Name/Malformed, not restored. Candidate b03c7bc16 adds bounded,
 content-free field-shape diagnostics and requires a new matched native host;
 do not run it against66658. Pure Windows aggregate schema4 tests pass24.
-Windows35181742445 is qualifying exact source5fdefad3a with the same sidecar
+Windows35181742445 qualified exact source5fdefad3a with the same sidecar
 and expected17 diagnostic cases. Its native boundary equals diagnosticb03c7bc16.
 Collector99495e3ba additionally reads stderr, where native pretty_env_logger
 writes, and persists only schema4 aggregates;25 PowerShell regressions pass.
@@ -60,6 +61,14 @@ keep actual Rust/Dart results separate. No duplicate full run is needed solely
 for this correction. The next native repair qualification uses the new guard.
 Canary private provisioning is pending a user restart after the execution guard
 blocked the agent restart. Keep shared relay live calls paused until released.
+
+One newly reserved read-only observation5cb1823cf2aeb48811b03bf37a8fb434 is now
+complete:37 cases, state unchanged, no remote writes, raw output removed and
+process cleanup confirmed. All7 Name failures have no app name but valid-shaped
+URL/display/layout/userInfo. Native repaira7911bd7a makes absent display labels
+optional while keeping present values/required structure strict. It needs new
+GCE qualification and a matched Windows host before rerunning real retained data.
+No new APK or account/key copy is needed for this protocol iteration.
 
 ## Fastest current Dart loop, September 13
 
