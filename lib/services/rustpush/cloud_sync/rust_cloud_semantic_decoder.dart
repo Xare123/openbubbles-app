@@ -529,7 +529,9 @@ final class RustCloudSemanticDecoder implements CloudSemanticDecoder {
     if (snapshot.kind != _entityKindFromFrb(result.entityKind!) ||
         snapshot.kind != payload.kind ||
         snapshot.logicalEntityKeyHash != payload.logicalEntityKeyHash ||
-        (payload is CloudMessageEntityPayload && payload.extensionSession != null &&
+        (payload is CloudMessageEntityPayload &&
+            (payload.extensionSession != null ||
+                payload.associationKind == CloudSemanticAssociationKind.heading) &&
             snapshot.parentLogicalKeyHash != payload.semanticParentLogicalKeyHash)) {
       throw const CloudSemanticDecodeFailure(
         CloudFailureCategory.conflict,
@@ -656,6 +658,8 @@ final class RustCloudSemanticDecoder implements CloudSemanticDecoder {
       CloudSemanticAssociationKind.reactionAdd,
     frb_api.CloudSyncTransientAssociationKind.reactionRemove =>
       CloudSemanticAssociationKind.reactionRemove,
+    frb_api.CloudSyncTransientAssociationKind.heading =>
+      CloudSemanticAssociationKind.heading,
   };
 
   CloudSemanticKnownMessageFlags _knownFlags(
@@ -808,7 +812,9 @@ final class RustCloudSemanticDecoder implements CloudSemanticDecoder {
         (payload.associationKind !=
                 frb_api.CloudSyncTransientAssociationKind.none &&
             payload.associationKind !=
-                frb_api.CloudSyncTransientAssociationKind.sticker) ||
+                frb_api.CloudSyncTransientAssociationKind.sticker &&
+            payload.associationKind !=
+                frb_api.CloudSyncTransientAssociationKind.heading) ||
         payload.reactionKind != null ||
         payload.reactionRemoved ||
         !_fieldStateMatches(payload.subjectState, payload.subject) ||
@@ -1263,10 +1269,11 @@ final class RustCloudSemanticDecoder implements CloudSemanticDecoder {
     final parentHash = payload.reactionParentLogicalKeyHash;
     final parentGuid = payload.reactionParentCanonicalGuid;
     final hasParent = parentHash != null && parentGuid != null;
+    final isHeading = payload.associationKind == frb_api.CloudSyncTransientAssociationKind.heading;
     if ((parentHash == null) != (parentGuid == null) ||
-        (payload.associatedRangeLocation == null) !=
-            (payload.associatedRangeLength == null) ||
-        (!hasParent &&
+        (!isHeading && (payload.associatedRangeLocation == null) !=
+            (payload.associatedRangeLength == null)) ||
+        (!isHeading && !hasParent &&
             (payload.reactionParentPart != null ||
                 payload.associatedRangeLocation != null))) {
       return false;
@@ -1282,6 +1289,9 @@ final class RustCloudSemanticDecoder implements CloudSemanticDecoder {
             hasParent &&
             payload.reactionKind == null &&
             !payload.reactionRemoved,
+      frb_api.CloudSyncTransientAssociationKind.heading =>
+        !isReaction && payload.reactionParentPart == null &&
+            payload.reactionKind == null && !payload.reactionRemoved,
       frb_api.CloudSyncTransientAssociationKind.reactionAdd =>
         isReaction &&
             hasParent &&

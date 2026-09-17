@@ -6647,3 +6647,79 @@ Historical tests do not establish current-device behavior.
 - Windows watch3481 is terminal. No active main live/test process or helper;
   C:free about27.3GiB. Updated native host stays available for compatible Dart
   checks. Pixel, received/group/write and independent-client release gates remain.
+
+### September 16 evening: heading compilation, relay diagnosis and Mac import
+
+- Heading native source d1734c01d introduces explicit non-causal linked heading
+  metadata, opaque optional uint32 ranges, and ten converter regressions.
+  Parent-owned Dart decoder/projector/registry changes and two test files remain
+  uncommitted and unqualified. Run35171127739 generated bindings but failed
+  native compilation: E0004 in cloud_sync_transient_bridge.rs:2142, missing
+  Heading arm in canonical identity validation. Artifact10475984769 exists;
+  no import, new Windows host, APK or duplicate run was performed. Installed
+  native/generated source3c780a8d7 remains the qualified baseline.
+- User requested registration diagnosis. USB read of Canary20002227 captured
+  IDS6005 at16:46 and no-identity/send6005 at16:51/18:46. No new relay-health
+  exception is present in the latest Dart log. Stored relay state last checked
+  2026-09-17T01:15:52Z=false, last success2026-09-15T06:17:15Z. Status probe
+  reports no active legacy/semantic/logout/coordinator operation, auth_ready=true,
+  outbox_state=blocked. This does not prove a healthy registration or safe queue
+  discard. No reset, account repair, hardware import or Alpha mutation occurred.
+- User clarified that Windows live testing can displace Canary on their shared
+  iPhone relay. No current Windows live client was identified. Cross-platform
+  relay ownership is now required by AGENTS.md. Zeno independently reviewed the
+  two health-check legs and ambiguous error coercion; findings accepted as source
+  issues, not proven event cause. No auth code changed. Helper closed/not_found;
+  no dedicated files/worktree, unsupported transcript deletion not attempted.
+- User supplied a fresh Mac export specifically for Windows. Independent task
+  granted an exclusive profile window. An offline Flutter/native test decoded
+  the export with signed DLL9aadb2bcc9c4abd040977c8db28ecd243736b63ff2275eada7296d6f75bbe849,
+  source3c780a8d7 and matching generated API. One test passed in about10seconds;
+  all eight protected profile files retained their SHA256 hashes. No account,
+  network, APS or IDS setup ran. The code existed only in the invocation's
+  process environment, not a source/evidence file.
+- The Mac export is syntactically usable, but MacOSConfig validation is
+  explicitly unavailable in this non-macOS build. Apple delegate authentication
+  at auth.rs:1175 and IDS registration need that provider. The CloudKit-only
+  harness avoids IDS restoration, but that does not prove renewable Mac-only
+  credentials. Hardware remains unchanged; no live Mac login was claimed.
+  Offline test source/evidence stays under build-evidence/mac-activation-20260916.
+- Two old flutter_tester processes (42092/46880) belong to the independent
+  FaceTime/Find My checkout, not the Mac probe. Their owner was notified to review
+  them; this task did not stop them. Available C:space was about27.3GiB.
+- Owner subsequently confirmed both were completed-suite orphans, stopped them,
+  and verified shutdown. Parent's final process check found no Flutter/Dart/app
+  process. The Mac-setup profile window is released; authenticated shared-relay
+  tests remain paused while the user repairs Canary. USB is connected again.
+
+### September 16 heading identity correction and Dart integration
+
+- Prior turn made progress through phone evidence and the offline Mac import;
+  the goal remains active. Live relay use stays paused. Parent repaired the
+  concrete E0004 in validate_canonical_identity_bindings, recomputing both the
+  optional linked Message hash and the heading's own Message hash. The link
+  remains non-causal. A single bounded Muse Contributor max helper authored
+  four synthetic native tests in cloud_sync_heading_identity_tests.rs; parent
+  reviewed the entire fixture/test file, included it, and verified shutdown.
+  No new worktree/cache or manually deleted session was involved.
+- Artifact10475984769 (run35171127739/source d1734c01d) has exact eight-member
+  generated inventory. Only four generated lines differ from installed3c;
+  imported them and verified all eight contents plus both normalization guards.
+  Failed-run generation is not native qualification. The installed runtime is
+  unchanged and cannot be used for current heading application source.
+- First heading run passed six and failed two. One fixture inherited an
+  unrelated snapshot parent; source also failed to reject such mismatches for
+  headings. Parent added the same actual-reply dependency check used by session
+  messages and covered correct/mismatched reply snapshots. Reopen fixture's
+  redundant unique ownership-proof insert was removed; the test now asserts
+  the proof survived the reopen, with no reseeding.
+- Ten focused heading cases passed, then the five-file affected integration
+  batch passed377 in34seconds; analysis of seven changed Dart files returned
+  no issues. Two frozen digest vectors cover linked heading with uint32MAX and
+  unlinked heading with an independently present range length. Both Dart digest
+  tests pass. Rust implementations must independently match these pinned values
+  in the next hosted run. Rustfmt parse checks pass; no local Cargo was attempted.
+- Official OpenAI subagent/test guidance was refreshed. Its effect was one
+  disjoint test helper, parent-owned integration, and one affected batch rather
+  than repeated full builds. All feature/public-release gates stay unchanged
+  until the new source is qualified and the cached real parents are replayed.

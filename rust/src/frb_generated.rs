@@ -24120,6 +24120,7 @@ impl SseDecode for crate::api::api::CloudSyncTransientAssociationKind {
             1 => crate::api::api::CloudSyncTransientAssociationKind::Sticker,
             2 => crate::api::api::CloudSyncTransientAssociationKind::ReactionAdd,
             3 => crate::api::api::CloudSyncTransientAssociationKind::ReactionRemove,
+            4 => crate::api::api::CloudSyncTransientAssociationKind::Heading,
             _ => unreachable!(
                 "Invalid variant for CloudSyncTransientAssociationKind: {}",
                 inner
@@ -34911,6 +34912,7 @@ impl flutter_rust_bridge::IntoDart for crate::api::api::CloudSyncTransientAssoci
             Self::Sticker => 1.into_dart(),
             Self::ReactionAdd => 2.into_dart(),
             Self::ReactionRemove => 3.into_dart(),
+            Self::Heading => 4.into_dart(),
             _ => unreachable!(),
         }
     }
@@ -42437,6 +42439,7 @@ impl SseEncode for crate::api::api::CloudSyncTransientAssociationKind {
                 crate::api::api::CloudSyncTransientAssociationKind::Sticker => 1,
                 crate::api::api::CloudSyncTransientAssociationKind::ReactionAdd => 2,
                 crate::api::api::CloudSyncTransientAssociationKind::ReactionRemove => 3,
+                crate::api::api::CloudSyncTransientAssociationKind::Heading => 4,
                 _ => {
                     unimplemented!("");
                 }

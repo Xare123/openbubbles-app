@@ -2142,6 +2142,27 @@ fn validate_canonical_identity_bindings(
             match payload.association() {
                 CloudCanonicalMessageAssociation::None => hasher
                     .canonical_entity_key_hash(CloudCanonicalEntityKind::Message, payload.guid())?,
+                CloudCanonicalMessageAssociation::Heading(heading) => {
+                    match (heading.linked_guid(), heading.linked_hash()) {
+                        (Some(linked_guid), Some(linked_hash)) => {
+                            let expected_linked_hash = hasher.canonical_entity_key_hash(
+                                CloudCanonicalEntityKind::Message,
+                                linked_guid,
+                            )?;
+                            if linked_hash != &expected_linked_hash {
+                                return Err(CloudCanonicalValidationFailure::InvalidPayload);
+                            }
+                        }
+                        (None, None) => {}
+                        _ => return Err(CloudCanonicalValidationFailure::InvalidPayload),
+                    }
+                    // A heading owns its Message identity. Its optional linked
+                    // message is navigation metadata, not its causal parent.
+                    hasher.canonical_entity_key_hash(
+                        CloudCanonicalEntityKind::Message,
+                        payload.guid(),
+                    )?
+                }
                 CloudCanonicalMessageAssociation::Sticker(parent) => {
                     let expected_parent_hash = hasher.canonical_entity_key_hash(
                         CloudCanonicalEntityKind::Message,
@@ -2859,6 +2880,10 @@ async fn cloud_sync_decode_transient_record_with_pcs_access(
 
 #[cfg(test)]
 mod tests {
+    mod heading_identity_tests {
+        include!("cloud_sync_heading_identity_tests.rs");
+    }
+
     use super::*;
     use crate::cloud_sync_canonical_dto::{
         parse_associated_parent, CloudCanonicalAlias, CloudCanonicalAttachmentPayload,

@@ -145,7 +145,26 @@ Map<String, String> _vectors() => <String, String>{
       expectedParentBundleId: 'com.example.synthetic',
     )),
   ),
+  'heading-linked': CloudKitV2CanonicalRepairDigest.forPayload(
+    _headingMessage(linked: true),
+  ),
+  'heading-unlinked-range': CloudKitV2CanonicalRepairDigest.forPayload(
+    _headingMessage(linked: false),
+  ),
 };
+
+CloudMessageEntityPayload _headingMessage({required bool linked}) => _basicMessage(
+  prepared: CloudSyncPreparedExtension.parse(
+    File('test/fixtures/cloud_sync/extension_metadata_digest_v1.json')
+        .readAsStringSync(),
+    expectedParentBundleId: 'com.example.synthetic',
+  ),
+  associationKind: CloudSemanticAssociationKind.heading,
+  associationParentCanonicalGuid: linked ? 'linked-guid' : null,
+  associationParentLogicalKeyHash: linked ? 'L' * 43 : null,
+  associatedRangeLocation: linked ? 0 : null,
+  associatedRangeLength: 0xffffffff,
+);
 
 const _flags = CloudSemanticKnownMessageFlags(
   fromMe: true,
@@ -161,6 +180,11 @@ CloudMessageEntityPayload _basicMessage({
   CloudSemanticKnownMessageFlags? knownFlags = _flags,
   CloudSemanticService service = CloudSemanticService.iMessage,
   CloudSyncPreparedExtension? prepared,
+  CloudSemanticAssociationKind associationKind = CloudSemanticAssociationKind.none,
+  String? associationParentCanonicalGuid,
+  String? associationParentLogicalKeyHash,
+  int? associatedRangeLocation,
+  int? associatedRangeLength,
 }) => CloudMessageEntityPayload(
   logicalEntityKeyHash: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
   canonicalGuid: 'guid',
@@ -180,6 +204,11 @@ CloudMessageEntityPayload _basicMessage({
   decodedExtensionPayloadState: prepared == null ? CloudSemanticFieldState.absent : CloudSemanticFieldState.value,
   decodedExtensionPayload: prepared?.canonicalUtf8,
   preparedExtension: prepared,
+  associationKind: associationKind,
+  associationParentCanonicalGuid: associationParentCanonicalGuid,
+  associationParentLogicalKeyHash: associationParentLogicalKeyHash,
+  associatedRangeLocation: associatedRangeLocation,
+  associatedRangeLength: associatedRangeLength,
 );
 
 CloudMessageEntityPayload _fieldStateMessage(CloudSemanticFieldState state) =>

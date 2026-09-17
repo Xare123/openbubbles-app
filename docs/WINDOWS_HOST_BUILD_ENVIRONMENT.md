@@ -9,6 +9,28 @@ timestamp: 2026-09-13
 
 # OpenBubbles Windows ARM64 host build environment
 
+## Current authentication constraint, September 16
+
+Reserve the iPhone relay across Windows and Pixel, not just each profile. The
+user reports registration displacement during concurrent use. Current Mac
+hardware exports can decode correctly but are not a supported durable replacement
+for that relay in this Windows build: `rustpush/src/macos.rs` explicitly returns
+`MacValidationUnavailable` on non-macOS, and Apple delegate refresh as well as
+IDS registration calls that provider. Do not replace a working profile solely
+because the activation code imports. CloudKit-only cached access is a separate,
+unproven case and does not establish future credential refresh.
+
+Offline native import proof (no account/network calls):
+`C:\Codex\OpenBubblesReview\build-evidence\mac-activation-20260916\mac_activation_import_test.dart`.
+It uses a process-local secret environment variable, never a committed code.
+The signed installed3c780a8d7 DLL and matching generated API passed; eight
+protected files retained their hashes. No hardware/profile mutation occurred.
+The newer heading candidate d1734c01d failed native compile in35171127739.
+The missing identity branch and reviewed regressions are now source-implemented;
+377 affected Dart cases and two digest tests pass. Generated heading bindings
+have been imported, but the corrected candidate must not use or replace that
+host until native qualification and a matching Windows build pass.
+
 ## Fastest current Dart loop, September 13
 
 September 14 update: `run_imported_cloud_sync_v2_dart_live.ps1` now separates

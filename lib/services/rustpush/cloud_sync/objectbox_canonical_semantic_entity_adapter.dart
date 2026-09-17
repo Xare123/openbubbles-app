@@ -17,6 +17,7 @@ import 'objectbox_cloud_semantic_store_gateway.dart';
 typedef _ProvenChatOwner = ({Chat chat, String logicalEntityKeyHash});
 
 const _extensionProjectionKey = 'cloudkit_v2_extension_projection';
+const _headingAssociationKey = 'cloudkit_v2_heading';
 
 enum _MessageChatRouteKind { direct, group, bare }
 
@@ -494,7 +495,8 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
         if (service == null ||
             createdAt == null ||
             flags == null ||
-            value.associationKind != CloudSemanticAssociationKind.none) {
+            (value.associationKind != CloudSemanticAssociationKind.none &&
+                value.associationKind != CloudSemanticAssociationKind.heading)) {
           throw CloudSyncFailure(
             category: CloudFailureCategory.malformedRecord,
             safeCode: 'legacy_ownership_message_shape_invalid',
@@ -1601,7 +1603,8 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
     if (payload.service == null ||
         payload.createdAt == null ||
         payload.knownFlags == null ||
-        payload.associationKind != CloudSemanticAssociationKind.none) {
+        (payload.associationKind != CloudSemanticAssociationKind.none &&
+            payload.associationKind != CloudSemanticAssociationKind.heading)) {
       throw CloudSyncFailure(
         category: CloudFailureCategory.dependency,
         safeCode: 'canonical_message_shape_unsupported',
@@ -1890,6 +1893,22 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
     }
 
     _applyMessageSummary(message, payload, replaceEdits: replaceEditContent);
+    if (replaceEditContent) {
+      if (payload.associationKind == CloudSemanticAssociationKind.heading) {
+        // Navigation metadata is not a reaction or a required parent. Keep the
+        // visible Message's own identity and preserve opaque wire ranges.
+        message.metadata ??= <String, dynamic>{};
+        message.metadata![_headingAssociationKey] = {
+          'version': 1,
+          'linked_guid': payload.associationParentCanonicalGuid,
+          'linked_key': payload.associationParentLogicalKeyHash,
+          'range_location': payload.associatedRangeLocation,
+          'range_length': payload.associatedRangeLength,
+        };
+      } else {
+        message.metadata?.remove(_headingAssociationKey);
+      }
+    }
     if (session != null && replaceEditContent) {
       message.metadata ??= <String, dynamic>{};
       message.metadata![_extensionProjectionKey] = {
@@ -2609,7 +2628,8 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
             canonicalGuid: value.replyParentCanonicalGuid!,
           );
         }
-        if (value.associationParentLogicalKeyHash != null) {
+        if (value.associationParentLogicalKeyHash != null &&
+            value.associationKind != CloudSemanticAssociationKind.heading) {
           add(
             kind: CloudEntityKind.message,
             logicalEntityKeyHash: value.associationParentLogicalKeyHash!,

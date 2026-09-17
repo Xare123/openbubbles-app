@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:typed_data';
 
 import 'cloud_attachment_provenance.dart';
@@ -17,7 +18,9 @@ enum CloudSemanticService { iMessage, sms }
 
 enum CloudSemanticChatStyle { direct, group }
 
-enum CloudSemanticAssociationKind { none, sticker, reactionAdd, reactionRemove }
+enum CloudSemanticAssociationKind {
+  none, sticker, reactionAdd, reactionRemove, heading,
+}
 
 final class CloudSemanticKnownMessageFlags {
   const CloudSemanticKnownMessageFlags({
@@ -324,17 +327,40 @@ final class CloudMessageEntityPayload extends CloudSemanticEntityPayload {
       throw ArgumentError('cloud_message_payload_reply_identity_invalid');
     }
     final hasAssociationParent = associationParentCanonicalGuid != null;
+    final isHeading = associationKind == CloudSemanticAssociationKind.heading;
     if (hasAssociationParent != (associationParentLogicalKeyHash != null) ||
         (associationKind == CloudSemanticAssociationKind.none &&
             hasAssociationParent) ||
-        (associationKind != CloudSemanticAssociationKind.none &&
+        (!isHeading &&
+            associationKind != CloudSemanticAssociationKind.none &&
             !hasAssociationParent) ||
-        (!hasAssociationParent &&
+        (!isHeading && !hasAssociationParent &&
             (associationParentPart != null ||
                 associatedRangeLocation != null ||
                 associatedRangeLength != null)) ||
-        (associatedRangeLocation == null) != (associatedRangeLength == null)) {
+        (!isHeading &&
+            (associatedRangeLocation == null) != (associatedRangeLength == null))) {
       throw ArgumentError('cloud_message_payload_association_invalid');
+    }
+    if (isHeading) {
+      final link = associationParentCanonicalGuid;
+      final invalidRange = [associatedRangeLocation, associatedRangeLength]
+          .any((value) => value != null && (value < 0 || value > 0xffffffff));
+      if (service != CloudSemanticService.iMessage ||
+          associationParentPart != null ||
+          preparedExtension == null ||
+          preparedExtension!.sessionContext != null ||
+          balloonBundleId == 'com.apple.messages.URLBalloonProvider' ||
+          decodedExtensionPayloadState != CloudSemanticFieldState.value ||
+          invalidRange ||
+          (link != null &&
+              (link.isEmpty ||
+                  utf8.encode(link).length > 16 * 1024 ||
+                  RegExp(r'[\x00-\x1f\x7f-\x9f:/]').hasMatch(link) ||
+                  !RegExp(r'^[A-Za-z0-9_-]{43}$')
+                      .hasMatch(associationParentLogicalKeyHash!)))) {
+        throw ArgumentError('cloud_message_payload_heading_invalid');
+      }
     }
   }
 

@@ -5313,6 +5313,7 @@ enum CloudSyncTransientAssociationKind {
   sticker,
   reactionAdd,
   reactionRemove,
+  heading,
 }
 
 /// Content-free statement of whether the native build can materialize an

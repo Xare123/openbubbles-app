@@ -20,6 +20,11 @@ delegated agents. They supplement, not replace, inherited project instructions.
 - Reserve exclusive Pixel or Windows live-profile testing by direct task-to-task
   request and acknowledgement before install/restart/UI/relay/account actions.
   Release the reservation after testing. Preserve Alpha and all real data.
+- That reservation must also cover the shared iPhone relay across platforms.
+  The user reports that simultaneous Windows/Canary use can displace registration.
+  Run one authenticated live client at a time for this relay. Separate worktrees
+  or different operating systems do not establish independent relay identities.
+  Do not treat a displaced registration as a proved CloudKit regression.
 - Neither task may create an upstream PR/draft or spend paid GCE funds without
   renewed user approval. The independent task runs its own goal and helpers;
   this parent tracks only shared interfaces and integration-ready handoffs.

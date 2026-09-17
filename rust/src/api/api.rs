@@ -9417,6 +9417,23 @@ mod cloudkit_repair_digest_tests {
         digest(&value)
     }
 
+    fn heading_digest(linked: bool) -> String {
+        let json =
+            include_str!("../../../test/fixtures/cloud_sync/extension_metadata_digest_v1.json");
+        let mut value = basic_message("body");
+        value.balloon_bundle_id_state = CloudSyncTransientFieldState::Value;
+        value.balloon_bundle_id = Some("com.example.synthetic".to_owned());
+        value.extension_metadata_json = Some(json.to_owned());
+        value.association_kind = CloudSyncTransientAssociationKind::Heading;
+        if linked {
+            value.reaction_parent_canonical_guid = Some("linked-guid".to_owned());
+            value.reaction_parent_logical_key_hash = Some("L".repeat(43));
+            value.associated_range_location = Some(0);
+        }
+        value.associated_range_length = Some(u32::MAX);
+        digest(&value)
+    }
+
     fn corpus() -> Vec<(&'static str, &'static str)> {
         CORPUS
             .lines()
@@ -9469,6 +9486,8 @@ mod cloudkit_repair_digest_tests {
             ("raw-bytes-framing", raw_bytes_framing_digest()),
             ("extension-metadata", extension_metadata_digest()),
             ("extension-session", extension_session_digest()),
+            ("heading-linked", heading_digest(true)),
+            ("heading-unlinked-range", heading_digest(false)),
         ];
         let expected = corpus();
         assert_eq!(actual.len(), expected.len());

@@ -9009,6 +9009,473 @@ void main() {
       });
     }
   });
+  group('type3 app headings', () {
+    CloudSyncPreparedExtension headingExtension() {
+      final prepared = CloudSyncPreparedExtension.parse(
+        extensionTestJson(),
+        expectedParentBundleId: extensionTestBundle,
+      );
+      expect(prepared.sessionContext, isNull);
+      return prepared;
+    }
+
+    CloudMessageEntityPayload headingPayload({
+      required String logicalKey,
+      required String guid,
+      String? linkedGuid,
+      String? linkedKey,
+      int? rangeLocation,
+      int? rangeLength,
+      String body = 'Heading body',
+    }) {
+      final prepared = headingExtension();
+      return _messagePayload(
+        logicalEntityKeyHash: logicalKey,
+        canonicalGuid: guid,
+        chatIdentifier: 'iMessage;-;extension-chat',
+        createdAt: testEpoch,
+        body: body,
+        balloonBundleId: extensionTestBundle,
+        decodedExtensionPayload: prepared.canonicalUtf8,
+        preparedExtension: prepared,
+        knownFlags: _messageFlags(fromMe: false),
+        associationKind: CloudSemanticAssociationKind.heading,
+        associationParentCanonicalGuid: linkedGuid,
+        associationParentLogicalKeyHash: linkedKey,
+        associationParentPart: null,
+        associatedRangeLocation: rangeLocation,
+        associatedRangeLength: rangeLength,
+      );
+    }
+
+    ObjectBoxCanonicalSemanticEntityAdapter headingAdapter() => _newAdapter(
+      store: store,
+      activeScopeProvider: () => activeScope,
+      resolver: resolver,
+      semanticApplyEnabled: true,
+      allowMessageUpserts: true,
+    );
+
+    void registerHeading(String logicalKey, String guid) {
+      resolver.put(
+        scope: scope,
+        generation: generation,
+        kind: CloudEntityKind.message,
+        logicalEntityKeyHash: logicalKey,
+        canonicalGuid: guid,
+      );
+    }
+
+    void expectHeadingMeta(
+      Message message, {
+      required String? linkedGuid,
+      required String? linkedKey,
+      required int? rangeLocation,
+      required int? rangeLength,
+    }) {
+      final meta =
+          message.metadata?['cloudkit_v2_heading'] as Map<String, dynamic>?;
+      expect(meta, isNotNull);
+      expect(meta!['version'], 1);
+      expect(meta['linked_guid'], linkedGuid);
+      expect(meta['linked_key'], linkedKey);
+      expect(meta['range_location'], rangeLocation);
+      expect(meta['range_length'], rangeLength);
+    }
+
+    test('projects a heading with an absent link as an ordinary visible message',
+        () {
+      seedExtensionChat();
+      const logicalKey = 'heading-absent-hash';
+      const guid = 'heading-absent-guid';
+      registerHeading(logicalKey, guid);
+      final adapter = headingAdapter();
+
+      expect(
+        adapter.applyEntity(
+          scope: scope,
+          generation: generation,
+          payload: headingPayload(logicalKey: logicalKey, guid: guid),
+          snapshot: _snapshot(CloudEntityKind.message, logicalKey),
+        ),
+        CloudCanonicalSemanticMutationReceipt.committed,
+      );
+
+      final messages = store.box<Message>().getAll();
+      expect(messages, hasLength(1));
+      final message = messages.single;
+      expect(message.guid, guid);
+      expect(message.text, 'Heading body');
+      expect(message.dateCreated, isNotNull);
+      expect(message.isFromMe, isFalse);
+      expect(message.chat.targetId, store.box<Chat>().getAll().single.id);
+      expect(message.balloonBundleId, extensionTestBundle);
+      expect(message.hasApplePayloadData, isTrue);
+      expect(message.associatedMessageGuid, isNull);
+      expect(message.associatedMessageType, isNull);
+      expect(message.associatedMessageEmoji, isNull);
+      expectHeadingMeta(
+        message,
+        linkedGuid: null,
+        linkedKey: null,
+        rangeLocation: null,
+        rangeLength: null,
+      );
+      expect(store.box<Handle>().count(), 1);
+      expect(message.handleId, isNot(0));
+
+      _seedExactOwnershipProof(
+        store,
+        scope: scope,
+        generation: generation,
+        kind: CloudEntityKind.message,
+        logicalEntityKeyHash: logicalKey,
+        canonicalGuid: guid,
+      );
+      expect(
+        adapter.applyEntity(
+          scope: scope,
+          generation: generation,
+          payload: headingPayload(logicalKey: logicalKey, guid: guid),
+          snapshot: _snapshot(CloudEntityKind.message, logicalKey),
+        ),
+        CloudCanonicalSemanticMutationReceipt.committed,
+      );
+      expect(store.box<Message>().count(), 1);
+      expectHeadingMeta(
+        store.box<Message>().getAll().single,
+        linkedGuid: null,
+        linkedKey: null,
+        rangeLocation: null,
+        rangeLength: null,
+      );
+    });
+
+    test('a missing linked message does not block heading projection', () {
+      seedExtensionChat();
+      const logicalKey = 'heading-missing-link-hash';
+      const guid = 'heading-missing-link-guid';
+      registerHeading(logicalKey, guid);
+      final adapter = headingAdapter();
+
+      expect(
+        adapter.applyEntity(
+          scope: scope,
+          generation: generation,
+          payload: headingPayload(
+            logicalKey: logicalKey,
+            guid: guid,
+            linkedGuid: 'absent-linked-guid',
+            linkedKey: 'L' * 43,
+            rangeLocation: 3,
+          ),
+          snapshot: _snapshot(CloudEntityKind.message, logicalKey),
+        ),
+        CloudCanonicalSemanticMutationReceipt.committed,
+      );
+
+      final messages = store.box<Message>().getAll();
+      expect(messages, hasLength(1));
+      final message = messages.single;
+      expect(message.guid, guid);
+      expect(message.text, 'Heading body');
+      expect(message.associatedMessageGuid, isNull);
+      expect(message.associatedMessageType, isNull);
+      expect(message.associatedMessageEmoji, isNull);
+      expectHeadingMeta(
+        message,
+        linkedGuid: 'absent-linked-guid',
+        linkedKey: 'L' * 43,
+        rangeLocation: 3,
+        rangeLength: null,
+      );
+      expect(
+        messages.where((row) => row.guid == 'absent-linked-guid'),
+        isEmpty,
+      );
+    });
+
+    test('self and nonself links never recurse or adopt the wrong chat', () {
+      seedExtensionChat();
+      final extensionChatId = store.box<Chat>().getAll().single.id;
+      final foreignChatId = store.box<Chat>().put(
+        Chat(
+          guid: 'heading-foreign-chat-guid',
+          chatIdentifier: 'iMessage;-;heading-foreign-chat',
+          style: 45,
+        ),
+      );
+      store.box<Message>().put(
+        Message(
+          guid: 'heading-foreign-guid',
+          dateCreated: testEpoch,
+          isFromMe: false,
+          text: 'Foreign stays',
+        )..chat.targetId = foreignChatId,
+      );
+      const logicalKey = 'heading-nonself-hash';
+      const guid = 'heading-nonself-guid';
+      registerHeading(logicalKey, guid);
+      final adapter = headingAdapter();
+
+      expect(
+        adapter.applyEntity(
+          scope: scope,
+          generation: generation,
+          payload: headingPayload(
+            logicalKey: logicalKey,
+            guid: guid,
+            linkedGuid: 'heading-foreign-guid',
+            linkedKey: 'F' * 43,
+            rangeLocation: 1,
+            rangeLength: 4,
+          ),
+          snapshot: _snapshot(CloudEntityKind.message, logicalKey),
+        ),
+        CloudCanonicalSemanticMutationReceipt.committed,
+      );
+
+      var messages = store.box<Message>().getAll();
+      expect(messages, hasLength(2));
+      final heading = messages.singleWhere((row) => row.guid == guid);
+      expect(heading.chat.targetId, extensionChatId);
+      expect(heading.text, 'Heading body');
+      expect(heading.associatedMessageGuid, isNull);
+      expectHeadingMeta(
+        heading,
+        linkedGuid: 'heading-foreign-guid',
+        linkedKey: 'F' * 43,
+        rangeLocation: 1,
+        rangeLength: 4,
+      );
+      final foreign =
+          messages.singleWhere((row) => row.guid == 'heading-foreign-guid');
+      expect(foreign.text, 'Foreign stays');
+      expect(foreign.chat.targetId, foreignChatId);
+
+      final selfKey = 'S' * 43;
+      const selfGuid = 'heading-self-guid';
+      registerHeading(selfKey, selfGuid);
+      expect(
+        adapter.applyEntity(
+          scope: scope,
+          generation: generation,
+          payload: headingPayload(
+            logicalKey: selfKey,
+            guid: selfGuid,
+            linkedGuid: selfGuid,
+            linkedKey: selfKey,
+          ),
+          snapshot: _snapshot(CloudEntityKind.message, selfKey),
+        ),
+        CloudCanonicalSemanticMutationReceipt.committed,
+      );
+      messages = store.box<Message>().getAll();
+      expect(messages, hasLength(3));
+      final selfHeading =
+          messages.singleWhere((row) => row.guid == selfGuid);
+      expect(selfHeading.chat.targetId, extensionChatId);
+      expectHeadingMeta(
+        selfHeading,
+        linkedGuid: selfGuid,
+        linkedKey: selfKey,
+        rangeLocation: null,
+        rangeLength: null,
+      );
+    });
+    test('heading metadata survives reopen and idempotent reapply', () async {
+      seedExtensionChat();
+      const logicalKey = 'heading-reopen-hash';
+      const guid = 'heading-reopen-guid';
+      registerHeading(logicalKey, guid);
+      var adapter = headingAdapter();
+      final payload = headingPayload(
+        logicalKey: logicalKey,
+        guid: guid,
+        linkedGuid: 'absent-linked-guid',
+        linkedKey: 'L' * 43,
+        rangeLocation: 2,
+        rangeLength: 6,
+      );
+
+      expect(
+        adapter.applyEntity(
+          scope: scope,
+          generation: generation,
+          payload: payload,
+          snapshot: _snapshot(CloudEntityKind.message, logicalKey),
+        ),
+        CloudCanonicalSemanticMutationReceipt.committed,
+      );
+      _seedExactOwnershipProof(
+        store,
+        scope: scope,
+        generation: generation,
+        kind: CloudEntityKind.message,
+        logicalEntityKeyHash: logicalKey,
+        canonicalGuid: guid,
+      );
+      expect(
+        adapter.applyEntity(
+          scope: scope,
+          generation: generation,
+          payload: payload,
+          snapshot: _snapshot(CloudEntityKind.message, logicalKey),
+        ),
+        CloudCanonicalSemanticMutationReceipt.committed,
+      );
+
+      store.close();
+      store = await openStore(directory: directory.path);
+      adapter = headingAdapter();
+      expect(store.box<CloudSemanticSnapshotEntity>().getAll().where(
+        (row) => row.logicalEntityKeyHash == logicalKey &&
+            row.generation == generation), hasLength(1));
+      var message = store.box<Message>().getAll().single;
+      expect(message.guid, guid);
+      expect(message.text, 'Heading body');
+      expectHeadingMeta(
+        message,
+        linkedGuid: 'absent-linked-guid',
+        linkedKey: 'L' * 43,
+        rangeLocation: 2,
+        rangeLength: 6,
+      );
+      expect(
+        adapter.applyEntity(
+          scope: scope,
+          generation: generation,
+          payload: payload,
+          snapshot: _snapshot(CloudEntityKind.message, logicalKey),
+        ),
+        CloudCanonicalSemanticMutationReceipt.committed,
+      );
+      expect(store.box<Message>().count(), 1);
+      message = store.box<Message>().getAll().single;
+      expect(message.text, 'Heading body');
+      expectHeadingMeta(
+        message,
+        linkedGuid: 'absent-linked-guid',
+        linkedKey: 'L' * 43,
+        rangeLocation: 2,
+        rangeLength: 6,
+      );
+
+      expect(
+        () => adapter.applyEntity(
+          scope: scope,
+          generation: generation + 1,
+          payload: payload,
+          snapshot: _snapshot(CloudEntityKind.message, logicalKey),
+        ),
+        throwsA(
+          predicate<CloudSyncFailure>(
+            (failure) => failure.safeCode == 'canonical_scope_fence_rejected',
+          ),
+        ),
+      );
+      expect(store.box<Message>().count(), 1);
+    });
+
+    test('a restored heading supplies the owned content for its type2 child', () {
+      seedV2SessionIdentities();
+      final adapter = v2Adapter();
+      final heading = headingPayload(
+        logicalKey: 'A' * 43,
+        guid: 'v2-base-guid',
+        linkedGuid: 'another-navigation-target',
+        linkedKey: 'L' * 43,
+        rangeLocation: 0,
+        rangeLength: 0xffffffff,
+      );
+      expect(heading.semanticParentLogicalKeyHash, isNull);
+      adapter.applyEntity(scope: scope, generation: generation, payload: heading,
+        snapshot: _snapshot(CloudEntityKind.message, 'A' * 43));
+      applyV2Update(adapter);
+      final rows = store.box<Message>().getAll();
+      expect(rows, hasLength(2));
+      final base = rows.singleWhere((row) => row.guid == 'v2-base-guid');
+      final update = rows.singleWhere((row) => row.guid == 'v2-update-guid');
+      expect(update.text, 'Heading body');
+      expect(update.amkSessionId, base.guid);
+      expect(base.amkSessionId, base.guid);
+      expect(rows.where((row) => row.guid == 'another-navigation-target'), isEmpty);
+      expectHeadingMeta(base, linkedGuid: 'another-navigation-target',
+        linkedKey: 'L' * 43, rangeLocation: 0, rangeLength: 0xffffffff);
+      expect(base.associatedMessageType, isNull);
+      expect(update.chat.targetId, base.chat.targetId);
+    });
+
+    test(
+        'an existing type2 update still commits under exact guards beside a heading',
+        () {
+      seedExtensionChat();
+      const logicalKey = 'heading-coexist-hash';
+      const guid = 'heading-coexist-guid';
+      registerHeading(logicalKey, guid);
+      var adapter = headingAdapter();
+      expect(
+        adapter.applyEntity(
+          scope: scope,
+          generation: generation,
+          payload: headingPayload(logicalKey: logicalKey, guid: guid),
+          snapshot: _snapshot(CloudEntityKind.message, logicalKey),
+        ),
+        CloudCanonicalSemanticMutationReceipt.committed,
+      );
+
+      resolver
+        ..put(
+          scope: scope,
+          generation: generation,
+          kind: CloudEntityKind.message,
+          logicalEntityKeyHash: 'A' * 43,
+          canonicalGuid: 'v2-base-guid',
+        )
+        ..put(
+          scope: scope,
+          generation: generation,
+          kind: CloudEntityKind.message,
+          logicalEntityKeyHash: 'B' * 43,
+          canonicalGuid: 'v2-update-guid',
+        );
+      _seedExactOwnershipProof(
+        store,
+        scope: scope,
+        generation: generation,
+        kind: CloudEntityKind.message,
+        logicalEntityKeyHash: 'A' * 43,
+        canonicalGuid: 'v2-base-guid',
+      );
+      _seedExactOwnershipProof(
+        store,
+        scope: scope,
+        generation: generation,
+        kind: CloudEntityKind.message,
+        logicalEntityKeyHash: 'B' * 43,
+        canonicalGuid: 'v2-update-guid',
+      );
+      adapter = v2Adapter();
+      applyV2Base(adapter);
+      applyV2Update(adapter);
+
+      final messages = store.box<Message>().getAll();
+      expect(messages, hasLength(3));
+      final heading = messages.singleWhere((row) => row.guid == guid);
+      expect(heading.text, 'Heading body');
+      expectHeadingMeta(
+        heading,
+        linkedGuid: null,
+        linkedKey: null,
+        rangeLocation: null,
+        rangeLength: null,
+      );
+      final update =
+          messages.singleWhere((row) => row.guid == 'v2-update-guid');
+      expect(update.amkSessionId, 'v2-base-guid');
+      expect(update.text, 'Base text');
+    });
+  });
 }
 
 ObjectBoxCanonicalSemanticEntityAdapter _newAdapter({
@@ -9117,6 +9584,13 @@ CloudMessageEntityPayload _messagePayload({
   String? replyParentCanonicalGuid,
   String? replyParentLogicalKeyHash,
   String? replyParentPart,
+  CloudSemanticAssociationKind associationKind =
+      CloudSemanticAssociationKind.none,
+  String? associationParentLogicalKeyHash,
+  String? associationParentCanonicalGuid,
+  int? associationParentPart,
+  int? associatedRangeLocation,
+  int? associatedRangeLength,
 }) => CloudMessageEntityPayload(
   logicalEntityKeyHash: logicalEntityKeyHash,
   canonicalGuid: canonicalGuid,
@@ -9130,6 +9604,12 @@ CloudMessageEntityPayload _messagePayload({
   replyParentCanonicalGuid: replyParentCanonicalGuid,
   replyParentLogicalKeyHash: replyParentLogicalKeyHash,
   replyParentPart: replyParentPart,
+  associationKind: associationKind,
+  associationParentLogicalKeyHash: associationParentLogicalKeyHash,
+  associationParentCanonicalGuid: associationParentCanonicalGuid,
+  associationParentPart: associationParentPart,
+  associatedRangeLocation: associatedRangeLocation,
+  associatedRangeLength: associatedRangeLength,
   body: body,
   senderHandle: senderHandle,
   createdAt: createdAt ?? testEpoch,

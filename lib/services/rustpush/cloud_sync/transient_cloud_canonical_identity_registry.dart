@@ -74,7 +74,8 @@ final class TransientCloudCanonicalIdentityRegistry
             value.replyParentCanonicalGuid!,
           );
         }
-        if (value.associationParentLogicalKeyHash != null) {
+        if (value.associationParentLogicalKeyHash != null &&
+            value.associationKind != CloudSemanticAssociationKind.heading) {
           add(
             CloudEntityKind.message,
             value.associationParentLogicalKeyHash!,

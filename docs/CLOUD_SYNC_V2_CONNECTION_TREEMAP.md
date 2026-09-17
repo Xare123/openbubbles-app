@@ -52,6 +52,44 @@ back to legacy sync, clear a cursor, or continue under a replacement account.
 
 ## Current candidate
 
+### Immediate handoff: heading qualification and relay isolation, September 16 evening
+
+- **SOURCE-IMPLEMENTED:** heading source `d1734c01d` failed hosted run35171127739
+  with E0004 in canonical identity validation. The correction now verifies the
+  optional linked Message hash while preserving the heading's own identity.
+  Four reviewed native regressions cover foreign-key, wrong-envelope and actual
+  reply cases; native compilation/execution of the correction is still pending.
+- **TEST-PROVEN Dart:** 377 affected decoder, projector, registry, applier and
+  store-gateway cases pass, plus two digest tests. Ten heading cases cover reopen,
+  replay, real type2 child content, missing/self/foreign navigation and actual
+  reply dependencies. A detected snapshot-parent mismatch is now rejected.
+  Two frozen heading digest vectors await independent Rust verification.
+- Generated artifact10475984769 was downloaded and its exact eight-file inventory
+  checked; only one Dart enum line and three Rust dispatch lines changed. Both
+  generated guards pass. Next hosted run must prove regeneration reproducibility
+  and execute native tests. **Installed Windows native remains 3c780a8d7**;
+  current application/heading source must not run against that older DLL.
+- Pixel Canary20002227 logs show IDS6005 at16:46 and no-identity/send6005 at
+  16:51 and18:46. The last saved relay probe failed at18:15; its generic warning
+  does not distinguish network, validation rejection or malformed response.
+  User reports Windows/Canary contention with this iPhone relay. No competing
+  Windows live client was identified. Phone status: sync/logout/coordinator idle,
+  authentication flag true, outbox blocked. No repair/reset was invoked by agent.
+- **TEST-PROVEN, not activated:** a fresh user-provided Mac hardware export
+  decodes through the signed Windows3c bridge in an offline native test.
+  Eight protected profile hashes are unchanged. `MacOSConfig` still rejects
+  validation on non-macOS; both IDS and Apple delegate refresh require it.
+  Cached CloudKit access is not proof of a durable relay replacement. Neither
+  Windows nor Pixel hardware/account was changed; activation material is not
+  stored in the repository or evidence files. Prefer serialized live relay use.
+- Relay source helper Zeno was reviewed and closed, shutdown verified. It made
+  no files or worktree. Supported agent-session deletion is unavailable; no
+  transcript was manually removed. No new paid cloud build or APK was started.
+- Heading identity helper Aristotle was reviewed, integrated and closed with
+  shutdown verified. No active child remains. Its unique synthetic test source
+  is retained. Next action: qualify the corrected committed candidate on hosted
+  Rust CI, then build the matching Windows host before live heading replay.
+
 ### Current live-qualified parent locator, September 16
 
 App integration **3c780a8d7bd1459988a95d4140942ce39ff63992** includes a cached-only
@@ -101,14 +139,15 @@ attachment parents decode as excluded SMS-family; six are unobserved in the
 current journal, not proved absent remotely. Checkpoints/outbox and observed
 inbox metadata were unchanged; raw output removed and process cleanup verified.
 
-**Next root repair: type-3 heading support.** Same-run native shape logs show
+**Root repair being qualified: type-3 heading support.** Same-run native shape logs show
 bare association references, both range fields present, renderable text and an
 Apple non-URL extension. Reviewed Beeper source classifies3 as heading, not
 reaction. Its fixtures include different own/linked GUIDs and range lengths
 0 and -1 in SQLite, so do not reinterpret3 as ordinary0, impose self-reference,
 or infer CloudKit's unsigned range encoding. Represent heading/link metadata
 explicitly and preserve exact wire values; its link is not automatically a
-required parent or session-base identity. Cached parent decode, not another
+required parent or session-base identity. Source now implements this shape,
+but the compile failure above prevents qualification. Cached parent decode, not another
 history sweep, is now the critical path. Detailed primary references are in
 the investigation log. Exact fetch is still needed only for unobserved parents.
 No helper or live-profile process is active; the profile window is released.

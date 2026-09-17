@@ -9,6 +9,7 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_safe_failure
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_semantic_diagnostics.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/rust_cloud_semantic_decoder.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_prepared_extension.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_repair_content_digest.dart';
 import 'cloud_sync_extension_test_fixture.dart';
 import 'package:bluebubbles/src/rust/api/api.dart' as frb;
 import 'package:bluebubbles/utils/logger/logger.dart';
@@ -116,6 +117,89 @@ void main() {
       );
     },
   );
+
+  test('heading wire links and ranges are preserved without a causal parent', () async {
+    final entry = _entry();
+    final digests = <String>{};
+    for (final link in <String?>['another-message', 'message-guid', null]) {
+      for (final range in <(int?, int?)>[(0, 0), (0, 0xffffffff), (13, null), (null, 0xffffffff), (null, null)]) {
+        bindings.result = _readyMessage(entry,
+          snapshot: _snapshotFor(frb.CloudSyncTransientEntityKind.message,
+            _messageHash, parentLogicalKeyHash: null),
+          payload: frb.CloudSyncTransientPayload(
+          message: _messagePayload(
+            associationKind: frb.CloudSyncTransientAssociationKind.heading,
+            reactionParentCanonicalGuid: link,
+            reactionParentLogicalKeyHash: link == null ? null : link == 'message-guid' ? _messageHash : _chatHash,
+            associatedRangeLocation: range.$1,
+            associatedRangeLength: range.$2,
+            balloonBundleIdState: frb.CloudSyncTransientFieldState.value,
+            balloonBundleId: extensionTestBundle,
+            extensionMetadataJson: extensionTestJson(),
+          ),
+        ));
+        final decoded = await decoder().decode(entry);
+        final payload = decoded.payload! as CloudMessageEntityPayload;
+        expect(payload.associationKind, CloudSemanticAssociationKind.heading);
+        expect(payload.canonicalGuid, 'message-guid');
+        expect(payload.associationParentCanonicalGuid, link);
+        expect(payload.associatedRangeLocation, range.$1);
+        expect(payload.associatedRangeLength, range.$2);
+        expect(payload.associationParentPart, isNull);
+        expect(payload.semanticParentLogicalKeyHash, isNull);
+        expect(decoded.snapshot!.parentLogicalKeyHash, isNull);
+        expect(payload.preparedExtension!.sessionContext, isNull);
+        digests.add(CloudKitV2CanonicalRepairDigest.forPayload(payload));
+      }
+    }
+    expect(digests, hasLength(15));
+  });
+
+  test('heading snapshot retains only its actual reply dependency', () async {
+    final entry = _entry();
+    final payload = _messagePayload(
+      associationKind: frb.CloudSyncTransientAssociationKind.heading,
+      reactionParentCanonicalGuid: 'navigation-target',
+      reactionParentLogicalKeyHash: _chatHash,
+      balloonBundleIdState: frb.CloudSyncTransientFieldState.value,
+      balloonBundleId: extensionTestBundle,
+      extensionMetadataJson: extensionTestJson(),
+      replyParentCanonicalGuid: 'actual-reply',
+      replyParentLogicalKeyHash: _reactionHash,
+      replyParentPart: '0',
+    );
+    bindings.result = _readyMessage(entry,
+      snapshot: _snapshotFor(frb.CloudSyncTransientEntityKind.message,
+        _messageHash, parentLogicalKeyHash: _reactionHash),
+      payload: frb.CloudSyncTransientPayload(message: payload));
+    final decoded = await decoder().decode(entry);
+    expect(decoded.snapshot!.parentLogicalKeyHash, _reactionHash);
+    expect((decoded.payload! as CloudMessageEntityPayload)
+        .semanticParentLogicalKeyHash, _reactionHash);
+
+    for (final wrongParent in <String?>[_chatHash, null]) {
+      bindings.result = _readyMessage(entry,
+        snapshot: _snapshotFor(frb.CloudSyncTransientEntityKind.message,
+          _messageHash, parentLogicalKeyHash: wrongParent),
+        payload: frb.CloudSyncTransientPayload(message: payload));
+      await _expectFailure(decoder().decode(entry), CloudFailureCategory.conflict,
+        safeCode: CloudSyncV2DecoderSafeFailureCodes.payloadIdentityMismatch);
+    }
+  });
+
+  test('heading cannot smuggle reaction or message-part semantics', () async {
+    final entry = _entry();
+    for (final invalid in [
+      _messagePayload(associationKind: frb.CloudSyncTransientAssociationKind.heading,
+        reactionKind: frb.CloudSyncTransientReactionKind.heart),
+      _messagePayload(associationKind: frb.CloudSyncTransientAssociationKind.heading,
+        reactionParentLogicalKeyHash: _chatHash, reactionParentCanonicalGuid: 'other',
+        reactionParentPart: 0),
+    ]) {
+      bindings.result = _readyMessage(entry, payload: frb.CloudSyncTransientPayload(message: invalid));
+      await expectLater(decoder().decode(entry), throwsA(isA<CloudSemanticDecodeFailure>()));
+    }
+  });
 
   test('retains malformed or misbound native extension metadata', () async {
     final entry = _entry();
@@ -1743,10 +1827,11 @@ frb.CloudSyncTransientSnapshot _snapshotFor(
   String logicalEntityKeyHash, {
   String sourceReference = _sourceReference,
   List<frb.CloudSyncTransientEditPart> editParts = const [],
+  String? parentLogicalKeyHash = _chatHash,
 }) => frb.CloudSyncTransientSnapshot(
   entityKind: kind,
   logicalEntityKeyHash: logicalEntityKeyHash,
-  parentLogicalKeyHash: _chatHash,
+  parentLogicalKeyHash: parentLogicalKeyHash,
   immutableContentDigest: _payloadSha,
   createdAtMillis: 1787385600000,
   editParts: editParts,

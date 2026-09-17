@@ -108,6 +108,42 @@ CloudChatEntityPayload _chat() {
 }
 
 void main() {
+  test('heading binds its own identity and reply but not its navigation link', () {
+    final prepared = CloudSyncPreparedExtension.parse(extensionTestJson(),
+      expectedParentBundleId: extensionTestBundle);
+    final payload = CloudMessageEntityPayload(
+      logicalEntityKeyHash: 'H' * 43,
+      canonicalGuid: 'heading-guid',
+      chatAliasKeyHash: 'chat-key',
+      chatIdentifier: 'iMessage;-;chat',
+      body: 'Heading body',
+      senderHandle: 'sender@example.invalid',
+      service: CloudSemanticService.iMessage,
+      associationKind: CloudSemanticAssociationKind.heading,
+      associationParentCanonicalGuid: 'navigation-guid',
+      associationParentLogicalKeyHash: 'N' * 43,
+      replyParentCanonicalGuid: 'actual-reply',
+      replyParentLogicalKeyHash: 'R' * 43,
+      replyParentPart: '0',
+      balloonBundleIdState: CloudSemanticFieldState.value,
+      balloonBundleId: extensionTestBundle,
+      decodedExtensionPayloadState: CloudSemanticFieldState.value,
+      decodedExtensionPayload: prepared.canonicalUtf8,
+      preparedExtension: prepared,
+    );
+    final registry = TransientCloudCanonicalIdentityRegistry();
+    final lease = registry.bind(_upsert(payload));
+    String? resolve(String key) => registry.resolveCanonicalGuid(
+      scope: _scopeA, generation: 7, kind: CloudEntityKind.message,
+      logicalEntityKeyHash: key);
+    expect(resolve('H' * 43), 'heading-guid');
+    expect(resolve('R' * 43), 'actual-reply');
+    expect(resolve('N' * 43), isNull);
+    lease.release();
+    expect(resolve('H' * 43), isNull);
+    expect(resolve('R' * 43), isNull);
+  });
+
   test('session update binds only its scoped base dependency and releases it', () {
     final value = jsonDecode(extensionTestJson()) as Map<String, dynamic>;
     value['version'] = 2;
