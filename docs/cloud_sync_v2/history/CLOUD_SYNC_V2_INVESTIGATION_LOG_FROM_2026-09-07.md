@@ -7097,3 +7097,12 @@ Historical tests do not establish current-device behavior.
   reset or private provisioning attempted. Watch44222 and smoke96533 completed,
   no owned process remains, offline window released, no standing lock. C:20.18GiB;
   no cache/evidence deletion. This turn made artifact/import validation progress.
+- Safe-alternative audit: Windows harness `_initialize` skips account setup only
+  for projection viewers. Retained inspection uses setupPush, makeAnisette,
+  restoreAccount and makeCloudkit. Encrypted read-auth cache can restore locally,
+  but the existing path is not guaranteed network-free: APS setup runs and stale
+  credentials can trigger MobileMe refresh. A local viewer cannot diagnose raw
+  retained attachment records. No fake account/connection or gate bypass added.
+  ADB remains empty; Canary sign-in question unanswered. No live request, account
+  mutation or duplicate build. The source check rules out a ready-made offline
+  shortcut; live preflight remains pending user state confirmation.

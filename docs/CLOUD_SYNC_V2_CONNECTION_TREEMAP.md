@@ -80,6 +80,12 @@ back to legacy sync, clear a cursor, or continue under a replacement account.
   Pixel is no longer listed by ADB. User has been asked whether Canary is still
   signed out or repaired, before risking shared-relay contention. Live diagnostic
   probe has NOT run. No device action/private provisioning/current reservation.
+- Offline alternative checked in source: projection-viewer modes skip account
+  bootstrap but cannot decode retained encrypted records. The normal cached-record
+  harness still calls setupPush and account construction; stale read authorization
+  may refresh over the network. Existing persisted read credentials do not prove a
+  network-free launch. No fake connection/account, skipped auth gate or new offline
+  framework was introduced. Canary sign-in status remains the next live preflight.
 - All current helpers are closed/verified. Sartre's source-backed lookup-location
   observation is retained in INCOMING_ARCHIVE_DESIGN.md as a proposed separation,
   not implemented group support. Parent rejected the broad "safe split" claim:
