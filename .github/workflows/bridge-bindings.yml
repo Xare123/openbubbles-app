@@ -115,11 +115,7 @@ jobs:
           if-no-files-found: error
           retention-days: 7
           path: |
-            lib/src/rust/api/api.dart
-            lib/src/rust/api/cloud_sync_dependency.dart
-            lib/src/rust/frb_generated.dart
-            lib/src/rust/frb_generated.io.dart
-            lib/src/rust/frb_generated.web.dart
+            lib/src/rust/
             rust/src/frb_generated.rs
             rust/src/frb_generated.io.rs
             rust/src/frb_generated.web.rs
@@ -129,14 +125,21 @@ jobs:
         shell: bash
         run: |
           git diff --exit-code -- \
-            lib/src/rust/api/api.dart \
-            lib/src/rust/api/cloud_sync_dependency.dart \
-            lib/src/rust/frb_generated.dart \
-            lib/src/rust/frb_generated.io.dart \
-            lib/src/rust/frb_generated.web.dart \
+            lib/src/rust/ \
             rust/src/frb_generated.rs \
             rust/src/frb_generated.io.rs \
             rust/src/frb_generated.web.rs
+          # diff alone omits newly generated untracked modules. Check the whole
+          # configured output tree, not a list that misses future API modules.
+          status="$(git status --porcelain -- \
+            lib/src/rust/ \
+            rust/src/frb_generated.rs \
+            rust/src/frb_generated.io.rs \
+            rust/src/frb_generated.web.rs)"
+          if [[ -n "$status" ]]; then
+            printf '%s\n' "$status" >&2
+            exit 1
+          fi
 
       - name: Compile committed Rust bridge
         run: cargo check --manifest-path rust/Cargo.toml --lib --message-format short
