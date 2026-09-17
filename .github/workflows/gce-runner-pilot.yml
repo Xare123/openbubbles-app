@@ -44,6 +44,7 @@ on:
         type: choice
         options:
           - agent/cloudkit-v2-update-seam
+          - agent/cloudkit-v2-received-origin-20260916
           - agent/facetime-findmy-independent-20260916
       flavor:
         description: Non-production Android flavor to build
@@ -60,6 +61,7 @@ on:
         type: choice
         options:
           - full
+          - cloudkit-qualification
           - build-only
           - bindings-only
           - rustpush-only
@@ -444,7 +446,7 @@ jobs:
         run: git config --global --add safe.directory "$FLUTTER_ROOT"
 
       - name: Set up Java
-        if: ${{ env.VALIDATION_MODE != 'bindings-only' && env.VALIDATION_MODE != 'rustpush-only' && env.VALIDATION_MODE != 'app-rust-only' && env.VALIDATION_MODE != 'dart-only' }}
+        if: ${{ env.VALIDATION_MODE != 'bindings-only' && env.VALIDATION_MODE != 'rustpush-only' && env.VALIDATION_MODE != 'app-rust-only' && env.VALIDATION_MODE != 'dart-only' && env.VALIDATION_MODE != 'cloudkit-qualification' }}
         uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
         with:
           java-version: "21"
@@ -452,7 +454,7 @@ jobs:
           cache: gradle
 
       - name: Set up Android SDK
-        if: ${{ env.VALIDATION_MODE != 'bindings-only' && env.VALIDATION_MODE != 'rustpush-only' && env.VALIDATION_MODE != 'app-rust-only' && env.VALIDATION_MODE != 'dart-only' }}
+        if: ${{ env.VALIDATION_MODE != 'bindings-only' && env.VALIDATION_MODE != 'rustpush-only' && env.VALIDATION_MODE != 'app-rust-only' && env.VALIDATION_MODE != 'dart-only' && env.VALIDATION_MODE != 'cloudkit-qualification' }}
         uses: amyu/setup-android@3fe49086b1abd7c9ef865120d5d4d486fe55ba98 # v5
 
       - name: Cache Cargo registries
@@ -469,7 +471,7 @@ jobs:
       # Cargo validates incremental fingerprints after a source-only restore.
       # Keep the compatibility family aligned with the active sampler job.
       - name: Cache ARM64 debug CargoKit output
-        if: ${{ env.VALIDATION_MODE != 'rustpush-only' && env.VALIDATION_MODE != 'app-rust-only' && env.VALIDATION_MODE != 'dart-only' }}
+        if: ${{ env.VALIDATION_MODE != 'rustpush-only' && env.VALIDATION_MODE != 'app-rust-only' && env.VALIDATION_MODE != 'dart-only' && env.VALIDATION_MODE != 'cloudkit-qualification' }}
         uses: actions/cache@cdf6c1fa76f9f475f3d7449005a359c84ca0f306 # v5.0.3
         with:
           path: build/app/build/build
@@ -478,7 +480,7 @@ jobs:
             ${{ runner.os }}-cloudkit-canary-cargokit-v2-${{ hashFiles('pubspec.lock', 'rust/Cargo.toml', 'rust/Cargo.lock', 'rustpush/Cargo.toml', 'rustpush/Cargo.lock', 'android/**/*.gradle*', 'android/**/gradle.properties', 'rust_builder/cargokit/**', 'tooling/android/patch_pub_cache_cargokit.sh') }}-
 
       - name: Install pinned Android SDK components
-        if: ${{ env.VALIDATION_MODE != 'bindings-only' && env.VALIDATION_MODE != 'rustpush-only' && env.VALIDATION_MODE != 'app-rust-only' && env.VALIDATION_MODE != 'dart-only' }}
+        if: ${{ env.VALIDATION_MODE != 'bindings-only' && env.VALIDATION_MODE != 'rustpush-only' && env.VALIDATION_MODE != 'app-rust-only' && env.VALIDATION_MODE != 'dart-only' && env.VALIDATION_MODE != 'cloudkit-qualification' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -510,7 +512,7 @@ jobs:
           done
 
       - name: Patch vendored CargoKit for Flutter 3.44.8
-        if: ${{ env.VALIDATION_MODE != 'bindings-only' && env.VALIDATION_MODE != 'rustpush-only' && env.VALIDATION_MODE != 'app-rust-only' && env.VALIDATION_MODE != 'dart-only' }}
+        if: ${{ env.VALIDATION_MODE != 'bindings-only' && env.VALIDATION_MODE != 'rustpush-only' && env.VALIDATION_MODE != 'app-rust-only' && env.VALIDATION_MODE != 'dart-only' && env.VALIDATION_MODE != 'cloudkit-qualification' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -518,7 +520,7 @@ jobs:
           bash ./tooling/android/patch_pub_cache_cargokit.sh
 
       - name: Install pinned Gradle
-        if: ${{ env.VALIDATION_MODE != 'bindings-only' && env.VALIDATION_MODE != 'rustpush-only' && env.VALIDATION_MODE != 'app-rust-only' && env.VALIDATION_MODE != 'dart-only' }}
+        if: ${{ env.VALIDATION_MODE != 'bindings-only' && env.VALIDATION_MODE != 'rustpush-only' && env.VALIDATION_MODE != 'app-rust-only' && env.VALIDATION_MODE != 'dart-only' && env.VALIDATION_MODE != 'cloudkit-qualification' }}
         shell: bash
         env:
           GRADLE_VERSION: 8.9
@@ -544,7 +546,7 @@ jobs:
       # dart-only reuses the same pin and checksum for the Dart suite without
       # the Rust, bridge, Android, or packaging gates.
       - name: Install pinned ObjectBox C library
-        if: ${{ env.VALIDATION_MODE == 'full' || env.VALIDATION_MODE == 'dart-only' }}
+        if: ${{ env.VALIDATION_MODE == 'full' || env.VALIDATION_MODE == 'dart-only' || env.VALIDATION_MODE == 'cloudkit-qualification' }}
         shell: bash
         env:
           OBJECTBOX_VERSION: 5.3.2
@@ -570,7 +572,7 @@ jobs:
           echo "LD_LIBRARY_PATH=$(dirname "$library")${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" >> "$GITHUB_ENV"
 
       - name: Ensure PowerShell is available for binding normalization
-        if: ${{ env.VALIDATION_MODE == 'full' || env.VALIDATION_MODE == 'bindings-only' || env.VALIDATION_MODE == 'app-rust-only' || env.VALIDATION_MODE == 'dart-only' }}
+        if: ${{ env.VALIDATION_MODE == 'full' || env.VALIDATION_MODE == 'bindings-only' || env.VALIDATION_MODE == 'app-rust-only' || env.VALIDATION_MODE == 'dart-only' || env.VALIDATION_MODE == 'cloudkit-qualification' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -594,7 +596,7 @@ jobs:
           pwsh --version
 
       - name: Install pinned Flutter Rust Bridge generator
-        if: ${{ env.VALIDATION_MODE == 'full' || env.VALIDATION_MODE == 'bindings-only' || env.VALIDATION_MODE == 'app-rust-only' }}
+        if: ${{ env.VALIDATION_MODE == 'full' || env.VALIDATION_MODE == 'bindings-only' || env.VALIDATION_MODE == 'app-rust-only' || env.VALIDATION_MODE == 'cloudkit-qualification' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -607,19 +609,19 @@ jobs:
           echo "${RUNNER_TEMP}/frb-codegen" >> "$GITHUB_PATH"
 
       - name: Regenerate committed bridge bindings
-        if: ${{ env.VALIDATION_MODE == 'full' || env.VALIDATION_MODE == 'bindings-only' || env.VALIDATION_MODE == 'app-rust-only' }}
+        if: ${{ env.VALIDATION_MODE == 'full' || env.VALIDATION_MODE == 'bindings-only' || env.VALIDATION_MODE == 'app-rust-only' || env.VALIDATION_MODE == 'cloudkit-qualification' }}
         shell: bash
         run: flutter_rust_bridge_codegen generate --config-file flutter_rust_bridge.yaml
 
       - name: Normalize generated SSE implementations
-        if: ${{ env.VALIDATION_MODE == 'full' || env.VALIDATION_MODE == 'bindings-only' || env.VALIDATION_MODE == 'app-rust-only' }}
+        if: ${{ env.VALIDATION_MODE == 'full' || env.VALIDATION_MODE == 'bindings-only' || env.VALIDATION_MODE == 'app-rust-only' || env.VALIDATION_MODE == 'cloudkit-qualification' }}
         shell: pwsh
         run: |
           ./tooling/frb/guard_generated_sse_impls.ps1 -Mode Deduplicate -ExpectedRemovalCount 6
           ./tooling/frb/guard_generated_sse_impls.ps1 -Mode Verify
 
       - name: Normalize platform-specific FRB diagnostics
-        if: ${{ env.VALIDATION_MODE == 'full' || env.VALIDATION_MODE == 'bindings-only' || env.VALIDATION_MODE == 'app-rust-only' }}
+        if: ${{ env.VALIDATION_MODE == 'full' || env.VALIDATION_MODE == 'bindings-only' || env.VALIDATION_MODE == 'app-rust-only' || env.VALIDATION_MODE == 'cloudkit-qualification' }}
         shell: pwsh
         run: |
           ./tooling/frb/normalize_generated_diagnostics.ps1 -Mode Normalize
@@ -631,7 +633,7 @@ jobs:
       # the generated files needed to review the change.
       - name: Check generated bridge bindings for drift
         id: binding-drift
-        if: ${{ always() && (env.VALIDATION_MODE == 'full' || env.VALIDATION_MODE == 'bindings-only' || env.VALIDATION_MODE == 'app-rust-only') }}
+        if: ${{ always() && (env.VALIDATION_MODE == 'full' || env.VALIDATION_MODE == 'bindings-only' || env.VALIDATION_MODE == 'app-rust-only' || env.VALIDATION_MODE == 'cloudkit-qualification') }}
         shell: bash
         run: |
           set -euo pipefail
@@ -664,7 +666,7 @@ jobs:
           fi
 
       - name: Check generated Rust bridge
-        if: ${{ env.VALIDATION_MODE == 'full' || env.VALIDATION_MODE == 'bindings-only' || env.VALIDATION_MODE == 'app-rust-only' }}
+        if: ${{ env.VALIDATION_MODE == 'full' || env.VALIDATION_MODE == 'bindings-only' || env.VALIDATION_MODE == 'app-rust-only' || env.VALIDATION_MODE == 'cloudkit-qualification' }}
         shell: bash
         run: cargo check --manifest-path rust/Cargo.toml --lib --message-format short
 
@@ -675,7 +677,7 @@ jobs:
       - name: Run selected test suites in parallel
         id: parallel-tests
         continue-on-error: true
-        if: ${{ env.VALIDATION_MODE == 'full' || env.VALIDATION_MODE == 'app-rust-only' || env.VALIDATION_MODE == 'dart-only' }}
+        if: ${{ env.VALIDATION_MODE == 'full' || env.VALIDATION_MODE == 'app-rust-only' || env.VALIDATION_MODE == 'dart-only' || env.VALIDATION_MODE == 'cloudkit-qualification' }}
         shell: bash
         env:
           PILOT_WORKFLOW_SHA: ${{ github.sha }}
@@ -704,7 +706,7 @@ jobs:
       # Collect independent suite failures in one run, but never package a
       # failed qualification. Missing outputs and skipped required suites fail.
       - name: Require every selected test suite to pass
-        if: ${{ env.VALIDATION_MODE == 'full' || env.VALIDATION_MODE == 'app-rust-only' || env.VALIDATION_MODE == 'dart-only' }}
+        if: ${{ env.VALIDATION_MODE == 'full' || env.VALIDATION_MODE == 'app-rust-only' || env.VALIDATION_MODE == 'dart-only' || env.VALIDATION_MODE == 'cloudkit-qualification' }}
         shell: bash
         env:
           DART_TEST_OUTCOME: ${{ steps.parallel-tests.outputs.dart }}
@@ -721,19 +723,31 @@ jobs:
               failed=1
             fi
           }
-          if [[ "$VALIDATION_MODE" == 'dart-only' ]]; then
-            require_success dart "$DART_TEST_OUTCOME"
-          else
-            require_success app-rust "$APP_RUST_TEST_OUTCOME"
-            if [[ "$VALIDATION_MODE" == 'full' ]]; then
+          case "$VALIDATION_MODE" in
+            dart-only)
+              require_success dart "$DART_TEST_OUTCOME"
+              ;;
+            app-rust-only)
+              require_success app-rust "$APP_RUST_TEST_OUTCOME"
+              ;;
+            cloudkit-qualification)
+              require_success app-rust "$APP_RUST_TEST_OUTCOME"
+              require_success dart "$DART_TEST_OUTCOME"
+              ;;
+            full)
+              require_success app-rust "$APP_RUST_TEST_OUTCOME"
               require_success dart "$DART_TEST_OUTCOME"
               require_success rustpush "$RUSTPUSH_TEST_OUTCOME"
               require_success protector "$PROTECTOR_TEST_OUTCOME"
               if [[ "$AUTOMATIC_UPLOADS" == 'true' ]]; then
                 require_success automatic-uploads "$AUTOMATIC_UPLOAD_TEST_OUTCOME"
               fi
-            fi
-          fi
+              ;;
+            *)
+              echo "Unsupported validation mode for suite requirements: $VALIDATION_MODE" >&2
+              exit 1
+              ;;
+          esac
           SELECTED_SUITES_FAILURE="$failed" python3 - <<'PY' > "$RUNNER_TEMP/validation-outcomes.json"
           import json, os
           fields = {
@@ -751,7 +765,7 @@ jobs:
           exit "$failed"
 
       - name: Preserve actual selected-suite outcomes
-        if: ${{ always() && (env.VALIDATION_MODE == 'full' || env.VALIDATION_MODE == 'app-rust-only' || env.VALIDATION_MODE == 'dart-only') }}
+        if: ${{ always() && (env.VALIDATION_MODE == 'full' || env.VALIDATION_MODE == 'app-rust-only' || env.VALIDATION_MODE == 'dart-only' || env.VALIDATION_MODE == 'cloudkit-qualification') }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: GCE actual test outcomes (${{ env.VALIDATION_MODE }})
@@ -760,7 +774,7 @@ jobs:
           retention-days: 7
 
       - name: Upload regenerated bridge bindings
-        if: ${{ always() && (env.VALIDATION_MODE == 'full' || env.VALIDATION_MODE == 'bindings-only' || env.VALIDATION_MODE == 'app-rust-only') }}
+        if: ${{ always() && (env.VALIDATION_MODE == 'full' || env.VALIDATION_MODE == 'bindings-only' || env.VALIDATION_MODE == 'app-rust-only' || env.VALIDATION_MODE == 'cloudkit-qualification') }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: GCE regenerated bridge bindings (${{ env.VALIDATION_MODE }})
@@ -777,7 +791,7 @@ jobs:
             rust/src/frb_generated.web.rs
 
       - name: Bound Gradle packaging memory on high-core runners
-        if: ${{ env.VALIDATION_MODE != 'bindings-only' && env.VALIDATION_MODE != 'rustpush-only' && env.VALIDATION_MODE != 'app-rust-only' && env.VALIDATION_MODE != 'dart-only' }}
+        if: ${{ env.VALIDATION_MODE != 'bindings-only' && env.VALIDATION_MODE != 'rustpush-only' && env.VALIDATION_MODE != 'app-rust-only' && env.VALIDATION_MODE != 'dart-only' && env.VALIDATION_MODE != 'cloudkit-qualification' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -787,7 +801,7 @@ jobs:
 
       - name: Build benchmark APK
         id: build
-        if: ${{ env.VALIDATION_MODE != 'bindings-only' && env.VALIDATION_MODE != 'rustpush-only' && env.VALIDATION_MODE != 'app-rust-only' && env.VALIDATION_MODE != 'dart-only' }}
+        if: ${{ env.VALIDATION_MODE != 'bindings-only' && env.VALIDATION_MODE != 'rustpush-only' && env.VALIDATION_MODE != 'app-rust-only' && env.VALIDATION_MODE != 'dart-only' && env.VALIDATION_MODE != 'cloudkit-qualification' }}
         env:
           REGISTRATION_RELAY_ACCESS_TOKEN: ${{ secrets.REGISTRATION_RELAY_ACCESS_TOKEN }}
         shell: bash
@@ -862,7 +876,7 @@ jobs:
           exit "$build_status"
 
       - name: Verify producer APK identity and native libraries
-        if: ${{ env.VALIDATION_MODE != 'bindings-only' && env.VALIDATION_MODE != 'rustpush-only' && env.VALIDATION_MODE != 'app-rust-only' && env.VALIDATION_MODE != 'dart-only' }}
+        if: ${{ env.VALIDATION_MODE != 'bindings-only' && env.VALIDATION_MODE != 'rustpush-only' && env.VALIDATION_MODE != 'app-rust-only' && env.VALIDATION_MODE != 'dart-only' && env.VALIDATION_MODE != 'cloudkit-qualification' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -896,7 +910,7 @@ jobs:
 
       - name: Upload benchmark APK
         id: upload-apk
-        if: ${{ env.VALIDATION_MODE != 'bindings-only' && env.VALIDATION_MODE != 'rustpush-only' && env.VALIDATION_MODE != 'app-rust-only' && env.VALIDATION_MODE != 'dart-only' }}
+        if: ${{ env.VALIDATION_MODE != 'bindings-only' && env.VALIDATION_MODE != 'rustpush-only' && env.VALIDATION_MODE != 'app-rust-only' && env.VALIDATION_MODE != 'dart-only' && env.VALIDATION_MODE != 'cloudkit-qualification' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: GCE producer ${{ inputs.flavor || 'beta' }} APK ${{ env.SOURCE_REF }} writer-${{ inputs.outbound_writer || false }} automatic-${{ inputs.automatic_uploads || false }}
@@ -983,7 +997,8 @@ jobs:
         (inputs.validation_mode || 'full') != 'bindings-only' &&
         (inputs.validation_mode || 'full') != 'rustpush-only' &&
         (inputs.validation_mode || 'full') != 'app-rust-only' &&
-        (inputs.validation_mode || 'full') != 'dart-only'
+        (inputs.validation_mode || 'full') != 'dart-only' &&
+        (inputs.validation_mode || 'full') != 'cloudkit-qualification'
       }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10

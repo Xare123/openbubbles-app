@@ -66,6 +66,10 @@ case "$VALIDATION_MODE" in
   app-rust-only)
     start_suite app_rust run_app_rust_suite
     ;;
+  cloudkit-qualification)
+    start_suite dart run_dart_suite
+    start_suite app_rust run_app_rust_suite
+    ;;
   dart-only)
     start_suite dart run_dart_suite
     ;;
