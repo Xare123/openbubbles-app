@@ -74,7 +74,9 @@ has no errors/warnings, with eight pre-existing harness style infos.
 bb0411345b3396dbceb5231aef6f6622f8801a85 on
 `agent/windows-dependency-locator-20260916`. This adds the eight exact ARM64
 selector tests, nine parent-observer tests and source-provenance inputs to the
-existing GitHub-hosted qualification. ValidateOnly passed. The shared GCE pilot
+existing GitHub-hosted qualification. ValidateOnly and hosted source contracts
+passed; watch session3481 follows this exact run (do not dispatch a duplicate).
+The shared GCE pilot
 remote advanced independently to d5533dd1e; it was not merged or overwritten.
 Its pre-existing local asset_graph deletion remains untouched.
 

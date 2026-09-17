@@ -6580,3 +6580,8 @@ Historical tests do not establish current-device behavior.
   run-retained-inspection.ps1. Main local processes are idle; Linux watch75930
   completed and no helper remains active. C: free about27.8GiB. No extra cleanup.
   Full received/group/write/device/public-release gates remain open.
+
+- Windows source-contract check passed and the existing job entered build/test/
+  packaging. Watch session3481 follows run35165381313; no new runtime is installed.
+  Documentation-only descendant8b5598b9f was pushed after that source pin passed,
+  so the running job still builds exact app3c780a8d7. No new dispatch is needed.
