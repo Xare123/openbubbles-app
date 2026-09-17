@@ -13,6 +13,8 @@ param(
     [string] $SignTool = 'C:\Program Files (x86)\Windows Kits\10\bin\10.0.26100.0\arm64\signtool.exe',
     [ValidateRange(1, 10000)]
     [int] $ExpectedNativeEncoderTestCount = 51,
+    [ValidateRange(1, 10000)]
+    [int] $ExpectedNativeDiagnosticTestCount = 5,
     [switch] $FunctionsOnlyForTest
 )
 
@@ -50,6 +52,7 @@ $nativeTestHostInvocationState = @{
     ReceiptPath = $ReceiptPath
     SignTool = $SignTool
     ExpectedNativeEncoderTestCount = $ExpectedNativeEncoderTestCount
+    ExpectedNativeDiagnosticTestCount = $ExpectedNativeDiagnosticTestCount
     FunctionsOnlyForTest = [bool]$FunctionsOnlyForTest
 }
 try {
@@ -69,6 +72,7 @@ finally {
     $ReceiptPath = $nativeTestHostInvocationState.ReceiptPath
     $SignTool = $nativeTestHostInvocationState.SignTool
     $ExpectedNativeEncoderTestCount = $nativeTestHostInvocationState.ExpectedNativeEncoderTestCount
+    $ExpectedNativeDiagnosticTestCount = $nativeTestHostInvocationState.ExpectedNativeDiagnosticTestCount
     $FunctionsOnlyForTest = $nativeTestHostInvocationState.FunctionsOnlyForTest
 }
 
@@ -343,7 +347,8 @@ function Import-VerifiedWindowsNativeTestHost {
         [string] $TestHostDirectory = '',
         [string] $ReceiptPath = '',
         [Parameter(Mandatory)][string] $SignTool,
-        [int] $ExpectedNativeEncoderTestCount = 51
+        [int] $ExpectedNativeEncoderTestCount = 51,
+        [ValidateRange(1, 10000)][int] $ExpectedNativeDiagnosticTestCount = 5
     )
     foreach ($field in @('ArchivePath', 'ProvenancePath', 'ExpectedArchiveSha256', 'ExpectedSourceSha', 'ExpectedPilotSha', 'ExpectedSignerThumbprint', 'Repository', 'SignTool')) {
         $value = Get-Variable -Name $field -ValueOnly
@@ -387,7 +392,7 @@ function Import-VerifiedWindowsNativeTestHost {
         catch { Fail-NativeTestHostImport ("profile ownership is held by another launcher: " + $_.Exception.Message) }
         Assert-NativeTestHostNoBlockingProcess
         Assert-NativeTestHostSourceTree -Repository $repoFull -ExpectedSourceSha $ExpectedSourceSha
-        $null = Invoke-VerifyWindowsCloudBundle -ArchivePath $ArchivePath -ProvenancePath $ProvenancePath -ExpectedArchiveSha256 $ExpectedArchiveSha256 -ExpectedSourceSha $ExpectedSourceSha -ExpectedPilotSha $ExpectedPilotSha -ExpectedVariant 'read-only' -ExpectedArtifactMode 'native-test-host' -ExpectedNativeEncoderTestCount $ExpectedNativeEncoderTestCount
+        $null = Invoke-VerifyWindowsCloudBundle -ArchivePath $ArchivePath -ProvenancePath $ProvenancePath -ExpectedArchiveSha256 $ExpectedArchiveSha256 -ExpectedSourceSha $ExpectedSourceSha -ExpectedPilotSha $ExpectedPilotSha -ExpectedVariant 'read-only' -ExpectedArtifactMode 'native-test-host' -ExpectedNativeEncoderTestCount $ExpectedNativeEncoderTestCount -ExpectedNativeDiagnosticTestCount $ExpectedNativeDiagnosticTestCount
         $provenanceHash = (Get-FileHash -LiteralPath $ProvenancePath -Algorithm SHA256).Hash.ToLowerInvariant()
         $provenanceDoc = Get-Content -LiteralPath $ProvenancePath -Raw | ConvertFrom-Json
         $manifest = @{}
@@ -584,5 +589,5 @@ if (-not $FunctionsOnlyForTest) {
     }
     $resolvedRepository = $Repository
     if (-not $resolvedRepository) { $resolvedRepository = (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path }
-    Import-VerifiedWindowsNativeTestHost -ArchivePath $ArchivePath -ProvenancePath $ProvenancePath -ExpectedArchiveSha256 $ExpectedArchiveSha256 -ExpectedSourceSha $ExpectedSourceSha -ExpectedPilotSha $ExpectedPilotSha -ExpectedSignerThumbprint $ExpectedSignerThumbprint -Repository $resolvedRepository -ProfileRoot $ProfileRoot -TestHostDirectory $TestHostDirectory -ReceiptPath $ReceiptPath -SignTool $SignTool -ExpectedNativeEncoderTestCount $ExpectedNativeEncoderTestCount | Out-Null
+    Import-VerifiedWindowsNativeTestHost -ArchivePath $ArchivePath -ProvenancePath $ProvenancePath -ExpectedArchiveSha256 $ExpectedArchiveSha256 -ExpectedSourceSha $ExpectedSourceSha -ExpectedPilotSha $ExpectedPilotSha -ExpectedSignerThumbprint $ExpectedSignerThumbprint -Repository $resolvedRepository -ProfileRoot $ProfileRoot -TestHostDirectory $TestHostDirectory -ReceiptPath $ReceiptPath -SignTool $SignTool -ExpectedNativeEncoderTestCount $ExpectedNativeEncoderTestCount -ExpectedNativeDiagnosticTestCount $ExpectedNativeDiagnosticTestCount | Out-Null
 }

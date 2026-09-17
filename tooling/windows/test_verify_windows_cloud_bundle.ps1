@@ -347,6 +347,21 @@ try {
     Invoke-VerifyWindowsCloudBundle -ArchivePath $native.Zip -ProvenancePath $native.Prov -ExpectedArchiveSha256 $native.ZipHash -ExpectedSourceSha $native.Src -ExpectedPilotSha $native.Pilot -ExpectedVariant 'read-only' -ExpectedArtifactMode 'native-test-host' | Out-Null
     Write-Host 'PASS native-schema-two-positive'; $script:Pass++
 } catch { Write-Host "FAIL native-schema-two-positive ($_)"; $script:FailCount++ }
+$expanded = New-EditedProv -Tag 'expanded-diagnostics' -SourceProv $native.Prov -Edit {
+    param($o)
+    $o.verification.native_content_free_diagnostic_tests.expected_test_count = 13
+    $o.verification.native_content_free_diagnostic_tests.expected_names = @(1..13 | ForEach-Object { "synthetic-diagnostic-$_" })
+}
+Assert-Fails -Name 'expanded-diagnostics-not-auto-trusted' -Body {
+    Invoke-VerifyWindowsCloudBundle -ArchivePath $native.Zip -ProvenancePath $expanded -ExpectedArchiveSha256 $native.ZipHash -ExpectedSourceSha $native.Src -ExpectedPilotSha $native.Pilot -ExpectedVariant 'read-only' -ExpectedArtifactMode 'native-test-host'
+}
+try {
+    Invoke-VerifyWindowsCloudBundle -ArchivePath $native.Zip -ProvenancePath $expanded -ExpectedArchiveSha256 $native.ZipHash -ExpectedSourceSha $native.Src -ExpectedPilotSha $native.Pilot -ExpectedVariant 'read-only' -ExpectedArtifactMode 'native-test-host' -ExpectedNativeDiagnosticTestCount 13 | Out-Null
+    Write-Host 'PASS explicit-expanded-diagnostics'; $script:Pass++
+} catch { Write-Host "FAIL explicit-expanded-diagnostics ($_)"; $script:FailCount++ }
+Assert-Fails -Name 'explicit-expanded-diagnostics-still-exact' -Body {
+    Invoke-VerifyWindowsCloudBundle -ArchivePath $native.Zip -ProvenancePath $expanded -ExpectedArchiveSha256 $native.ZipHash -ExpectedSourceSha $native.Src -ExpectedPilotSha $native.Pilot -ExpectedVariant 'read-only' -ExpectedArtifactMode 'native-test-host' -ExpectedNativeDiagnosticTestCount 12
+}
 Assert-Fails -Name 'native-mode-confusion-rejected' -Body {
     Invoke-VerifyWindowsCloudBundle -ArchivePath $native.Zip -ProvenancePath $native.Prov -ExpectedArchiveSha256 $native.ZipHash -ExpectedSourceSha $native.Src -ExpectedPilotSha $native.Pilot -ExpectedVariant 'read-only' -ExpectedArtifactMode 'harness'
 }

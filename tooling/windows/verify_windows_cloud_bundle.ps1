@@ -10,6 +10,8 @@ param(
     [string] $ExpectedArtifactMode = 'harness',
     [ValidateRange(1, 10000)]
     [int] $ExpectedNativeEncoderTestCount = 51,
+    [ValidateRange(1, 10000)]
+    [int] $ExpectedNativeDiagnosticTestCount = 5,
     [switch] $FunctionsOnlyForTest
 )
 
@@ -68,7 +70,8 @@ function Invoke-VerifyWindowsCloudBundle {
         [Parameter(Mandatory)][string] $ExpectedPilotSha,
         [Parameter(Mandatory)][string] $ExpectedVariant,
         [ValidateSet('harness', 'native-test-host')][string] $ExpectedArtifactMode = 'harness',
-        [ValidateRange(1, 10000)][int] $ExpectedNativeEncoderTestCount = 51
+        [ValidateRange(1, 10000)][int] $ExpectedNativeEncoderTestCount = 51,
+        [ValidateRange(1, 10000)][int] $ExpectedNativeDiagnosticTestCount = 5
     )
     foreach ($p in @($ArchivePath, $ProvenancePath)) { if (-not (Test-Path -LiteralPath $p)) { Fail "missing input $p" } }
     $actualArchiveHash = (Get-FileHash -LiteralPath $ArchivePath -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -163,7 +166,7 @@ function Invoke-VerifyWindowsCloudBundle {
         if ($inv.proof_status -cne 'not-run-no-gui-assembly') { Fail 'native-test-host invalid-launch status mismatch' }
         if ($v.native_timestamp_compose_tests -cne 'passed' -or $v.native_timestamp_compose_expected_count -ne 7) { Fail 'native timestamp compose suite mismatch' }
         $nativeSuites = @(
-            @{ Name = 'native_content_free_diagnostic_tests'; Count = 5 },
+            @{ Name = 'native_content_free_diagnostic_tests'; Count = $ExpectedNativeDiagnosticTestCount },
             @{ Name = 'native_read_discovery_tests'; Count = 2 },
             @{ Name = 'native_system_event_tests'; Count = 5 }
         )
@@ -287,5 +290,5 @@ if (-not $FunctionsOnlyForTest) {
     if (-not $ArchivePath -or -not $ProvenancePath -or -not $ExpectedArchiveSha256 -or -not $ExpectedSourceSha -or -not $ExpectedPilotSha -or -not $ExpectedVariant) {
         throw 'ArchivePath, ProvenancePath, ExpectedArchiveSha256, ExpectedSourceSha, ExpectedPilotSha, ExpectedVariant are all required.'
     }
-    Invoke-VerifyWindowsCloudBundle -ArchivePath $ArchivePath -ProvenancePath $ProvenancePath -ExpectedArchiveSha256 $ExpectedArchiveSha256 -ExpectedSourceSha $ExpectedSourceSha -ExpectedPilotSha $ExpectedPilotSha -ExpectedVariant $ExpectedVariant -ExpectedArtifactMode $ExpectedArtifactMode -ExpectedNativeEncoderTestCount $ExpectedNativeEncoderTestCount | Out-Null
+    Invoke-VerifyWindowsCloudBundle -ArchivePath $ArchivePath -ProvenancePath $ProvenancePath -ExpectedArchiveSha256 $ExpectedArchiveSha256 -ExpectedSourceSha $ExpectedSourceSha -ExpectedPilotSha $ExpectedPilotSha -ExpectedVariant $ExpectedVariant -ExpectedArtifactMode $ExpectedArtifactMode -ExpectedNativeEncoderTestCount $ExpectedNativeEncoderTestCount -ExpectedNativeDiagnosticTestCount $ExpectedNativeDiagnosticTestCount | Out-Null
 }

@@ -322,6 +322,9 @@ $script:SigStore[$rustInstalled] = 'Valid'
 try {
     $archiveBefore = Get-FileHash -LiteralPath $f.Zip -Algorithm SHA256
     $provBefore = Get-FileHash -LiteralPath $f.Prov -Algorithm SHA256
+    Assert-ImportFails -Name 'explicit-diagnostic-count-forwarded' -Body {
+        Import-VerifiedWindowsNativeTestHost -ArchivePath $f.Zip -ProvenancePath $f.Prov -ExpectedArchiveSha256 $f.ZipHash -ExpectedSourceSha $f.Src -ExpectedPilotSha $f.Pilot -ExpectedSignerThumbprint $Thumb -Repository $repo -SignTool $fakeSignTool -ExpectedNativeDiagnosticTestCount 13
+    }
     $result = Import-VerifiedWindowsNativeTestHost -ArchivePath $f.Zip -ProvenancePath $f.Prov -ExpectedArchiveSha256 $f.ZipHash -ExpectedSourceSha $f.Src -ExpectedPilotSha $f.Pilot -ExpectedSignerThumbprint $Thumb -Repository $repo -SignTool $fakeSignTool
     $ok = $true
     if ($result.TestHostDirectory -cne $runner) { Write-Host 'FAIL success-positive (test-host dir)'; $ok = $false }
