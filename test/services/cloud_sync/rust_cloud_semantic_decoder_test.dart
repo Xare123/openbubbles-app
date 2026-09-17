@@ -867,6 +867,30 @@ void main() {
     });
   });
 
+  test('attachment quarantine detail is recorded without changing the primary reason', () async {
+    for (final detail in [
+      'native_attachment_metadata_absent',
+      'native_attachment_metadata_malformed_nested_plist',
+      'native_attachment_conversion_user_info_empty',
+      'native_attachment_conversion_mmcs_key',
+    ]) {
+      final diagnostics = CloudSyncSemanticDiagnosticCollector();
+      final entry = _entry();
+      bindings.result = frb.CloudSyncTransientDecodeResult(
+        protectedSourceReference: _sourceReference,
+        generation: BigInt.from(entry.generation),
+        quarantineReason: frb.CloudSyncTransientQuarantineReason.malformedRecord,
+        quarantineDiagnosticSafeCode: detail,
+      );
+      await _expectFailure(
+        decoder(diagnosticRecorder: diagnostics.record).decode(entry),
+        CloudFailureCategory.malformedRecord,
+        safeCode: 'native_quarantined_malformed_record',
+      );
+      expect(diagnostics.snapshot(), {detail: 1, 'native_quarantined_malformed_record': 1});
+    }
+  });
+
   test(
     'chat quarantine detail fails closed without changing disposition',
     () async {

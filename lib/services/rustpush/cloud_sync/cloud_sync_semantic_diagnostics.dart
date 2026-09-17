@@ -141,6 +141,7 @@ abstract final class CloudSyncSemanticDiagnosticCodes {
     'legacy_ownership_message_shape_invalid',
     'legacy_ownership_reaction_shape_invalid',
     'legacy_ownership_transient_owner_invalid',
+    'native_attachment_metadata_absent',
     'native_invalid_disposition_shape',
     'native_out_of_scope_i_message_lite',
     'native_out_of_scope_rcs',
@@ -321,6 +322,45 @@ abstract final class CloudSyncSemanticDiagnosticCodes {
     'canonical_build',
   };
 
+  // Native attachment quarantine detail. Closed vocabulary only.
+  // Metadata reuses the CloudRawPresenceFailure diagnostic suffixes already
+  // used for native_chat_property_presence (base failure suffixes only; no
+  // shape-qualified derivatives, no arbitrary strings).
+  static const _nativeAttachmentMetadataSegments = <String>{
+    'too_many_fields',
+    'malformed_field_identifier',
+    'duplicate_field_identifier',
+    'field_not_present',
+    'nested_payload_too_large',
+    'malformed_nested_plist',
+    'nested_plist_not_dictionary',
+    'explicit_clear_without_presence',
+  };
+
+  static const _nativeAttachmentConversionSegments = <String>{
+    'content_field',
+    'guid_presence',
+    'empty_guid',
+    'user_info_empty',
+    'user_info_mixed_modes',
+    'inline_marker',
+    'inline_part',
+    'mmcs_signature',
+    'mmcs_owner',
+    'mmcs_url',
+    'mmcs_key',
+    'owner',
+    'logical_identity',
+    'uti_field',
+    'mime_field',
+    'transfer_name_field',
+    'total_bytes_field',
+    'outgoing_field',
+    'canonical_payload',
+    'created_date',
+    'canonical_build',
+  };
+
   static const _chatCardinalityPrefixes = <String>{
     'canonical_message_chat_exact_guid_',
     'canonical_message_chat_candidate_service_identifier_',
@@ -382,6 +422,16 @@ abstract final class CloudSyncSemanticDiagnosticCodes {
           code,
           'native_chat_conversion_',
           _nativeChatConversionSegments,
+        ) ||
+        _matchesPrefix(
+          code,
+          'native_attachment_metadata_',
+          _nativeAttachmentMetadataSegments,
+        ) ||
+        _matchesPrefix(
+          code,
+          'native_attachment_conversion_',
+          _nativeAttachmentConversionSegments,
         )) {
       return true;
     }

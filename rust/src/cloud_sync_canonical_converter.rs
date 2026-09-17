@@ -3249,9 +3249,46 @@ enum CloudAttachmentUserInfoKind {
     Mmcs,
 }
 
+/// Closed location of an attachment rejection, never metadata values.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum CloudAttachmentDiagnosticCode {
+    ContentField, GuidPresence, EmptyGuid, UserInfoEmpty, UserInfoMixedModes,
+    InlineMarker, InlinePart, MmcsSignature, MmcsOwner, MmcsUrl, MmcsKey,
+    Owner, LogicalIdentity, UtiField, MimeField, TransferNameField,
+    TotalBytesField, OutgoingField, CanonicalPayload, CreatedDate, CanonicalBuild,
+}
+
+impl CloudAttachmentDiagnosticCode {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::ContentField => "content_field",
+            Self::GuidPresence => "guid_presence",
+            Self::EmptyGuid => "empty_guid",
+            Self::UserInfoEmpty => "user_info_empty",
+            Self::UserInfoMixedModes => "user_info_mixed_modes",
+            Self::InlineMarker => "inline_marker",
+            Self::InlinePart => "inline_part",
+            Self::MmcsSignature => "mmcs_signature",
+            Self::MmcsOwner => "mmcs_owner",
+            Self::MmcsUrl => "mmcs_url",
+            Self::MmcsKey => "mmcs_key",
+            Self::Owner => "owner",
+            Self::LogicalIdentity => "logical_identity",
+            Self::UtiField => "uti_field",
+            Self::MimeField => "mime_field",
+            Self::TransferNameField => "transfer_name_field",
+            Self::TotalBytesField => "total_bytes_field",
+            Self::OutgoingField => "outgoing_field",
+            Self::CanonicalPayload => "canonical_payload",
+            Self::CreatedDate => "created_date",
+            Self::CanonicalBuild => "canonical_build",
+        }
+    }
+}
+
 fn validate_attachment_user_info(
     user_info: &MMCSAttachmentMeta,
-) -> Result<CloudAttachmentUserInfoKind, CloudCanonicalQuarantineReason> {
+) -> Result<CloudAttachmentUserInfoKind, CloudAttachmentDiagnosticCode> {
     fn non_empty(value: Option<&str>) -> bool {
         value.is_some_and(|value| !value.is_empty() && !value.chars().any(char::is_control))
     }
@@ -3273,29 +3310,35 @@ fn validate_attachment_user_info(
         || user_info.mmcs_url.is_some()
         || user_info.decryption_key.is_some();
 
+    // Same predicates and accepted combinations as before; only the failing
+    // predicate is now retained. Never return owners, URLs, keys or signatures.
     match (has_inline_metadata, has_mmcs_metadata) {
-        (true, false)
-            if matches!(
-                user_info.inline_attachment.as_deref(),
-                Some("ia-0" | "ia-1")
-            ) && user_info
-                .message_part
-                .as_deref()
-                .is_some_and(|value| value.parse::<u32>().is_ok()) =>
-        {
+        (false, false) => Err(CloudAttachmentDiagnosticCode::UserInfoEmpty),
+        (true, true) => Err(CloudAttachmentDiagnosticCode::UserInfoMixedModes),
+        (true, false) => {
+            if !matches!(user_info.inline_attachment.as_deref(), Some("ia-0" | "ia-1")) {
+                return Err(CloudAttachmentDiagnosticCode::InlineMarker);
+            }
+            if !user_info.message_part.as_deref().is_some_and(|v| v.parse::<u32>().is_ok()) {
+                return Err(CloudAttachmentDiagnosticCode::InlinePart);
+            }
             Ok(CloudAttachmentUserInfoKind::Inline)
         }
-        (false, true)
-            if hex(user_info.mmcs_signature_hex.as_deref())
-                && non_empty(user_info.mmcs_owner.as_deref())
-                && user_info.mmcs_url.as_deref().is_some_and(|value| {
-                    value.starts_with("https://") && non_empty(Some(value))
-                })
-                && hex(user_info.decryption_key.as_deref()) =>
-        {
+        (false, true) => {
+            if !hex(user_info.mmcs_signature_hex.as_deref()) {
+                return Err(CloudAttachmentDiagnosticCode::MmcsSignature);
+            }
+            if !non_empty(user_info.mmcs_owner.as_deref()) {
+                return Err(CloudAttachmentDiagnosticCode::MmcsOwner);
+            }
+            if !user_info.mmcs_url.as_deref().is_some_and(|v| v.starts_with("https://") && non_empty(Some(v))) {
+                return Err(CloudAttachmentDiagnosticCode::MmcsUrl);
+            }
+            if !hex(user_info.decryption_key.as_deref()) {
+                return Err(CloudAttachmentDiagnosticCode::MmcsKey);
+            }
             Ok(CloudAttachmentUserInfoKind::Mmcs)
         }
-        _ => Err(CloudCanonicalQuarantineReason::MalformedRecord),
     }
 }
 
@@ -3304,9 +3347,31 @@ pub(crate) fn convert_attachment(
     presence: &CloudRawRecordPresence,
     attachment: &AttachmentMeta,
 ) -> CloudCanonicalConversionOutcome {
+    convert_attachment_with_diagnostic(context, presence, attachment).0
+}
+
+pub(crate) fn convert_attachment_with_diagnostic(
+    context: &CloudCanonicalConversionContext<'_>,
+    presence: &CloudRawRecordPresence,
+    attachment: &AttachmentMeta,
+) -> (CloudCanonicalConversionOutcome, Option<CloudAttachmentDiagnosticCode>) {
+    let mut stage = CloudAttachmentDiagnosticCode::ContentField;
+    let outcome = convert_attachment_internal(context, presence, attachment, &mut stage);
+    let diagnostic = matches!(&outcome, CloudCanonicalConversionOutcome::Quarantined(_))
+        .then_some(stage);
+    (outcome, diagnostic)
+}
+
+fn convert_attachment_internal(
+    context: &CloudCanonicalConversionContext<'_>,
+    presence: &CloudRawRecordPresence,
+    attachment: &AttachmentMeta,
+    stage: &mut CloudAttachmentDiagnosticCode,
+) -> CloudCanonicalConversionOutcome {
     if let Err(reason) = require_present(presence, &["cm"]) {
         return CloudCanonicalConversionOutcome::Quarantined(reason);
     }
+    *stage = CloudAttachmentDiagnosticCode::GuidPresence;
     match presence.nested_field("cm", "aguid") {
         CloudNestedPresence::Present => {}
         CloudNestedPresence::Unavailable => {
@@ -3320,6 +3385,7 @@ pub(crate) fn convert_attachment(
             )
         }
     }
+    *stage = CloudAttachmentDiagnosticCode::EmptyGuid;
     if attachment.guid.is_empty() {
         return CloudCanonicalConversionOutcome::Quarantined(
             CloudCanonicalQuarantineReason::MalformedRequiredIdentity,
@@ -3344,8 +3410,10 @@ pub(crate) fn convert_attachment(
                 materialization_capability = CloudCanonicalAttachmentMaterializationCapability::
                     MetadataOnlyUnsupportedMediaCredentials;
             }
-            Err(reason) => {
-                return CloudCanonicalConversionOutcome::Quarantined(reason);
+            Err(detail) => {
+                *stage = detail;
+                return CloudCanonicalConversionOutcome::Quarantined(
+                    CloudCanonicalQuarantineReason::MalformedRecord);
             }
         }
     }
@@ -3354,9 +3422,11 @@ pub(crate) fn convert_attachment(
             CloudCanonicalDeferredReason::UnsupportedSticker,
         );
     }
+    *stage = CloudAttachmentDiagnosticCode::Owner;
     let (canonical_guid, logical_hash, owner_guid, owner_hash, owner_part) =
         match parse_owned_attachment_guid(&attachment.guid) {
             Ok(owned) => {
+                *stage = CloudAttachmentDiagnosticCode::LogicalIdentity;
                 let owner_hash = match context.hasher.canonical_entity_key_hash(
                     CloudCanonicalEntityKind::Message,
                     owned.message_guid(),
@@ -3385,6 +3455,7 @@ pub(crate) fn convert_attachment(
                 )
             }
             Err(_) => {
+                *stage = CloudAttachmentDiagnosticCode::LogicalIdentity;
                 let logical_hash = match context.hasher.canonical_entity_key_hash(
                     CloudCanonicalEntityKind::Attachment,
                     &attachment.guid,
@@ -3395,18 +3466,22 @@ pub(crate) fn convert_attachment(
                 (attachment.guid.clone(), logical_hash, None, None, None)
             }
         };
+    *stage = CloudAttachmentDiagnosticCode::UtiField;
     let uti = match nested_attachment_string(presence, "t", &attachment.uti) {
         Ok(value) => value,
         Err(outcome) => return outcome,
     };
+    *stage = CloudAttachmentDiagnosticCode::MimeField;
     let mime_type = match nested_attachment_string(presence, "mimet", &attachment.mime_type) {
         Ok(value) => value,
         Err(outcome) => return outcome,
     };
+    *stage = CloudAttachmentDiagnosticCode::TransferNameField;
     let transfer_name = match nested_attachment_string(presence, "tn", &attachment.transfer_name) {
         Ok(value) => value,
         Err(outcome) => return outcome,
     };
+    *stage = CloudAttachmentDiagnosticCode::TotalBytesField;
     let total_bytes = match presence.nested_field("cm", "tb") {
         CloudNestedPresence::Present if attachment.total_bytes < 0 => {
             return CloudCanonicalConversionOutcome::Deferred(
@@ -3441,6 +3516,7 @@ pub(crate) fn convert_attachment(
             )
         }
     };
+    *stage = CloudAttachmentDiagnosticCode::OutgoingField;
     let is_outgoing = match presence.nested_field("cm", "ig") {
         CloudNestedPresence::Present => CloudCanonicalField::Value(attachment.is_outgoing),
         CloudNestedPresence::Absent => CloudCanonicalField::Absent,
@@ -3455,6 +3531,7 @@ pub(crate) fn convert_attachment(
             )
         }
     };
+    *stage = CloudAttachmentDiagnosticCode::CanonicalPayload;
     let payload = match CloudCanonicalAttachmentPayload::new_with_materialization_capability(
         canonical_guid,
         owner_guid,
@@ -3471,6 +3548,13 @@ pub(crate) fn convert_attachment(
         Ok(value) => value,
         Err(error) => return validation_quarantine(error),
     };
+    *stage = CloudAttachmentDiagnosticCode::CreatedDate;
+    let created_at_millis = match apple_attachment_nanos_to_unix_millis(attachment.created_date) {
+        Some(value) => Some(value),
+        None => return CloudCanonicalConversionOutcome::Quarantined(
+            CloudCanonicalQuarantineReason::MalformedRecord),
+    };
+    *stage = CloudAttachmentDiagnosticCode::CanonicalBuild;
     build_upsert(
         context,
         CloudCanonicalEntityKind::Attachment,
@@ -3479,14 +3563,7 @@ pub(crate) fn convert_attachment(
         vec![],
         CloudCanonicalPayload::Attachment(Box::new(payload)),
         None,
-        match apple_attachment_nanos_to_unix_millis(attachment.created_date) {
-            Some(value) => Some(value),
-            None => {
-                return CloudCanonicalConversionOutcome::Quarantined(
-                    CloudCanonicalQuarantineReason::MalformedRecord,
-                )
-            }
-        },
+        created_at_millis,
         None,
         None,
         vec![],
@@ -6726,6 +6803,172 @@ mod tests {
             payload.materialization_capability(),
             CloudCanonicalAttachmentMaterializationCapability::MetadataOnlyUnsupportedMediaCredentials
         );
+    }
+
+    #[test]
+    fn attachment_user_info_diagnostics_preserve_the_prior_acceptance_matrix() {
+        // Independent reference for the pre-diagnostic predicate. Exercise
+        // absent, valid, empty and malformed values without changing media rules.
+        fn prior(ui: &MMCSAttachmentMeta) -> bool {
+            let nonempty = |v: Option<&str>| v.is_some_and(|v|
+                !v.is_empty() && !v.chars().any(char::is_control));
+            let hex = |v: Option<&str>| v.is_some_and(|v|
+                !v.is_empty() && v.len() % 2 == 0 && v.bytes().all(|b|
+                    b.is_ascii_digit() || matches!(b, b'a'..=b'f' | b'A'..=b'F')));
+            let inline = ui.inline_attachment.is_some() || ui.message_part.is_some();
+            let mmcs = ui.mmcs_signature_hex.is_some() || ui.mmcs_owner.is_some()
+                || ui.mmcs_url.is_some() || ui.decryption_key.is_some();
+            match (inline, mmcs) {
+                (true, false) => matches!(ui.inline_attachment.as_deref(), Some("ia-0" | "ia-1"))
+                    && ui.message_part.as_deref().is_some_and(|v| v.parse::<u32>().is_ok()),
+                (false, true) => hex(ui.mmcs_signature_hex.as_deref())
+                    && nonempty(ui.mmcs_owner.as_deref())
+                    && ui.mmcs_url.as_deref().is_some_and(|v| v.starts_with("https://") && nonempty(Some(v)))
+                    && hex(ui.decryption_key.as_deref()),
+                _ => false,
+            }
+        }
+        let values: [[Option<&str>; 4]; 6] = [
+            [None, Some("ia-0"), Some("ia-1"), Some("ia-2")],
+            [None, Some("0"), Some("4294967295"), Some("-1")],
+            [None, Some("aa"), Some(""), Some("not-hex")],
+            [None, Some(SECRET), Some(""), Some("bad\nowner")],
+            [None, Some("https://example.invalid/"), Some("http://example.invalid/"), Some("https://bad\n")],
+            [None, Some("Bb"), Some(""), Some("odd")],
+        ];
+        for mut selector in 0..4096 {
+            let mut fields = [None; 6];
+            for (index, options) in values.iter().enumerate() {
+                fields[index] = options[selector % 4];
+                selector /= 4;
+            }
+            let ui = MMCSAttachmentMeta {
+                inline_attachment: fields[0].map(str::to_owned),
+                message_part: fields[1].map(str::to_owned),
+                mmcs_signature_hex: fields[2].map(str::to_owned),
+                mmcs_owner: fields[3].map(str::to_owned),
+                mmcs_url: fields[4].map(str::to_owned),
+                decryption_key: fields[5].map(str::to_owned),
+                ..Default::default()
+            };
+            assert_eq!(validate_attachment_user_info(&ui).is_ok(), prior(&ui));
+        }
+    }
+
+    #[test]
+    fn attachment_diagnostics_preserve_user_info_rejection_and_hide_values() {
+        use CloudAttachmentDiagnosticCode as Code;
+        let hasher = CloudSemanticIdentifierHasher::new(b"fixture-key").unwrap();
+        let base = AttachmentMeta {
+            guid: "standalone-attachment-guid".to_owned(),
+            total_bytes: 42,
+            ..Default::default()
+        };
+        let valid_mmcs = MMCSAttachmentMeta {
+            mmcs_signature_hex: Some("aa".repeat(32)),
+            mmcs_owner: Some(SECRET.to_owned()),
+            mmcs_url: Some(format!("https://example.invalid/{SECRET}")),
+            decryption_key: Some("bb".repeat(33)),
+            ..Default::default()
+        };
+        let valid_inline = MMCSAttachmentMeta {
+            inline_attachment: Some("ia-0".to_owned()),
+            message_part: Some("0".to_owned()),
+            ..Default::default()
+        };
+        let mut cases = vec![
+            (MMCSAttachmentMeta::default(), Code::UserInfoEmpty),
+            (MMCSAttachmentMeta {
+                inline_attachment: Some("ia-0".to_owned()),
+                ..valid_mmcs.clone()
+            }, Code::UserInfoMixedModes),
+            (MMCSAttachmentMeta {
+                inline_attachment: Some(SECRET.to_owned()),
+                ..valid_inline.clone()
+            }, Code::InlineMarker),
+            (MMCSAttachmentMeta {
+                message_part: Some(SECRET.to_owned()),
+                ..valid_inline.clone()
+            }, Code::InlinePart),
+        ];
+        for (field, code) in [(0, Code::MmcsSignature), (1, Code::MmcsOwner),
+            (2, Code::MmcsUrl), (3, Code::MmcsKey)] {
+            let mut malformed = valid_mmcs.clone();
+            match field {
+                0 => malformed.mmcs_signature_hex = Some(SECRET.to_owned()),
+                1 => malformed.mmcs_owner = Some("bad\nowner".to_owned()),
+                2 => malformed.mmcs_url = Some(format!("http://example.invalid/{SECRET}")),
+                _ => malformed.decryption_key = None,
+            }
+            cases.push((malformed, code));
+        }
+        for (user_info, expected) in cases {
+            let mut attachment = base.clone();
+            attachment.user_info = Some(user_info);
+            let (outcome, detail) = convert_attachment_with_diagnostic(
+                &context(&hasher, "server-attachment-diagnostic", None),
+                &attachment_presence(), &attachment);
+            assert_eq!(outcome, CloudCanonicalConversionOutcome::Quarantined(
+                CloudCanonicalQuarantineReason::MalformedRecord));
+            assert_eq!(detail, Some(expected));
+            assert!(!format!("{detail:?} {}", expected.as_str()).contains(SECRET));
+            assert_eq!(outcome, convert_attachment(
+                &context(&hasher, "server-attachment-diagnostic", None),
+                &attachment_presence(), &attachment));
+        }
+        for user_info in [None, Some(valid_mmcs), Some(valid_inline)] {
+            let mut attachment = base.clone();
+            attachment.user_info = user_info;
+            let (outcome, detail) = convert_attachment_with_diagnostic(
+                &context(&hasher, "server-attachment-diagnostic", None),
+                &attachment_presence(), &attachment);
+            assert!(matches!(outcome, CloudCanonicalConversionOutcome::Ready(_)));
+            assert_eq!(detail, None);
+        }
+        let mut sticker = base;
+        sticker.is_sticker = true;
+        let (outcome, detail) = convert_attachment_with_diagnostic(
+            &context(&hasher, "server-attachment-diagnostic", None),
+            &attachment_presence(), &sticker);
+        assert_eq!(outcome, CloudCanonicalConversionOutcome::Deferred(
+            CloudCanonicalDeferredReason::UnsupportedSticker));
+        assert_eq!(detail, None);
+    }
+
+    #[test]
+    fn attachment_diagnostics_identify_structural_failure_without_changing_it() {
+        use CloudAttachmentDiagnosticCode as Code;
+        let hasher = CloudSemanticIdentifierHasher::new(b"fixture-key").unwrap();
+        let base = AttachmentMeta {
+            guid: "standalone-attachment-guid".to_owned(), total_bytes: 42,
+            ..Default::default()
+        };
+        let mut cases = vec![
+            (base.clone(), raw_presence(&[]), Code::ContentField),
+            (base.clone(), attachment_presence_with(&["tb", "ig"], false), Code::GuidPresence),
+        ];
+        let mut empty = base.clone();
+        empty.guid.clear();
+        cases.push((empty, attachment_presence(), Code::EmptyGuid));
+        let mut owner = base.clone();
+        owner.guid = "at_malformed".to_owned();
+        cases.push((owner, attachment_presence(), Code::Owner));
+        for (field, code) in [("t", Code::UtiField), ("mimet", Code::MimeField),
+            ("tn", Code::TransferNameField)] {
+            // A present raw field with no typed value is still rejected.
+            cases.push((base.clone(), attachment_presence_with(
+                &["aguid", "tb", "ig", field], false), code));
+        }
+        for (attachment, presence, expected) in cases {
+            let (outcome, detail) = convert_attachment_with_diagnostic(
+                &context(&hasher, "server-attachment-diagnostic", None),
+                &presence, &attachment);
+            assert!(matches!(outcome, CloudCanonicalConversionOutcome::Quarantined(_)));
+            assert_eq!(detail, Some(expected));
+            assert_eq!(outcome, convert_attachment(
+                &context(&hasher, "server-attachment-diagnostic", None),
+                &presence, &attachment));
+        }
     }
 
     #[test]

@@ -17,8 +17,8 @@ use std::{
 
 use crate::{
     cloud_sync_canonical_converter::{
-        convert_attachment, convert_chat_with_diagnostic, convert_message, convert_tombstone,
-        CloudCanonicalConversionContext, CloudCanonicalConversionOutcome,
+        convert_attachment_with_diagnostic, convert_chat_with_diagnostic, convert_message, convert_tombstone,
+        CloudAttachmentDiagnosticCode, CloudCanonicalConversionContext, CloudCanonicalConversionOutcome,
         CloudCanonicalOutOfScopeService, CloudCanonicalQuarantineReason,
         CloudCanonicalValidationDiagnosticClass, CloudChatDiagnosticCode, CloudRawFieldPresence,
         CloudRawPresenceFailure, CloudRawRecordPresence,
@@ -334,7 +334,7 @@ fn classify_chat_property_shape(value: &[u8]) -> CloudTransientChatPropertyShape
     CloudTransientChatPropertyShape::Unknown
 }
 
-/// Closed, content-free detail for an already-quarantined chat record.
+/// Closed, content-free detail for an already-quarantined chat/attachment record.
 ///
 /// This never changes projection disposition. It only preserves which strict
 /// parser boundary rejected the record so a Canary run can distinguish a real
@@ -348,6 +348,9 @@ pub(crate) enum CloudTransientQuarantineDiagnostic {
     ChatPropertyPresence(CloudRawPresenceFailure),
     ChatPropertyPresenceWithShape(CloudRawPresenceFailure, CloudTransientChatPropertyShape),
     ChatConversion(CloudChatDiagnosticCode),
+    AttachmentMetadataAbsent,
+    AttachmentMetadataPresence(CloudRawPresenceFailure),
+    AttachmentConversion(CloudAttachmentDiagnosticCode),
 }
 
 impl CloudTransientQuarantineDiagnostic {
@@ -373,7 +376,29 @@ impl CloudTransientQuarantineDiagnostic {
             Self::ChatConversion(code) => {
                 format!("native_chat_conversion_{}", code.as_str())
             }
+            Self::AttachmentMetadataAbsent => "native_attachment_metadata_absent".to_owned(),
+            Self::AttachmentMetadataPresence(reason) => {
+                format!("native_attachment_metadata_{}", reason.diagnostic_code())
+            }
+            Self::AttachmentConversion(code) => {
+                format!("native_attachment_conversion_{}", code.as_str())
+            }
         }
+    }
+}
+
+fn attachment_conversion_diagnostic(
+    outcome: CloudTransientDecodeOutcome,
+    diagnostic: Option<CloudAttachmentDiagnosticCode>,
+    converter_quarantined: bool,
+) -> CloudTransientDecodeOutcome {
+    match (outcome, diagnostic, converter_quarantined) {
+        (CloudTransientDecodeOutcome::Quarantined(reason), Some(code), true) => {
+            CloudTransientDecodeOutcome::QuarantinedWithDiagnostic(
+                reason, CloudTransientQuarantineDiagnostic::AttachmentConversion(code),
+            )
+        }
+        (outcome, _, _) => outcome,
     }
 }
 
@@ -2841,18 +2866,17 @@ async fn cloud_sync_decode_transient_record_with_pcs_access(
                     Err(failure) => return CloudTransientDecodeOutcome::Failure(failure),
                 },
                 Ok(None) => {
-                    return CloudTransientDecodeOutcome::Quarantined(
+                    return CloudTransientDecodeOutcome::QuarantinedWithDiagnostic(
                         CloudCanonicalQuarantineReason::MalformedRecord,
+                        CloudTransientQuarantineDiagnostic::AttachmentMetadataAbsent,
                     )
                 }
                 Err(failure) => return CloudTransientDecodeOutcome::Failure(failure),
             };
-            if presence
-                .capture_decrypted_plist_dictionary("cm", &decompressed)
-                .is_err()
-            {
-                return CloudTransientDecodeOutcome::Quarantined(
+            if let Err(reason) = presence.capture_decrypted_plist_dictionary("cm", &decompressed) {
+                return CloudTransientDecodeOutcome::QuarantinedWithDiagnostic(
                     CloudCanonicalQuarantineReason::MalformedRecord,
+                    CloudTransientQuarantineDiagnostic::AttachmentMetadataPresence(reason),
                 );
             }
             let strict_record_key = StrictCloudKitV2Decryptor { inner: &record_key };
@@ -2860,7 +2884,16 @@ async fn cloud_sync_decode_transient_record_with_pcs_access(
                 Ok(value) => value,
                 Err(failure) => return CloudTransientDecodeOutcome::Failure(failure),
             };
-            convert_attachment(&context, &presence, &attachment.cm.0)
+            let (converted, diagnostic) =
+                convert_attachment_with_diagnostic(&context, &presence, &attachment.cm.0);
+            let converter_quarantined =
+                matches!(&converted, CloudCanonicalConversionOutcome::Quarantined(_));
+            let outcome = normalize_conversion(
+                converted, &hasher, &scope_fingerprint, &zone_fingerprint, request.generation,
+            );
+            // Do not attribute a later identity-normalization failure to the
+            // converter. Detail only accompanies the rejection that produced it.
+            return attachment_conversion_diagnostic(outcome, diagnostic, converter_quarantined);
         }
         CloudNativeStream::MessageUpdate
         | CloudNativeStream::RecoverableMessageDelete
@@ -2904,6 +2937,28 @@ mod tests {
     }
 
     #[test]
+    fn attachment_detail_does_not_relabel_post_conversion_failures() {
+        let detail = Some(CloudAttachmentDiagnosticCode::UserInfoEmpty);
+        assert!(matches!(attachment_conversion_diagnostic(
+            CloudTransientDecodeOutcome::Quarantined(CloudCanonicalQuarantineReason::MalformedRecord),
+            detail, true),
+            CloudTransientDecodeOutcome::QuarantinedWithDiagnostic(
+                CloudCanonicalQuarantineReason::MalformedRecord,
+                CloudTransientQuarantineDiagnostic::AttachmentConversion(
+                    CloudAttachmentDiagnosticCode::UserInfoEmpty))));
+        for diagnostic in [None, detail] {
+            assert!(matches!(attachment_conversion_diagnostic(
+                CloudTransientDecodeOutcome::Quarantined(CloudCanonicalQuarantineReason::InvalidCanonicalPayload),
+                diagnostic, false),
+                CloudTransientDecodeOutcome::Quarantined(CloudCanonicalQuarantineReason::InvalidCanonicalPayload)));
+            assert!(matches!(attachment_conversion_diagnostic(
+                CloudTransientDecodeOutcome::Failure(CloudTransientBridgeFailure::ScopeMismatch),
+                diagnostic, true),
+                CloudTransientDecodeOutcome::Failure(CloudTransientBridgeFailure::ScopeMismatch)));
+        }
+    }
+
+    #[test]
     fn chat_quarantine_diagnostics_are_closed_and_content_free() {
         let diagnostics = [
             (
@@ -2938,6 +2993,22 @@ mod tests {
                     CloudChatDiagnosticCode::MissingGroupIdentifierField,
                 ),
                 "native_chat_conversion_missing_group_identifier_field",
+            ),
+            (
+                CloudTransientQuarantineDiagnostic::AttachmentMetadataAbsent,
+                "native_attachment_metadata_absent",
+            ),
+            (
+                CloudTransientQuarantineDiagnostic::AttachmentMetadataPresence(
+                    CloudRawPresenceFailure::MalformedNestedPlist,
+                ),
+                "native_attachment_metadata_malformed_nested_plist",
+            ),
+            (
+                CloudTransientQuarantineDiagnostic::AttachmentConversion(
+                    CloudAttachmentDiagnosticCode::UserInfoEmpty,
+                ),
+                "native_attachment_conversion_user_info_empty",
             ),
         ];
 
