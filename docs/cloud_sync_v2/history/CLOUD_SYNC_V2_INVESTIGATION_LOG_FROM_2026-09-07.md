@@ -6943,3 +6943,30 @@ Historical tests do not establish current-device behavior.
   no dedicated worktree or files; supported session deletion unavailable. New
   source remains unqualified until GCE and matched Windows execution, not a
   restored-message claim. No further live window currently reserved for Windows.
+- Pushed exact sourceb9ebb102e (a791 repair + docs) to trusted fork branch.
+  Windows35185153466 dispatched once onf21/native-test-host/read-only and GCE
+  owner dispatched35185177773 on correctedfab604fc7/cloudkit-qualification.
+  Both source-only; no APK, no outbound flags, no live credentials uploaded.
+  GCE runtime cleanup/cost remains with its owner. Source pin must stay exact
+  until checkout gate passes. Averroes classifies21 remaining unknown sample
+  results using redacted observations while builds run, no edits or live access.
+- Condensed the current treemap by moving300 lines of superseded build/runtime
+  checkpoints verbatim into TREEMAP_PRE_OPTIONAL_LABEL_REPAIR_2026-09-16.md.
+  Exact body comparison passed. Replaced them with actionable architecture,
+  unresolved received/group/retained work and archive links; release gates and
+  current evidence remain in the treemap. No historical evidence was deleted.
+- Averroes classified all21 unknown samples at decoder quarantine throw460:
+  5 unsupported-service,7 unsupported-message-type,1 malformed-parent,
+  8 attachment malformed-record. Parent accepted the source/category inventory,
+  rejected linking equal aggregate counts to the7 name failures, and rejected
+  a claim that a name-only change could repair attachment failures before parent
+  probing. Agent withdrew both inferences, made no edits, and closed/not_found.
+  Known quarantine category is not proof that a record may be excluded.
+- Reporting repair797d6210c attaches the typed native quarantine reason to its
+  exception and adds exactly14 reviewed code strings to the report allowlist.
+  Category, retry/admission and out-of-scope behavior stay unchanged. Tests
+  freeze every enum mapping, reject appended/private/unreviewed content and
+  verify these codes are not Canary-retainable dependency permissions.112
+  focused Dart decoder/safe-failure/prepared-extension cases passed; analysis
+  clean. This Dart-only descendant is separate from in-flight nativeb9 evidence;
+  it requires no new native build. All main helpers are closed and verified.

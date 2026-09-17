@@ -34,6 +34,9 @@ timestamp: 2026-09-16
 - [Preserved September 16 pre-reader checkpoints](history/TREEMAP_PRE_RECEIVED_READER_2026-09-16.md):
   superseded source, build, helper and device snapshots. All previous evidence
   remains available while the current treemap carries only actionable state.
+- [Preserved September 16 pre-optional-label checkpoints](history/TREEMAP_PRE_OPTIONAL_LABEL_REPAIR_2026-09-16.md):
+  verbatim older qualification/runtime checkpoints moved out of the active tree
+  after the seven missing-name failures were identified. Not current run state.
 
 ## Evidence roots
 
