@@ -1190,6 +1190,45 @@ impl Debug for CloudCanonicalReplyReference {
     }
 }
 
+/// A type-3 app heading has an optional navigation link, not a causal parent.
+/// Its uint32 range fields are opaque wire metadata, not a text span; preserve
+/// presence and values without interpreting a SQLite sentinel or doing math.
+#[derive(Clone, Eq, PartialEq)]
+pub(crate) struct CloudCanonicalHeadingReference {
+    linked_guid: Option<String>,
+    linked_hash: Option<CloudCanonicalHash>,
+    range_location: Option<u32>,
+    range_length: Option<u32>,
+}
+
+impl CloudCanonicalHeadingReference {
+    pub(crate) fn new(
+        linked_guid: Option<String>, linked_hash: Option<CloudCanonicalHash>,
+        range_location: Option<u32>, range_length: Option<u32>,
+    ) -> Result<Self, CloudCanonicalValidationFailure> {
+        if linked_guid.is_some() != linked_hash.is_some() {
+            return Err(CloudCanonicalValidationFailure::MalformedAssociatedParent);
+        }
+        if let Some(guid) = &linked_guid {
+            validate_identifier(guid)?;
+            if guid.contains(':') || guid.contains('/') || guid.chars().any(char::is_control) {
+                return Err(CloudCanonicalValidationFailure::MalformedAssociatedParent);
+            }
+        }
+        Ok(Self { linked_guid, linked_hash, range_location, range_length })
+    }
+    pub(crate) fn linked_guid(&self) -> Option<&str> { self.linked_guid.as_deref() }
+    pub(crate) fn linked_hash(&self) -> Option<&CloudCanonicalHash> { self.linked_hash.as_ref() }
+    pub(crate) fn range_location(&self) -> Option<u32> { self.range_location }
+    pub(crate) fn range_length(&self) -> Option<u32> { self.range_length }
+}
+
+impl Debug for CloudCanonicalHeadingReference {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
+        formatter.write_str("CloudCanonicalHeadingReference(redacted)")
+    }
+}
+
 #[derive(Clone, Eq, PartialEq)]
 pub(crate) enum CloudCanonicalMessageAssociation {
     None,
@@ -1202,6 +1241,7 @@ pub(crate) enum CloudCanonicalMessageAssociation {
         kind: CloudCanonicalReactionKind,
         parent: CloudCanonicalParentReference,
     },
+    Heading(CloudCanonicalHeadingReference),
 }
 
 impl CloudCanonicalMessageAssociation {
@@ -1210,13 +1250,13 @@ impl CloudCanonicalMessageAssociation {
             Self::ReactionAdd { .. } | Self::ReactionRemove { .. } => {
                 CloudCanonicalEntityKind::Reaction
             }
-            Self::None | Self::Sticker(_) => CloudCanonicalEntityKind::Message,
+            Self::None | Self::Sticker(_) | Self::Heading(_) => CloudCanonicalEntityKind::Message,
         }
     }
 
     fn parent_hash(&self) -> Option<&CloudCanonicalHash> {
         match self {
-            Self::None => None,
+            Self::None | Self::Heading(_) => None,
             Self::Sticker(parent)
             | Self::ReactionAdd { parent, .. }
             | Self::ReactionRemove { parent, .. } => Some(&parent.parent_logical_key_hash),
@@ -1237,19 +1277,23 @@ impl CloudCanonicalMessageAssociation {
         match self {
             Self::ReactionAdd { kind, parent } => Some((*kind, parent, false)),
             Self::ReactionRemove { kind, parent } => Some((*kind, parent, true)),
-            Self::None | Self::Sticker(_) => None,
+            Self::None | Self::Sticker(_) | Self::Heading(_) => None,
         }
     }
 
     pub(crate) fn sticker(&self) -> Option<&CloudCanonicalParentReference> {
         match self {
             Self::Sticker(parent) => Some(parent),
-            Self::None | Self::ReactionAdd { .. } | Self::ReactionRemove { .. } => None,
+            Self::None | Self::ReactionAdd { .. } | Self::ReactionRemove { .. } | Self::Heading(_) => None,
         }
     }
 
     pub(crate) fn is_sticker(&self) -> bool {
         matches!(self, Self::Sticker(_))
+    }
+
+    pub(crate) fn heading(&self) -> Option<&CloudCanonicalHeadingReference> {
+        match self { Self::Heading(heading) => Some(heading), _ => None }
     }
 }
 
@@ -1260,6 +1304,7 @@ impl Debug for CloudCanonicalMessageAssociation {
             Self::Sticker(_) => "sticker-redacted",
             Self::ReactionAdd { .. } => "reaction-add-redacted",
             Self::ReactionRemove { .. } => "reaction-remove-redacted",
+            Self::Heading(_) => "heading-redacted",
         };
         formatter
             .debug_tuple("CloudCanonicalMessageAssociation")
@@ -1450,6 +1495,12 @@ impl CloudCanonicalMessagePayload {
         validate_optional_text(&associated_emoji)?;
         let mut extension_session = None;
         let mut extension_parent_hash = None;
+        if association.heading().is_some() &&
+            (service != CloudCanonicalService::IMessage ||
+                balloon_bundle_id.value().is_none_or(|id| id == "com.apple.messages.URLBalloonProvider") ||
+                decoded_extension_payload.value().is_none()) {
+            return Err(CloudCanonicalValidationFailure::InvalidPayload);
+        }
         if let CloudCanonicalField::Value(bytes) = &decoded_extension_payload {
             let (metadata, session) =
                 crate::cloud_sync_extension_metadata::parse_projection_metadata_json(bytes)
@@ -1506,7 +1557,7 @@ impl CloudCanonicalMessagePayload {
                 return Err(CloudCanonicalValidationFailure::InvalidPayload);
             }
         }
-        if (!matches!(&association, CloudCanonicalMessageAssociation::None) && reply.is_some())
+        if (!matches!(&association, CloudCanonicalMessageAssociation::None | CloudCanonicalMessageAssociation::Heading(_)) && reply.is_some())
             || (association.is_reaction()
                 && (!matches!(&edits, CloudCanonicalField::Absent)
                     || !matches!(&retracted_parts, CloudCanonicalField::Absent)))
@@ -1539,6 +1590,8 @@ impl CloudCanonicalMessagePayload {
             .checked_add(msg_proto_4_group_id.as_ref().map_or(0, String::len))
             .ok_or(CloudCanonicalValidationFailure::CollectionLimit)?
             .checked_add(sender_handle.len())
+            .ok_or(CloudCanonicalValidationFailure::CollectionLimit)?
+            .checked_add(association.heading().and_then(|heading| heading.linked_guid()).map_or(0, str::len))
             .ok_or(CloudCanonicalValidationFailure::CollectionLimit)?;
         for field in [
             &subject,

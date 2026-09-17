@@ -3875,6 +3875,7 @@ pub enum CloudSyncTransientAssociationKind {
     Sticker,
     ReactionAdd,
     ReactionRemove,
+    Heading,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -8925,6 +8926,7 @@ fn repair_digest_association(value: CloudSyncTransientAssociationKind) -> &'stat
         CloudSyncTransientAssociationKind::Sticker => "sticker",
         CloudSyncTransientAssociationKind::ReactionAdd => "reactionAdd",
         CloudSyncTransientAssociationKind::ReactionRemove => "reactionRemove",
+        CloudSyncTransientAssociationKind::Heading => "heading",
     }
 }
 
@@ -9617,6 +9619,7 @@ fn map_cloud_sync_transient_payload(
                     Some(std::str::from_utf8(bytes).ok()?.to_owned())
                 }
             };
+            let heading = payload.association().heading();
             let (association_kind, reaction_kind, association_parent, reaction_removed) =
                 match payload.association().reaction() {
                     Some((kind, parent, removed)) => (
@@ -9636,7 +9639,8 @@ fn map_cloud_sync_transient_payload(
                             Some(parent),
                             false,
                         ),
-                        None => (CloudSyncTransientAssociationKind::None, None, None, false),
+                        None => (if heading.is_some() { CloudSyncTransientAssociationKind::Heading }
+                            else { CloudSyncTransientAssociationKind::None }, None, None, false),
                     },
                 };
             let reply = payload.reply();
@@ -9699,14 +9703,18 @@ fn map_cloud_sync_transient_payload(
                 reaction_kind,
                 reaction_removed,
                 reaction_parent_logical_key_hash: association_parent
-                    .map(|parent| parent.parent_hash().value().to_owned()),
+                    .map(|parent| parent.parent_hash().value().to_owned())
+                    .or_else(|| heading.and_then(|value| value.linked_hash()).map(|value| value.value().to_owned())),
                 reaction_parent_canonical_guid: association_parent
-                    .map(|parent| parent.parent_guid().to_owned()),
+                    .map(|parent| parent.parent_guid().to_owned())
+                    .or_else(|| heading.and_then(|value| value.linked_guid()).map(str::to_owned)),
                 reaction_parent_part: association_parent.and_then(|parent| parent.parent_part()),
                 associated_range_location: association_parent
-                    .and_then(|parent| parent.range_location()),
+                    .and_then(|parent| parent.range_location())
+                    .or_else(|| heading.and_then(|value| value.range_location())),
                 associated_range_length: association_parent
-                    .and_then(|parent| parent.range_length()),
+                    .and_then(|parent| parent.range_length())
+                    .or_else(|| heading.and_then(|value| value.range_length())),
                 reply_parent_logical_key_hash: reply
                     .map(|parent| parent.parent_hash().value().to_owned()),
                 reply_parent_canonical_guid: reply.map(|parent| parent.parent_guid().to_owned()),

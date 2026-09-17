@@ -93,7 +93,7 @@ fn selected_message_parent(
                 ));
             }
             match message.association() {
-                CloudCanonicalMessageAssociation::None => {}
+                CloudCanonicalMessageAssociation::None | CloudCanonicalMessageAssociation::Heading(_) => {}
                 CloudCanonicalMessageAssociation::Sticker(parent)
                 | CloudCanonicalMessageAssociation::ReactionAdd { parent, .. }
                 | CloudCanonicalMessageAssociation::ReactionRemove { parent, .. } => {

@@ -2718,6 +2718,28 @@ fn build_association(
         ));
     }
 
+    if associated_type == 3 {
+        // App headings are independent Messages with an optional linked target.
+        // They are neither tapbacks nor universal extension-session bases.
+        // The normal bounded extension decoder below must still accept the app.
+        if proto.payload_data.is_none() ||
+            proto.balloon_bundle_id.as_deref().is_none_or(|bundle| bundle.is_empty() || bundle == URL_BALLOON_PROVIDER) ||
+            extension_session.is_some() {
+            return Err(CloudCanonicalConversionOutcome::Quarantined(
+                CloudCanonicalQuarantineReason::UnsupportedAssociationType,
+            ));
+        }
+        let linked_hash = proto.associated_message_guid.as_deref().map(|guid|
+            context.hasher.canonical_entity_key_hash(CloudCanonicalEntityKind::Message, guid)
+                .map_err(validation_quarantine)
+        ).transpose()?;
+        let heading = crate::cloud_sync_canonical_dto::CloudCanonicalHeadingReference::new(
+            proto.associated_message_guid.clone(), linked_hash,
+            proto.associated_message_range_location, proto.associated_message_range_length,
+        ).map_err(validation_quarantine)?;
+        return Ok((CloudCanonicalMessageAssociation::Heading(heading), CloudCanonicalEntityKind::Message, None));
+    }
+
     let (remove, index) = match associated_type {
         2000..=2007 => (false, associated_type - 2000),
         3000..=3007 => (true, associated_type - 3000),
@@ -3532,6 +3554,7 @@ pub(crate) fn convert_tombstone(
 #[cfg(test)]
 mod tests {
     use super::*;
+    mod heading_tests { include!("cloud_sync_heading_tests.rs"); }
     use prost::Message as _;
     use rustpush::{
         cloud_messages::{
