@@ -64,17 +64,22 @@ back to legacy sync, clear a cursor, or continue under a replacement account.
   All4 new native tests passed, including4096 previous-rule comparisons, strict
   structural failures and non-attribution after normalization. The job's VM and
   runner were removed; owner verified zero instances, parent verified zero runners.
-  Estimated compute$0.08. Windows qualification remains pending.
+  Estimated compute$0.08. Windows35192422648 also passed in27m23s, with710 Dart,
+  51 DLL encoder cases, native scopes and exact source/provenance checks.
   Ptolemy's two-file Dart change was reviewed/corrected, closed and verified.
-- Keep installedb9 and its successful14-message/9-attachment recovery as the
-  verified baseline. Do not run this new native boundary against that older DLL.
-  Next: qualify matching native host, reserve the relay, re-observe the8 attachment
+- Installed diagnostic host is nowf43919ba3cbf18599be8d1270924293cae339aae,
+  signed DLL4bfdd1218ca2559c5ea5e2a756111a0432030bc1ed96da291de8d426b4c77084.
+  Four exact native tests plus actual-DLL smoke passed locally. All15 checked
+  account/database files unchanged during import; b9 remains verified rollback.
+  Its14-message/9-attachment recovery remains preserved, not undone by this update.
+  Next: confirm Canary sign-in status, reserve the relay, re-observe the8 attachment
   malformed-record cases without projection, then repair the observed cause.
   No APK, live mutation, new profile or destructive cleanup is needed for this step.
-- Active exact-source job: Windows35192422648 onf21, appf43919ba3cbf18599be8d1270924293cae339aae.
-  GCE35192463601 onfab604fc7 is complete. Do not dispatch duplicates or use
-  installedb9 for changed native code. Pixel is no longer listed by ADB; no
-  device action or private provisioning occurred. No current live reservation.
+- Both sourcef439 jobs are complete: Windows35192422648/f21 and
+  GCE35192463601/fab604fc7. Watches/smokes44222 and96533 are terminal. No duplicates.
+  Pixel is no longer listed by ADB. User has been asked whether Canary is still
+  signed out or repaired, before risking shared-relay contention. Live diagnostic
+  probe has NOT run. No device action/private provisioning/current reservation.
 - All current helpers are closed/verified. Sartre's source-backed lookup-location
   observation is retained in INCOMING_ARCHIVE_DESIGN.md as a proposed separation,
   not implemented group support. Parent rejected the broad "safe split" claim:

@@ -4,10 +4,24 @@ title: OpenBubbles Windows ARM64 Host Build Environment
 description: Verified toolchain layout and the non-obvious constraints for building the Rust bridge and running the test suites for Android, Windows ARM64, and Windows x64 from one Windows-on-ARM host.
 resource: openbubbles-app
 tags: [windows, arm64, x64, android, rust, objectbox, openssl, toolchain, testing]
-timestamp: 2026-09-16
+timestamp: 2026-09-17
 ---
 
 # OpenBubbles Windows ARM64 host build environment
+
+## Current diagnostic host, September 17
+
+Sourcef43919ba3cbf18599be8d1270924293cae339aae is installed after successful
+Windows35192422648 and GCE35192463601. Existing signer only, signed DLL
+`4bfdd1218ca2559c5ea5e2a756111a0432030bc1ed96da291de8d426b4c77084`.
+Archive98ad6e09b197b02d4e44a4686aa2d99da24f5a30956961fdf8194b81bb7b8d66,
+provenance8f3f15610cb460f4f966940d750c0b6e968bd507923e13a9eb4ddab077a3ed14;
+pilotf21cf96314ad86a5c039aa5d9fc7880057f995ec, expected17 diagnostic cases.
+Source inputs64, recursive pins6, logs13 and3 ARM64 binaries verified. Four exact
+native diagnostic tests and actual-DLL smoke passed locally;15 checked profile
+files unchanged. b9 remains rollback. No live f439 probe yet: Pixel is offline and
+Canary's current sign-in status was requested. No standing profile/relay lock.
+The following dated notes describe earlier qualification and recovery evidence.
 
 ## Current authentication constraint, September 16
 

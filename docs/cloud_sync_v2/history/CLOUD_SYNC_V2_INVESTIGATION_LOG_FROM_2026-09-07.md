@@ -7078,3 +7078,22 @@ Historical tests do not establish current-device behavior.
 - New ADB inventory is empty. No phone restart/provisioning or account call was
   attempted. All helper agents remain closed. Current goal turn made qualification
   progress; no blocked/complete status asserted. C:about20.5GiB free, no deletion.
+- Windows35192422648 passed in27m23s. Artifact10485377244 outer
+  cec1750d9670f45e11633e0569363853df8145c66135fb8f66162eb38e8809b7,
+  inner98ad6e09b197b02d4e44a4686aa2d99da24f5a30956961fdf8194b81bb7b8d66,
+  provenance8f3f15610cb460f4f966940d750c0b6e968bd507923e13a9eb4ddab077a3ed14.
+  Verified16outer members,64Git inputs,6pins,13logs,3ARM64 binaries;710Dart,
+  51real-DLL encoders and native scopes pass. All3 new converter tests appear as
+  ok in their log. Proof at build-evidence/windows-attachment-diagnostics-35192422648.
+- Reserved an offline-only profile window with the independent task, imported
+  exactf439 under the existing signer, then restored source checkout6173d7a7d.
+  SignedDLL4bfdd1218ca2559c5ea5e2a756111a0432030bc1ed96da291de8d426b4c77084;
+  EXEece1445af4a491b8709055069ef99b7d5deb2fa029a9b530664fb7de43ca5a97.
+  All15checked account/database hashes unchanged. Four installed native tests
+  including4096comparison inputs and one actual-DLL smoke passed. b9 retained
+  as rollback; no profile/relay/network call occurred during these offline tests.
+- Pixel remains absent from ADB. Asked user whether Canary is still at activation
+  or now signed in before the next shared-relay test. No f439 live observation,
+  reset or private provisioning attempted. Watch44222 and smoke96533 completed,
+  no owned process remains, offline window released, no standing lock. C:20.18GiB;
+  no cache/evidence deletion. This turn made artifact/import validation progress.
