@@ -6723,3 +6723,35 @@ Historical tests do not establish current-device behavior.
   disjoint test helper, parent-owned integration, and one affected batch rather
   than repeated full builds. All feature/public-release gates stay unchanged
   until the new source is qualified and the cached real parents are replayed.
+
+- Correction66658db67a67d300bbadda75b4ff0ccde8f216f7 was committed and pushed
+  fork-only. Hosted35173960820 runs with allow_generated_drift=false; strict
+  regeneration, native compilation and application Rust tests passed by02:33Z.
+  rustpush/provider/protector checks are still active. Watch35990 follows it.
+- With the GCE task owner's no-overlap acknowledgement, parent changed only
+  the original pilot's Windows builder: four exact heading identity cases,
+  two heading converter spot cases, source preflight routing for included files,
+  and three additional provenance inputs. ValidateOnly passed against66658db67.
+  Commitf21cf96314ad86a5c039aa5d9fc7880057f995ec was pushed only to
+  agent/windows-dependency-locator-20260916; shared agent/gce-runner-pilot and
+  pre-existing asset_graph deletion remain untouched. Windows35174173364 is
+  active, source checks passed, watch39651. These two hosted platform jobs run
+  in parallel; neither is a new paid GCE run or an APK installation.
+- Read-only group reviewer Locke identified the current direct-only caller
+  chain and the absence of a complete group-owner resolver. Parent accepted the
+  callsite inventory but rejected its proposed bare DTO list and later final-
+  page witness: they can omit an owner, and a terminal delta page is not a census.
+  No guessed identifier normalization is accepted. Preserve original-alias
+  support as an explicit remaining requirement with real scoped ownership
+  evidence. Draft6c66 stays unmerged; no safety check was weakened. Helper closed.
+- C: dipped below25GiB, so parent audited only current .dart_tool/build outputs.
+  They total about2.63GiB; twelve compiler cache files dominate. Prepared exact
+  ten-file manifest, preserving the newest unit/live harness caches and all
+  protected artifacts. Execution policy rejected the deletion command before
+  process launch. Remeasurement confirms all ten targets remain: zero reclaimed,
+  about24.2GiB free. No workaround attempted. Manifest under
+  build-evidence/cleanup-heading-20260916; no source/profile/session deleted.
+- A fresh USB status probe is unchanged: no active sync/logout/coordinator,
+  auth client present, outgoing queue blocked, relay last checked01:15:52Z=false.
+  No registration, hardware or outbox mutation was attempted. Live Windows relay
+  usage remains paused while Canary repair is unresolved.

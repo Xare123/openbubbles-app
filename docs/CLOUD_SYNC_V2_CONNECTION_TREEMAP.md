@@ -57,8 +57,10 @@ back to legacy sync, clear a cursor, or continue under a replacement account.
 - **SOURCE-IMPLEMENTED:** heading source `d1734c01d` failed hosted run35171127739
   with E0004 in canonical identity validation. The correction now verifies the
   optional linked Message hash while preserving the heading's own identity.
-  Four reviewed native regressions cover foreign-key, wrong-envelope and actual
-  reply cases; native compilation/execution of the correction is still pending.
+  Correction **66658db67a67d300bbadda75b4ff0ccde8f216f7** includes four reviewed
+  native regressions for foreign-key, wrong-envelope and actual reply cases.
+  Hosted **35173960820** has passed strict binding reproducibility, compilation
+  and the application Rust tests; rustpush/provider/protector gates are pending.
 - **TEST-PROVEN Dart:** 377 affected decoder, projector, registry, applier and
   store-gateway cases pass, plus two digest tests. Ten heading cases cover reopen,
   replay, real type2 child content, missing/self/foreign navigation and actual
@@ -66,8 +68,7 @@ back to legacy sync, clear a cursor, or continue under a replacement account.
   Two frozen heading digest vectors await independent Rust verification.
 - Generated artifact10475984769 was downloaded and its exact eight-file inventory
   checked; only one Dart enum line and three Rust dispatch lines changed. Both
-  generated guards pass. Next hosted run must prove regeneration reproducibility
-  and execute native tests. **Installed Windows native remains 3c780a8d7**;
+  generated guards pass. **Installed Windows native remains 3c780a8d7**;
   current application/heading source must not run against that older DLL.
 - Pixel Canary20002227 logs show IDS6005 at16:46 and no-identity/send6005 at
   16:51 and18:46. The last saved relay probe failed at18:15; its generic warning
@@ -87,8 +88,24 @@ back to legacy sync, clear a cursor, or continue under a replacement account.
   transcript was manually removed. No new paid cloud build or APK was started.
 - Heading identity helper Aristotle was reviewed, integrated and closed with
   shutdown verified. No active child remains. Its unique synthetic test source
-  is retained. Next action: qualify the corrected committed candidate on hosted
-  Rust CI, then build the matching Windows host before live heading replay.
+  is retained. Windows **35174173364** is building exact source66658db67 through
+  isolated pilot **f21cf96314ad86a5c039aa5d9fc7880057f995ec**; source-contract
+  preflight passed. This pilot requires17 native diagnostic cases and records
+  the two included Rust test files plus the registry test in provenance.
+  Watch handles: Linux35990, Windows39651. Follow these runs, never duplicate.
+  No new runtime is installed. After success verify all provenance, import with
+  `-ExpectedNativeDiagnosticTestCount 17`, then reserve the shared relay before
+  bounded cached-parent decode/replay. Phone registration repair is still unproved.
+- Received-group reviewer Locke was closed after review. Exact current caller
+  path is direct-only. Reject both arbitrary caller-supplied candidate lists
+  and a terminal page as proof of a complete group-owner set; neither establishes
+  all current alias claims. The group draft remains unmerged. It needs a real
+  account/generation-bound owner-selection contract, not guessed normalized IDs.
+- Storage sweep found ten superseded test-cache files (2,016,097,112 bytes).
+  Deletion was refused by execution policy before launch. **Nothing removed**;
+  no alternative deletion mechanism used. Manifest:
+  `build-evidence/cleanup-heading-20260916/manifest.json`. C: free about24.2GiB;
+  local caches total about2.63GiB, retained. Current heavy builds are hosted.
 
 ### Current live-qualified parent locator, September 16
 

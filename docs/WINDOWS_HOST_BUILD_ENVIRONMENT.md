@@ -31,6 +31,15 @@ The missing identity branch and reviewed regressions are now source-implemented;
 have been imported, but the corrected candidate must not use or replace that
 host until native qualification and a matching Windows build pass.
 
+Current build source is `66658db67a67d300bbadda75b4ff0ccde8f216f7`.
+Windows run35174173364 uses dedicated pilot
+`f21cf96314ad86a5c039aa5d9fc7880057f995ec`, which selects17 diagnostic cases
+(previously13) and includes both heading test modules in source provenance.
+Its source-contract preflight passed. Use explicit
+`-ExpectedNativeDiagnosticTestCount 17` during bundle verification/import.
+The shared GCE pilot branch and pre-existing local asset_graph deletion were
+not modified. No paid GCE run is authorized by this handoff.
+
 ## Fastest current Dart loop, September 13
 
 September 14 update: `run_imported_cloud_sync_v2_dart_live.ps1` now separates
