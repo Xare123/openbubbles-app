@@ -6755,3 +6755,16 @@ Historical tests do not establish current-device behavior.
   auth client present, outgoing queue blocked, relay last checked01:15:52Z=false.
   No registration, hardware or outbox mutation was attempted. Live Windows relay
   usage remains paused while Canary repair is unresolved.
+
+- Native qualification35173960820 completed successfully at02:37:13Z, source
+  66658db67a67d300bbadda75b4ff0ccde8f216f7, duration17m51s. Logs explicitly show
+  all ten converter heading cases and four identity-validator cases passed.
+  Totals:767 application,351 rustpush,11 remote Anisette provider and40 protector
+  tests. Strict committed-binding regeneration passed, not skipped. The two
+  pinned heading digest vectors therefore agree in independently executed Dart
+  and Rust implementations. Artifact10477413177 is394111bytes, outer SHA256
+  6cd3e6379f03f8c2ea2347d99da94f8434980108317f9f7d074b1e8b3cdb4ef1;
+  metadata recorded, archive not redownloaded because strict reproduction already
+  verifies committed content. Linux watch35990 exited0. Windows35174173364 and
+  watch39651 remain active; no new native runtime or APK has been installed.
+  Main handoff-only descendant0e7316d60 does not change the native boundary.

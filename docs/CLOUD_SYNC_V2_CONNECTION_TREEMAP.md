@@ -59,8 +59,9 @@ back to legacy sync, clear a cursor, or continue under a replacement account.
   optional linked Message hash while preserving the heading's own identity.
   Correction **66658db67a67d300bbadda75b4ff0ccde8f216f7** includes four reviewed
   native regressions for foreign-key, wrong-envelope and actual reply cases.
-  Hosted **35173960820** has passed strict binding reproducibility, compilation
-  and the application Rust tests; rustpush/provider/protector gates are pending.
+  Hosted **35173960820 passed** in17m51s: strict binding reproducibility,
+  compilation,767 application Rust tests (all14 heading regressions),351 rustpush,
+  11 authentication-provider and40 protector tests. Linux watch35990 is terminal.
 - **TEST-PROVEN Dart:** 377 affected decoder, projector, registry, applier and
   store-gateway cases pass, plus two digest tests. Ten heading cases cover reopen,
   replay, real type2 child content, missing/self/foreign navigation and actual
@@ -92,7 +93,7 @@ back to legacy sync, clear a cursor, or continue under a replacement account.
   isolated pilot **f21cf96314ad86a5c039aa5d9fc7880057f995ec**; source-contract
   preflight passed. This pilot requires17 native diagnostic cases and records
   the two included Rust test files plus the registry test in provenance.
-  Watch handles: Linux35990, Windows39651. Follow these runs, never duplicate.
+  Active watch: Windows39651. Follow this run; never dispatch a duplicate.
   No new runtime is installed. After success verify all provenance, import with
   `-ExpectedNativeDiagnosticTestCount 17`, then reserve the shared relay before
   bounded cached-parent decode/replay. Phone registration repair is still unproved.
