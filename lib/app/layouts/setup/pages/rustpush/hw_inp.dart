@@ -143,6 +143,21 @@ class HwInpState extends OptimizedState<HwInp> {
     lastCheckedCode = code;
     try {
       relayHost = normalizeRelayHost(relayHost);
+      if (shouldBlockRelayRegistrationForMissingAppCredential(
+        relayHost: relayHost,
+        appCredential: registrationRelayAccessToken,
+        officialRelayHost: registrationRelayHost,
+      )) {
+        Logger.warn(
+          "Relay registration unavailable: official relay host but build has no relay access token; no relay request made",
+        );
+        showSnackbar(
+          "Relay unavailable",
+          missingRelayAppCredentialMessage,
+        );
+        lastCheckedCode = "";
+        return;
+      }
       if (staging == null) {
         FocusManager.instance.primaryFocus?.unfocus();
       }
@@ -167,11 +182,11 @@ class HwInpState extends OptimizedState<HwInp> {
       );
       if (versionResponse.kind == RelayVersionResponseKind.rejected) {
         Logger.warn(
-          "Relay registration code rejected status=${response2.statusCode}",
+          "Relay authorization failed status=${response2.statusCode}",
         );
         showSnackbar(
           "Fetching validation data",
-          "Relay code rejected. Generate a new code and try again.",
+          relayAuthorizationFailedMessage,
         );
         lastCheckedCode = "";
         return;

@@ -53,5 +53,145 @@ void main() {
 
       expect(result.kind, RelayVersionResponseKind.malformed);
     });
+
+    test('treats non-string version keys as malformed instead of throwing', () {
+      final result = validateRelayVersionResponse(
+        statusCode: 200,
+        data: {
+          'versions': {1: 'x'},
+        },
+      );
+
+      expect(result.kind, RelayVersionResponseKind.malformed);
+    });
+  });
+
+  group('relay app credential preflight', () {
+    const officialHost = 'https://registration-relay.beeper.com';
+    const customHost = 'https://relay.example.com';
+
+    test('blocks official-origin requests with a blank app credential', () {
+      expect(isRelayAppCredentialMissing(''), isTrue);
+      expect(isRelayAppCredentialMissing('   '), isTrue);
+      expect(
+        shouldBlockRelayRegistrationForMissingAppCredential(
+          relayHost: officialHost,
+          appCredential: '',
+          officialRelayHost: officialHost,
+        ),
+        isTrue,
+      );
+      expect(
+        shouldBlockRelayRegistrationForMissingAppCredential(
+          relayHost: officialHost,
+          appCredential: '   ',
+          officialRelayHost: officialHost,
+        ),
+        isTrue,
+      );
+    });
+
+    test('allows official-origin requests with a supplied app credential', () {
+      expect(isRelayAppCredentialMissing('token'), isFalse);
+      expect(
+        shouldBlockRelayRegistrationForMissingAppCredential(
+          relayHost: officialHost,
+          appCredential: 'token',
+          officialRelayHost: officialHost,
+        ),
+        isFalse,
+      );
+    });
+
+    test('allows custom-origin requests without an app credential', () {
+      expect(
+        isOfficialRelayHost(
+          relayHost: customHost,
+          officialRelayHost: officialHost,
+        ),
+        isFalse,
+      );
+      expect(
+        shouldBlockRelayRegistrationForMissingAppCredential(
+          relayHost: customHost,
+          appCredential: '',
+          officialRelayHost: officialHost,
+        ),
+        isFalse,
+      );
+    });
+
+    test('matches the official host regardless of trailing slash', () {
+      expect(
+        shouldBlockRelayRegistrationForMissingAppCredential(
+          relayHost: '$officialHost/',
+          appCredential: '',
+          officialRelayHost: officialHost,
+        ),
+        isTrue,
+      );
+    });
+
+    test('treats official host case and the default port as the same origin', () {
+      expect(
+        isOfficialRelayHost(
+          relayHost: 'HTTPS://REGISTRATION-RELAY.BEEPER.COM',
+          officialRelayHost: officialHost,
+        ),
+        isTrue,
+      );
+      expect(
+        isOfficialRelayHost(
+          relayHost: 'https://registration-relay.beeper.com:443',
+          officialRelayHost: officialHost,
+        ),
+        isTrue,
+      );
+      expect(
+        shouldBlockRelayRegistrationForMissingAppCredential(
+          relayHost: 'https://registration-relay.beeper.com:443/',
+          appCredential: '  ',
+          officialRelayHost: officialHost,
+        ),
+        isTrue,
+      );
+    });
+
+    test('rejects non-origins without claiming a custom relay', () {
+      expect(
+        isOfficialRelayHost(
+          relayHost: 'not-a-url',
+          officialRelayHost: officialHost,
+        ),
+        isFalse,
+      );
+      expect(
+        isOfficialRelayHost(
+          relayHost: 'https://registration-relay.beeper.com/api/v1',
+          officialRelayHost: officialHost,
+        ),
+        isFalse,
+      );
+    });
+
+    test('missing-credential copy reports an unsent request without blaming the code', () {
+      expect(
+        missingRelayAppCredentialMessage,
+        'This build has no access to the registration relay. '
+        'No request was sent and your device code was not checked. '
+        'Use a relay-enabled build or contact its provider.',
+      );
+      expect(missingRelayAppCredentialMessage, isNot(contains('Generate a new code')));
+    });
+
+    test('authorization-failed copy stays uncertain between code and app access', () {
+      expect(
+        relayAuthorizationFailedMessage,
+        contains('The relay could not authorize this request.'),
+      );
+      expect(relayAuthorizationFailedMessage, contains('device code'));
+      expect(relayAuthorizationFailedMessage, contains('relay access may need renewal'));
+      expect(relayAuthorizationFailedMessage, isNot(contains('Generate a new code')));
+    });
   });
 }

@@ -25,6 +25,60 @@ bool isPotentialEncodedHardwareTransfer(String value) {
   return RegExp(r'^[A-Za-z0-9+/]+={0,2}$').hasMatch(value);
 }
 
+bool isRelayAppCredentialMissing(String appCredential) {
+  return appCredential.trim().isEmpty;
+}
+
+bool isOfficialRelayHost({
+  required String relayHost,
+  required String officialRelayHost,
+}) {
+  final actual = _normalizeRelayOrigin(relayHost);
+  final official = _normalizeRelayOrigin(officialRelayHost);
+  if (actual == null || official == null) return false;
+  return actual.scheme.toLowerCase() == official.scheme.toLowerCase() &&
+      actual.host.toLowerCase() == official.host.toLowerCase() &&
+      _effectiveRelayPort(actual) == _effectiveRelayPort(official);
+}
+
+Uri? _normalizeRelayOrigin(String value) {
+  final uri = Uri.tryParse(value.trim());
+  if (uri == null || !uri.hasScheme || !uri.hasAuthority) return null;
+  if (uri.scheme.toLowerCase() != 'https') return null;
+  if (uri.userInfo.isNotEmpty) return null;
+  if (uri.host.isEmpty) return null;
+  if ((uri.path.isNotEmpty && uri.path != '/') ||
+      uri.query.isNotEmpty ||
+      uri.fragment.isNotEmpty) {
+    return null;
+  }
+  return uri;
+}
+
+int _effectiveRelayPort(Uri uri) => uri.hasPort ? uri.port : 443;
+
+bool shouldBlockRelayRegistrationForMissingAppCredential({
+  required String relayHost,
+  required String appCredential,
+  required String officialRelayHost,
+}) {
+  return isOfficialRelayHost(
+        relayHost: relayHost,
+        officialRelayHost: officialRelayHost,
+      ) &&
+      isRelayAppCredentialMissing(appCredential);
+}
+
+const String missingRelayAppCredentialMessage =
+    'This build has no access to the registration relay. '
+    'No request was sent and your device code was not checked. '
+    'Use a relay-enabled build or contact its provider.';
+
+const String relayAuthorizationFailedMessage =
+    'The relay could not authorize this request. '
+    'The device code or the app\u2019s relay access may need renewal. '
+    'Check the relay setup or contact the build provider.';
+
 RelayVersionResponseValidation validateRelayVersionResponse({
   required int? statusCode,
   required Object? data,
@@ -48,7 +102,15 @@ RelayVersionResponseValidation validateRelayVersionResponse({
     );
   }
 
-  final versions = Map<String, dynamic>.from(data['versions'] as Map);
+  late final Map<String, dynamic> versions;
+  try {
+    versions = Map<String, dynamic>.from(data['versions'] as Map);
+  } catch (_) {
+    return RelayVersionResponseValidation(
+      kind: RelayVersionResponseKind.malformed,
+      statusCode: statusCode,
+    );
+  }
   if (versions['software_name'] is! String ||
       versions['software_version'] is! String ||
       versions['unique_device_id'] is! String) {
