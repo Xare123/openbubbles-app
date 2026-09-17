@@ -638,11 +638,7 @@ jobs:
         run: |
           set -euo pipefail
           files=(
-            lib/src/rust/api/api.dart
-            lib/src/rust/api/cloud_sync_chat1_correlation.dart
-            lib/src/rust/frb_generated.dart
-            lib/src/rust/frb_generated.io.dart
-            lib/src/rust/frb_generated.web.dart
+            lib/src/rust
             rust/src/frb_generated.rs
             rust/src/frb_generated.io.rs
             rust/src/frb_generated.web.rs
@@ -781,11 +777,7 @@ jobs:
           if-no-files-found: error
           retention-days: 7
           path: |
-            lib/src/rust/api/api.dart
-            lib/src/rust/api/cloud_sync_chat1_correlation.dart
-            lib/src/rust/frb_generated.dart
-            lib/src/rust/frb_generated.io.dart
-            lib/src/rust/frb_generated.web.dart
+            lib/src/rust/
             rust/src/frb_generated.rs
             rust/src/frb_generated.io.rs
             rust/src/frb_generated.web.rs
