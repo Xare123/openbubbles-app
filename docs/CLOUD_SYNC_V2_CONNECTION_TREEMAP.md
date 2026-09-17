@@ -52,6 +52,17 @@ back to legacy sync, clear a cursor, or continue under a replacement account.
 
 ## Current candidate
 
+### Goal blocked on live-test preflight, September 17
+
+The same unknown Canary sign-in state remained through three consecutive goal
+turns after the diagnostic runtime was ready. Fresh checks still show no ADB
+device, no local test process, both qualification jobs terminal/successful and
+zero GitHub runners. The goal is blocked, not completed, to stop idle repetition.
+User must confirm whether Canary is still at activation/sign-in or now signed in,
+or reconnect the Pixel for a fresh check. Then reserve the shared relay and run
+the already-qualified cached attachment probe. Do not rebuild, reset data, weaken
+auth checks or repeat a full sweep merely to work around this missing preflight.
+
 ### Next discriminating test: attachment quarantine details
 
 - Sourceba47b1f09 adds secondary, closed attachment rejection details at missing

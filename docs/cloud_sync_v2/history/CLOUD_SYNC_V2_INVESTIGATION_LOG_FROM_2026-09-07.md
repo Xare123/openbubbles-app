@@ -7106,3 +7106,12 @@ Historical tests do not establish current-device behavior.
   ADB remains empty; Canary sign-in question unanswered. No live request, account
   mutation or duplicate build. The source check rules out a ready-made offline
   shortcut; live preflight remains pending user state confirmation.
+- Blocked audit completed September17: unknown Canary sign-in state persisted
+  across three consecutive goal turns since the diagnostic runtime was ready.
+  Fresh ADB list empty, source clean atf6b5b0849, no owned Flutter/Dart process,
+  Windows35192422648 and GCE35192463601 terminal success, repository runners0.
+  No live test, account repair, data reset, new build or network workaround.
+  Marked the existing production goal blocked, not complete, awaiting Canary
+  state confirmation or Pixel reconnection. Resume with the already-qualified
+  attachment probe under a fresh shared-relay reservation; other release gates
+  remain open. C:about20.18GiB free; all helpers closed, evidence preserved.
