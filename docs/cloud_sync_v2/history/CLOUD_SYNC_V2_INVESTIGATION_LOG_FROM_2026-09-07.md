@@ -6970,3 +6970,59 @@ Historical tests do not establish current-device behavior.
   focused Dart decoder/safe-failure/prepared-extension cases passed; analysis
   clean. This Dart-only descendant is separate from in-flight nativeb9 evidence;
   it requires no new native build. All main helpers are closed and verified.
+
+### September 16 late: optional-label repair restores real Windows rows and survives restart
+
+- Corrected GCE35185177773 passed at exact appb9ebb102e/workflowfab604fc7:
+  full generated-Dart subtree reproduction, generated Rust check,770 app Rust,
+  3941 Dart with5 skips,14 semantic and3 evidence PowerShell checks. No APK,
+  Android JVM tests, signing, live credentials or account access. Owner verified
+  VM lifetime15m06.835s, deletion and zero project instances; parent verified
+  completed success and zero GitHub runners. Estimated compute$0.0720(about$0.07),
+  not a final invoice. No duplicate build.
+- Windows35185153466 passed in25m25s at appb9/pilotf21. Artifact10482492949 outer
+  SHA256c3748d31b0671b4b09867570e625370e752466e6aa1f4945aff960ac16f6a8de,
+  innerd33a581a7cebd140ecad941288cb4233c2a24ea190bbca4e0effb05be8ecf642,
+  provenanceb011e9db61aa3acda6d101920f88ad3f826c0be3b55f5de4f1c1c5707e6d3783.
+  Verified16 outer members,64 Git source inputs,6 recursive pins,13 log hashes
+  and3 ARM64 binaries.705 Dart,51 DLL encoders,17 native diagnostics and35 native
+  extension cases passed, including sparse success and strict rejection controls.
+- Imported/signed b9 using the existing signer. Current DLL
+  2f960b7365ba9d87f25a87effd92cf30916b3faea008e644c84a153c21422919;
+  testEXE47f295c249addeb9af79ca6ca6fa16c654b4fc0a295090cdf67514b77d5d6296.
+  All15 checked account/database hashes unchanged during import. Three installed
+  sparse-layout cases plus one actual-DLL smoke passed. Previous5f bundle and
+  source provenance remain rollback material; no device APK or keys copied.
+- After explicit peer reservation and fresh Canary signed-out/idle preflight,
+  observation1a6913ac507a0658b047646403c53da4 rechecked the same37 cached entries.
+  Both standalone extension failures became Ready; all5 previously failing
+  parent-decode checks became Ready. These are7 decode checks, not proof of7
+  unique messages. The21 other quarantines are now reported by their exact native
+  reason, unchanged in classification. State unchanged, remote writes off, raw
+  output removed and process cleanup confirmed.
+- Reserved the normal local-projection window separately. Preserved an idle,
+  hash-stable157,138,944-byte ObjectBox rollback snapshot before the operation.
+  SHA256a48f405fcfa28eea9d6fb1f8c336829851f8f0f313cfdd9c8d7c392f90c53789;
+  private path/manifest under build-evidence/optional-label-projection-20260917.
+  No restore is automatic. Normal draincb040c7a12c340ac4bb14fd0e750c1c1 completed
+  one process: remote fetch0; initial replay applied9 message/9 attachment changes,
+  retained sweep applied5 further changes. Retained6246 remains incomplete;
+  outbox24->24. No remote writes/deletes or IDS sends, raw cleanup confirmed.
+- Independent offline before/after comparison reopened disposable copies and
+  verified14,044->14,058 Message rows and2,530->2,539 Attachment rows. Every old
+  row ID remains. Outbox IDs/operation IDs/states/update timestamps are identical.
+  All14 new messages contain display text and parseable app metadata; no Unicode
+  replacement characters or payload parse errors. This is structural persistence
+  proof, not a visual Pixel/Windows GUI claim. No text/names/IDs printed. Original
+  hashes remained unchanged during inspection; disposable working copies removed.
+  Result: build-evidence/optional-label-projection-20260917/result.json.
+- A separately reserved cold-reader pair1a35a2802cd2848458fcfe4ef2387933 then ran
+  two fresh processes: both fetched0/applied0, retained6246 stable, outbox24 stable.
+  No duplicate work observed, no remote writes, raw output removed, processes
+  gone. Both Windows/profile/relay reservations released; no standing lock for
+  the pending Canary user restart. Peer must request before new shared live use.
+- All helper agents closed and shutdown verified. All watches/smokes/observers
+  (81248,14224,17240,99219,74157,32085) are terminal. GCE VMs/runners deleted.
+  C:about20.47GiB free; no cleanup of protected logs, snapshots or sessions.
+  Goal remains active: full retained repair, incoming/group/media/write gates,
+  Pixel activation/lifecycle/visual checks and independent-client proof remain.

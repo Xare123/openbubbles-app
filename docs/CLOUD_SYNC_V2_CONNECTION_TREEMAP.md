@@ -54,16 +54,16 @@ back to legacy sync, clear a cursor, or continue under a replacement account.
 
 ### Immediate handoff: missing optional extension labels proved, September 16
 
-- **TEST-PROVEN and installed:** Windows35181742445 passed in24m15s for app5fdefad3a,
+- **TEST-PROVEN and installed:** Windows35185153466 passed in25m25s for appb9ebb102e,
   native-test-host/read-only and pilotf21. Installed signed DLL SHA256
-  `14d421aba82c292c01e9f3bc8175e295d598e115ce32e604b5f0b841625e8f3e`.
+  `2f960b7365ba9d87f25a87effd92cf30916b3faea008e644c84a153c21422919`.
   Verified64 source inputs,6 recursive pins,13 log hashes and3 ARM64 binaries.
-  Hosted704 Dart,51 DLL encoder,17 native diagnostic and33 extension cases passed.
-  Local exact shape test and actual-DLL smoke each passed once; all15 checked
-  account/database files unchanged. No app/account launch during import. Previous
-  66658 bundle is rollback material; qualification record is under
-  `build-evidence/windows-name-shapes-35181742445/verification.json`.
-- **LIVE-PROVEN partial, not restored:** exclusive read-only Windows observation
+  Hosted705 Dart,51 DLL encoder,17 native diagnostic and35 extension cases passed.
+  Three local sparse-layout native tests and one actual-DLL smoke passed; all15
+  checked account/database files unchanged during import. Previous5f bundle is
+  rollback material; qualification record is under
+  `build-evidence/windows-optional-labels-35185153466/verification.json`.
+- **Historical diagnostic evidence:** exclusive read-only Windows observation
   b0e626b0a5a3e252c4ef2d5fc3130900 completed37 retained cases with durable state
   unchanged. Five cached heading parents advanced beyond unsupported association
   to extension decode `Name/Malformed`. No new restored messages or remote writes
@@ -71,7 +71,7 @@ back to legacy sync, clear a cursor, or continue under a replacement account.
   cases and proved all7 Name failures have absent `an`, NSURL URL, display/layout
   strings and NSDictionary userInfo. Durable state unchanged, no remote writes,
   raw output removed and process cleanup confirmed. Read-test reservation released.
-- **SOURCE-IMPLEMENTED, not qualified:** optional-display repaira7911bd7a was
+- **LIVE-PROVEN Windows repair:** optional-display repaira7911bd7a was
   reviewed by Ampere01a0adc7, accepted and closed/not_found. No child remains.
   The name is display data, not message/session identity. Its
   absence maps to the existing empty-label renderer value. Template display
@@ -80,14 +80,22 @@ back to legacy sync, clear a cursor, or continue under a replacement account.
   retained. Apple documents optional template text; private key names remain the
   existing parser's mapping, not public CloudKit schema evidence. Native tests
   cover sparse labels, bad present types, missing URL and incomplete structure;
-  Dart test checks content and wire identity. Rustfmt/Dart analysis pass, execution
-  pending GCE plus a matched new Windows host. Do not load changed native source
-  against installed5f or claim those seven records restored yet.
-- **Active qualification:** exact sourceb9ebb102e70d7aa9d17db8892935009ee42a2501
-  is running Windows35185153466 on unchangedf21 sidecar and GCE35185177773 on
-  corrected pilotfab604fc7. No duplicate run, no APK. GCE owner01a0ac53 owns
-  final outcomes, cleanup and cost. Parent will verify/import matched Windows
-  host, reserve relay, then re-decode the same cached sample before any sweep.
+  Dart test checks content and wire identity. Both cloud qualifications pass.
+  Exact read-only observation1a6913ac507a0658b047646403c53da4 clears the2 sampled
+  message failures and5 parent-decode failures; do not count them as7 unique rows.
+  Normal projectioncb040c7a12c340ac4bb14fd0e750c1c1 then restored14 Message rows
+  and9 Attachment rows, independently confirmed on offline before/after copies.
+  Counts14044->14058 and2530->2539; all prior row IDs and24 outbox control rows
+  preserved. All14 new messages have display text and parseable app metadata;
+  no replacement characters/payload errors. This is not Pixel visual proof.
+- **Completed qualification:** exact sourceb9ebb102e70d7aa9d17db8892935009ee42a2501
+  passed Windows35185153466 and GCE35185177773 on corrected pilotfab604fc7.
+  GCE770 Rust/3941 Dart(+5 skips)/17 PowerShell checks passed, including full-tree
+  binding reproduction. Owner verified deleted VM/zero instances; parent verified
+  cleanup job/zero runner registrations. Estimated compute$0.07. No duplicate/APK.
+  Fresh-process stability1a35a2802cd2848458fcfe4ef2387933 passed two zero-fetch,
+  zero-apply runs, retained6246 unchanged and outbox24 unchanged. Raw streams
+  removed; all owned processes exited. No active profile/relay reservation.
   Sidecar Averroes01a0adcc completed its21-case classification and is closed,
   shutdown verified. All main child agents are closed; no live profile process.
 - **TEST-PROVEN Dart reporting fix797d6210c:** quarantine exceptions previously
@@ -98,8 +106,8 @@ back to legacy sync, clear a cursor, or continue under a replacement account.
   1 malformed-parent and8 malformed attachment-record quarantines. These are
   not automatically exclusions. Aggregate count equality proves no linkage;
   the8 attachment failures occur before parent probing and need independent
-  cause evidence. Existing next37-case observation will compare them at no
-  extra fetch; do not infer the name fix repairs their parent/record metadata.
+  cause evidence. The subsequent37-case observation confirmed all21 reasons
+  remain; the name repair does not fix those independent quarantines.
 - **Canary registration blocker:** installed710003e7b APK SHA256
   `8d87ec693bbbcbb9d31b0ab886e254cc2ef5c1a9253c3fc7acac9dc3233ad90b`
   omits the relay application token from its developer build. The same verified
@@ -124,14 +132,15 @@ back to legacy sync, clear a cursor, or continue under a replacement account.
   closed; supported session deletion unavailable, transcripts retained.
   USB is now disconnected; paired wireless ADB192.168.68.50:38787 remains online,
   with the same Canary PID. No private provisioning has been applied.
-- Independent FaceTime/Find My task acknowledged exclusive Pixel/relay ownership
-  for this provisioning. No Windows live calls or new APK planned. User renewed
-  GCE authorization on September16; source-only qualification is active.
-  C:about20.86GiB free. Scoped audit: build/test_cache2.62GB, .dart_tool63MB;
+- All live reservations were released after cleanup. A pending user restart is
+  not a standing relay lock. Coordinate a new window with the independent
+  FaceTime/Find My task before shared profile/relay use. Both GCE jobs finished;
+  their runners/VMs were removed. No new APK was built in this iteration.
+  C:about20.47GiB free. Scoped audit: build/test_cache2.62GB, .dart_tool63MB;
   no attribution made for other concurrent disk usage. Prior denied cleanup remains
   zero removed; preserved snapshots,
   credentials, rollback archives and transcripts are not cleanup candidates.
-- **TEST-PROVEN source, not installed:** db1fe6d76 detects missing build relay
+- **TEST-PROVEN source, not installed on Pixel:** db1fe6d76 detects missing build relay
   access before HTTP/native calls to the official origin and reports401/403 as
   ambiguous authorization failure, not a proven invalid device code. Default
   HTTPS port/case handling and custom origins are covered. Sixteen validator and
