@@ -37,6 +37,8 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/objectbox_cloud_sync_pr
 import 'package:bluebubbles/src/rust/api/api.dart' as api;
 import 'package:bluebubbles/src/rust/api/cloud_sync_chat_identity.dart'
     as identity_api;
+import 'package:bluebubbles/src/rust/api/cloud_sync_dependency.dart'
+    as dependency_api;
 import 'package:bluebubbles/src/rust/frb_generated.dart';
 import 'package:bluebubbles/src/rust/lib.dart' as rustlib;
 import 'package:bluebubbles/utils/logger/logger.dart';
@@ -1843,12 +1845,58 @@ class CloudSyncV2WindowsHarnessState extends State<CloudSyncV2WindowsHarness> {
                   if (parentCheckpoint == null) {
                     throw StateError('cloud_sync_windows_dev_observation_checkpoint_missing');
                   }
+                  String? physicalParentHash;
+                  if (Platform.environment['OPENBUBBLES_INSPECT_PARENT_LOCATORS'] == '1') {
+                    final client = _activeClient;
+                    if (client is! rustlib.ArcCloudMessagesClientDefaultAnisetteProvider || row.etagHash == null || row.payloadSha256 == null ||
+                        row.encryptedPayloadRef == null) {
+                      throw StateError('cloud_sync_windows_dev_test_host_invalid');
+                    }
+                    final timestamp = cloudInboxCanonicalServerModifiedAt(row);
+                    final located = await dependency_api.cloudSyncLocateProtectedMessageParent(
+                      cloudMessagesClient: client,
+                      nativeWriterPauseToken: pause,
+                      storageDirectory: fs.appDocDir.path,
+                      expectedAuth: api.CloudSyncNativeAuthMetadata(
+                        nativeSessionId: auth.nativeSessionId,
+                        accountFingerprint: auth.accountFingerprint,
+                        protectedStoreIdentity: auth.protectedStoreIdentity,
+                      ),
+                      sourceZone: zone,
+                      sourceGeneration: BigInt.from(row.generation),
+                      messageGeneration: BigInt.from(parentCheckpoint.generation),
+                      expectedParentLogicalKeyHash: parentHash,
+                      source: identity_api.CloudSyncChatIdentitySourceInput(
+                        changeIdHash: row.changeIdHash,
+                        recordIdHash: row.serverRecordIdHash,
+                        etagHash: row.etagHash!,
+                        payloadSha256: row.payloadSha256!,
+                        payloadLength: null,
+                        serverModifiedAtMillis: timestamp?.millisecondsSinceEpoch,
+                        protectedRawEnvelopeReference: row.encryptedPayloadRef!,
+                      ),
+                    );
+                    physicalParentHash = validateCloudSyncParentLocator(
+                      result: located,
+                      sourceChangeHash: row.changeIdHash,
+                      sourceRecordHash: row.serverRecordIdHash,
+                      sourceGeneration: row.generation,
+                      messageGeneration: parentCheckpoint.generation,
+                      parentLogicalHash: parentHash,
+                      nativeSessionId: auth.nativeSessionId,
+                    );
+                    item['parent_locator_available'] = physicalParentHash != null;
+                    if (located.failureCode != null) {
+                      item['parent_locator_failure'] = located.failureCode!.name;
+                    }
+                  }
                   item.addAll(observeCloudSyncRetainedMessageParent(
                     store: Database.store,
                     scope: parentScope,
                     generation: parentCheckpoint.generation,
                     logicalParentHash: parentHash,
                     canonicalParentGuid: parentGuid,
+                    locatedParentRecordHash: physicalParentHash,
                   ));
                 } finally {
                   parentCheckpointQuery.close();

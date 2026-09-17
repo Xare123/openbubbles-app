@@ -4,6 +4,44 @@ import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_models.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_persistent_keys.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/objectbox_canonical_semantic_entity_adapter.dart';
+import 'package:bluebubbles/src/rust/api/cloud_sync_dependency.dart' as native;
+
+/// Reject mixed or stale native observations before they can select an inbox
+/// record. This is correlation only, never permission to project or fetch.
+String? validateCloudSyncParentLocator({
+  required native.CloudSyncDependencyParentResult result,
+  required String sourceChangeHash,
+  required String sourceRecordHash,
+  required int sourceGeneration,
+  required int messageGeneration,
+  required String parentLogicalHash,
+  required String nativeSessionId,
+}) {
+  final hashPattern = RegExp(r'^[A-Za-z0-9_-]{43}$');
+  if (sourceGeneration < 1 ||
+      messageGeneration < 1 ||
+      !hashPattern.hasMatch(sourceChangeHash) ||
+      !hashPattern.hasMatch(sourceRecordHash) ||
+      !hashPattern.hasMatch(parentLogicalHash) ||
+      nativeSessionId.isEmpty) {
+    throw StateError('retained_parent_locator_binding_rejected');
+  }
+  final target = result.target;
+  if (target == null && result.failureCode != null) return null;
+  if (target == null ||
+      result.failureCode != null ||
+      target.sourceChangeIdHash != sourceChangeHash ||
+      target.sourceRecordIdHash != sourceRecordHash ||
+      target.sourceGeneration != BigInt.from(sourceGeneration) ||
+      target.messageGeneration != BigInt.from(messageGeneration) ||
+      target.parentLogicalKeyHash != parentLogicalHash ||
+      target.nativeSessionId != nativeSessionId ||
+      !RegExp(r'^[A-Za-z0-9_-]{43}$').hasMatch(target.parentRecordIdHash) ||
+      !RegExp(r'^[A-Za-z0-9_-]{43}$').hasMatch(target.bindingHash)) {
+    throw StateError('retained_parent_locator_binding_rejected');
+  }
+  return target.parentRecordIdHash;
+}
 
 Map<String, Object?> observeCloudSyncRetainedMessageParent({
   required Store store,
@@ -11,11 +49,14 @@ Map<String, Object?> observeCloudSyncRetainedMessageParent({
   required int generation,
   required String logicalParentHash,
   required String canonicalParentGuid,
+  String? locatedParentRecordHash,
 }) {
   if (scope.zone != 'messageManateeZone' ||
       scope.persistenceLane != CloudSyncPersistenceLane.semantic ||
       generation < 1 ||
-      !RegExp(r'^[A-Za-z0-9_-]{43}$').hasMatch(logicalParentHash)) {
+      !RegExp(r'^[A-Za-z0-9_-]{43}$').hasMatch(logicalParentHash) ||
+      (locatedParentRecordHash != null &&
+          !RegExp(r'^[A-Za-z0-9_-]{43}$').hasMatch(locatedParentRecordHash))) {
     throw StateError('retained_parent_observation_scope_invalid');
   }
   final scopeKey = cloudSyncPersistentScopeKey(scope);
@@ -125,8 +166,14 @@ Map<String, Object?> observeCloudSyncRetainedMessageParent({
             savedMaps.single.mapKey ==
                 cloudSyncCanonicalRecordMapKey(scope, logicalParentHash),
       };
-      if (savedMaps.length != 1) return result;
-      final map = savedMaps.single;
+      // An explicitly bound native locator can find retained physical evidence
+      // before projection has created a map. It still grants no row ownership.
+      final map = savedMaps.length == 1 ? savedMaps.single : null;
+      final physicalHash = locatedParentRecordHash ?? map?.serverRecordIdHash;
+      if (physicalHash == null) return result;
+      result['parent_physical_lookup_used'] = locatedParentRecordHash != null;
+      result['parent_locator_matches_map'] =
+          map != null && map.serverRecordIdHash == physicalHash;
       final latest =
           (store.box<CloudInboxChangeEntity>().query(
                 CloudInboxChangeEntity_.scopeKey
@@ -140,7 +187,7 @@ Map<String, Object?> observeCloudSyncRetainedMessageParent({
                     .and(CloudInboxChangeEntity_.generation.equals(generation))
                     .and(
                       CloudInboxChangeEntity_.serverRecordIdHash.equals(
-                        map.serverRecordIdHash,
+                        physicalHash,
                       ),
                     ),
               )..order(
@@ -151,7 +198,11 @@ Map<String, Object?> observeCloudSyncRetainedMessageParent({
             ..limit = 1;
       try {
         final row = latest.findFirst();
-        result['parent_mapped_inbox_present'] = row != null;
+        result['parent_physical_inbox_present'] = row != null;
+        result['parent_mapped_inbox_present'] =
+            row != null &&
+            map != null &&
+            map.serverRecordIdHash == physicalHash;
         if (row != null) {
           result.addAll({
             'parent_latest_is_save':
@@ -162,6 +213,8 @@ Map<String, Object?> observeCloudSyncRetainedMessageParent({
                 row.failureCategory ==
                 CloudFailureCategory.outOfScopeService.name,
             'parent_map_matches_latest':
+                map != null &&
+                map.serverRecordIdHash == physicalHash &&
                 map.mapKey ==
                     cloudSyncCanonicalRecordMapKey(scope, logicalParentHash) &&
                 map.etagHash == row.etagHash &&

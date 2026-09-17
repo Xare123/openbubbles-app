@@ -9,6 +9,7 @@
 import 'api/api.dart';
 import 'api/cloud_sync_chat1_correlation.dart';
 import 'api/cloud_sync_chat_identity.dart';
+import 'api/cloud_sync_dependency.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'frb_generated.dart';
@@ -1651,6 +1652,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   dco_decode_box_autoadd_cloud_sync_chat_identity_source_input(dynamic raw);
 
   @protected
+  CloudSyncDependencyParentTarget
+  dco_decode_box_autoadd_cloud_sync_dependency_parent_target(dynamic raw);
+
+  @protected
   CloudSyncMessageUpdatePrepareInput
   dco_decode_box_autoadd_cloud_sync_message_update_prepare_input(dynamic raw);
 
@@ -2208,6 +2213,14 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   CloudSyncChatIdentitySourceInput
   dco_decode_cloud_sync_chat_identity_source_input(dynamic raw);
+
+  @protected
+  CloudSyncDependencyParentResult
+  dco_decode_cloud_sync_dependency_parent_result(dynamic raw);
+
+  @protected
+  CloudSyncDependencyParentTarget
+  dco_decode_cloud_sync_dependency_parent_target(dynamic raw);
 
   @protected
   CloudSyncMessageUpdatePrepareInput
@@ -3256,6 +3269,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   CloudSyncChatIdentityComparison?
   dco_decode_opt_box_autoadd_cloud_sync_chat_identity_comparison(dynamic raw);
+
+  @protected
+  CloudSyncDependencyParentTarget?
+  dco_decode_opt_box_autoadd_cloud_sync_dependency_parent_target(dynamic raw);
 
   @protected
   CloudSyncMessageUpdateReadbackReceipt?
@@ -5501,6 +5518,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  CloudSyncDependencyParentTarget
+  sse_decode_box_autoadd_cloud_sync_dependency_parent_target(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   CloudSyncMessageUpdatePrepareInput
   sse_decode_box_autoadd_cloud_sync_message_update_prepare_input(
     SseDeserializer deserializer,
@@ -6234,6 +6257,14 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   sse_decode_cloud_sync_chat_identity_source_input(
     SseDeserializer deserializer,
   );
+
+  @protected
+  CloudSyncDependencyParentResult
+  sse_decode_cloud_sync_dependency_parent_result(SseDeserializer deserializer);
+
+  @protected
+  CloudSyncDependencyParentTarget
+  sse_decode_cloud_sync_dependency_parent_target(SseDeserializer deserializer);
 
   @protected
   CloudSyncMessageUpdatePrepareInput
@@ -7456,6 +7487,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   CloudSyncChatIdentityComparison?
   sse_decode_opt_box_autoadd_cloud_sync_chat_identity_comparison(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  CloudSyncDependencyParentTarget?
+  sse_decode_opt_box_autoadd_cloud_sync_dependency_parent_target(
     SseDeserializer deserializer,
   );
 
@@ -10127,6 +10164,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_box_autoadd_cloud_sync_dependency_parent_target(
+    CloudSyncDependencyParentTarget self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_box_autoadd_cloud_sync_message_update_prepare_input(
     CloudSyncMessageUpdatePrepareInput self,
     SseSerializer serializer,
@@ -10985,6 +11028,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_cloud_sync_chat_identity_source_input(
     CloudSyncChatIdentitySourceInput self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_cloud_sync_dependency_parent_result(
+    CloudSyncDependencyParentResult self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_cloud_sync_dependency_parent_target(
+    CloudSyncDependencyParentTarget self,
     SseSerializer serializer,
   );
 
@@ -12429,6 +12484,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_opt_box_autoadd_cloud_sync_chat_identity_comparison(
     CloudSyncChatIdentityComparison? self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_opt_box_autoadd_cloud_sync_dependency_parent_target(
+    CloudSyncDependencyParentTarget? self,
     SseSerializer serializer,
   );
 

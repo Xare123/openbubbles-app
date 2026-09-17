@@ -6,6 +6,7 @@
 import 'api/api.dart';
 import 'api/cloud_sync_chat1_correlation.dart';
 import 'api/cloud_sync_chat_identity.dart';
+import 'api/cloud_sync_dependency.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'frb_generated.dart';
@@ -65,7 +66,7 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
   String get codegenVersion => '2.3.0';
 
   @override
-  int get rustContentHash => -554697084;
+  int get rustContentHash => 313760075;
 
   static const kDefaultExternalLibraryLoaderConfig =
       ExternalLibraryLoaderConfig(
@@ -1833,6 +1834,19 @@ abstract class RustLibApi extends BaseApi {
     required CloudChat candidate,
     required CloudSyncChatIdentitySourceInput source,
     CloudSyncStagedChatIdentityCandidate? stagedCandidate,
+  });
+
+  Future<CloudSyncDependencyParentResult>
+  crateApiCloudSyncDependencyCloudSyncLocateProtectedMessageParent({
+    required ArcCloudMessagesClientDefaultAnisetteProvider cloudMessagesClient,
+    required BigInt nativeWriterPauseToken,
+    required String storageDirectory,
+    required CloudSyncNativeAuthMetadata expectedAuth,
+    required String sourceZone,
+    required BigInt sourceGeneration,
+    required BigInt messageGeneration,
+    required String expectedParentLogicalKeyHash,
+    required CloudSyncChatIdentitySourceInput source,
   });
 
   RustArcIncrementStrongCountFnType
@@ -15513,6 +15527,87 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         ],
       );
 
+  @override
+  Future<CloudSyncDependencyParentResult>
+  crateApiCloudSyncDependencyCloudSyncLocateProtectedMessageParent({
+    required ArcCloudMessagesClientDefaultAnisetteProvider cloudMessagesClient,
+    required BigInt nativeWriterPauseToken,
+    required String storageDirectory,
+    required CloudSyncNativeAuthMetadata expectedAuth,
+    required String sourceZone,
+    required BigInt sourceGeneration,
+    required BigInt messageGeneration,
+    required String expectedParentLogicalKeyHash,
+    required CloudSyncChatIdentitySourceInput source,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcCloudMessagesClientDefaultAnisetteProvider(
+            cloudMessagesClient,
+            serializer,
+          );
+          sse_encode_u_64(nativeWriterPauseToken, serializer);
+          sse_encode_String(storageDirectory, serializer);
+          sse_encode_box_autoadd_cloud_sync_native_auth_metadata(
+            expectedAuth,
+            serializer,
+          );
+          sse_encode_String(sourceZone, serializer);
+          sse_encode_u_64(sourceGeneration, serializer);
+          sse_encode_u_64(messageGeneration, serializer);
+          sse_encode_String(expectedParentLogicalKeyHash, serializer);
+          sse_encode_box_autoadd_cloud_sync_chat_identity_source_input(
+            source,
+            serializer,
+          );
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 332,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_cloud_sync_dependency_parent_result,
+          decodeErrorData: null,
+        ),
+        constMeta:
+            kCrateApiCloudSyncDependencyCloudSyncLocateProtectedMessageParentConstMeta,
+        argValues: [
+          cloudMessagesClient,
+          nativeWriterPauseToken,
+          storageDirectory,
+          expectedAuth,
+          sourceZone,
+          sourceGeneration,
+          messageGeneration,
+          expectedParentLogicalKeyHash,
+          source,
+        ],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta
+  get kCrateApiCloudSyncDependencyCloudSyncLocateProtectedMessageParentConstMeta =>
+      const TaskConstMeta(
+        debugName: "cloud_sync_locate_protected_message_parent",
+        argNames: [
+          "cloudMessagesClient",
+          "nativeWriterPauseToken",
+          "storageDirectory",
+          "expectedAuth",
+          "sourceZone",
+          "sourceGeneration",
+          "messageGeneration",
+          "expectedParentLogicalKeyHash",
+          "source",
+        ],
+      );
+
   Future<void> Function(int, dynamic)
   encode_DartFn_Inputs_String_Output_String_AnyhowException(
     FutureOr<String> Function(String) raw,
@@ -18631,6 +18726,13 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  CloudSyncDependencyParentTarget
+  dco_decode_box_autoadd_cloud_sync_dependency_parent_target(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_cloud_sync_dependency_parent_target(raw);
+  }
+
+  @protected
   CloudSyncMessageUpdatePrepareInput
   dco_decode_box_autoadd_cloud_sync_message_update_prepare_input(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
@@ -20029,6 +20131,42 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       payloadLength: dco_decode_opt_box_autoadd_u_64(arr[4]),
       serverModifiedAtMillis: dco_decode_opt_box_autoadd_i_64(arr[5]),
       protectedRawEnvelopeReference: dco_decode_String(arr[6]),
+    );
+  }
+
+  @protected
+  CloudSyncDependencyParentResult
+  dco_decode_cloud_sync_dependency_parent_result(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 2)
+      throw Exception('unexpected arr length: expect 2 but see ${arr.length}');
+    return CloudSyncDependencyParentResult(
+      target: dco_decode_opt_box_autoadd_cloud_sync_dependency_parent_target(
+        arr[0],
+      ),
+      failureCode: dco_decode_opt_box_autoadd_cloud_sync_transient_failure_code(
+        arr[1],
+      ),
+    );
+  }
+
+  @protected
+  CloudSyncDependencyParentTarget
+  dco_decode_cloud_sync_dependency_parent_target(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 8)
+      throw Exception('unexpected arr length: expect 8 but see ${arr.length}');
+    return CloudSyncDependencyParentTarget(
+      sourceChangeIdHash: dco_decode_String(arr[0]),
+      sourceRecordIdHash: dco_decode_String(arr[1]),
+      sourceGeneration: dco_decode_u_64(arr[2]),
+      messageGeneration: dco_decode_u_64(arr[3]),
+      parentLogicalKeyHash: dco_decode_String(arr[4]),
+      parentRecordIdHash: dco_decode_String(arr[5]),
+      nativeSessionId: dco_decode_String(arr[6]),
+      bindingHash: dco_decode_String(arr[7]),
     );
   }
 
@@ -23501,6 +23639,15 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     return raw == null
         ? null
         : dco_decode_box_autoadd_cloud_sync_chat_identity_comparison(raw);
+  }
+
+  @protected
+  CloudSyncDependencyParentTarget?
+  dco_decode_opt_box_autoadd_cloud_sync_dependency_parent_target(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw == null
+        ? null
+        : dco_decode_box_autoadd_cloud_sync_dependency_parent_target(raw);
   }
 
   @protected
@@ -29099,6 +29246,15 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  CloudSyncDependencyParentTarget
+  sse_decode_box_autoadd_cloud_sync_dependency_parent_target(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_cloud_sync_dependency_parent_target(deserializer));
+  }
+
+  @protected
   CloudSyncMessageUpdatePrepareInput
   sse_decode_box_autoadd_cloud_sync_message_update_prepare_input(
     SseDeserializer deserializer,
@@ -31001,6 +31157,48 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       payloadLength: var_payloadLength,
       serverModifiedAtMillis: var_serverModifiedAtMillis,
       protectedRawEnvelopeReference: var_protectedRawEnvelopeReference,
+    );
+  }
+
+  @protected
+  CloudSyncDependencyParentResult
+  sse_decode_cloud_sync_dependency_parent_result(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_target =
+        sse_decode_opt_box_autoadd_cloud_sync_dependency_parent_target(
+          deserializer,
+        );
+    var var_failureCode =
+        sse_decode_opt_box_autoadd_cloud_sync_transient_failure_code(
+          deserializer,
+        );
+    return CloudSyncDependencyParentResult(
+      target: var_target,
+      failureCode: var_failureCode,
+    );
+  }
+
+  @protected
+  CloudSyncDependencyParentTarget
+  sse_decode_cloud_sync_dependency_parent_target(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_sourceChangeIdHash = sse_decode_String(deserializer);
+    var var_sourceRecordIdHash = sse_decode_String(deserializer);
+    var var_sourceGeneration = sse_decode_u_64(deserializer);
+    var var_messageGeneration = sse_decode_u_64(deserializer);
+    var var_parentLogicalKeyHash = sse_decode_String(deserializer);
+    var var_parentRecordIdHash = sse_decode_String(deserializer);
+    var var_nativeSessionId = sse_decode_String(deserializer);
+    var var_bindingHash = sse_decode_String(deserializer);
+    return CloudSyncDependencyParentTarget(
+      sourceChangeIdHash: var_sourceChangeIdHash,
+      sourceRecordIdHash: var_sourceRecordIdHash,
+      sourceGeneration: var_sourceGeneration,
+      messageGeneration: var_messageGeneration,
+      parentLogicalKeyHash: var_parentLogicalKeyHash,
+      parentRecordIdHash: var_parentRecordIdHash,
+      nativeSessionId: var_nativeSessionId,
+      bindingHash: var_bindingHash,
     );
   }
 
@@ -35697,6 +35895,22 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
     if (sse_decode_bool(deserializer)) {
       return (sse_decode_box_autoadd_cloud_sync_chat_identity_comparison(
+        deserializer,
+      ));
+    } else {
+      return null;
+    }
+  }
+
+  @protected
+  CloudSyncDependencyParentTarget?
+  sse_decode_opt_box_autoadd_cloud_sync_dependency_parent_target(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    if (sse_decode_bool(deserializer)) {
+      return (sse_decode_box_autoadd_cloud_sync_dependency_parent_target(
         deserializer,
       ));
     } else {
@@ -42141,6 +42355,15 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_box_autoadd_cloud_sync_dependency_parent_target(
+    CloudSyncDependencyParentTarget self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_cloud_sync_dependency_parent_target(self, serializer);
+  }
+
+  @protected
   void sse_encode_box_autoadd_cloud_sync_message_update_prepare_input(
     CloudSyncMessageUpdatePrepareInput self,
     SseSerializer serializer,
@@ -43795,6 +44018,38 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_opt_box_autoadd_u_64(self.payloadLength, serializer);
     sse_encode_opt_box_autoadd_i_64(self.serverModifiedAtMillis, serializer);
     sse_encode_String(self.protectedRawEnvelopeReference, serializer);
+  }
+
+  @protected
+  void sse_encode_cloud_sync_dependency_parent_result(
+    CloudSyncDependencyParentResult self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_opt_box_autoadd_cloud_sync_dependency_parent_target(
+      self.target,
+      serializer,
+    );
+    sse_encode_opt_box_autoadd_cloud_sync_transient_failure_code(
+      self.failureCode,
+      serializer,
+    );
+  }
+
+  @protected
+  void sse_encode_cloud_sync_dependency_parent_target(
+    CloudSyncDependencyParentTarget self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_String(self.sourceChangeIdHash, serializer);
+    sse_encode_String(self.sourceRecordIdHash, serializer);
+    sse_encode_u_64(self.sourceGeneration, serializer);
+    sse_encode_u_64(self.messageGeneration, serializer);
+    sse_encode_String(self.parentLogicalKeyHash, serializer);
+    sse_encode_String(self.parentRecordIdHash, serializer);
+    sse_encode_String(self.nativeSessionId, serializer);
+    sse_encode_String(self.bindingHash, serializer);
   }
 
   @protected
@@ -47591,6 +47846,22 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_bool(self != null, serializer);
     if (self != null) {
       sse_encode_box_autoadd_cloud_sync_chat_identity_comparison(
+        self,
+        serializer,
+      );
+    }
+  }
+
+  @protected
+  void sse_encode_opt_box_autoadd_cloud_sync_dependency_parent_target(
+    CloudSyncDependencyParentTarget? self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    sse_encode_bool(self != null, serializer);
+    if (self != null) {
+      sse_encode_box_autoadd_cloud_sync_dependency_parent_target(
         self,
         serializer,
       );

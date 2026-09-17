@@ -7,6 +7,8 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_models.dart'
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_persistent_keys.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/objectbox_canonical_semantic_entity_adapter.dart';
 import 'package:crypto/crypto.dart';
+import 'package:bluebubbles/src/rust/api/api.dart' as api;
+import 'package:bluebubbles/src/rust/api/cloud_sync_dependency.dart' as native;
 import 'package:flutter_test/flutter_test.dart';
 
 String _hash(String marker) => marker * 43;
@@ -14,6 +16,82 @@ String _ref(String marker) => 'obcs2.ref.${_hash(marker)}';
 String _digest(String value) => sha256.convert(utf8.encode(value)).toString();
 
 void main() {
+  test(
+    'native locator result is bound to one child, parent generation and session',
+    () {
+      native.CloudSyncDependencyParentTarget target({
+        String? sourceChange,
+        String? sourceRecord,
+        int sourceGeneration = 3,
+        int messageGeneration = 4,
+        String? parentLogical,
+        String? physical,
+        String session = 'synthetic-session',
+        String? binding,
+      }) => native.CloudSyncDependencyParentTarget(
+        sourceChangeIdHash: sourceChange ?? _hash('C'),
+        sourceRecordIdHash: sourceRecord ?? _hash('S'),
+        sourceGeneration: BigInt.from(sourceGeneration),
+        messageGeneration: BigInt.from(messageGeneration),
+        parentLogicalKeyHash: parentLogical ?? _hash('L'),
+        parentRecordIdHash: physical ?? _hash('R'),
+        nativeSessionId: session,
+        bindingHash: binding ?? _hash('B'),
+      );
+      String? validate(native.CloudSyncDependencyParentResult result) =>
+          validateCloudSyncParentLocator(
+            result: result,
+            sourceChangeHash: _hash('C'),
+            sourceRecordHash: _hash('S'),
+            sourceGeneration: 3,
+            messageGeneration: 4,
+            parentLogicalHash: _hash('L'),
+            nativeSessionId: 'synthetic-session',
+          );
+      expect(
+        validate(native.CloudSyncDependencyParentResult(target: target())),
+        _hash('R'),
+      );
+      expect(
+        validate(
+          const native.CloudSyncDependencyParentResult(
+            failureCode: api.CloudSyncTransientFailureCode.invalidRequest,
+          ),
+        ),
+        isNull,
+      );
+      for (final changed in [
+        target(sourceChange: _hash('X')),
+        target(sourceRecord: _hash('X')),
+        target(sourceGeneration: 2),
+        target(messageGeneration: 3),
+        target(parentLogical: _hash('X')),
+        target(physical: 'raw-record-name'),
+        target(session: 'stale-session'),
+        target(binding: ''),
+      ]) {
+        expect(
+          () =>
+              validate(native.CloudSyncDependencyParentResult(target: changed)),
+          throwsStateError,
+        );
+      }
+      expect(
+        () => validate(const native.CloudSyncDependencyParentResult()),
+        throwsStateError,
+      );
+      expect(
+        () => validate(
+          native.CloudSyncDependencyParentResult(
+            target: target(),
+            failureCode: api.CloudSyncTransientFailureCode.invalidRequest,
+          ),
+        ),
+        throwsStateError,
+      );
+    },
+  );
+
   const parentGuid = 'aabbccdd-1122-4333-8444-5566778899aa';
   const generation = 3;
   final parentHash = _hash('L');
@@ -331,7 +409,7 @@ void main() {
     'replay': store.box<CloudSemanticReplayEntity>().count(),
   });
 
-  Map<String, Object?> observe({int epoch = generation}) {
+  Map<String, Object?> observe({int epoch = generation, String? physicalHash}) {
     final before = fingerprint();
     try {
       final result = observeCloudSyncRetainedMessageParent(
@@ -340,6 +418,7 @@ void main() {
         generation: epoch,
         logicalParentHash: parentHash,
         canonicalParentGuid: parentGuid,
+        locatedParentRecordHash: physicalHash,
       );
       expect(
         result.values.every((value) => value is int || value is bool),
@@ -385,6 +464,44 @@ void main() {
       expect(result['parent_case_variant_count'], 0);
       expectNoOwnership(result);
       expect(result.containsKey('parent_mapped_inbox_present'), isFalse);
+    },
+  );
+
+  test(
+    'native physical locator finds retained evidence without inventing a map',
+    () {
+      seedInbox(sequence: 8, change: 'N', excluded: true);
+      seedInbox(
+        owner: scopeFor('B'),
+        sequence: 99,
+        change: 'Z',
+        tombstone: true,
+      );
+      final result = observe(physicalHash: _hash('R'));
+      expect(result['parent_row_count'], 0);
+      expect(result['parent_snapshot_count'], 0);
+      expect(result['parent_map_count'], 0);
+      expect(result['parent_physical_lookup_used'], isTrue);
+      expect(result['parent_physical_inbox_present'], isTrue);
+      expect(result['parent_mapped_inbox_present'], isFalse);
+      expect(result['parent_locator_matches_map'], isFalse);
+      expect(result['parent_latest_excluded'], isTrue);
+      expect(result['parent_latest_is_save'], isTrue);
+      expect(result['parent_map_matches_latest'], isFalse);
+    },
+  );
+
+  test(
+    'unobserved physical locator is not remote absence or map ownership',
+    () {
+      seedMap();
+      seedInbox();
+      final result = observe(physicalHash: _hash('Q'));
+      expect(result['parent_physical_lookup_used'], isTrue);
+      expect(result['parent_physical_inbox_present'], isFalse);
+      expect(result['parent_locator_matches_map'], isFalse);
+      expect(result.containsKey('parent_map_matches_latest'), isFalse);
+      expect(() => observe(physicalHash: 'raw-record'), throwsStateError);
     },
   );
 
