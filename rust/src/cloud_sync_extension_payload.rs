@@ -38,7 +38,7 @@ use plist::{
     stream::{Event, Reader},
     Dictionary, Value,
 };
-use rustpush::{BalloonLayout, KeyedArchive, NSURL};
+use rustpush::{KeyedArchive, NSURL};
 
 type Failure = ExtensionPayloadFailure;
 type Result<T> = std::result::Result<T, Failure>;
@@ -214,8 +214,18 @@ fn extension_field_wire_shape(value: Option<&Value>) -> &'static str {
     }
 }
 
-fn required_extension_name(dict: &Dictionary) -> Result<String> {
-    let result = required(dict, "an").and_then(text).map(str::to_owned);
+fn optional_display_text(dict: &Dictionary, key: &str) -> Result<String> {
+    // CloudKit may omit display labels. The existing renderer/JSON schema uses
+    // an empty string for no label; keep the original presence in protected
+    // source. A present wrong type or oversized value is never defaulted away.
+    dict.get(key)
+        .map(text)
+        .transpose()
+        .map(|value| value.unwrap_or_default().to_owned())
+}
+
+fn extension_display_name(dict: &Dictionary) -> Result<String> {
+    let result = optional_display_text(dict, "an");
     if result.is_err() {
         // Only inspect fixed known fields after archive graph validation. Never
         // enumerate arbitrary keys or emit class names, names, URLs or raw bytes.
@@ -243,7 +253,7 @@ fn project(
     // Ordinary extra app/userInfo fields are ignored like legacy serde. The
     // graph preflight budgets them and protected source remains untouched.
     *stage = ExtensionDecodeStage::Name;
-    let name = required_extension_name(dict)?;
+    let name = extension_display_name(dict)?;
     *stage = ExtensionDecodeStage::AppId;
     let app_id = dict
         .get("appid")
@@ -311,24 +321,18 @@ fn project(
             }
             let info = dictionary(info)?;
             class_is(info, &["NSDictionary", "NSMutableDictionary"])?;
-            // Reuse the exact existing serde layout field contract.
-            let layout: BalloonLayout = plist::from_value(root).map_err(|_| Failure::Malformed)?;
-            let BalloonLayout::TemplateLayout {
-                image_subtitle,
-                image_title,
-                caption,
-                secondary_subcaption,
-                tertiary_subcaption,
-                subcaption,
-                ..
-            } = layout;
+            // A template's text labels are optional display data, not identity.
+            // Preserve the established archive keys and renderer shape while
+            // allowing omissions; do not require the legacy live-push serde
+            // struct's six Strings in a sparse CloudKit archive. Class/layout,
+            // present-value types and all archive budgets remain mandatory.
             Some(ExtensionTemplateMetadata {
-                image_subtitle,
-                image_title,
-                caption,
-                secondary_subcaption,
-                tertiary_subcaption,
-                subcaption,
+                image_subtitle: optional_display_text(info, "image-subtitle")?,
+                image_title: optional_display_text(info, "image-title")?,
+                caption: optional_display_text(info, "caption")?,
+                secondary_subcaption: optional_display_text(info, "secondary-subcaption")?,
+                tertiary_subcaption: optional_display_text(info, "tertiary-subcaption")?,
+                subcaption: optional_display_text(info, "subcaption")?,
             })
         }
         (Some(kind), None) if text(kind)? != "MSMessageTemplateLayout" => {
@@ -879,7 +883,7 @@ mod tests {
             let fields = root.as_dictionary_mut().unwrap();
             fields.insert("an".into(), value.clone());
             assert_eq!(
-                required_extension_name(fields),
+                extension_display_name(fields),
                 text(&value).map(str::to_owned),
             );
         }
@@ -887,21 +891,20 @@ mod tests {
         let mut root = balloon();
         root.as_dictionary_mut().unwrap().remove("an");
         let mut stage = ExtensionDecodeStage::Complete;
-        assert_eq!(
-            decode_extension_payload_inner(
-                &encode(&archived(root)),
-                "com.example.synthetic",
-                &mut stage,
-            ),
-            Err(Failure::Malformed),
-        );
-        assert_eq!(stage, ExtensionDecodeStage::Name);
+        let metadata = decode_extension_payload_inner(
+            &encode(&archived(root)),
+            "com.example.synthetic",
+            &mut stage,
+        )
+        .unwrap();
+        assert!(metadata.name.is_empty());
+        assert_eq!(stage, ExtensionDecodeStage::Complete);
         let mut root = balloon();
         root.as_dictionary_mut()
             .unwrap()
             .insert("an".into(), s(&"x".repeat(MAX_STRING_BYTES + 1)));
         assert_eq!(
-            required_extension_name(root.as_dictionary().unwrap()),
+            extension_display_name(root.as_dictionary().unwrap()),
             Err(Failure::LimitExceeded)
         );
     }
@@ -1077,6 +1080,78 @@ mod tests {
             format!("{metadata:?}"),
             "ExtensionPayloadMetadata([redacted])"
         );
+    }
+
+    #[test]
+    fn absent_display_name_and_sparse_template_preserve_renderable_content() {
+        let mut root = balloon();
+        let fields = root.as_dictionary_mut().unwrap();
+        fields.remove("an");
+        fields.insert("ldtext".into(), s("Synthetic heading text"));
+        fields.insert("layoutClass".into(), s("MSMessageTemplateLayout"));
+        fields.insert(
+            "userInfo".into(),
+            dict(&[
+                ("$class", s("NSDictionary")),
+                ("caption", s("Synthetic caption")),
+            ]),
+        );
+        let metadata = decode(root.clone()).unwrap();
+        assert!(metadata.name.is_empty());
+        assert!(metadata.app_id.is_none());
+        assert_eq!(metadata.balloon.url, "app:synthetic");
+        assert_eq!(
+            metadata.balloon.ld_text.as_deref(),
+            Some("Synthetic heading text")
+        );
+        let layout = metadata.balloon.layout.as_ref().unwrap();
+        assert_eq!(layout.caption, "Synthetic caption");
+        for value in [
+            &layout.image_title,
+            &layout.image_subtitle,
+            &layout.subcaption,
+            &layout.secondary_subcaption,
+            &layout.tertiary_subcaption,
+        ] {
+            assert!(value.is_empty());
+        }
+        assert_eq!(
+            parse_generated_metadata_json(&serialize_generated_metadata_json(&metadata).unwrap())
+                .unwrap(),
+            metadata
+        );
+
+        // Optional display fields never turn a missing required URL into success.
+        root.as_dictionary_mut().unwrap().remove("URL");
+        assert_eq!(decode(root), Err(Failure::Malformed));
+    }
+
+    #[test]
+    fn sparse_template_rejects_present_wrong_types_and_unknown_layouts() {
+        for key in [
+            "image-subtitle",
+            "image-title",
+            "caption",
+            "subcaption",
+            "secondary-subcaption",
+            "tertiary-subcaption",
+        ] {
+            let mut root = balloon();
+            let fields = root.as_dictionary_mut().unwrap();
+            fields.remove("an");
+            fields.insert("layoutClass".into(), s("MSMessageTemplateLayout"));
+            fields.insert(
+                "userInfo".into(),
+                dict(&[("$class", s("NSDictionary")), (key, Value::Boolean(false))]),
+            );
+            assert_eq!(decode(root), Err(Failure::Malformed));
+        }
+        let mut root = balloon();
+        let fields = root.as_dictionary_mut().unwrap();
+        fields.remove("an");
+        fields.insert("layoutClass".into(), s("FutureLayout"));
+        fields.insert("userInfo".into(), dict(&[("$class", s("NSDictionary"))]));
+        assert_eq!(decode(root), Err(Failure::UnsupportedContent));
     }
 
     #[test]
@@ -1441,26 +1516,17 @@ mod tests {
     }
 
     #[test]
-    fn unknown_or_incomplete_template_cannot_be_silently_erased() {
-        for kind in ["FutureLayout", "MSMessageTemplateLayout"] {
+    fn incomplete_template_structure_cannot_be_silently_erased() {
+        for has_layout_class in [true, false] {
             let mut root = balloon();
             let d = root.as_dictionary_mut().unwrap();
-            d.insert("layoutClass".into(), s(kind));
-            d.insert(
-                "userInfo".into(),
-                dict(&[
-                    ("$class", s("NSDictionary")),
-                    ("caption", s("only one caption")),
-                ]),
-            );
-            assert_eq!(
-                decode(root).unwrap_err(),
-                if kind == "FutureLayout" {
-                    Failure::UnsupportedContent
-                } else {
-                    Failure::Malformed
-                }
-            );
+            // Text labels can be absent, but the layout/userInfo pair cannot.
+            if has_layout_class {
+                d.insert("layoutClass".into(), s("MSMessageTemplateLayout"));
+            } else {
+                d.insert("userInfo".into(), dict(&[("$class", s("NSDictionary"))]));
+            }
+            assert_eq!(decode(root).unwrap_err(), Failure::Malformed);
         }
     }
 

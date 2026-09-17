@@ -114,6 +114,42 @@ void main() {
     expect(app.isLive, isFalse);
   });
 
+  test(
+    'empty native display labels retain template content and wire identity',
+    () {
+      final value = _fixture();
+      value['version'] = 2;
+      value['context'] = {
+        'role': 'base',
+        'session_guid': 'synthetic-wire-session',
+        'session_logical_key_hash': 'a' * 43,
+      };
+      final metadata = value['metadata'];
+      metadata['name'] = '';
+      metadata['app_id'] = null;
+      for (final key in [
+        'image_subtitle',
+        'image_title',
+        'secondary_subcaption',
+        'tertiary_subcaption',
+        'subcaption',
+      ]) {
+        metadata['balloon']['layout'][key] = '';
+      }
+      final prepared = _parse(value);
+      final app = prepared.toPayloadData().appData!.single;
+      expect(app.appName, '');
+      expect(app.appId, isNull);
+      expect(app.url, 'app:synthetic');
+      expect(app.ldText, 'Synthetic description');
+      expect(app.userInfo!.caption, 'c');
+      expect(prepared.metadata.bundleId, _bundle);
+      expect(prepared.sessionContext!.sessionGuid, 'synthetic-wire-session');
+      expect(prepared.sessionContext!.sessionLogicalKeyHash, 'a' * 43);
+      expect(app.session, _uuid);
+    },
+  );
+
   test('valid empty text and icon stay empty, not null', () {
     final value = _fixture();
     value['metadata']['name'] = '';
