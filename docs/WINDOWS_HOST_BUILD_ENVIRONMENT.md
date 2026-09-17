@@ -207,6 +207,14 @@ candidate counts and parent flags before inferring a Chat or timestamp defect.
 This probe never admits a row or supplies authority to mutate it. Checkpoint,
 outbox and sampled-inbox checks are not a byte-for-byte whole-database comparison.
 
+September16 adds an explicitly opt-in cached native parent locator. Its generated
+bridge is incompatible with the previous aa953639a runtime: qualify the matching
+ARM64 artifact before using `OPENBUBBLES_INSPECT_PARENT_LOCATORS=1`. The private
+retained-inspection wrapper exposes this as `-LocateParents` and requires the
+exact native source, pilot, archive and provenance hashes. A successful locator
+only identifies the physical record to inspect; it does not prove remote
+absence or authorize projection. See the treemap for the active qualification.
+
 Prepend the qualified runtime folder to PATH for the test process so ObjectBox
 5.3.2 ARM64 is found. The initial missing-path attempt failed with error 126 before
 the account operation. After correcting PATH, local projection startup passed in

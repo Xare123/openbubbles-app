@@ -6521,3 +6521,62 @@ Historical tests do not establish current-device behavior.
   Received-group draft, full write/receive, Pixel lifecycle and independent-client
   display gates remain open. No main live/test process or active helper remains;
   C: free approximately 29 GiB at the last checkpoint. No additional deletion.
+
+### September 16 authenticated parent locator and ARM64 qualification
+
+- Previous turn was progress (scope-race repair and dependency evidence). This
+  turn implemented an actual ObjectBox parent correlation helper and reused
+  Popper for six synthetic database cases. Parent reviewed them, added physical
+  locator/result-binding cases, and all nine helper cases plus 25 harness cases
+  passed. Synthetic test stores were removed by their scoped teardown; no copy
+  of personal data or extra worktree was created.
+- Live observation 07740683eea5012339db223b59a80a8c, source a7b426a9b/native
+  aa953639a, examined 37 records. Every sampled ready child (five extension
+  updates and eight attachments) has zero exact/case-variant parent rows,
+  current Message snapshots and record maps. The journal cannot be joined
+  through a nonexistent map. Source checkpoints/outbox and sampled inbox
+  metadata stayed unchanged, raw output removed, owned processes stopped and
+  the profile reservation released. Remote absence is still unproven.
+- Native source 8859a4f1aeac7c83554a3ca805177936340cabc0 adds a separate
+  cloud_sync_dependency API module. It decodes only the authenticated protected
+  child with cached PCS, selects a declared Message parent, recomputes its logical
+  identity, derives Apple's exact salted record name inside Rust, and returns
+  keyed metadata only. Account/client/store/container/source are revalidated
+  after awaited work. It performs no remote fetch/save/delete, PCS warmup,
+  staging or projection; exact remote lookup remains unimplemented.
+- Popper supplied seven behavioral native tests and one cached-path contract.
+  They exercise real canonical constructors, independent balloon/session IDs,
+  replies/reactions/attachments, stale-install and substituted hashes, exact
+  GUID case and container salt. Parent reviewed, wired the test module and
+  qualified it in hosted run 35163901886. All 753 app, 351 rustpush, 11 Anisette
+  provider and 40 protector cases passed. The helper is closed/not_found.
+- Run 35163901886 completed at 2026-09-17T00:05:49Z. Artifact10474590417 is
+  394079 bytes, archive SHA256
+  f13a2b6ecf2c1c4b543eaac11c7eaeac5e51b2c25bb50becfdb5c717c98d739b.
+  Exact eight-member whitelist and per-member hashes verified before import.
+  New member is lib/src/rust/api/cloud_sync_dependency.dart; both generated
+  guards pass. Committed-binding reproducibility was explicitly skipped, not
+  claimed. Evidence staged under build-evidence/dependency-locator-35163901886.
+- Dart integration 3c780a8d7bd1459988a95d4140942ce39ff63992 is committed/pushed
+  only to the internal fork source branch. Two initial test-host typing errors
+  (Object versus Arc client and BigInt versus platform i64) were corrected before
+  the 34-case passing run. Analysis has only eight existing harness style infos.
+  Locator results must match child IDs, generations, parent key and session;
+  mixed/error/malformed results cannot select physical journal evidence.
+- Windows pilot bb0411345 adds exact native test names, the new database test
+  and source manifests only. A transient push failed; a later non-fast-forward
+  showed the shared remote advanced to d5533dd1e. Parent preserved that branch
+  and published its known Windows lineage under the separate
+  agent/windows-dependency-locator-20260916 branch. Existing local asset_graph
+  deletion was not staged, restored or removed. No GCP/signing policy changed.
+- Windows run 35165381313 is now active for app3c780a8d7/pilotbb0411345,
+  native-test-host/read-only. ValidateOnly passed. Never pair its new bindings
+  with the installed aa953639a DLL. Follow the existing job, verify artifact
+  provenance, import/sign under a reserved window, then use the private wrapper's
+  explicit source/native/pilot/archive/provenance pins plus LocateParents.
+  Wrapper parse and old 37-case report validation passed; the locator itself
+  has not yet been exercised on the live Windows profile or Pixel.
+- Parent request wrapper remains at build-evidence/windows-reader-35154038683/
+  run-retained-inspection.ps1. Main local processes are idle; Linux watch75930
+  completed and no helper remains active. C: free about27.8GiB. No extra cleanup.
+  Full received/group/write/device/public-release gates remain open.

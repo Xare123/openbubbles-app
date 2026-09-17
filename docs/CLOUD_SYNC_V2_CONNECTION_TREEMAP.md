@@ -52,7 +52,48 @@ back to legacy sync, clear a cursor, or continue under a replacement account.
 
 ## Current candidate
 
-### Active Windows qualification and storage checkpoint
+### Current pending runtime qualification, September 16
+
+App integration **3c780a8d7bd1459988a95d4140942ce39ff63992** includes a cached-only
+native parent locator from source **8859a4f1aeac7c83554a3ca805177936340cabc0**.
+The locator derives an exact keyed Message record identity from a freshly
+authenticated child (extension/reply/reaction/attachment). No caller-supplied
+GUID, remote fetch, file staging, cursor change, projection or write is added.
+The opt-in Windows inspector validates its child/generation/session binding,
+then can query the physical journal even when no canonical map exists.
+
+Hosted native run **35163901886 passed**: 753 app tests (including eight new
+locator cases), 351 rustpush, 11 authentication-provider and 40 protector tests.
+Artifact 10474590417 has eight generated members, all verified and imported;
+SHA256 `f13a2b6ecf2c1c4b543eaac11c7eaeac5e51b2c25bb50becfdb5c717c98d739b`.
+Both generated guards pass. Reproducibility against the pre-generation commit
+was deliberately skipped. Targeted Dart integration passed 34 cases; analysis
+has no errors/warnings, with eight pre-existing harness style infos.
+
+**Windows run 35165381313 is active**, source 3c780a8d7, isolated pilot
+bb0411345b3396dbceb5231aef6f6622f8801a85 on
+`agent/windows-dependency-locator-20260916`. This adds the eight exact ARM64
+selector tests, nine parent-observer tests and source-provenance inputs to the
+existing GitHub-hosted qualification. ValidateOnly passed. The shared GCE pilot
+remote advanced independently to d5533dd1e; it was not merged or overwritten.
+Its pre-existing local asset_graph deletion remains untouched.
+
+**Installed Windows native remains aa953639a**, detailed below. Do not run the
+new bindings against it. Follow the existing Windows job, verify/import/sign
+only its exact completed artifact, then reserve one bounded profile window.
+The private retained-inspection wrapper now accepts explicit native/pilot/
+archive/provenance pins and `-LocateParents`; its old defaults deliberately do
+not authorize the new host. No new APK or paid GCE run from this task.
+
+Latest observation 07740683eea5012339db223b59a80a8c examined 37 cases: all five
+sampled extension parents and eight attachment owners have zero exact/case-
+variant local rows, current snapshots and maps. No physical journal join was
+possible without the locator. This is not proof of remote absence. Next use the
+qualified locator to find that exact retained physical record and classify its
+current version; only an unobserved parent justifies designing an exact fetch.
+No helper or live-profile process is active. The profile reservation is released.
+
+### Last installed Windows qualification and storage baseline
 
 Product/native integration16430e0f2 is unchanged. Fixture-only source
 aa953639a3c7dfb5b6f40fcb742b3f60b9b81953 corrects a remaining generation1 key
