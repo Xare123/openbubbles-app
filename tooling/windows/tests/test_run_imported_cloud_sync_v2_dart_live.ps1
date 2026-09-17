@@ -199,6 +199,18 @@ Assert-Check 'extension-name-shapes-closed-aggregates' (
 Assert-Check 'native-shape-diagnostics-redacted' (
     -not (($nativeDiagnostics | ConvertTo-Json -Depth 8) -match 'must-not-escape'))
 
+$stderrDiagnostics = Get-DartApplierContentFreeNativeDiagnostics `
+    -Stdout 'Flutter test passed without native log output' `
+    -Stderr @'
+DEBUG rust_lib_bluebubbles::cloud_sync_transient_bridge > CloudKit V2 extension name contract name_shape=absent url_shape=ns_url app_id_shape=other_scalar display_shape=string layout_shape=string user_info_shape=ns_dictionary secret=must-not-escape
+unrelated private-message-content
+'@
+Assert-Check 'native-stderr-shapes-not-lost-or-exposed' (
+    $stderrDiagnostics.extension_name_shapes.Count -eq 1 -and
+    $stderrDiagnostics.extension_name_shapes[0].count -eq 1 -and
+    -not (($stderrDiagnostics | ConvertTo-Json -Depth 8) -match
+        'must-not-escape|private-message-content'))
+
 $first = [pscustomobject]@{
     fetched = 0; applied = 0; all_zones_empty_terminal = $true
     chat_order_cache_repaired = 0; outbox_before = 3; outbox_after = 3

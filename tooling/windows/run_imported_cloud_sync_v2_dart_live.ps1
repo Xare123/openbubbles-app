@@ -489,7 +489,11 @@ function ConvertTo-DartApplierDiagnosticCountRows {
 }
 
 function Get-DartApplierContentFreeNativeDiagnostics {
-    param([Parameter(Mandatory)][string] $Stdout)
+    param([Parameter(Mandatory)][string] $Stdout, [string] $Stderr = '')
+    # pretty_env_logger writes native diagnostics to stderr. Only examining
+    # Flutter stdout loses the actual decoder failure while its test still passes.
+    # Both streams are bounded by the launcher; only closed aggregates leave here.
+    $Stdout = $Stdout + "`n" + $Stderr
     $retainedShapes = @{}
     $retainedRouteShapes = @{}
     $systemEventShapes = @{}
@@ -770,7 +774,8 @@ function Invoke-DartApplierPass {
                 Fail-DartApplierLive 'dart_applier_status_detail_rejected'
             }
         }
-        $nativeDiagnostics = Get-DartApplierContentFreeNativeDiagnostics -Stdout $stdout
+        $nativeDiagnostics = Get-DartApplierContentFreeNativeDiagnostics `
+            -Stdout $stdout -Stderr (Get-Content -LiteralPath $rawErr -Raw)
         return [pscustomobject][ordered]@{
             pass = $Pass
             launch_id = $launchId
