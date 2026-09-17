@@ -1898,6 +1898,89 @@ class CloudSyncV2WindowsHarnessState extends State<CloudSyncV2WindowsHarness> {
                     canonicalParentGuid: parentGuid,
                     locatedParentRecordHash: physicalParentHash,
                   ));
+                  if (physicalParentHash != null) {
+                    final parentRows = (Database.store.box<CloudInboxChangeEntity>().query(
+                      CloudInboxChangeEntity_.scopeKey.equals(cloudSyncPersistentScopeKey(parentScope))
+                        .and(CloudInboxChangeEntity_.accountFingerprint.equals(auth.accountFingerprint))
+                        .and(CloudInboxChangeEntity_.zone.equals(parentScope.zone))
+                        .and(CloudInboxChangeEntity_.generation.equals(parentCheckpoint.generation))
+                        .and(CloudInboxChangeEntity_.serverRecordIdHash.equals(physicalParentHash)),
+                    )..order(CloudInboxChangeEntity_.fetchSequence, flags: Order.descending))
+                      .build()..limit = 2;
+                    late final List<CloudInboxChangeEntity> versions;
+                    try { versions = parentRows.find(); } finally { parentRows.close(); }
+                    if (versions.isEmpty) {
+                      item['parent_decode'] = 'unobserved';
+                    } else if (versions.length == 2 && versions[0].fetchSequence == versions[1].fetchSequence) {
+                      item['parent_decode'] = 'ambiguous_version';
+                    } else {
+                      final parentRow = versions.first;
+                      if (parentRow.isTombstone || parentRow.changeType == 'delete') {
+                        item['parent_decode'] = 'tombstone';
+                      } else if (parentRow.changeType != 'save' || parentRow.encryptedPayloadRef == null ||
+                          parentRow.payloadSha256 == null || parentRow.etagHash == null ||
+                          parentRow.preflightCategory != null || parentRow.preflightCode != null ||
+                          parentRow.status < 0 || parentRow.status >= CloudInboxStatus.values.length) {
+                        item['parent_decode'] = 'unreadable_cached_row';
+                      } else {
+                        try {
+                          final parentDecoded = await RustCloudSemanticDecoder(
+                            readAuthSnapshot: () async => auth,
+                            storageDirectory: fs.appDocDir.path,
+                            nativeWriterPauseToken: pause,
+                            diagnosticRecorder: (label) => labels.add('parent_$label'),
+                          ).decode(CloudInboxEntry(
+                            scope: parentScope,
+                            sequence: parentRow.fetchSequence,
+                            generation: parentRow.generation,
+                            batchId: parentRow.batchId,
+                            status: CloudInboxStatus.values[parentRow.status],
+                            attemptCount: parentRow.retryCount,
+                            createdAt: DateTime.fromMillisecondsSinceEpoch(parentRow.createdAtMs, isUtc: true),
+                            change: CloudFetchedChange(
+                              changeId: parentRow.changeIdHash,
+                              recordIdHash: parentRow.serverRecordIdHash,
+                              etagHash: parentRow.etagHash,
+                              type: CloudChangeType.save,
+                              encryptedServerRecordId: parentRow.encryptedServerRecordId,
+                              protectedSystemFieldsReference: parentRow.protectedSystemFieldsRef,
+                              encryptedPayloadReference: parentRow.encryptedPayloadRef,
+                              payloadSha256: parentRow.payloadSha256,
+                              serverModifiedAt: cloudInboxCanonicalServerModifiedAt(parentRow),
+                            ),
+                          ));
+                          final parentPayload = parentDecoded.payload;
+                          final matches = parentPayload is CloudMessageEntityPayload &&
+                              parentPayload.canonicalGuid == parentGuid &&
+                              parentPayload.logicalEntityKeyHash == parentHash &&
+                              parentDecoded.scope == parentScope &&
+                              parentDecoded.generation == parentCheckpoint.generation;
+                          item['parent_decode'] = matches ? 'ready' : 'identity_mismatch';
+                          if (matches) {
+                            item['parent_body_present'] = parentPayload.body?.isNotEmpty ?? false;
+                            item['parent_extension_role'] = parentPayload.extensionSession?.role.name ?? 'none';
+                            item['parent_self_dependency'] = parentPayload.semanticParentLogicalKeyHash == parentHash;
+                          }
+                        } on CloudSemanticOutOfScopeServiceDisposition catch (excluded) {
+                          item['parent_decode'] = excluded.safeCode;
+                        } on CloudSemanticDecodeFailure catch (failure) {
+                          if (failure.category == CloudFailureCategory.authorization ||
+                              cloudSyncIsResetRequiredSafeCode(failure.safeCode)) {
+                            rethrow;
+                          }
+                          item['parent_decode'] = cloudSyncV2SafeFailureCodeForCandidate(failure.safeCode);
+                          item['parent_decode_category'] = failure.category.name;
+                        }
+                        final afterParent = Database.store.box<CloudInboxChangeEntity>().get(parentRow.id);
+                        if (afterParent == null || afterParent.status != parentRow.status ||
+                            afterParent.retryCount != parentRow.retryCount ||
+                            afterParent.updatedAtMs != parentRow.updatedAtMs ||
+                            afterParent.payloadSha256 != parentRow.payloadSha256) {
+                          throw StateError('cloud_sync_windows_dev_observation_changed');
+                        }
+                      }
+                    }
+                  }
                 } finally {
                   parentCheckpointQuery.close();
                 }
