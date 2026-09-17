@@ -215,6 +215,13 @@ exact native source, pilot, archive and provenance hashes. A successful locator
 only identifies the physical record to inspect; it does not prove remote
 absence or authorize projection. See the treemap for the active qualification.
 
+For parent-locator runtime3c780a8d7, the bundle verifier/importer additionally
+requires `-ExpectedNativeDiagnosticTestCount 13` (the original five plus eight
+new exact selector cases). Default5 is intentionally retained for old rollback
+bundles. Never derive this expectation from the downloaded manifest. Tooling
+may be loaded before selecting a clean exact native revision; the import still
+checks that exact source, archive, provenance, signer and vendor ObjectBox pin.
+
 Prepend the qualified runtime folder to PATH for the test process so ObjectBox
 5.3.2 ARM64 is found. The initial missing-path attempt failed with error 126 before
 the account operation. After correcting PATH, local projection startup passed in

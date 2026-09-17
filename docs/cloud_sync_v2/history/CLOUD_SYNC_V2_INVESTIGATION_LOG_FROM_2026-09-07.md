@@ -6585,3 +6585,65 @@ Historical tests do not establish current-device behavior.
   packaging. Watch session3481 follows run35165381313; no new runtime is installed.
   Documentation-only descendant8b5598b9f was pushed after that source pin passed,
   so the running job still builds exact app3c780a8d7. No new dispatch is needed.
+
+### September 16 live parent classification identifies rejected headings
+
+- Previous turn made progress and left verified Windows run35165381313 active.
+  While it ran, Dart-only commitde1f9a2bd added exact cached-parent re-decode to
+  the bounded observer. Its 25 harness cases passed; analysis has only eight
+  pre-existing style infos. It preserves native identity checks and reports
+  parent disposition separately from the child, with no projection or fetch.
+- Windows35165381313 passed in24m36s for app3c780a8d7/pilotbb0411345. Artifact
+  10474154655 is35575387bytes, outer SHA256
+  7907b0534ca6171048f6da9986d0b75747a9d32cf7632d055ba99483599b01e7.
+  Inner archive6c5a5c6eca087f901177899094db5c53d57c168fd8ef0f3acdefa81ba7130947;
+  provenancecc6042f8cdd597a3d793e4f3765995933711f8320c7ca18819b00a4806e5e142.
+  All61 input hashes matched declared Git blobs (2 raw,59 WindowsCRLF); six
+  recursive submodule pins and13 logs verified. The actual ARM64 log records
+  all eight locator tests;694 Dart and51 encoder cases passed.
+- The old verifier's exact diagnostic count5 rejected the new13-case suite.
+  Tooling71809eb67 adds a trusted caller parameter, preserving default5 and
+  requiring explicit13 for this candidate. Synthetic verification23/import36
+  cases passed, including refusal to infer counts from bundle metadata and
+  forwarding through dot-source parameter preservation. No check was disabled.
+- The reviewed new tooling was loaded, clean checkout3c780a8d7 selected for the
+  unchanged exact-source import guard, then the original branch/HEAD restored.
+  Existing signer signed only EXE/DLL, not vendor ObjectBox. Signed DLL:
+  9aadb2bcc9c4abd040977c8db28ecd243736b63ff2275eada7296d6f75bbe849;
+  EXE987364eefa5c1808441659691e6e40f0acfe334065df90aef95b23f1c103b046.
+  Old aa953 runtime archive/provenance retained; no account or schema change.
+  Detailed receipt: build-evidence/windows-parent-locator-35165381313/verification.json.
+- Live cached-only observation78a51359654e103f086601d27790bb83 used Dart71809eb67
+  and native3c780a8d7. All37 cases completed. The five extension children locate
+  cached retained parents, rejected as unsupported_association_type. Two of eight
+  attachment owners locate excluded SMS-family records; six are unobserved in
+  the current journal. No remote-absence, restored-message or child-exclusion
+  claim follows automatically. Selected inbox/checkpoint/outbox checks passed;
+  raw output deleted and no owned tester remained. Profile window released.
+- Same-run native logs contain seven type3/bare-reference shapes, matching the
+  five parent re-decodes and two previously sampled type3 failures. Both range
+  fields are present; text/attributed-body present; extension_class=apple_other;
+  no reply. Exact range values and reference equality were not exposed. Only
+  fixed, content-free shape lines were inspected, not message text or targets.
+- Agent Reach's GitHub backend provided primary-source corroboration, reviewed
+  by the parent: Beeper maps3 to heading and preserves linkedMessageID in its
+  heading renderer. Fixtures prove own GUID can differ from the associated GUID,
+  and show SQLite ranges(0,-1) and(0,0). These are not CloudKit protobuf fixtures.
+  Do not impose self-reference/zero-only ranges or normalize a sentinel by guess.
+  Sources: [type mapping](https://github.com/beeper/platform-imessage/blob/f28eab5ab4e5f874a4f29d0504b612e8c1accf03/src/IMessage/Sources/IMessage/Mappers/MessageMapperTypes.swift#L206-L210),
+  [heading handler](https://github.com/beeper/platform-imessage/blob/f28eab5ab4e5f874a4f29d0504b612e8c1accf03/src/IMessage/Sources/IMessage/Mappers/MessageMapper%2BAssociated.swift#L25-L62),
+  [associated fixture](https://github.com/beeper/platform-imessage/blob/f28eab5ab4e5f874a4f29d0504b612e8c1accf03/src/IMessage/Sources/IMessageTests/Fixtures/message_gamepigeon_associated.json#L6-L36),
+  [invite fixture](https://github.com/beeper/platform-imessage/blob/f28eab5ab4e5f874a4f29d0504b612e8c1accf03/src/IMessage/Sources/IMessageTests/Fixtures/message_gamepigeon_invite.json#L6-L11).
+- Pending implementation: explicit type3 heading representation through the
+  supported app carrier, retaining its own identity and exact linked GUID/range
+  fields, without making a reaction or unconditional causal/base dependency.
+  Add native/Dart tests for non-self linkage and opaque range preservation,
+  then retry the cached parent and descendants. No blanket reclassification.
+- Popper's separate received-group review found an original_group_id-only alias
+  can select two distinct group routes. Parent confirmed the OR-match in draft
+  projection code; draft6c66 remains unmerged. Require a unique authenticated
+  owner, not title/member heuristics, and frozen direct-v1 bytes before integration.
+  Both bounded reviews were accepted as findings, not deployed fixes; helper closed.
+- Windows watch3481 is terminal. No active main live/test process or helper;
+  C:free about27.3GiB. Updated native host stays available for compatible Dart
+  checks. Pixel, received/group/write and independent-client release gates remain.

@@ -52,7 +52,7 @@ back to legacy sync, clear a cursor, or continue under a replacement account.
 
 ## Current candidate
 
-### Current pending runtime qualification, September 16
+### Current live-qualified parent locator, September 16
 
 App integration **3c780a8d7bd1459988a95d4140942ce39ff63992** includes a cached-only
 native parent locator from source **8859a4f1aeac7c83554a3ca805177936340cabc0**.
@@ -70,30 +70,48 @@ Both generated guards pass. Reproducibility against the pre-generation commit
 was deliberately skipped. Targeted Dart integration passed 34 cases; analysis
 has no errors/warnings, with eight pre-existing harness style infos.
 
-**Windows run 35165381313 is active**, source 3c780a8d7, isolated pilot
+**Windows run 35165381313 passed**, source 3c780a8d7, isolated pilot
 bb0411345b3396dbceb5231aef6f6622f8801a85 on
 `agent/windows-dependency-locator-20260916`. This adds the eight exact ARM64
 selector tests, nine parent-observer tests and source-provenance inputs to the
-existing GitHub-hosted qualification. ValidateOnly and hosted source contracts
-passed; watch session3481 follows this exact run (do not dispatch a duplicate).
+existing GitHub-hosted qualification. It passed 694 Dart, 51 native encoder and
+13 native diagnostic cases, including all eight locator cases. All 61 source
+inputs, six submodule pins, 13 log hashes and three ARM64 binaries verified.
+Watch3481 is terminal; do not dispatch a duplicate.
 The shared GCE pilot
 remote advanced independently to d5533dd1e; it was not merged or overwritten.
 Its pre-existing local asset_graph deletion remains untouched.
 
-**Installed Windows native remains aa953639a**, detailed below. Do not run the
-new bindings against it. Follow the existing Windows job, verify/import/sign
-only its exact completed artifact, then reserve one bounded profile window.
-The private retained-inspection wrapper now accepts explicit native/pilot/
-archive/provenance pins and `-LocateParents`; its old defaults deliberately do
-not authorize the new host. No new APK or paid GCE run from this task.
+**Installed Windows native is now 3c780a8d7**, signed DLL SHA256
+`9aadb2bcc9c4abd040977c8db28ecd243736b63ff2275eada7296d6f75bbe849`.
+Existing signer only, vendor ObjectBox untouched; the prior aa953 bundle remains
+recoverable. Inner archive SHA256
+`6c5a5c6eca087f901177899094db5c53d57c168fd8ef0f3acdefa81ba7130947`,
+provenance `cc6042f8cdd597a3d793e4f3765995933711f8320c7ca18819b00a4806e5e142`.
+Import still checks exact source3c780a8d7. Updated verification tooling71809eb67
+takes explicit `-ExpectedNativeDiagnosticTestCount 13`; its old default5 remains
+for rollback archives. Verifier23 and importer36 synthetic cases passed.
+The private observation wrapper takes these exact pins plus `-LocateParents`.
+No new APK or paid GCE run from this task.
 
-Latest observation 07740683eea5012339db223b59a80a8c examined 37 cases: all five
-sampled extension parents and eight attachment owners have zero exact/case-
-variant local rows, current snapshots and maps. No physical journal join was
-possible without the locator. This is not proof of remote absence. Next use the
-qualified locator to find that exact retained physical record and classify its
-current version; only an unobserved parent justifies designing an exact fetch.
-No helper or live-profile process is active. The profile reservation is released.
+**LIVE-PROVEN** observation78a51359654e103f086601d27790bb83 (Dart71809eb67)
+located all 13 sampled ready children's physical parent identities. Five
+extension parents ARE cached, but the decoder rejects association type3. Two
+attachment parents decode as excluded SMS-family; six are unobserved in the
+current journal, not proved absent remotely. Checkpoints/outbox and observed
+inbox metadata were unchanged; raw output removed and process cleanup verified.
+
+**Next root repair: type-3 heading support.** Same-run native shape logs show
+bare association references, both range fields present, renderable text and an
+Apple non-URL extension. Reviewed Beeper source classifies3 as heading, not
+reaction. Its fixtures include different own/linked GUIDs and range lengths
+0 and -1 in SQLite, so do not reinterpret3 as ordinary0, impose self-reference,
+or infer CloudKit's unsigned range encoding. Represent heading/link metadata
+explicitly and preserve exact wire values; its link is not automatically a
+required parent or session-base identity. Cached parent decode, not another
+history sweep, is now the critical path. Detailed primary references are in
+the investigation log. Exact fetch is still needed only for unobserved parents.
+No helper or live-profile process is active; the profile window is released.
 
 ### Last installed Windows qualification and storage baseline
 
