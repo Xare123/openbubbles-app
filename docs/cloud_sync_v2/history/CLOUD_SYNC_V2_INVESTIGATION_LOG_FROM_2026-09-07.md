@@ -7067,3 +7067,14 @@ Historical tests do not establish current-device behavior.
   proposed read-only Found discovery/ordinary-reader ingress design with no
   equivalence/create authority; group capture and NotFound write rules unchanged.
   No implementation enabled. Helper closed; no unique files/worktree created.
+- GCE35192463601 completed successfully at exact f439/workflowfab604fc7. Whole
+  generated-tree reproduction and Rust bridge check passed.774 app Rust,
+  3946 Dart(+5 skips),14 semantic plus3 evidence PowerShell cases passed. Owner
+  verified each of the4 new native diagnostic tests once as `ok`, including
+  all4096 comparison inputs. VM lifetime15m53.746s, estimated compute$0.0758;
+  cleanup job succeeded, GCP inventory0 and GitHub runner count0. No retry, APK,
+  signing or live credentials. Parent independently saw overall success and0
+  repository runners. Windows35192422648 remains active; no new host installed.
+- New ADB inventory is empty. No phone restart/provisioning or account call was
+  attempted. All helper agents remain closed. Current goal turn made qualification
+  progress; no blocked/complete status asserted. C:about20.5GiB free, no deletion.

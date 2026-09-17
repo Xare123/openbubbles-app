@@ -59,19 +59,22 @@ back to legacy sync, clear a cursor, or continue under a replacement account.
   Original quarantine reason/category stays unchanged. Conversion detail is not
   attached to a later normalization/identity rejection. Media acceptance rules
   are intentionally unchanged; no owner/URL/key/signature values cross the bridge.
-- Dart decoder/diagnostic tests passed64; analysis clean. Native syntax parses;
-  execution awaits cloud qualification. Tests include4096 previous-rule comparison
-  combinations, strict structural failures and non-attribution after normalization.
+- Dart decoder/diagnostic tests passed64; analysis clean. GCE35192463601 now passed
+  full-tree binding reproduction,774 Rust/3946 Dart(+5 skips)/17 PowerShell cases.
+  All4 new native tests passed, including4096 previous-rule comparisons, strict
+  structural failures and non-attribution after normalization. The job's VM and
+  runner were removed; owner verified zero instances, parent verified zero runners.
+  Estimated compute$0.08. Windows qualification remains pending.
   Ptolemy's two-file Dart change was reviewed/corrected, closed and verified.
 - Keep installedb9 and its successful14-message/9-attachment recovery as the
   verified baseline. Do not run this new native boundary against that older DLL.
   Next: qualify matching native host, reserve the relay, re-observe the8 attachment
   malformed-record cases without projection, then repair the observed cause.
   No APK, live mutation, new profile or destructive cleanup is needed for this step.
-- Active exact-source jobs: Windows35192422648 onf21 and GCE35192463601 onfab604fc7,
-  both appf43919ba3cbf18599be8d1270924293cae339aae. Source gates passed; do not
-  dispatch duplicates or use installedb9 for changed native code. GCE owner
-  01a0ac53 monitors terminal cleanup/cost. No current live account reservation.
+- Active exact-source job: Windows35192422648 onf21, appf43919ba3cbf18599be8d1270924293cae339aae.
+  GCE35192463601 onfab604fc7 is complete. Do not dispatch duplicates or use
+  installedb9 for changed native code. Pixel is no longer listed by ADB; no
+  device action or private provisioning occurred. No current live reservation.
 - All current helpers are closed/verified. Sartre's source-backed lookup-location
   observation is retained in INCOMING_ARCHIVE_DESIGN.md as a proposed separation,
   not implemented group support. Parent rejected the broad "safe split" claim:
