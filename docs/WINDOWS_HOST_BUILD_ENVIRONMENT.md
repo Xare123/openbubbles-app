@@ -4,7 +4,7 @@ title: OpenBubbles Windows ARM64 Host Build Environment
 description: Verified toolchain layout and the non-obvious constraints for building the Rust bridge and running the test suites for Android, Windows ARM64, and Windows x64 from one Windows-on-ARM host.
 resource: openbubbles-app
 tags: [windows, arm64, x64, android, rust, objectbox, openssl, toolchain, testing]
-timestamp: 2026-09-13
+timestamp: 2026-09-16
 ---
 
 # OpenBubbles Windows ARM64 host build environment
@@ -25,20 +25,30 @@ Offline native import proof (no account/network calls):
 It uses a process-local secret environment variable, never a committed code.
 The signed installed3c780a8d7 DLL and matching generated API passed; eight
 protected files retained their hashes. No hardware/profile mutation occurred.
-The newer heading candidate d1734c01d failed native compile in35171127739.
-The missing identity branch and reviewed regressions are now source-implemented;
-377 affected Dart cases and two digest tests pass. Generated heading bindings
-have been imported, but the corrected candidate must not use or replace that
-host until native qualification and a matching Windows build pass.
+The heading candidate d1734c01d failed native compile in35171127739; corrected
+66658db67 passed Linux35173960820 and Windows35174173364. Windows66658 is now
+installed, signed DLL SHA256
+`c04cc711008999a3871cd7ef13306c2bb48e334c04215fdae34d10c6b0dbb377`.
+Three ARM64 binaries,64 source inputs,six recursive pins and13 test-log hashes
+were verified. Fifteen local native cases plus one actual-DLL encoder test passed.
+Profile data was unchanged during import. The prior3c bundle remains rollback.
 
 Current build source is `66658db67a67d300bbadda75b4ff0ccde8f216f7`.
 Windows run35174173364 uses dedicated pilot
 `f21cf96314ad86a5c039aa5d9fc7880057f995ec`, which selects17 diagnostic cases
 (previously13) and includes both heading test modules in source provenance.
-Its source-contract preflight passed. Use explicit
+It passed full qualification and import. Use explicit
 `-ExpectedNativeDiagnosticTestCount 17` during bundle verification/import.
 The shared GCE pilot branch and pre-existing local asset_graph deletion were
 not modified. No paid GCE run is authorized by this handoff.
+
+Read-only observation b0e626b0a5a3e252c4ef2d5fc3130900 exercised37 retained
+cases with durable state unchanged. Five cached heading parents advanced to
+extension Name/Malformed, not restored. Candidate b03c7bc16 adds bounded,
+content-free field-shape diagnostics and requires a new matched native host;
+do not run it against66658. Pure Windows aggregate schema4 tests pass24.
+Canary private provisioning is pending a user restart after the execution guard
+blocked the agent restart. Keep shared relay live calls paused until released.
 
 ## Fastest current Dart loop, September 13
 

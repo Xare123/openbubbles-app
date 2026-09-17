@@ -52,7 +52,63 @@ back to legacy sync, clear a cursor, or continue under a replacement account.
 
 ## Current candidate
 
-### Immediate handoff: heading qualification and relay isolation, September 16 evening
+### Immediate handoff: Windows decode advanced; Canary provisioning, September 16
+
+- **TEST-PROVEN:** Linux35173960820 and Windows35174173364 both passed for
+  source66658db67. The installed Windows native is now66658, signed DLL SHA256
+  `c04cc711008999a3871cd7ef13306c2bb48e334c04215fdae34d10c6b0dbb377`.
+  Windows704 Dart tests,51 native encoders,17 native diagnostics and10 heading
+  converters passed. Source/provenance and binary hashes were verified before
+  import;15 local native cases plus one actual-DLL encoder case passed. The two
+  frozen digest vectors passed independently in Rust and Dart. Prior3c bundle
+  remains rollback material. The older handoff below is historical, not current.
+- **LIVE-PROVEN partial, not restored:** exclusive read-only Windows observation
+  b0e626b0a5a3e252c4ef2d5fc3130900 completed37 retained cases with durable state
+  unchanged. Five cached heading parents advanced beyond unsupported association
+  to extension decode `Name/Malformed`. No new restored messages or remote writes
+  were claimed. Next protocol work: establish the actual CloudKit extension name
+  shape or decouple independent heading text from balloon parsing without guessing.
+- **Canary registration blocker:** installed710003e7b APK SHA256
+  `8d87ec693bbbcbb9d31b0ab886e254cc2ef5c1a9253c3fc7acac9dc3233ad90b`
+  omits the relay application token from its developer build. The same verified
+  device code/origin returns200 with Windows' saved application token,401 with
+  the empty Canary token. This is not proof of an invalid device code. No secret
+  was added to CI, source, artifacts or an APK.
+- User-approved Canary restart cleared the repeated interlock-busy symptom.
+  Prior stable snapshot preserves702 chats/11917 messages/2416 attachments and
+  nine outgoing entries; its lease was expired about28h. The user's subsequent
+  setup reset removed hardware/identity files; GSA/keychain/database remain.
+  Current setup is activation, unauthenticated and idle. Alpha stays untouched.
+- User approved one additional restart and private debugger relay provisioning.
+  The reviewed helper in `experiments/relay-debug-provision-20260916` calls normal
+  config/selection APIs only, guarded by exact APK, mounted activation page,
+  approved origin and matching-or-empty code. It copies no Windows account/keys.
+  **Not executed:** execution policy rejected the approved restart before launch.
+  Read-only follow-up confirms the old PID8013 remains and no VM-service marker
+  or ADB forward exists. Ask user to force-stop/reopen Canary and leave activation
+  visible; do not route around the guard. Inspect first, no automatic retry after
+  an async timeout. Verify host through normal UI; user continues Apple sign-in.
+  Ohm's read-only review is accepted; closed and verified not_found. All helpers
+  closed; supported session deletion unavailable, transcripts retained.
+- Independent FaceTime/Find My task acknowledged exclusive Pixel/relay ownership
+  for this provisioning. No Windows live calls, new APK, or paid GCE run planned.
+  C:24.04GiB free. Prior denied cleanup remains zero removed; preserved snapshots,
+  credentials, rollback archives and transcripts are not cleanup candidates.
+- **TEST-PROVEN source, not installed:** db1fe6d76 detects missing build relay
+  access before HTTP/native calls to the official origin and reports401/403 as
+  ambiguous authorization failure, not a proven invalid device code. Default
+  HTTPS port/case handling and custom origins are covered. Sixteen validator and
+  four secret-exclusion tests passed; targeted analysis clean. No token or build
+  secret changed. Epicurus reviewed/integrated/closed, shutdown verified.
+- **Pending native qualification:** b03c7bc16 adds closed type/presence labels for
+  six known extension fields on a Name failure. Decoder acceptance is unchanged;
+  no archive values, arbitrary keys or class names are exposed. Windows aggregate
+  schema4 parser passed24 tests, including injected-content rejection; Rustfmt
+  passed. Native test and refreshed Windows host remain pending. Do not run this
+  new native boundary against the installed66658 DLL. No APK is needed for this
+  next discriminating observation. All child agents are closed.
+
+### Previous handoff: heading qualification and relay isolation
 
 - **SOURCE-IMPLEMENTED:** heading source `d1734c01d` failed hosted run35171127739
   with E0004 in canonical identity validation. The correction now verifies the
@@ -138,7 +194,7 @@ The shared GCE pilot
 remote advanced independently to d5533dd1e; it was not merged or overwritten.
 Its pre-existing local asset_graph deletion remains untouched.
 
-**Installed Windows native is now 3c780a8d7**, signed DLL SHA256
+**Previously installed Windows native was 3c780a8d7**, signed DLL SHA256
 `9aadb2bcc9c4abd040977c8db28ecd243736b63ff2275eada7296d6f75bbe849`.
 Existing signer only, vendor ObjectBox untouched; the prior aa953 bundle remains
 recoverable. Inner archive SHA256
@@ -695,8 +751,10 @@ No empty local journal proves that an Alpha-only chat is absent from Apple.
    create/readback and normal reader wiring; then media/mutations and independent
    Apple-client visibility. Keep flags off until the full path passes.
 3. Preserve the verified f027 APK/manifest from successful build35058684776.
-   Wait for the Pixel connection and inspect installed identity/state. No
-   installation while its owner is busy; an idle snapshot is not an atomic lease.
+   Pixel is connected, but private activation staging needs the user to restart
+   Canary because the execution guard rejected agent restart. The installed710
+   and uninstalledf027 both lack the relay token; installing f027 will not fix
+   that. No installation while its owner is busy; idle is not an atomic lease.
 4. Batch Pixel qualification: Profile encryption/read progress, actual host
    detach during work, reopen without a stranded lock, ordinary approved test
    send/edit/unsend, exact readback and no-submit restart replay. Preserve Alpha.

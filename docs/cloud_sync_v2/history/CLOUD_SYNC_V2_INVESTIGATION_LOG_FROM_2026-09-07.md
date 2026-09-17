@@ -6768,3 +6768,77 @@ Historical tests do not establish current-device behavior.
   verifies committed content. Linux watch35990 exited0. Windows35174173364 and
   watch39651 remain active; no new native runtime or APK has been installed.
   Main handoff-only descendant0e7316d60 does not change the native boundary.
+
+### September 16 Windows heading qualification and Canary activation diagnosis
+
+- Windows35174173364 succeeded in26m23 for source66658db67/pilotf21cf9631.
+  Verified64 source inputs, six recursive pins,13 log hashes and three ARM64
+  binaries. Inner archive SHA256
+  `de908ce161853c2bd1c8d54321fdf6470921c12fc1f79e9efab34bc90da1bf40`,
+  provenance `d94f1336271afd07a917596c062bf52aed5bfe68fe69affb4594cd9bd0bf4816`.
+  Installed with existing engineering signer; signed DLL
+  `c04cc711008999a3871cd7ef13306c2bb48e334c04215fdae34d10c6b0dbb377`.
+  48700 protected profile files retained their hashes during import. Local15
+  native cases plus one actual-DLL Flutter encoder test passed; processes exited.
+- User approved exclusive Windows read-only test. Observation
+  b0e626b0a5a3e252c4ef2d5fc3130900 completed37 cases, durable state unchanged,
+  no remote writes, raw output removed and process cleanup verified. Five cached
+  heading parents now reach extension Name/Malformed instead of unsupported
+  association. Seven message cases total remain extension-deferred. Six attachment
+  parents remain unobserved; two SMS parents intentionally excluded. No message
+  restoration claimed. Windows reservation released after the observation.
+- Kepler's primary-source review supports heading text being independent of a
+  generic balloon payload. Main parser still requires string `an`; external
+  implementations alone do not establish the real cached CloudKit field shape.
+  Findings accepted, no speculative parser relaxation, helper closed.
+- Pixel repeatedly reported interlock-busy while sync/logout/coordinator were
+  idle. Stable offline snapshot preserves702 chats/11917 messages/2416 attachments
+  and nine queued operations. Stored lease was about28h expired, with no active
+  operation-file handle observed. User approved one restart only; no data clear
+  or lease edit. Busy advanced to legacy/V2 conflict, then user setup reset left
+  no hardware/id file. GSA, keychain and database remain. Alpha unchanged.
+- Relay version endpoint comparison using the same saved code/origin: Windows
+  application token200, empty/missing application token401. Canary710 developer
+  workflow omits that compile define, unlike Alpha/Beta. The existing uninstalled
+  f027 APK has the same omission, so installing it is not an activation remedy.
+  Fresh Mac export decodes offline but non-macOS validation remains unavailable.
+- User approved an additional restart plus private staging of the known relay
+  configuration using the debug VM and normal config/selection API. No Windows
+  keys/account/messages will be copied. Helper is outside source, secret-free,
+  inspect-first with exact origin/page/code guards. Ohm reviewed it read-only;
+  accepted async-void timeout warning, API scope preflight and host verification.
+  No apply yet. Independent task acknowledged Pixel/relay exclusivity. C:24.04GiB;
+  no deletion or paid build. Final provisioning result must be appended.
+- The approved second restart was rejected by execution policy before launch.
+  No workaround attempted. Read-only check confirms Canary PID8013 unchanged,
+  no VM-service marker, no ADB forward, and another app foreground. Provisioning
+  has not run; next step requires the user to force-stop/reopen Canary and leave
+  the self-hosted activation page visible. Ohm shutdown verified not_found;
+  no dedicated worktree or files to remove, supported session deletion unavailable.
+
+### September 16 source-only progress while Canary restart awaits the user
+
+- Read-only USB check confirms the old PID8013, not a completed manual restart.
+  No restart workaround, provisioning, registration, outbox or live relay call.
+  Independent task acknowledges its live clients remain paused.
+- Accepted/reviewed Muse helper Epicurus's bounded relay fix in db1fe6d76:
+  official-origin requests fail locally when build app access is absent; custom
+  origins retain their existing behavior.401/403 no longer proves a rejected
+  device code. Parent required concise wording and URI/default-port equivalence,
+  then verified the return precedes both HTTP and native setup calls. Malformed
+  non-string version keys return a classified failure instead of throwing.
+  Sixteen validator and four secret-contract tests pass; parent Dart analysis
+  clean. No token/CI changes. Helper closed and verified not_found; no dedicated
+  artifact/worktree to delete, unsupported session deletion not attempted.
+- b03c7bc16 adds a diagnostic discriminator for the actual Name/Malformed case:
+  six fixed field types, with fixed wrapper classifications, not raw values.
+  It preserves required-name decoding and every existing archive bound. A native
+  regression covers absent, wrapped, scalar and over-limit cases. Rustfmt passes;
+  compilation/execution still pending hosted qualification. Windows schema4
+  aggregate parser passes24 cases and drops unrecognized/injected field values.
+  This prepares one informative observation, not a speculative parser fallback.
+- Agent Reach's GitHub backend confirmed prior Windows35174173364 completed
+  successfully and no feature run is active. Native changes need a new exact
+  runtime; do not weaken the fast-loop compatibility guard to reuse66658. No
+  APK/paid GCE run, no local Cargo build, C:about24.17GiB free. Commits use skip-ci
+  to prevent unrelated APK builds; only explicit hosted qualification is planned.
