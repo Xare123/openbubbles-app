@@ -52,6 +52,23 @@ back to legacy sync, clear a cursor, or continue under a replacement account.
 
 ## Current candidate
 
+### Next discriminating test: attachment quarantine details
+
+- Sourceba47b1f09 adds secondary, closed attachment rejection details at missing
+  `cm`, decrypted metadata-presence capture and canonical conversion boundaries.
+  Original quarantine reason/category stays unchanged. Conversion detail is not
+  attached to a later normalization/identity rejection. Media acceptance rules
+  are intentionally unchanged; no owner/URL/key/signature values cross the bridge.
+- Dart decoder/diagnostic tests passed64; analysis clean. Native syntax parses;
+  execution awaits cloud qualification. Tests include4096 previous-rule comparison
+  combinations, strict structural failures and non-attribution after normalization.
+  Ptolemy's two-file Dart change was reviewed/corrected, closed and verified.
+- Keep installedb9 and its successful14-message/9-attachment recovery as the
+  verified baseline. Do not run this new native boundary against that older DLL.
+  Next: qualify matching native host, reserve the relay, re-observe the8 attachment
+  malformed-record cases without projection, then repair the observed cause.
+  No APK, live mutation, new profile or destructive cleanup is needed for this step.
+
 ### Immediate handoff: missing optional extension labels proved, September 16
 
 - **TEST-PROVEN and installed:** Windows35185153466 passed in25m25s for appb9ebb102e,

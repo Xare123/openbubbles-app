@@ -7026,3 +7026,31 @@ Historical tests do not establish current-device behavior.
   C:about20.47GiB free; no cleanup of protected logs, snapshots or sessions.
   Goal remains active: full retained repair, incoming/group/media/write gates,
   Pixel activation/lifecycle/visual checks and independent-client proof remain.
+
+### September 16 late: bounded attachment-rejection discriminator
+
+- Previous goal turn made real progress through live restoration and cold-repeat
+  proof. Current task remains active; no completion/blocked claim. The8 sampled
+  attachment malformed-record cases are the next independent read diagnosis.
+- Native trace showed the same quarantine can occur before typed conversion
+  (missing cm or failed decrypted-plist presence capture) or inside the converter.
+  Sourceba47b1f0973d1b8fdbc51cdd38a487d3fa0e1e43 adds closed secondary detail for
+  both layers using the existing optional diagnostic bridge field, no new API.
+  Original disposition/category and validation predicates stay unchanged.
+  User-info details distinguish empty/mixed media modes, inline fields and MMCS
+  validation sites without carrying actual values. Later identity normalization
+  cannot be mislabeled as the earlier converter failure.
+- Parent added native success/defer/quarantine controls and a4096-combination
+  reference comparison against the previous user-info predicate. These tests are
+  authored, not executed yet; Rustfmt syntax parse passed without reformatting
+  unrelated source. No local Cargo build or schema change.
+- Muse Ptolemy edited only semantic_diagnostics.dart and its test. Parent reviewed
+  all30 exact details and13 rejection cases, corrected a test that claimed
+  admission proof while testing only diagnostics, and required actual primary-
+  failure/retainable non-membership checks. Agent13 tests passed, combined parent
+  decoder/diagnostic64 passed; analysis clean. Helper closed/not_found, no unique
+  workspace/cache produced; supported transcript deletion remains unavailable.
+- Installed nativeb9 remains unchanged. No live/window/device action this turn.
+  C:about20.5GiB, previous scoped cache audit still applies; no deletion performed.
+  Plan: one source-only GCE qualification plus matching Windows host, then the
+  existing cached-only observer. Do not weaken parsing before observing detail.
