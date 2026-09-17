@@ -177,9 +177,13 @@ CloudKit V2 transient message retained_route_shape outer_type_class=class_1 serv
 CloudKit V2 transient message retained_shape outer_type_class=system_4 absent_mask=042 without_value_mask=000
 CloudKit V2 retained conversion outcome=CloudCanonicalConversionOutcome::Quarantined(MalformedRequiredIdentity)
 CloudKit V2 transient message unsupported_service source=top_level_svc service_class=rcs top_level_service_class=rcs msg_proto_4_service_class=sms message_kind=normal
+CloudKit V2 extension name contract name_shape=absent url_shape=ns_url app_id_shape=other_scalar display_shape=string layout_shape=string user_info_shape=ns_dictionary
+CloudKit V2 extension name contract name_shape=absent url_shape=ns_url app_id_shape=other_scalar display_shape=string layout_shape=string user_info_shape=ns_dictionary message=must-not-escape
+CloudKit V2 extension name contract name_shape=private-name url_shape=ns_url app_id_shape=other_scalar display_shape=string layout_shape=string user_info_shape=ns_dictionary
+CloudKit V2 extension name contract name_shape=absent url_shape=ns_url app_id_shape=other_scalar display_shape=string layout_shape=string user_info_shape=ns_dictionary-private-class
 '@
 Assert-Check 'native-shape-diagnostics-aggregated' (
-    $nativeDiagnostics.schema_version -eq 3 -and
+    $nativeDiagnostics.schema_version -eq 4 -and
     $nativeDiagnostics.retained_message_shapes.Count -eq 1 -and
     $nativeDiagnostics.retained_message_shapes[0].count -eq 2 -and
     $nativeDiagnostics.retained_route_shapes.Count -eq 1 -and
@@ -187,6 +191,11 @@ Assert-Check 'native-shape-diagnostics-aggregated' (
     $nativeDiagnostics.system_event_shapes.Count -eq 1 -and
     $nativeDiagnostics.conversion_outcomes.Count -eq 1 -and
     $nativeDiagnostics.unsupported_services.Count -eq 1)
+Assert-Check 'extension-name-shapes-closed-aggregates' (
+    $nativeDiagnostics.extension_name_shapes.Count -eq 1 -and
+    $nativeDiagnostics.extension_name_shapes[0].count -eq 2 -and
+    $nativeDiagnostics.extension_name_shapes[0].shape -ceq
+        'name=absent;url=ns_url;app_id=other_scalar;display=string;layout=string;user_info=ns_dictionary')
 Assert-Check 'native-shape-diagnostics-redacted' (
     -not (($nativeDiagnostics | ConvertTo-Json -Depth 8) -match 'must-not-escape'))
 

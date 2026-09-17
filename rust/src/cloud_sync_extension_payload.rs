@@ -190,6 +190,47 @@ fn live_layout_wire_shape(value: &Value) -> (&'static str, &'static str) {
     )
 }
 
+// A missing app name does not establish that this is a generic balloon at all.
+// Keep this closed vocabulary independent of archive keys, class names and values.
+// It distinguishes absent/scalar/wrapped representations without relaxing decode.
+fn extension_field_wire_shape(value: Option<&Value>) -> &'static str {
+    match value {
+        None => "absent",
+        Some(Value::String(value)) if value == "$null" => "null_marker",
+        Some(Value::String(_)) => "string",
+        Some(Value::Data(_)) => "data",
+        Some(Value::Array(_)) => "array",
+        Some(Value::Dictionary(dict)) => match dict.get("$class").and_then(Value::as_string) {
+            Some("NSString") => "ns_string",
+            Some("NSMutableString") => "ns_mutable_string",
+            Some("NSData") => "ns_data",
+            Some("NSMutableData") => "ns_mutable_data",
+            Some("NSDictionary" | "NSMutableDictionary") => "ns_dictionary",
+            Some("NSURL") => "ns_url",
+            Some(_) => "other_class",
+            None => "dictionary",
+        },
+        Some(_) => "other_scalar",
+    }
+}
+
+fn required_extension_name(dict: &Dictionary) -> Result<String> {
+    let result = required(dict, "an").and_then(text).map(str::to_owned);
+    if result.is_err() {
+        // Only inspect fixed known fields after archive graph validation. Never
+        // enumerate arbitrary keys or emit class names, names, URLs or raw bytes.
+        log::debug!(target: "rust_lib_bluebubbles::cloud_sync_transient_bridge",
+            "CloudKit V2 extension name contract name_shape={} url_shape={} app_id_shape={} display_shape={} layout_shape={} user_info_shape={}",
+            extension_field_wire_shape(dict.get("an")),
+            extension_field_wire_shape(dict.get("URL")),
+            extension_field_wire_shape(dict.get("appid")),
+            extension_field_wire_shape(dict.get("ldtext")),
+            extension_field_wire_shape(dict.get("layoutClass")),
+            extension_field_wire_shape(dict.get("userInfo")));
+    }
+    result
+}
+
 fn project(
     root: &Value,
     bundle_id: &str,
@@ -202,7 +243,7 @@ fn project(
     // Ordinary extra app/userInfo fields are ignored like legacy serde. The
     // graph preflight budgets them and protected source remains untouched.
     *stage = ExtensionDecodeStage::Name;
-    let name = text(required(dict, "an")?)?.to_owned();
+    let name = required_extension_name(dict)?;
     *stage = ExtensionDecodeStage::AppId;
     let app_id = dict
         .get("appid")
@@ -804,6 +845,65 @@ mod tests {
             assert!(!label.contains("Synthetic App"));
             assert!(!label.contains("app:synthetic"));
         }
+    }
+
+    #[test]
+    fn name_contract_diagnostics_are_closed_and_preserve_decode_failures() {
+        assert_eq!(extension_field_wire_shape(None), "absent");
+        let cases = [
+            (s("private-name"), "string"),
+            (s("$null"), "null_marker"),
+            (Value::Data(b"private-bytes".to_vec()), "data"),
+            (Value::Array(vec![s("private-array")]), "array"),
+            (Value::Boolean(true), "other_scalar"),
+            (dict(&[("private-key", s("private-value"))]), "dictionary"),
+            (dict(&[("$class", s("private-class"))]), "other_class"),
+            (dict(&[("$class", s("NSString"))]), "ns_string"),
+            (
+                dict(&[("$class", s("NSMutableString"))]),
+                "ns_mutable_string",
+            ),
+            (dict(&[("$class", s("NSData"))]), "ns_data"),
+            (dict(&[("$class", s("NSMutableData"))]), "ns_mutable_data"),
+            (dict(&[("$class", s("NSDictionary"))]), "ns_dictionary"),
+            (
+                dict(&[("$class", s("NSMutableDictionary"))]),
+                "ns_dictionary",
+            ),
+            (dict(&[("$class", s("NSURL"))]), "ns_url"),
+        ];
+        for (value, expected) in cases {
+            assert_eq!(extension_field_wire_shape(Some(&value)), expected);
+            assert!(!expected.contains("private"));
+            let mut root = balloon();
+            let fields = root.as_dictionary_mut().unwrap();
+            fields.insert("an".into(), value.clone());
+            assert_eq!(
+                required_extension_name(fields),
+                text(&value).map(str::to_owned),
+            );
+        }
+
+        let mut root = balloon();
+        root.as_dictionary_mut().unwrap().remove("an");
+        let mut stage = ExtensionDecodeStage::Complete;
+        assert_eq!(
+            decode_extension_payload_inner(
+                &encode(&archived(root)),
+                "com.example.synthetic",
+                &mut stage,
+            ),
+            Err(Failure::Malformed),
+        );
+        assert_eq!(stage, ExtensionDecodeStage::Name);
+        let mut root = balloon();
+        root.as_dictionary_mut()
+            .unwrap()
+            .insert("an".into(), s(&"x".repeat(MAX_STRING_BYTES + 1)));
+        assert_eq!(
+            required_extension_name(root.as_dictionary().unwrap()),
+            Err(Failure::LimitExceeded)
+        );
     }
 
     #[test]

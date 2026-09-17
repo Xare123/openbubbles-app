@@ -495,6 +495,7 @@ function Get-DartApplierContentFreeNativeDiagnostics {
     $systemEventShapes = @{}
     $conversionOutcomes = @{}
     $unsupportedServices = @{}
+    $extensionNameShapes = @{}
 
     $retainedPattern =
         'CloudKit V2 transient message retained_shape absent_mask=([0-9a-f]{3}) without_value_mask=([0-9a-f]{3}) guid_empty=(true|false) chat_empty=(true|false) sender_empty=(true|false) from_me=(true|false) body_present=(true|false) attributed_present=(true|false) extension_class=(no_payload|empty_payload|url_balloon|apple_other|other_provider|provider_absent) reply_present=(true|false)'
@@ -556,8 +557,22 @@ function Get-DartApplierContentFreeNativeDiagnostics {
         $unsupportedServices[$key] = [long]($unsupportedServices[$key] ?? 0) + 1
     }
 
+    # Capture only the native closed vocabulary. Arbitrary archive values or
+    # trailing error text must never be persisted in these aggregate rows.
+    $extensionShape = '(absent|null_marker|string|data|array|ns_string|ns_mutable_string|ns_data|ns_mutable_data|ns_dictionary|ns_url|other_class|dictionary|other_scalar)'
+    $extensionNamePattern = 'CloudKit V2 extension name contract name_shape={0} url_shape={0} app_id_shape={0} display_shape={0} layout_shape={0} user_info_shape={0}(?=\s|$)' -f $extensionShape
+    foreach ($match in [regex]::Matches(
+        $Stdout, $extensionNamePattern, [Text.RegularExpressions.RegexOptions]::CultureInvariant
+    )) {
+        $key = 'name={0};url={1};app_id={2};display={3};layout={4};user_info={5}' -f
+            $match.Groups[1].Value, $match.Groups[2].Value,
+            $match.Groups[3].Value, $match.Groups[4].Value,
+            $match.Groups[5].Value, $match.Groups[6].Value
+        $extensionNameShapes[$key] = [long]($extensionNameShapes[$key] ?? 0) + 1
+    }
+
     return [pscustomobject][ordered]@{
-        schema_version = 3
+        schema_version = 4
         retained_message_shapes = [object[]]@(
             ConvertTo-DartApplierDiagnosticCountRows $retainedShapes
         )
@@ -572,6 +587,9 @@ function Get-DartApplierContentFreeNativeDiagnostics {
         )
         unsupported_services = [object[]]@(
             ConvertTo-DartApplierDiagnosticCountRows $unsupportedServices
+        )
+        extension_name_shapes = [object[]]@(
+            ConvertTo-DartApplierDiagnosticCountRows $extensionNameShapes
         )
     }
 }
