@@ -286,6 +286,7 @@ mod cloud_sync_received_source_stage;
 mod cloud_sync_received_record_match;
 mod cloud_sync_received_projection;
 mod cloud_sync_received_raw_match;
+mod cloud_sync_received_record_discovery;
 mod cloud_sync_message_proto_patch;
 mod cloud_sync_message_summary_patch;
 mod cloud_sync_message_update_compose;

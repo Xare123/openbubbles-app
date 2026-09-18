@@ -781,6 +781,165 @@ pub async fn cloud_sync_prepare_received_archive_inspection(
     })
 }
 
+/// Authenticated read-only record discovery for a protected received source.
+///
+/// Separation of the parent-bound inspection above: no chat parent is decoded,
+/// projected, or required here. The protected source is opened and hash-verified
+/// exactly as above, the deterministic record name is derived from its GUID plus
+/// the authenticated container identity, and the record resolves through the
+/// existing read-only inspector with its receipt and raw-wire checks. A validated
+/// find returns its original raw bytes alongside the observation for a future
+/// protected staging step that is not yet wired. The normal protected reader
+/// pipeline still owns equivalence, projection, and ownership. NotFound is a
+/// separate payload-free observation with no create grant. No writes, no IDS activity.
+// Staged and uncalled until the reviewed reader-ingress wiring lands; the
+// hosted qualification batch is the first caller path under review.
+#[allow(dead_code)]
+#[allow(clippy::too_many_arguments)]
+async fn cloud_sync_discover_received_record_exact(
+    cloud_messages_client: &Arc<CloudMessagesClient<DefaultAnisetteProvider>>,
+    native_writer_pause_token: u64,
+    storage_directory: String,
+    expected_auth: CloudSyncNativeAuthMetadata,
+    received_source: CloudSyncNativeReceivedArchiveSourceBinding,
+    message_generation: u64,
+) -> anyhow::Result<(
+    CloudSyncReceivedRecordObservation,
+    Option<(rustpush::cloudkit_proto::Record, Vec<u8>)>,
+)> {
+    use crate::cloud_sync_received_record_discovery::{
+        settle_discovery, DiscoveryDisposition, DiscoveryLookupOutcome, DiscoverySnapshot,
+    };
+    use rustpush::cloud_messages::CloudMessageRecordVersionLookup;
+    if message_generation == 0
+        || received_source.account_fingerprint != expected_auth.account_fingerprint
+        || received_source.protected_store_identity != expected_auth.protected_store_identity
+    {
+        return Err(anyhow!("cloud_sync_received_archive_identity_changed"));
+    }
+    let permit = acquire_cloudkit_read_authentication(native_writer_pause_token)
+        .map_err(|_| anyhow!("cloud_sync_received_archive_read_permit"))?;
+    let before = cloud_sync_capture_auth_snapshot(cloud_messages_client, storage_directory.clone()).await?;
+    cloud_sync_require_received_auth(&expected_auth, &before)?;
+    let source_stage = crate::cloud_sync_received_source_stage::NativeReceivedArchiveStage {
+        message_guid_hash: received_source.message_guid_hash.clone(),
+        source_sha256: received_source.source_sha256.clone(),
+        protected_reference: received_source.protected_reference,
+        lease_reference: received_source.lease_reference,
+        payload_sha256: received_source.payload_sha256,
+        payload_length: received_source.payload_length,
+    };
+    let received = crate::cloud_sync_received_source_stage::open_received_archive_source(
+        PathBuf::from(&storage_directory),
+        before.account_fingerprint.clone(),
+        &source_stage,
+    )
+    .map_err(|_| anyhow!("cloud_sync_received_archive_protected_source_changed"))?;
+    let container = cloud_messages_client
+        .get_cached_container_for_read_authentication(&permit)
+        .await
+        .map_err(|_| anyhow!("cloud_sync_received_archive_identity_unavailable"))?;
+    let hasher = crate::cloud_sync_protector::semantic_identifier_hasher(storage_directory.clone())
+        .map_err(|_| anyhow!("cloud_sync_received_archive_identity_unavailable"))?;
+    let snapshot = DiscoverySnapshot {
+        account_fingerprint: before.account_fingerprint.clone(),
+        protected_store_identity: expected_auth.protected_store_identity.clone(),
+        container_user_id: container.user_id.clone(),
+        message_generation,
+    };
+    let request = crate::cloud_sync_received_record_discovery::prepare_discovery(
+        received.guid(),
+        &snapshot,
+        &hasher,
+    )
+    .map_err(|_| anyhow!("cloud_sync_received_archive_source_changed"))?;
+    let mut raw_found = None;
+    let outcome = match cloud_messages_client
+        .lookup_received_message_record(&permit, &request.record_name)
+        .await
+    {
+        Ok(CloudMessageRecordVersionLookup::NotFound) => DiscoveryLookupOutcome::NotFound,
+        Ok(CloudMessageRecordVersionLookup::Found(record, receipt)) => {
+            if receipt.record_name() != request.record_name {
+                return Err(anyhow!("cloud_sync_received_archive_record_mismatch"));
+            }
+            let raw = record
+                .get_raw_record()
+                .map_err(|_| anyhow!("cloud_sync_received_archive_record_mismatch"))?;
+            if raw.etag.as_deref() != Some(receipt.etag()) {
+                return Err(anyhow!("cloud_sync_received_archive_record_mismatch"));
+            }
+            let wire = record
+                .original_record_wire()
+                .ok_or_else(|| anyhow!("cloud_sync_received_archive_record_mismatch"))?
+                .to_vec();
+            raw_found = Some((raw.clone(), wire.clone()));
+            DiscoveryLookupOutcome::Found {
+                record_name: request.record_name.clone(),
+                etag: receipt.etag().to_owned(),
+                raw_bytes: wire,
+            }
+        }
+        _ => DiscoveryLookupOutcome::TransportFailure,
+    };
+    // Even NotFound is discarded when identity, container, or source moved
+    // while awaiting network. No warmup or new session substitution.
+    let after = cloud_sync_capture_auth_snapshot(cloud_messages_client, storage_directory.clone()).await?;
+    cloud_sync_require_received_auth(&expected_auth, &after)?;
+    let after_container = cloud_messages_client
+        .get_cached_container_for_read_authentication(&permit)
+        .await
+        .map_err(|_| anyhow!("cloud_sync_received_archive_identity_changed"))?;
+    if !Arc::ptr_eq(&container, &after_container) {
+        return Err(anyhow!("cloud_sync_received_archive_identity_changed"));
+    }
+    crate::cloud_sync_received_source_stage::open_received_archive_source(
+        PathBuf::from(&storage_directory),
+        after.account_fingerprint.clone(),
+        &source_stage,
+    )
+    .map_err(|_| anyhow!("cloud_sync_received_archive_protected_source_changed"))?;
+    let after_snapshot = DiscoverySnapshot {
+        account_fingerprint: after.account_fingerprint.clone(),
+        protected_store_identity: expected_auth.protected_store_identity.clone(),
+        container_user_id: after_container.user_id.clone(),
+        message_generation,
+    };
+    let settled = settle_discovery(&snapshot, &after_snapshot, &request, outcome, &hasher)
+        .map_err(|error| match error {
+            crate::cloud_sync_outbound::CloudSyncOutboundFailure::BindingMismatch => {
+                anyhow!("cloud_sync_received_archive_identity_changed")
+            }
+            _ => anyhow!("cloud_sync_received_archive_record_mismatch"),
+        })?;
+    let mut result = CloudSyncReceivedRecordObservation {
+        disposition: CloudSyncReceivedRecordDisposition::Unresolved,
+        message_guid_hash: source_stage.message_guid_hash.clone(),
+        source_sha256: source_stage.source_sha256.clone(),
+        logical_entity_key_hash: request.logical_entity_key_hash.clone(),
+        server_record_id_hash: request.server_record_id_hash.clone(),
+        etag_hash: settled.etag_hash.clone(),
+        protected_raw_record_reference: None,
+        protected_raw_record_lease_reference: None,
+        raw_generation: message_generation,
+    };
+    match settled.disposition {
+        DiscoveryDisposition::Absent => {
+            result.disposition = CloudSyncReceivedRecordDisposition::Absent;
+            raw_found = None;
+        }
+        DiscoveryDisposition::FoundForReaderIngress => {
+            // Validated find returned alongside the observation; protected staging
+            // into the normal reader pipeline is separate. Equivalence,
+            // projection, and ownership stay with that pipeline: Unresolved here.
+        }
+        _ => {
+            raw_found = None;
+        }
+    }
+    Ok((result, raw_found))
+}
+
 /// Local-only stage. The caller must hold its cross-engine local-store lease
 /// from this call through durable adoption and commit/rollback. Keep the exact
 /// read session alive; a replaced client/container/source never yields a file.

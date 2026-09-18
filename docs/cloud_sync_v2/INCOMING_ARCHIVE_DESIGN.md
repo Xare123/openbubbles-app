@@ -107,6 +107,32 @@ Do not relax it or synthesize a positive IDS-send receipt to reuse that lane.
 Incoming groups/media and pre-seal readiness failure still need coverage.
 Capture and inspection stay default-off until their respective live gates pass.
 
+### Discovery slice implementation, September 18
+
+Supervisor approved the bounded authenticated discovery-to-normal-reader path
+(default off, source/test only until checkpoint review). New binding-neutral
+module `rust/src/cloud_sync_received_record_discovery.rs` implements the
+lookup half of the separation above: exact GUID plus container-scoped user
+identity derives one record name; account, store, container identity, and
+message_generation (alongside account, store, and container identity) is pinned
+before the lookup and revalidated after it; read-permit freshness itself stays
+with the existing container and auth-snapshot machinery;
+`NotFound` stays a payload-free separate observation with no create grant;
+`Found` binds ETag and original raw bytes for normal reader ingress only,
+deciding no equivalence. No owner selection, no candidate lists, no
+title/membership matching, no writes, no IDS activity, no new flags. The
+reader-ingress wiring and hosted qualification remain open before enabling.
+Status September 18 (uncompiled scaffolding, under review): the request now
+immutably binds its preparation snapshot and settlement rejects cross-scope
+replays (regression test included); the raw-size bound reuses the established
+8MiB `MAX_RAW_RECORD_BYTES`; and private `cloud_sync_discover_received_record_exact`
+in `rust/src/api/api.rs` performs the real read-only preparation, exact
+lookup, receipt and raw-wire validation, and after-await revalidation with no
+parent, reusing the existing inspector and permit machinery. Validated finds
+stage raw bytes as `Unresolved` for the normal reader pipeline; no equivalence
+is claimed and no reader-ingress wiring exists yet. Native compile and tests
+are unverified locally and await one coherent hosted qualification batch.
+
 ## Current retry architecture, September 16 continuation
 
 The receive transaction now targets an inline platform-encrypted seed rather
