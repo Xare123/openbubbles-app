@@ -66,10 +66,12 @@ Execution is pending provider repair, not running: both configured Muse
 Contributor routes failed before executing the handoff with provider400,
 `unknown parameter access_programs`. The alternate route failed during remote
 compaction. No takeover acknowledgement or implementation has occurred. A bounded
-read-only diagnosis was sent to task `01a0687b-43f0-7a22-999f-260c60ae3d42`
-(Connect Muse Spark API agent), respecting the user's instruction to keep
-OpenCodex off. Do not repeat identical retries or change provider/security
-configuration to force the handoff through. Confirm actual execution once repaired.
+repair was assigned to task `01a0687b-43f0-7a22-999f-260c60ae3d42`
+(Connect Muse Spark API agent). The user subsequently instructed that OpenCodex
+stay on and explicitly authorized that task to fix the compatibility error,
+superseding the initial read-only/no-enable limit. Require a real Codex tool call
+and the affected compaction-path check before retrying the handoff. Preserve
+access safeguards and shared configuration; do not repeat identical failures.
 
 Handoff baseline is clean source `7aa70b1617669d55bca7c9da38ebd2c2e16e3c7c`,
 branch `agent/cloudkit-v2-newest-bootstrap`, and installed diagnostic native

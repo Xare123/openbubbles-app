@@ -7144,3 +7144,9 @@ Historical tests do not establish current-device behavior.
   keep OpenCodex off remains in force. No provider/service/security change is
   authorized by that diagnosis; report the smallest supported correction and
   required approval. The primary ownership assignment remains pending execution.
+- User then explicitly instructed "Keep open codex on" and asked the Muse repair
+  agent to fix the failure. Forwarded this new authority to the same repair task,
+  superseding the initial read-only/no-enable restriction. It owns the smallest
+  compatible repair, service-state preservation and actual Muse tool/compaction
+  verification. Application work stays pending until that checkpoint succeeds;
+  no access safeguard bypass or unrelated configuration change is authorized.
