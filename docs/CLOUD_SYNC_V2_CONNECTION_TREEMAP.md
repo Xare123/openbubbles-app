@@ -62,16 +62,15 @@ Supervisor `01a098ec-c448-73a1-a73f-696d142de228` reviews meaningful checkpoints
 high-risk integration changes and final release evidence, without a competing
 implementation loop. See AGENTS.md for the scope and coordination contract.
 
-Execution is pending provider repair, not running: both configured Muse
-Contributor routes failed before executing the handoff with provider400,
-`unknown parameter access_programs`. The alternate route failed during remote
-compaction. No takeover acknowledgement or implementation has occurred. A bounded
-repair was assigned to task `01a0687b-43f0-7a22-999f-260c60ae3d42`
-(Connect Muse Spark API agent). The user subsequently instructed that OpenCodex
-stay on and explicitly authorized that task to fix the compatibility error,
-superseding the initial read-only/no-enable limit. Require a real Codex tool call
-and the affected compaction-path check before retrying the handoff. Preserve
-access safeguards and shared configuration; do not repeat identical failures.
+Execution is running: primary owner `01a0abe1-9bbe-71b2-a9ce-4d4578022b0e`
+confirmed takeover on September 18 with real scoped repository reads
+(HEAD `875902829`, clean tree) and a supervisor checkpoint, after the
+provider400 `access_programs` repair was verified by the supervisor.
+Earlier failed-handoff notes above are historical. Non-mutating preflight
+this turn: no Flutter/Dart/OpenBubbles process, `adb devices -l` shows no
+attached device, so the attachment observation cannot run yet. No runtime,
+account, queue, or device change was made. Preserve access safeguards and
+shared configuration; do not repeat identical failures.
 
 Handoff baseline is clean source `7aa70b1617669d55bca7c9da38ebd2c2e16e3c7c`,
 branch `agent/cloudkit-v2-newest-bootstrap`, and installed diagnostic native
