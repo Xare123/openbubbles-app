@@ -5,29 +5,46 @@
 These rules apply to task `01a098ec-c448-73a1-a73f-696d142de228` and its
 delegated agents. They supplement, not replace, inherited project instructions.
 
-## Independent workstream ownership (September 16)
+## Primary implementation and checkpoint review (September 18)
 
-- This task owns CloudKit. FaceTime and Find My are now owned by independent
-  task `01a0abe1-9bbe-71b2-a9ce-4d4578022b0e` (facetime & find my). Do not start
-  competing FaceTime/Find My implementation or helper loops in this task.
-- That task works on its own branch/worktree from committed app `b1468abbb`
-  and rustpush `5862be3`. It may read, never edit, this CloudKit checkout. No
-  automatic cross-lane merge, bulk cherry-pick or shared generated-file write.
+- User assigned primary remaining OpenBubbles implementation to existing task
+  `01a0abe1-9bbe-71b2-a9ce-4d4578022b0e` (facetime & find my), using
+  `meta-model/muse-spark-1.3-contributor` at max effort. CloudKit production
+  readiness is the priority; existing FaceTime/Find My work remains preserved.
+- That task now owns edits in this CloudKit checkout and its current branch.
+  This explicitly replaces the earlier read-only restriction. Keep independent
+  FaceTime/Find My changes in their existing checkout; no automatic bulk merge
+  or simultaneous generated-file edits across workstreams.
+- Supervisor task `01a098ec-c448-73a1-a73f-696d142de228` reviews checkpoints,
+  rather than running a competing implementation/build loop. Send it one
+  concise checkpoint after a meaningful fix or gate result, before enabling
+  high-risk auth/encryption/identity/write-recovery changes, and when a concrete
+  blocker needs a decision. Include exact revisions, changed paths, executed
+  checks, live versus unverified behavior, and the decision requested.
+- Routine source work and relevant tests do not require step-by-step approval.
+  Continue independent useful work while awaiting review. Do not create an
+  acknowledgement loop or send repeated unchanged status messages. Final
+  integration and release claims require supervisor review of actual evidence.
 - Shared auth/registration, rust/src/api/api.rs, rustpush_service.dart, native
   gates, dependency locks and FRB bindings require announced scope and reviewed
   integration. Feature work in a separate checkout is not permission to change
   the active account/profile or installed build.
-- Reserve exclusive Pixel or Windows live-profile testing by direct task-to-task
-  request and acknowledgement before install/restart/UI/relay/account actions.
-  Release the reservation after testing. Preserve Alpha and all real data.
+- Primary owner schedules exclusive Pixel or Windows live-profile testing.
+  Announce live use, confirm no other worker is using the profile, and release
+  it after testing. Any other task must request and receive the primary owner's
+  acknowledgement before install/restart/UI/relay/account actions. Preserve
+  Alpha and all real data. An announced window never expands user authorization.
 - That reservation must also cover the shared iPhone relay across platforms.
   The user reports that simultaneous Windows/Canary use can displace registration.
   Run one authenticated live client at a time for this relay. Separate worktrees
   or different operating systems do not establish independent relay identities.
   Do not treat a displaced registration as a proved CloudKit regression.
-- Neither task may create an upstream PR/draft or spend paid GCE funds without
-  renewed user approval. The independent task runs its own goal and helpers;
-  this parent tracks only shared interfaces and integration-ready handoffs.
+- No upstream PR/draft without explicit user confirmation. User renewed GCE
+  approval on September 17; use the established source-only runner through
+  owner task `01a0ac53-985b-7713-a21c-79251501c75c` for justified bounded runs.
+  Do not modify infrastructure, IAM, secrets or billing, or upload credentials.
+  The primary implementation task manages its own helpers and current goal;
+  the supervisor tracks checkpoint reviews and integration readiness.
 
 ## Helper model preference
 
@@ -42,9 +59,10 @@ parallel agents without useful independent work.
 Apply OpenAI's [subagent guidance](https://learn.chatgpt.com/docs/agent-configuration/subagents)
 and [test calibration guidance](https://developers.openai.com/api/docs/guides/latest-model):
 
-- The parent owns the critical path, system decisions, integration and release
-  evidence. Delegate independent work that can run while the parent advances a
-  different required step, not work the parent will immediately duplicate.
+- The primary owner manages the critical path, implementation and test evidence;
+  the supervisor reviews the high-risk and release checkpoints above. Delegate
+  independent work that can run alongside a different required step, not work
+  the primary owner or supervisor will immediately duplicate.
 - Give each helper an exact outcome, source revision, allowed files/actions,
   acceptance check and concise return format. Prefer a small context packet to
   the full conversation. Return findings and changed paths, not raw tool logs.
@@ -82,8 +100,8 @@ and [test calibration guidance](https://developers.openai.com/api/docs/guides/la
   If the routed tool rejects the path, return the patch to the parent. Do not
   create Desktop probe files or bypass the editing rule with shell file writes.
 - Avoid whole-file formatter churn in existing files. Keep prototype changes
-  isolated until parent review and executed tests. No paid GCE run without
-  renewed approval; full qualification currently uses GitHub-hosted Actions.
+  isolated until review and executed tests. Use the established GCE qualification
+  and GitHub-hosted Windows/signing paths under the authorization above.
 
 ## Documentation before compaction
 

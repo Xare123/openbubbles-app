@@ -4,7 +4,7 @@ title: Cloud Sync V2 Investigation Log from 2026-09-07
 description: Chronological qualification results after the current treemap was separated from the historical investigation record.
 resource: openbubbles-app
 tags: [openbubbles, cloudkit, investigation, evidence, canary]
-timestamp: 2026-09-11
+timestamp: 2026-09-18
 ---
 
 # Cloud Sync V2 investigation log from 2026-09-07
@@ -7115,3 +7115,21 @@ Historical tests do not establish current-device behavior.
   state confirmation or Pixel reconnection. Resume with the already-qualified
   attachment probe under a fresh shared-relay reservation; other release gates
   remain open. C:about20.18GiB free; all helpers closed, evidence preserved.
+
+## September 18: user-directed Muse primary ownership handoff
+
+- User requested that existing task `01a0abe1-9bbe-71b2-a9ce-4d4578022b0e`
+  (facetime & find my) perform primary remaining OpenBubbles work, with this
+  supervisor receiving checkpoint messages for periodic review. CloudKit stays
+  the production priority; this is not permission to discard its other work.
+- Verified clean CloudKit source `7aa70b1617669d55bca7c9da38ebd2c2e16e3c7c`,
+  branch `agent/cloudkit-v2-newest-bootstrap`, no matching local application or
+  Flutter/Dart process, and C: free space 26.75 GiB. No live account/device check,
+  build, cleanup, source fix or runtime change occurred during the handoff.
+- Updated AGENTS.md and the current tree to transfer CloudKit write ownership
+  to that task, replace the obsolete read-only restriction, preserve separate
+  feature work, and define evidence-based review checkpoints. Primary task owns
+  shared-profile scheduling; supervisor starts no competing implementation loop.
+- Dispatch uses exact model `meta-model/muse-spark-1.3-contributor`, effort max.
+  A dispatched instruction alone is not proof of execution; verify the task's
+  acknowledgement and report any routing failure before claiming takeover.

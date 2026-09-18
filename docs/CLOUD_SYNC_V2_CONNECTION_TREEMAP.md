@@ -4,7 +4,7 @@ title: Cloud Sync V2 Current Connection Treemap
 description: Current source of truth for CloudKit V2 architecture, safety boundaries, qualification state, and next gates.
 resource: openbubbles-app
 tags: [openbubbles, cloudkit, messages-in-icloud, architecture, recovery, canary]
-timestamp: 2026-09-17
+timestamp: 2026-09-18
 ---
 
 # Cloud Sync V2 current connection treemap
@@ -52,12 +52,35 @@ back to legacy sync, clear a cursor, or continue under a replacement account.
 
 ## Current candidate
 
-### Goal blocked on live-test preflight, September 17
+### Primary ownership handoff, September 18
+
+User assigned primary implementation to existing task
+`01a0abe1-9bbe-71b2-a9ce-4d4578022b0e` (facetime & find my), on Muse Spark
+1.3 Contributor at max effort. It owns this CloudKit checkout, prioritizes the
+remaining production gates, and preserves its independent FaceTime/Find My work.
+Supervisor `01a098ec-c448-73a1-a73f-696d142de228` reviews meaningful checkpoints,
+high-risk integration changes and final release evidence, without a competing
+implementation loop. See AGENTS.md for the scope and coordination contract.
+
+Handoff baseline is clean source `7aa70b1617669d55bca7c9da38ebd2c2e16e3c7c`,
+branch `agent/cloudkit-v2-newest-bootstrap`, and installed diagnostic native
+source `f43919ba3cbf18599be8d1270924293cae339aae`. This handoff changes no
+runtime, account, queue or device. Fresh local check found no matching
+Flutter/Dart/OpenBubbles process and C: has 26.75 GiB free. The prior qualification
+and device observations below remain dated evidence, not fresh live state.
+
+Next: verify current Canary state and exclusive relay availability, then run the
+existing attachment diagnostic without refetch/projection/writes. If the live
+preflight is unavailable, advance a specific offline-testable production gap,
+not repeated unchanged polls or a duplicate APK build. Report evidence and the
+next decision at a checkpoint; all unfinished release gates remain unfinished.
+
+### Last live-test blocker, September 17
 
 The same unknown Canary sign-in state remained through three consecutive goal
-turns after the diagnostic runtime was ready. Fresh checks still show no ADB
+turns after the diagnostic runtime was ready. Checks on September 17 showed no ADB
 device, no local test process, both qualification jobs terminal/successful and
-zero GitHub runners. The goal is blocked, not completed, to stop idle repetition.
+zero GitHub runners. The goal was marked blocked, not completed, to stop idle repetition.
 User must confirm whether Canary is still at activation/sign-in or now signed in,
 or reconnect the Pixel for a fresh check. Then reserve the shared relay and run
 the already-qualified cached attachment probe. Do not rebuild, reset data, weaken
