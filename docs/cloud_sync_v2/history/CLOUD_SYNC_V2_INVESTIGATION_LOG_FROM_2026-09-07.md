@@ -7133,3 +7133,14 @@ Historical tests do not establish current-device behavior.
 - Dispatch uses exact model `meta-model/muse-spark-1.3-contributor`, effort max.
   A dispatched instruction alone is not proof of execution; verify the task's
   acknowledgement and report any routing failure before claiming takeover.
+- Handoff committed locally as `764eba960`. First dispatch turn
+  `01a0b500-d0d2-7940-a1d4-f876af9cac4a` failed before execution with provider
+  `unknown parameter access_programs`. One alternate configured Muse Contributor
+  route, `opencode-free/muse-spark-1.3-contributor-free`, failed during remote
+  compaction in turn `01a0b501-676b-71d0-a313-e476d865f52c` with the same error.
+  Both turns are terminal failures, not active work. No third unchanged retry.
+- Existing repair task `01a0687b-43f0-7a22-999f-260c60ae3d42` was assigned a
+  bounded read-only diagnosis using Luna high. Its latest user instruction to
+  keep OpenCodex off remains in force. No provider/service/security change is
+  authorized by that diagnosis; report the smallest supported correction and
+  required approval. The primary ownership assignment remains pending execution.

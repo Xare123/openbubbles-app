@@ -62,6 +62,15 @@ Supervisor `01a098ec-c448-73a1-a73f-696d142de228` reviews meaningful checkpoints
 high-risk integration changes and final release evidence, without a competing
 implementation loop. See AGENTS.md for the scope and coordination contract.
 
+Execution is pending provider repair, not running: both configured Muse
+Contributor routes failed before executing the handoff with provider400,
+`unknown parameter access_programs`. The alternate route failed during remote
+compaction. No takeover acknowledgement or implementation has occurred. A bounded
+read-only diagnosis was sent to task `01a0687b-43f0-7a22-999f-260c60ae3d42`
+(Connect Muse Spark API agent), respecting the user's instruction to keep
+OpenCodex off. Do not repeat identical retries or change provider/security
+configuration to force the handoff through. Confirm actual execution once repaired.
+
 Handoff baseline is clean source `7aa70b1617669d55bca7c9da38ebd2c2e16e3c7c`,
 branch `agent/cloudkit-v2-newest-bootstrap`, and installed diagnostic native
 source `f43919ba3cbf18599be8d1270924293cae339aae`. This handoff changes no
