@@ -277,10 +277,20 @@ auth checks or repeat a full sweep merely to work around this missing preflight.
   commit/rollback live in adoptCloudSyncDiscoveredStage, covered by a
   mismatch/validation/duplicate/generation/store-mismatch/lost-commit matrix
   proving exactly one rollback before adoption and none after it.
-- Open: matching Windows fast-loop runtime build for the new native
-  discovery calls (installed f439 predates them and must not run them);
-  live account/relay observation; ordinary-reader projection of retained v2
-  rows; the remaining release gates below. Dart green is not end-to-end proof.
+- Windows run 35425250707 (success) built exact source d3cdca8915e0a3fc23121
+  plus the readerPending short-circuit correction, sidecar f21, read-only
+  native-test-host on win11-arm64: ARM64 MSVC lib compiles including the new
+  discovery bridge, contracts pass, launcher/auth-probe tests pass, 710
+  focused Dart tests pass, chat1 discovery permit/budget native cases pass.
+  Artifact zip SHA256
+  1bba95576a301001204d2d3d2d14bf3b6a5c0dc180f6549f0939385b67c7b258
+  (35.7 MB engineering bundle, not installed). No CloudKit run, no signing,
+  writer defines and auto-send runtime absent, zero runners remain. Not
+  covered here: the 7 received-record discovery Rust unit tests and the
+  journal discovery Dart file (covered locally and on the parent GCE run).
+- Open: live account/relay observation (installed f439 still predates the new
+  calls and must not run them); ordinary-reader projection of retained v2
+  rows; the remaining release gates below. Build green is not end-to-end proof.
 
 ### Retained architecture and unresolved work
 
