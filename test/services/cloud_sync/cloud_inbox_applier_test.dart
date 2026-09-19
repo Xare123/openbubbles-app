@@ -585,6 +585,7 @@ void main() {
       expect(result.retained, 0);
       expect(restartedStore.retainedEntries.single.status, CloudInboxStatus.applied);
       expect(restartedStore.transaction.snapshot('message-key'), snapshot);
+      expect(restartedStore.transaction.appliedPayloads, contains(replyPayload));
       expect(restartedStore.transaction.appliedChanges, {inbox.change.changeId});
       expect(restartedStore.transaction.entityApplyCount, 1);
     },
