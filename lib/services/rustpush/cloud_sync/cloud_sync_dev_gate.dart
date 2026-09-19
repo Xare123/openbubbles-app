@@ -53,6 +53,14 @@ abstract final class CloudSyncDevGate {
     'OPENBUBBLES_CLOUD_SYNC_V2_RECEIVED_UPLOADS', defaultValue: false,
   );
 
+  /// Separate opt-in for parentless exact-lookup discovery adoption. Requires
+  /// local capture, strict inspection, the semantic pull worker and the V2
+  /// writer owner alongside this flag; adopted rows stay pending for the
+  /// ordinary reader and never grant create, upload or send authority.
+  static const bool receivedArchiveDiscoveryEnabled = bool.fromEnvironment(
+    'OPENBUBBLES_CLOUD_SYNC_V2_RECEIVED_DISCOVERY', defaultValue: false,
+  );
+
   /// Independent read-only Android lifecycle gate. This never enables the
   /// outbound writer or ordinary-send consumer and is fenced to Canary again
   /// at runtime on both sides of the method channel.

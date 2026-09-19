@@ -100,6 +100,37 @@ final class CloudSyncReceivedArchiveJournal {
     finally { query.close(); }
   });
 
+  /// Bounded parentless discovery candidates: state-1 intents with no proven
+  /// parent (no observation yet, or an unresolved one). State-2 rows stay in
+  /// the ordinary found pipeline; adopted rows never resurface here.
+  /// Admission and reader-ownership guards still apply at adoption time.
+  List<int> readDiscoveryCandidates({
+    required CloudSyncNativeAuthSnapshot currentAuth, int limit = 5,
+    int? maximumIntentId,
+  }) => _store.runInTransaction(TxMode.read, () {
+    _verifyOwnership();
+    if (limit < 1 || limit > 20 || currentAuth.accountFingerprint != _binding.scope.accountFingerprint) {
+      throw StateError('cloud_sync_received_archive_identity_changed');
+    }
+    if (maximumIntentId != null && maximumIntentId < 0) {
+      throw ArgumentError('cloud_sync_received_archive_limit_invalid');
+    }
+    var condition =
+      CloudSyncReceivedArchiveIntentEntity_.accountFingerprint.equals(_binding.scope.accountFingerprint)
+        .and(CloudSyncReceivedArchiveIntentEntity_.writerEpoch.equals(_binding.epoch))
+        .and(CloudSyncReceivedArchiveIntentEntity_.state.equals(1))
+        .and(CloudSyncReceivedArchiveIntentEntity_.recordObservationBinding.isNull()
+          .or(CloudSyncReceivedArchiveIntentEntity_.recordObservationBinding.startsWith('[1,4,')));
+    if (maximumIntentId != null) {
+      condition = condition.and(CloudSyncReceivedArchiveIntentEntity_.id.lessOrEqual(maximumIntentId));
+    }
+    final query = _store.box<CloudSyncReceivedArchiveIntentEntity>().query(condition)
+        .order(CloudSyncReceivedArchiveIntentEntity_.updatedAtMs)
+        .order(CloudSyncReceivedArchiveIntentEntity_.id).build()..limit = limit;
+    try { return query.find().map((row) => row.id).toList(growable: false); }
+    finally { query.close(); }
+  });
+
   CloudSyncReceivedArchiveAdmissionSource readForReader({
     required int intentId, required CloudSyncNativeAuthSnapshot currentAuth,
   }) => _store.runInTransaction(TxMode.read, () {

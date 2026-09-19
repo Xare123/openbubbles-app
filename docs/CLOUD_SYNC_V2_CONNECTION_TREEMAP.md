@@ -257,6 +257,31 @@ auth checks or repeat a full sweep merely to work around this missing preflight.
   not count as full-tree binding proof. Keep its real Rust/Dart evidence; do not
   rerun a full build just for this. Apply corrected gate to the next native repair.
 
+### Discovery worker wiring and enabled-path tests, September 19
+
+- TEST-PROVEN component gate (not readiness): source b056a1be4 (trusted
+  branch head) passed dart-only GCE run 35423525874: 3962 Dart pass / 0 fail
+  with app_rust/protector/uploads skipped, source-SHA verified on the runner,
+  writer/uploads false, no APK/signing, instance gce-35423525874-1 deleted
+  with zero runners remaining. It qualifies the source-bound journal and
+  normal-history linkage plus v2 inventory components only: fresh discovery
+  sources link to already-owned inbox changes without replacing references
+  or adopting new leases, and production inventory enforces state-4-only
+  source-validated v2 markers.
+- Real caller: the gated received worker now runs bounded parentless
+  discovery (one state-1 candidate per pass via readDiscoveryCandidates)
+  after the ordinary found pass and before reader recovery, under a new
+  OPENBUBBLES_CLOUD_SYNC_V2_RECEIVED_DISCOVERY flag defaulting off alongside
+  the existing capture/inspection/pull/writer gates. The direct parent-bound
+  create path is unchanged. Post-stage verification, validation, adoption and
+  commit/rollback live in adoptCloudSyncDiscoveredStage, covered by a
+  mismatch/validation/duplicate/generation/store-mismatch/lost-commit matrix
+  proving exactly one rollback before adoption and none after it.
+- Open: matching Windows fast-loop runtime build for the new native
+  discovery calls (installed f439 predates them and must not run them);
+  live account/relay observation; ordinary-reader projection of retained v2
+  rows; the remaining release gates below. Dart green is not end-to-end proof.
+
 ### Retained architecture and unresolved work
 
 - The cached-only native parent locator derives an exact keyed parent identity

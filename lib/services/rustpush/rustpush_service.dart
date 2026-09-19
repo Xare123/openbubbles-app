@@ -50,6 +50,7 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_received_arc
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_received_delivery.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_received_source_runtime.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_received_inspection_adapter.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_received_discovery_retain_adapter.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_received_reader_adapter.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_received_record_observation.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_mutation_identity.dart';
@@ -8511,6 +8512,29 @@ class RustPushService extends GetxService {
                 cloudSyncV2SafeFailureCode(error) == 'received_found_reader_newer_evidence';
             journal.markReaderAttemptConsidered(intentId: intentId, now: DateTime.now().toUtc());
             Logger.warn('Cloud Sync V2 received reader deferred code=${cloudSyncV2SafeFailureCode(error)}');
+          }
+        }
+        if (CloudSyncDevGate.receivedArchiveDiscoveryEnabled) {
+          // Bounded parentless discovery: one state-1 intent with no proven
+          // parent gets an exact native lookup; adoption stays pending for
+          // the ordinary reader recovery below. All discovery gates default
+          // off; the direct parent-bound create path above is unchanged.
+          final discovery = journal.readDiscoveryCandidates(currentAuth: captured, limit: 1,
+            maximumIntentId: _cloudSyncV2ReceivedRoundCeiling);
+          for (final discoveryIntentId in discovery) {
+            await validate();
+            try {
+              readerPending = readerPending || await retainCloudSyncDiscoveredReceivedFound(
+                intentId: discoveryIntentId,
+                privateStorageDirectory: storagePath,
+                readActiveClient: () => state?.icloudServices?.cloudMessagesClient,
+                stillCurrent: stillCurrent);
+            } catch (error) {
+              if (!stillCurrent()) rethrow;
+              _cloudSyncV2ReceivedPassDeferred = true;
+              journal.markReaderAttemptConsidered(intentId: discoveryIntentId, now: DateTime.now().toUtc());
+              Logger.warn('Cloud Sync V2 received discovery deferred code=${cloudSyncV2SafeFailureCode(error)}');
+            }
           }
         }
         await validate();

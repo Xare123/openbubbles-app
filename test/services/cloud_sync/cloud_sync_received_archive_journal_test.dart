@@ -8,8 +8,10 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_outbound_cha
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_persistent_keys.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_protector.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_received_archive_identity.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_protected_page_lease_lifecycle.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_received_archive_journal.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_received_archive_source_binding.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_received_discovery_retain_adapter.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_received_archive_staging.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_store.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_transport.dart';
@@ -3082,6 +3084,242 @@ void main() {
       expect(after, contains(discoverySource.leaseReference));
       expect(after.contains(_lease('2')), isFalse);
     });
+    test('discovery candidates select fresh state-1 rows', () async {
+      await seedDiscovery('discovery-guid-16');
+      expect(journal.readDiscoveryCandidates(currentAuth: auth), [discoveryIntentId]);
+    });
+    test('discovery candidates include unresolved prior inspection', () async {
+      await seedDiscovery('discovery-guid-17');
+      final gen = await currentGeneration();
+      final unresolved = CloudSyncReceivedRecordObservation(
+        state: CloudSyncReceivedRecordState.unresolved,
+        accountFingerprint: discoverySource.accountFingerprint,
+        protectedStoreIdentity: discoverySource.protectedStoreIdentity,
+        messageGuidHash: discoverySource.messageGuidHash,
+        sourceSha256: discoverySource.sourceSha256,
+        logicalEntityKeyHash: _a43('L'),
+        serverRecordIdHash: _a43('R'),
+        generation: gen,
+        parentBinding: 'synthetic-unresolved-parent',
+        observedAtMs: _time(4).millisecondsSinceEpoch,
+      );
+      final row = discoveryIntent();
+      row.recordObservationBinding = unresolved.encode();
+      store.box<CloudSyncReceivedArchiveIntentEntity>().put(row);
+      expect(journal.readDiscoveryCandidates(currentAuth: auth), [discoveryIntentId]);
+    });
+    test('discovery candidates exclude adopted and state-2 rows', () async {
+      await seedDiscovery('discovery-guid-18');
+      expect(adoptDiscovery(generation: await currentGeneration()), isTrue);
+      expect(journal.readDiscoveryCandidates(currentAuth: auth), isEmpty);
+      await seedDiscovery('discovery-guid-19');
+      final row = discoveryIntent();
+      row.state = 2;
+      store.box<CloudSyncReceivedArchiveIntentEntity>().put(row);
+      expect(journal.readDiscoveryCandidates(currentAuth: auth), isEmpty);
+    });
+    test('discovery candidates respect ceiling, limit and auth', () async {
+      await seedDiscovery('discovery-guid-20');
+      final first = discoveryIntentId;
+      await seedDiscovery('discovery-guid-21');
+      expect(journal.readDiscoveryCandidates(currentAuth: auth, maximumIntentId: first), [first]);
+      expect(journal.readDiscoveryCandidates(currentAuth: auth, limit: 1), hasLength(1));
+      final rotated = CloudSyncNativeAuthSnapshot.fromNative(
+        nativeSessionId: 'native-session',
+        accountFingerprint: 'BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB',
+        protectedStoreIdentity: _storeId,
+        cloudMessagesClient: Object(),
+      );
+      expect(() => journal.readDiscoveryCandidates(currentAuth: rotated), throwsStateError);
+    });
+    api.CloudSyncReceivedFoundProjection discoveryStage({
+      required int generation,
+      String? guidHash,
+      String? sourceHash,
+      String lease = '1',
+      String batch = 'B',
+    }) => api.CloudSyncReceivedFoundProjection(
+      messageGuidHash: guidHash ?? discoverySource.messageGuidHash,
+      sourceSha256: sourceHash ?? discoverySource.sourceSha256,
+      generation: BigInt.from(generation),
+      batchId: _a43(batch),
+      leaseReference: _lease(lease),
+      change: api.CloudSyncProtectedChange(
+        changeId: _a43('D'),
+        recordIdHash: _a43('R'),
+        etagHash: _a43('E'),
+        kind: api.CloudSyncProtectedChangeKind.save,
+        payloadSha256: _h64('d'),
+        payloadLength: BigInt.from(128),
+        protectedRecordIdentityReference: 'obcs2.ref.${_a43('I')}',
+        protectedRawEnvelopeReference: 'obcs2.ref.${_a43('Y')}',
+        serverModifiedAtMillis: null,
+        preflightCode: null,
+        isTombstone: false,
+      ),
+    );
+    Future<bool> runPipelineStage({
+      required api.CloudSyncReceivedFoundProjection result,
+      required int generation,
+      Future<void> Function()? validate,
+      CloudSyncReceivedArchiveSourceBinding? source,
+      required _DiscoveryStageTransport transport,
+    }) {
+      final lifecycle = CloudProtectedPageLeaseLifecycle(store: durable, transport: transport);
+      return adoptCloudSyncDiscoveredStage(
+        result: result,
+        source: source ?? discoverySource,
+        checkpointGeneration: generation,
+        validate: validate ?? () async {},
+        durable: durable,
+        journal: journal,
+        scope: discoveryScope(),
+        intentId: discoveryIntentId,
+        auth: auth,
+        coordinator: fence,
+        stillCurrent: () => true,
+        lifecycle: lifecycle,
+        transport: transport,
+      );
+    }
+    test('pipeline mismatch rolls back exactly once', () async {
+      await seedDiscovery('discovery-guid-23');
+      final gen = await currentGeneration();
+      final transport = _DiscoveryStageTransport();
+      await expectLater(
+        runPipelineStage(
+          result: discoveryStage(generation: gen, guidHash: _a43('Z')),
+          generation: gen,
+          transport: transport,
+        ),
+        throwsStateError,
+      );
+      expect(transport.rolledBack, [_lease('1')]);
+      expect(transport.committed, isEmpty);
+      expect(discoveryIntent().state, 1);
+      expect(store.box<CloudInboxChangeEntity>().count(), 0);
+    });
+    test('pipeline pre-adoption validation failure rolls back exactly once', () async {
+      await seedDiscovery('discovery-guid-24');
+      final gen = await currentGeneration();
+      final transport = _DiscoveryStageTransport();
+      await expectLater(
+        runPipelineStage(
+          result: discoveryStage(generation: gen),
+          generation: gen,
+          transport: transport,
+          validate: () async { throw StateError('synthetic stale'); },
+        ),
+        throwsStateError,
+      );
+      expect(transport.rolledBack, [_lease('1')]);
+      expect(transport.committed, isEmpty);
+      expect(discoveryIntent().state, 1);
+    });
+    test('pipeline adopts and commits without rollback', () async {
+      await seedDiscovery('discovery-guid-25');
+      final gen = await currentGeneration();
+      final transport = _DiscoveryStageTransport();
+      expect(
+        await runPipelineStage(result: discoveryStage(generation: gen), generation: gen, transport: transport),
+        isTrue,
+      );
+      expect(transport.committed, [_lease('1')]);
+      expect(transport.rolledBack, isEmpty);
+      expect(transport.acknowledged, [_lease('1')]);
+      expect(discoveryIntent().state, 4);
+      expect(store.box<CloudInboxChangeEntity>().count(), 1);
+    });
+    test('pipeline duplicate rolls back only the new lease', () async {
+      await seedDiscovery('discovery-guid-26');
+      final gen = await currentGeneration();
+      final transport = _DiscoveryStageTransport();
+      expect(
+        await runPipelineStage(result: discoveryStage(generation: gen), generation: gen, transport: transport),
+        isTrue,
+      );
+      expect(
+        await runPipelineStage(
+          result: discoveryStage(generation: gen, lease: '2'),
+          generation: gen,
+          transport: transport,
+        ),
+        isTrue,
+      );
+      // The duplicate rolls back only the new staged lease: nothing new is
+      // committed because the inbox already owns the change.
+      expect(transport.rolledBack, [_lease('2')]);
+      expect(transport.committed, [_lease('1')]);
+      expect(store.box<CloudInboxChangeEntity>().count(), 1);
+      expect(discoveryIntent().state, 4);
+    });
+    test('pipeline lost commit never rolls back adopted work', () async {
+      await seedDiscovery('discovery-guid-27');
+      final gen = await currentGeneration();
+      final transport = _DiscoveryStageTransport()..failCommit = true;
+      await expectLater(
+        runPipelineStage(result: discoveryStage(generation: gen), generation: gen, transport: transport),
+        throwsStateError,
+      );
+      expect(transport.committed, [_lease('1')]);
+      expect(transport.rolledBack, isEmpty);
+      expect(discoveryIntent().state, 4);
+      expect(store.box<CloudInboxChangeEntity>().count(), 1);
+      // Retry resumes the adopted lease without another lookup or staging.
+      transport.failCommit = false;
+      final lifecycle = CloudProtectedPageLeaseLifecycle(store: durable, transport: transport);
+      await lifecycle.commitJournaledPage(
+        CloudFetchBatch(
+          scope: discoveryScope(), changes: [discoveryChange()],
+          batchId: _a43('B'), generation: gen,
+          nextToken: null, hasMore: false,
+          protectedPageLeaseReference: _lease('1'),
+        ),
+        previousCheckpointReference: null,
+      );
+      expect(transport.committed, [_lease('1'), _lease('1')]);
+      expect(transport.rolledBack, isEmpty);
+      expect(store.box<CloudInboxChangeEntity>().count(), 1);
+    });
+    test('pipeline generation mismatch rolls back exactly once', () async {
+      await seedDiscovery('discovery-guid-28');
+      final gen = await currentGeneration();
+      final transport = _DiscoveryStageTransport();
+      await expectLater(
+        runPipelineStage(result: discoveryStage(generation: 999), generation: gen, transport: transport),
+        throwsStateError,
+      );
+      expect(transport.rolledBack, [_lease('1')]);
+      expect(discoveryIntent().state, 1);
+      expect(store.box<CloudInboxChangeEntity>().count(), 0);
+    });
+    test('pipeline foreign source rolls back exactly once', () async {
+      await seedDiscovery('discovery-guid-29');
+      final gen = await currentGeneration();
+      final foreign = CloudSyncReceivedArchiveSourceBinding(
+        accountFingerprint: discoverySource.accountFingerprint,
+        protectedStoreIdentity: 'obcs2.store.${_a43('Q')}',
+        messageGuidHash: discoverySource.messageGuidHash,
+        sourceSha256: discoverySource.sourceSha256,
+        protectedReference: discoverySource.protectedReference,
+        leaseReference: discoverySource.leaseReference,
+        payloadSha256: discoverySource.payloadSha256,
+        payloadLength: discoverySource.payloadLength,
+      );
+      final transport = _DiscoveryStageTransport();
+      await expectLater(
+        runPipelineStage(
+          result: discoveryStage(generation: gen),
+          generation: gen,
+          transport: transport,
+          source: foreign,
+        ),
+        throwsStateError,
+      );
+      expect(transport.rolledBack, [_lease('1')]);
+      expect(discoveryIntent().state, 1);
+      expect(store.box<CloudInboxChangeEntity>().count(), 0);
+    });
   });
 }
 
@@ -3169,6 +3407,48 @@ class _ReceivedLeaseTransport
     rolledBack.add(leaseReference);
   }
 
+  @override
+  dynamic noSuchMethod(Invocation invocation) =>
+      throw StateError('unexpected operation');
+}
+
+/// Discovery pipeline transport: records lease commit/acknowledge/rollback
+/// with an optional lost-commit failure. No native behavior is simulated
+/// beyond counting the exact production lifecycle calls.
+class _DiscoveryStageTransport
+    implements
+        CloudProtectedPageLeaseTransport,
+        CloudProtectedLocalLifecycleTransport {
+  bool failCommit = false;
+  final committed = <String>[];
+  final acknowledged = <String>[];
+  final rolledBack = <String>[];
+  @override
+  String get protectedPageLeaseRecoveryIdentity => _storeId;
+  @override
+  Future<T> runLocalProtectedStoreExclusive<T>(
+    Future<T> Function() action,
+  ) => action();
+  @override
+  Future<T> runProtectedStoreExclusive<T>(
+    Future<T> Function() action,
+  ) => action();
+  @override
+  Future<void> commitProtectedPageLease(
+    String leaseReference,
+    Set<String> retainedReferences,
+  ) async {
+    committed.add(leaseReference);
+    if (failCommit) throw StateError('synthetic lost commit response');
+  }
+  @override
+  Future<void> acknowledgeCommittedPageLease(String leaseReference) async {
+    acknowledged.add(leaseReference);
+  }
+  @override
+  Future<void> rollbackProtectedPageLease(String leaseReference) async {
+    rolledBack.add(leaseReference);
+  }
   @override
   dynamic noSuchMethod(Invocation invocation) =>
       throw StateError('unexpected operation');
