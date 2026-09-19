@@ -3320,6 +3320,54 @@ void main() {
       expect(discoveryIntent().state, 1);
       expect(store.box<CloudInboxChangeEntity>().count(), 0);
     });
+    test('retained v2 row keeps readable content pending for an absent parent', () async {
+      await seedDiscovery('discovery-guid-30');
+      final gen = await currentGeneration();
+      expect(adoptDiscovery(generation: gen), isTrue);
+      // Readable synthetic content stays visible in the local store.
+      final message = _byGuid('discovery-guid-30')!;
+      expect(message.text, 'original');
+      expect(message.attributedBody.single.string, 'original');
+      // Pending-ness is attributable to a specific absence: no record map
+      // projects this record, and no parent-bound observation exists.
+      expect(recordMapCountForZone(store, discoveryScope().zone), 0);
+      expect(
+        () => CloudSyncReceivedRecordObservation.decode(discoveryIntent().recordObservationBinding!),
+        throwsStateError,
+      );
+      final pending = store.box<CloudInboxChangeEntity>().getAll()
+          .where((row) => row.serverRecordIdHash == _a43('R'))
+          .toList();
+      expect(pending, hasLength(1));
+      expect(pending.single.status, CloudInboxStatus.pending.index);
+      // Restart continuity: the same content, absence, and pending row.
+      await reopen();
+      durable = ObjectBoxCloudSyncStore(
+        store: store,
+        protector: _ReceivedTestProtector(),
+        receivedArchiveJournal: journal,
+        clock: () => _time(4),
+      );
+      expect(_byGuid('discovery-guid-30')!.text, 'original');
+      expect(recordMapCountForZone(store, discoveryScope().zone), 0);
+      expect(discoveryIntent().state, 4);
+      CloudSyncReceivedDiscoveryObservation.decode(discoveryIntent().recordObservationBinding!)
+          .requireSource(discoverySource);
+      expect(
+        store.box<CloudInboxChangeEntity>().getAll()
+            .where((row) => row.serverRecordIdHash == _a43('R'))
+            .toList(),
+        hasLength(1),
+      );
+      // Replaying the owned change preserves rather than duplicates it.
+      expect(adoptDiscovery(generation: await currentGeneration()), isFalse);
+      expect(
+        store.box<CloudInboxChangeEntity>().getAll()
+            .where((row) => row.serverRecordIdHash == _a43('R'))
+            .toList(),
+        hasLength(1),
+      );
+    });
   });
 }
 

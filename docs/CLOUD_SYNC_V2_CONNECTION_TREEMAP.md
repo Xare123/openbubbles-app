@@ -294,6 +294,40 @@ auth checks or repeat a full sweep merely to work around this missing preflight.
   the 7 received-record discovery plus 2 chat1 native cases pass on the
   imported ARM64 DLL with zero profile-data writes outside the test host.
   Installed f439 app bundle retained untouched as rollback.
+
+### Full-length verification record, September 19
+
+- Short hash prefixes in chat messages are not the verification record; the
+  durable values are: trusted source
+  d3cdca8915e0a3fc23121da63f98331c4552196b, sidecar
+  f21cf96314ad86a5c039aa5d9fc7880057f995ec, source tree
+  32b5e1e1738ce2f685c9a888f2096fb9943adfcb, outer artifact digest
+  aa49fdeb16f64eee69a35dce7db419b1edf39360f97e49a7b294cc488b5cf257,
+  inner archive
+  1bba95576a301001204d2d3d2d14bf3b6a5c0dc180f6549f0939385b67c7b258,
+  provenance 2a0b6ed0ff2c5992b81569f72ee8341f77277f25ca534620f7da380aed57d22d,
+  unsigned rust_lib 3f1611bf68c3265dac396b20814205463a55d15cba9e22a6b3db01c11324c89f,
+  unsigned compose-tests 271c5bd5f314d008780ae184fdda03c27e27c998f06a0e93d17c04f1dc70d1d7,
+  signed rust_lib 54D231DBD4E70F30660A9C1354324BF5EA153422E6021EDAF14A7DB2B04B7E44,
+  signed compose-tests 1DC8CB1DDAFC2C05A3CEA6FD792C03D62CE8140668ADFBC70E02F85D2027717C,
+  vendor objectbox 9c8583c4015ab9e4ce2ed3d2d581811fa059e03bb528cb8c8387adcdfda8d8a5,
+  prior test-host DLL 4BFDD1218CA2559C5EA5E2A756111A0432030BC1ED96DA291DE8D426B4C77084
+  retained in rollback, installed f439 app DLL
+  6F84CA92CF40223A948C1E50A0102069CA5AD62C49ACB15BA05457F258495FF5 unchanged.
+- Imported module paths (absolute): the isolated dev profile test host holds
+  native-compose-tests.exe, rust_lib_bluebubbles.dll and objectbox.dll plus
+  the rebound receipt; the ordinary app installation is a separate directory
+  and was never written. Signer: CN=OpenBubbles ARM64 Development, thumbprint
+  8240557965890665F3B49E5FEC83D511CA4F2C9D, valid to 2028-07-28.
+- Reader-fixture result: a retained v2 discovery row keeps readable synthetic
+  content pending for a specific absent parent (zero record maps for the
+  record, no parent-bound observation) across reopen, and replays preserve
+  the single inbox row. Journal suite 87/87 locally.
+- Known environmental failure, unrelated to discovery: the full packaged
+  native run is 798 pass / 1 fail / 1 ignored, the single failure being
+  cross_process_lock_reports_busy (expects busy, host reports unavailable),
+  deterministic on this machine in an untouched lock module the CI smoke
+  does not execute. No code change made for it.
 - Open: live account/relay observation; ordinary-reader projection of
   retained v2 rows; the remaining release gates below. Offline green is not
   end-to-end proof.
