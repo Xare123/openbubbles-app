@@ -111,12 +111,11 @@ auth checks or repeat a full sweep merely to work around this missing preflight.
   Estimated compute$0.08. Windows35192422648 also passed in27m23s, with710 Dart,
   51 DLL encoder cases, native scopes and exact source/provenance checks.
   Ptolemy's two-file Dart change was reviewed/corrected, closed and verified.
-- Installed diagnostic host is nowf43919ba3cbf18599be8d1270924293cae339aae,
-  signed DLL4bfdd1218ca2559c5ea5e2a756111a0432030bc1ed96da291de8d426b4c77084.
-  Four exact native tests plus actual-DLL smoke passed locally. All15 checked
-  account/database files unchanged during import; b9 remains verified rollback.
+- Installed diagnostic host is now b7fe0cc53556e860fa1f364df8a742794ce4663d (run 35457188182, sidecar 5d16015),
+  signed DLL b3c7f18b978fb8a485c1319c668c6610491a00f0a357d0427da3f45258397c10, exe b4e94c1449ae4e86e2c9d75769b87716cbbe376fd9770f82572a26ffc4f7cc2d.
+  All 8 lock tests pass locally on the signed host; CI proved encoder 51, diagnostics 17, lock 6, timestamp 7, discovery 2, system 5. Profile hashes unchanged across import and smoke; d3/f21 receipt (exe 1DC8CB1D, dll 54D231DB) remains the rollback reference.
   Its14-message/9-attachment recovery remains preserved, not undone by this update.
-  Next: confirm Canary sign-in status, reserve the relay, re-observe the8 attachment
+  Next: reserve the exclusive relay (Pixel/Canary absence alone does not block), re-observe the 8 attachment
   malformed-record cases without projection, then repair the observed cause.
   No APK, live mutation, new profile or destructive cleanup is needed for this step.
 - Both sourcef439 jobs are complete: Windows35192422648/f21 and
