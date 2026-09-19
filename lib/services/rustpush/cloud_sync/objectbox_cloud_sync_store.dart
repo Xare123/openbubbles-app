@@ -960,12 +960,14 @@ class ObjectBoxCloudSyncStore
         throw _storageFailure('received_found_reader_newer_evidence');
       }
       // Existing reader owns its original references; roll back new lease.
-      // No re-marking: the inbox row and the adopted intent were written
-      // atomically by the owning adoption. The supplied triple must still
-      // prove linked to the owned change instead of reporting duplicate.
-      journal.validateDiscoveryDuplicate(transactionStore: _store, scope: scope,
+      // A valid fresh discovery source is atomically linked to the owned
+      // change with discovery ownership, without replacing the inbox row or
+      // adopting the new lease. An already-owned state-4 intent only
+      // revalidates. Anything unlinked throws instead of reporting duplicate.
+      journal.linkDiscoveryDuplicate(transactionStore: _store, scope: scope,
         intentId: intentId, source: source, currentAuth: currentAuth,
-        stillCurrent: stillCurrent, change: change);
+        stillCurrent: stillCurrent, change: change, generation: generation,
+        observedAtMs: nowMs);
       return false;
     }
     final mapQuery = _recordMaps.query(CloudRecordMapEntity_.scopeKey.equals(_scopeKey(scope))
@@ -1019,10 +1021,14 @@ class ObjectBoxCloudSyncStore
     final encoded=intent.recordObservationBinding;
     if(encoded==null) return null;
     if (CloudSyncReceivedDiscoveryObservation.isEncoded(encoded)) {
-      // Version-2 discovery markers carry no raw references: validate the
-      // marker and its source binding, then contribute nothing to the
-      // raw-reference inventory. Malformed or foreign markers throw here
-      // instead of being silently skipped.
+      // Version-2 discovery markers are only valid on adopted state-4 rows
+      // and carry no raw references: validate the marker and its source
+      // binding, then contribute nothing to the raw-reference inventory.
+      // Markers on wrong-state rows, malformed markers, and foreign markers
+      // throw here instead of being silently treated as benign observations.
+      if (intent.state != 4) {
+        throw StateError('cloud_sync_received_archive_intent_changed');
+      }
       CloudSyncReceivedDiscoveryObservation.decode(encoded).requireSource(source);
       return null;
     }

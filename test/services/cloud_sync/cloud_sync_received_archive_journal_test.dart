@@ -2926,6 +2926,15 @@ void main() {
         () => journal.markReaderAttemptConsidered(intentId: discoveryIntentId, now: _time(6)),
         throwsStateError,
       );
+      // Production inventory enforces the same state-4-only invariant.
+      await expectLater(
+        durable.readLiveProtectedOutboundLeaseReferences(maximumCount: 4096),
+        throwsStateError,
+      );
+      await expectLater(
+        durable.readLiveProtectedReferences(maximumCount: 131072),
+        throwsStateError,
+      );
     });
     test('malformed v2 marker fails closed in reads and inventory', () async {
       await seedDiscovery('discovery-guid-11');
@@ -2994,6 +3003,84 @@ void main() {
         throwsStateError,
       );
       expect(store.box<CloudInboxChangeEntity>().count(), 1);
+    });
+    test('normal-history inbox row links fresh discovery source without new lease', () async {
+      // Ordinary fetch history owns record R before any discovery intent runs.
+      final historyChange = CloudFetchedChange(
+        changeId: _a43('D'),
+        recordIdHash: _a43('R'),
+        etagHash: _a43('E'),
+        type: CloudChangeType.save,
+        isTombstone: false,
+        encryptedServerRecordId: 'obcs2.ref.${_a43('I')}',
+        protectedSystemFieldsReference: 'obcs2.ref.${_a43('J')}',
+        encryptedPayloadReference: 'obcs2.ref.${_a43('Y')}',
+        payloadSha256: _h64('d'),
+        serverModifiedAt: _time(2),
+      );
+      final prior = await durable.readCheckpoint(discoveryScope());
+      await durable.journalFetchedBatch(
+        CloudFetchBatch(
+          scope: discoveryScope(), changes: [historyChange],
+          batchId: 'synthetic-normal-history',
+          generation: prior.generation,
+          nextToken: 'synthetic-normal-cursor', hasMore: false,
+          protectedPageLeaseReference: _lease('9'),
+        ),
+        now: _time(4), leaseFence: fence,
+        expectedGeneration: prior.generation,
+        expectedFetchedToken: prior.fetchedToken,
+        expectedFetchDirection: prior.fetchDirection,
+      );
+      await durable.markInboxApplied(discoveryScope(),
+        sequence: prior.fetchedSequence + 1, now: _time(4), leaseFence: fence);
+      expect(store.box<CloudInboxChangeEntity>().count(), 1);
+      // A fresh discovery intent for the same record links to the owned
+      // change: no duplicate inbox row, no new lease ownership.
+      await seedDiscovery('discovery-guid-15');
+      final gen = await currentGeneration();
+      expect(gen, prior.generation);
+      expect(
+        durable.journalDiscoveredFound(
+          scope: discoveryScope(),
+          change: discoveryChange(),
+          generation: gen,
+          batchId: _a43('B'),
+          leaseReference: _lease('2'),
+          leaseFence: fence,
+          journal: journal,
+          intentId: discoveryIntentId,
+          source: discoverySource,
+          currentAuth: auth,
+          stillCurrent: () => true,
+        ),
+        isFalse,
+      );
+      final row = discoveryIntent();
+      expect(row.state, 4);
+      expect(row.readerChangeId, _a43('D'));
+      CloudSyncReceivedDiscoveryObservation.decode(row.recordObservationBinding!)
+          .requireSource(discoverySource);
+      expect(store.box<CloudInboxChangeEntity>().count(), 1);
+      // The applied history lease is released; the linked source lease stays
+      // owned while the rolled-back staged lease is never adopted.
+      final leases = await durable.readLiveProtectedOutboundLeaseReferences(maximumCount: 4096);
+      expect(leases, contains(discoverySource.leaseReference));
+      expect(leases.contains(_lease('2')), isFalse);
+      await reopen();
+      durable = ObjectBoxCloudSyncStore(
+        store: store,
+        protector: _ReceivedTestProtector(),
+        receivedArchiveJournal: journal,
+        clock: () => _time(4),
+      );
+      expect(discoveryIntent().state, 4);
+      CloudSyncReceivedDiscoveryObservation.decode(discoveryIntent().recordObservationBinding!)
+          .requireSource(discoverySource);
+      expect(store.box<CloudInboxChangeEntity>().count(), 1);
+      final after = await durable.readLiveProtectedOutboundLeaseReferences(maximumCount: 4096);
+      expect(after, contains(discoverySource.leaseReference));
+      expect(after.contains(_lease('2')), isFalse);
     });
   });
 }

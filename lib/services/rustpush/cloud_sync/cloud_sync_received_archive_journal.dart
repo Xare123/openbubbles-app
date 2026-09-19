@@ -251,18 +251,20 @@ final class CloudSyncReceivedArchiveJournal {
     _store.box<CloudSyncReceivedArchiveIntentEntity>().put(row);
   }
 
-  /// Validates a duplicate discovery report without mutating: the supplied
-  /// intent/source/auth triple must be bound exactly as an adoption would
-  /// require, and a state-4 row must already own this exact change. A
-  /// normal-history inbox row owned by another adoption still reports
-  /// duplicate, but only after the triple proves linked. Anything else
-  /// throws instead of reporting a benign duplicate.
-  void validateDiscoveryDuplicate({
+  /// Links a duplicate discovery report without touching inbox ownership:
+  /// the supplied intent/source/auth triple must be bound exactly as an
+  /// adoption would require. A valid fresh intent is atomically marked
+  /// adopted for the already-owned change with discovery ownership; the
+  /// inbox row and its original references are never replaced and the new
+  /// lease is never adopted here (the caller rolls it back). An already
+  /// state-4 row must already own this exact change and only revalidates.
+  /// Anything else throws instead of reporting a benign duplicate.
+  void linkDiscoveryDuplicate({
     required Store transactionStore, required CloudSyncScope scope,
     required int intentId,
     required CloudSyncReceivedArchiveSourceBinding source,
     required CloudSyncNativeAuthSnapshot currentAuth, required bool Function() stillCurrent,
-    required CloudFetchedChange change,
+    required CloudFetchedChange change, required int generation, required int observedAtMs,
   }) {
     if (!identical(transactionStore, _store) || !stillCurrent() ||
         scope.accountFingerprint != _binding.scope.accountFingerprint ||
@@ -306,11 +308,15 @@ final class CloudSyncReceivedArchiveJournal {
       }
       return;
     }
-    // A valid unadopted discovery intent whose record the inbox already owns
-    // through normal history still reports duplicate after the linkage above.
     if (intent.state != 1 && intent.state != 2 || intent.readerChangeId != null) {
       throw StateError('cloud_sync_received_archive_admission_changed');
     }
+    // Link the fresh source to the existing inbox change. This revalidates
+    // the same triple and writes only the intent row: no inbox insert, no
+    // lease adoption, no reference replacement.
+    markDiscoveryAdopted(transactionStore: transactionStore, scope: scope, intentId: intentId,
+      source: source, currentAuth: currentAuth, stillCurrent: stillCurrent,
+      change: change, generation: generation, observedAtMs: observedAtMs);
   }
 
   List<CloudSyncReceivedArchiveAdmissionSource> readCreateCandidates({
