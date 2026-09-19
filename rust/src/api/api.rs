@@ -796,17 +796,14 @@ pub async fn cloud_sync_prepare_received_archive_inspection(
 // hosted qualification batch is the first caller path under review.
 #[allow(dead_code)]
 #[allow(clippy::too_many_arguments)]
-async fn cloud_sync_discover_received_record_exact(
+pub async fn cloud_sync_discover_received_record_exact(
     cloud_messages_client: &Arc<CloudMessagesClient<DefaultAnisetteProvider>>,
     native_writer_pause_token: u64,
     storage_directory: String,
     expected_auth: CloudSyncNativeAuthMetadata,
     received_source: CloudSyncNativeReceivedArchiveSourceBinding,
     message_generation: u64,
-) -> anyhow::Result<(
-    CloudSyncReceivedRecordObservation,
-    Option<(rustpush::cloudkit_proto::Record, Vec<u8>)>,
-)> {
+) -> anyhow::Result<CloudSyncPreparedReceivedDiscovery> {
     use crate::cloud_sync_received_record_discovery::{
         settle_discovery, DiscoveryDisposition, DiscoveryLookupOutcome, DiscoverySnapshot,
     };
@@ -912,7 +909,7 @@ async fn cloud_sync_discover_received_record_exact(
             }
             _ => anyhow!("cloud_sync_received_archive_record_mismatch"),
         })?;
-    let mut result = CloudSyncReceivedRecordObservation {
+    let mut observation = CloudSyncReceivedRecordObservation {
         disposition: CloudSyncReceivedRecordDisposition::Unresolved,
         message_guid_hash: source_stage.message_guid_hash.clone(),
         source_sha256: source_stage.source_sha256.clone(),
@@ -925,7 +922,7 @@ async fn cloud_sync_discover_received_record_exact(
     };
     match settled.disposition {
         DiscoveryDisposition::Absent => {
-            result.disposition = CloudSyncReceivedRecordDisposition::Absent;
+            observation.disposition = CloudSyncReceivedRecordDisposition::Absent;
             raw_found = None;
         }
         DiscoveryDisposition::FoundForReaderIngress => {
@@ -937,9 +934,107 @@ async fn cloud_sync_discover_received_record_exact(
             raw_found = None;
         }
     }
-    Ok((result, raw_found))
+    Ok(CloudSyncPreparedReceivedDiscovery {
+        pending: tokio::sync::Mutex::new(Some(DiscoveryPending {
+            cloud_messages_client: cloud_messages_client.clone(),
+            container,
+            storage_directory,
+            auth: after,
+            source: source_stage,
+            observation,
+            raw_found,
+            prepared_at: std::time::Instant::now(),
+        })),
+    })
 }
 
+/// One in-memory exact-discovery result. No raw file exists until the caller
+/// stages it through the protected readback stager below. Dropping or discarding
+/// it never changes a durable source, Apple record, or cursor.
+#[frb(opaque)]
+pub struct CloudSyncPreparedReceivedDiscovery {
+    pending: tokio::sync::Mutex<Option<DiscoveryPending>>,
+}
+
+struct DiscoveryPending {
+    cloud_messages_client: Arc<CloudMessagesClient<DefaultAnisetteProvider>>,
+    container: Arc<rustpush::cloudkit::CloudKitOpenContainer<'static, DefaultAnisetteProvider>>,
+    storage_directory: String,
+    auth: CloudSyncNativeAuthMetadata,
+    source: crate::cloud_sync_received_source_stage::NativeReceivedArchiveStage,
+    observation: CloudSyncReceivedRecordObservation,
+    raw_found: Option<(rustpush::cloudkit_proto::Record, Vec<u8>)>,
+    prepared_at: std::time::Instant,
+}
+
+impl std::fmt::Debug for CloudSyncPreparedReceivedDiscovery {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("CloudSyncPreparedReceivedDiscovery(redacted)")
+    }
+}
+
+/// Validated discovery find -> the existing protected reader change shape. Only
+/// a prepared result still holding its original raw bytes can stage: Absent,
+/// transport-failure, and expired results fail without touching storage. No
+/// parent is required or invented; the returned change carries the same
+/// record-id/ETag-hash validation and lease rollback as ordinary fetched
+/// history. Caller owns local exclusion through journal adoption and lease
+/// commit, then uses the normal projector. No remote I/O here.
+pub async fn cloud_sync_stage_discovered_received_record(
+    prepared: &CloudSyncPreparedReceivedDiscovery,
+    native_writer_pause_token: u64,
+) -> anyhow::Result<CloudSyncReceivedFoundProjection> {
+    let mut pending = prepared.pending.lock().await.take()
+        .ok_or_else(|| anyhow!("cloud_sync_received_archive_inspection_consumed"))?;
+    if pending.prepared_at.elapsed() > std::time::Duration::from_secs(120) {
+        return Err(anyhow!("cloud_sync_received_archive_inspection_expired"));
+    }
+    let permit = acquire_cloudkit_read_authentication(native_writer_pause_token)
+        .map_err(|_| anyhow!("cloud_sync_received_archive_read_permit"))?;
+    let auth = cloud_sync_capture_auth_snapshot(&pending.cloud_messages_client, pending.storage_directory.clone()).await?;
+    cloud_sync_require_received_auth(&pending.auth, &auth)?;
+    let current_container = pending.cloud_messages_client.get_cached_container_for_read_authentication(&permit).await
+        .map_err(|_| anyhow!("cloud_sync_received_archive_identity_changed"))?;
+    if !Arc::ptr_eq(&pending.container, &current_container) {
+        return Err(anyhow!("cloud_sync_received_archive_identity_changed"));
+    }
+    crate::cloud_sync_received_source_stage::open_received_archive_source(
+        PathBuf::from(&pending.storage_directory), auth.account_fingerprint.clone(), &pending.source)
+        .map_err(|_| anyhow!("cloud_sync_received_archive_protected_source_changed"))?;
+    let (record, raw) = pending.raw_found.take()
+        .ok_or_else(|| anyhow!("cloud_sync_received_archive_found_projection_not_ready"))?;
+    if pending.prepared_at.elapsed() > std::time::Duration::from_secs(120) {
+        return Err(anyhow!("cloud_sync_received_archive_inspection_expired"));
+    }
+    let page = crate::cloud_sync_native_fetch::cloud_sync_stage_received_found_projection(
+        PathBuf::from(&pending.storage_directory), auth.account_fingerprint,
+        pending.observation.raw_generation, &record, &raw)
+        .map_err(|_| anyhow!("cloud_sync_received_archive_readback_stage_failed"))?;
+    if page.changes().len() != 1 || page.protected_next_checkpoint_reference().is_some() ||
+        page.changes()[0].record_id_hash() != pending.observation.server_record_id_hash ||
+        page.changes()[0].etag_hash() != pending.observation.etag_hash.as_deref() {
+        let _ = crate::cloud_sync_native_fetch::cloud_sync_rollback_protected_page(
+            PathBuf::from(&pending.storage_directory), &page);
+        return Err(anyhow!("cloud_sync_received_archive_record_mismatch"));
+    }
+    Ok(CloudSyncReceivedFoundProjection {
+        message_guid_hash: pending.source.message_guid_hash,
+        source_sha256: pending.source.source_sha256,
+        generation: page.generation(), batch_id: page.batch_id().to_owned(),
+        lease_reference: page.page_lease_reference().to_owned(),
+        change: map_cloud_sync_protected_change(&page.changes()[0]),
+    })
+}
+
+/// Releases an unused discovery result or no-ops after staging consumed it. No
+/// disk or account operation occurs, including after identity validation fails.
+/// Every prepared holder must reach this or the staging call above; dropping
+/// the Dart handle alone never stages, adopts, or projects anything.
+pub async fn cloud_sync_discard_received_discovery(
+    prepared: &CloudSyncPreparedReceivedDiscovery,
+) {
+    prepared.pending.lock().await.take();
+}
 /// Local-only stage. The caller must hold its cross-engine local-store lease
 /// from this call through durable adoption and commit/rollback. Keep the exact
 /// read session alive; a replaced client/container/source never yields a file.
