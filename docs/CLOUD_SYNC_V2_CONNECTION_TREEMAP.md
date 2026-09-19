@@ -79,8 +79,8 @@ runtime, account, queue or device. Fresh local check found no matching
 Flutter/Dart/OpenBubbles process and C: has 26.75 GiB free. The prior qualification
 and device observations below remain dated evidence, not fresh live state.
 
-Next: verify current Canary state and exclusive relay availability, then run the
-existing attachment diagnostic without refetch/projection/writes. If the live
+Next: verify exclusive relay availability, then run the
+existing attachment diagnostic without refetch/projection/writes. Stop the live action only if the relay is unavailable, a competitor is active, or Windows auth needs refresh/2FA/registration. If the live
 preflight is unavailable, advance a specific offline-testable production gap,
 not repeated unchanged polls or a duplicate APK build. Report evidence and the
 next decision at a checkpoint; all unfinished release gates remain unfinished.
@@ -91,7 +91,7 @@ The same unknown Canary sign-in state remained through three consecutive goal
 turns after the diagnostic runtime was ready. Checks on September 17 showed no ADB
 device, no local test process, both qualification jobs terminal/successful and
 zero GitHub runners. The goal was marked blocked, not completed, to stop idle repetition.
-User must confirm whether Canary is still at activation/sign-in or now signed in,
+Canary/Pixel physical availability is coordination only, not a Windows cached-record technical dependency when Rami confirms an exclusive Windows-only relay window by direct message; missing Pixel attachment or unavailable Canary UI alone does not block. User must confirm whether Canary is still at activation/sign-in or now signed in,
 or reconnect the Pixel for a fresh check. Then reserve the shared relay and run
 the already-qualified cached attachment probe. Do not rebuild, reset data, weaken
 auth checks or repeat a full sweep merely to work around this missing preflight.
