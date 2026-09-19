@@ -161,6 +161,91 @@ final class CloudSyncReceivedArchiveJournal {
       ..state = 4;
     _store.box<CloudSyncReceivedArchiveIntentEntity>().put(row);
   }
+  /// Synchronous part of the caller's discovery inbox transaction. Same
+  /// no-Message-write and no-evidence-replacement guarantees as reader
+  /// adoption, but WITHOUT parent proof: the intent carries a source-bound
+  /// discovery result whose owner is still unresolved. Newer local edits and
+  /// summary info still block adoption. The adopted pending inbox row lets the
+  /// ordinary reader retain or project once a parent is proven.
+  void markDiscoveryAdopted({
+    required Store transactionStore, required CloudSyncScope scope,
+    required int intentId,
+    required CloudSyncReceivedArchiveSourceBinding source,
+    required CloudSyncNativeAuthSnapshot currentAuth, required bool Function() stillCurrent,
+    required CloudFetchedChange change, required int generation,
+    required int observedAtMs,
+  }) {
+    if (!identical(transactionStore, _store) || !stillCurrent() ||
+        scope.accountFingerprint != _binding.scope.accountFingerprint ||
+        scope.container != 'com.apple.messages.cloud' || scope.database != 'private' ||
+        scope.zone != 'messageManateeZone' || scope.persistenceLane != CloudSyncPersistenceLane.semantic) {
+      throw StateError('cloud_sync_received_archive_admission_changed');
+    }
+    _verifyOwnership();
+    if (currentAuth.accountFingerprint != _binding.scope.accountFingerprint) {
+      throw StateError('cloud_sync_received_archive_identity_changed');
+    }
+    // Direct row read joins the caller's write transaction; the tx-wrapped
+    // readMaterializedForInspection must never nest inside it.
+    final intent = _readBoundIntent(intentId);
+    if (intent.state != 1 && intent.state != 2 ||
+        intent.admittedOperationId != null || intent.readerChangeId != null ||
+        intent.messageGuidHash != source.messageGuidHash ||
+        intent.sourceSha256 != source.sourceSha256) {
+      throw StateError('cloud_sync_received_archive_admission_changed');
+    }
+    final nowSource = CloudSyncReceivedArchiveSourceBinding.decode(
+      intent.protectedSourceBinding,
+    );
+    nowSource.requireOrigin(
+      accountFingerprint: intent.accountFingerprint,
+      messageGuidHash: intent.messageGuidHash,
+      sourceSha256: intent.sourceSha256,
+    );
+    if (nowSource.encode() != source.encode()) {
+      throw StateError('cloud_sync_received_archive_admission_changed');
+    }
+    final message = _store.box<Message>().get(intent.localMessageId);
+    if (message == null) {
+      throw StateError('cloud_sync_received_archive_admission_changed');
+    }
+    if (message.dateEdited != null || message.messageSummaryInfo.isNotEmpty) {
+      throw StateError('cloud_sync_received_archive_admitted_source_changed');
+    }
+    if (generation == 0 ||
+        change.type != CloudChangeType.save || change.isTombstone ||
+        !RegExp(r'^[A-Za-z0-9_-]{43}$').hasMatch(change.changeId)) {
+      throw StateError('cloud_sync_received_archive_record_mismatch');
+    }
+    // Reuse the already-validated row: this runs synchronously with no awaits
+    // between validation and put, and a second _readBoundIntent would reject
+    // the state-4 row this adoption is about to write (no observation exists
+    // until the ordinary reader proves a parent).
+    // Explicit discovery-reader representation: the state-4 row carries a
+    // discoveryRetained observation so later journal reads, recovery scans,
+    // and reopen validate it instead of rejecting a parentless adoption.
+    // logicalEntityKeyHash reuses the server record hash: the install-keyed
+    // logical hash is native-only and no discovery read path compares this
+    // field (create-path comparisons never see discoveryRetained rows).
+    final observation = CloudSyncReceivedRecordObservation(
+      state: CloudSyncReceivedRecordState.discoveryRetained,
+      accountFingerprint: source.accountFingerprint,
+      protectedStoreIdentity: source.protectedStoreIdentity,
+      messageGuidHash: source.messageGuidHash,
+      sourceSha256: source.sourceSha256,
+      logicalEntityKeyHash: change.recordIdHash,
+      serverRecordIdHash: change.recordIdHash,
+      generation: generation,
+      parentBinding: '',
+      observedAtMs: observedAtMs,
+    );
+    observation.requireSource(source);
+    final row = intent
+      ..readerChangeId = change.changeId
+      ..recordObservationBinding = observation.encode()
+      ..state = 4;
+    _store.box<CloudSyncReceivedArchiveIntentEntity>().put(row);
+  }
 
   List<CloudSyncReceivedArchiveAdmissionSource> readCreateCandidates({
     required CloudSyncNativeAuthSnapshot currentAuth, int limit = 5,
@@ -1209,13 +1294,14 @@ final class CloudSyncReceivedArchiveJournal {
               observation?.state != CloudSyncReceivedRecordState.absent)) {
         return false;
       }
-      if (intent.state == 4 &&
-          (intent.readerChangeId == null ||
-           (observation?.state != CloudSyncReceivedRecordState.equivalent &&
-            observation?.state != CloudSyncReceivedRecordState.needsProjection) ||
-           intent.admittedOperationId != null)) {
-        return false;
-      }
+    if (intent.state == 4 &&
+        (intent.readerChangeId == null ||
+         (observation?.state != CloudSyncReceivedRecordState.equivalent &&
+          observation?.state != CloudSyncReceivedRecordState.needsProjection &&
+          observation?.state != CloudSyncReceivedRecordState.discoveryRetained) ||
+         intent.admittedOperationId != null)) {
+      return false;
+    }
       source.requireOrigin(
         accountFingerprint: intent.accountFingerprint,
         messageGuidHash: intent.messageGuidHash,

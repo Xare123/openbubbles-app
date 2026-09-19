@@ -132,6 +132,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       wire.rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncPreparedMessageCreateHandle;
 
   CrossPlatformFinalizerArg
+  get rust_arc_decrement_strong_count_CloudSyncPreparedReceivedDiscoveryPtr => wire
+      .rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncPreparedReceivedDiscovery;
+
+  CrossPlatformFinalizerArg
   get rust_arc_decrement_strong_count_CloudSyncPreparedReceivedInspectionPtr =>
       wire.rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncPreparedReceivedInspection;
 
@@ -412,6 +416,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   CloudSyncPreparedMessageCreateHandle
   dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncPreparedMessageCreateHandle(
+    dynamic raw,
+  );
+
+  @protected
+  CloudSyncPreparedReceivedDiscovery
+  dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncPreparedReceivedDiscovery(
     dynamic raw,
   );
 
@@ -766,6 +776,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   CloudSyncPreparedMessageCreateHandle
   dco_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncPreparedMessageCreateHandle(
+    dynamic raw,
+  );
+
+  @protected
+  CloudSyncPreparedReceivedDiscovery
+  dco_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncPreparedReceivedDiscovery(
     dynamic raw,
   );
 
@@ -1161,6 +1177,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   CloudSyncPreparedMessageCreateHandle
   dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncPreparedMessageCreateHandle(
+    dynamic raw,
+  );
+
+  @protected
+  CloudSyncPreparedReceivedDiscovery
+  dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncPreparedReceivedDiscovery(
     dynamic raw,
   );
 
@@ -1765,6 +1787,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   CloudSyncRawSystemFields dco_decode_box_autoadd_cloud_sync_raw_system_fields(
     dynamic raw,
   );
+
+  @protected
+  CloudSyncReceivedFoundProjection
+  dco_decode_box_autoadd_cloud_sync_received_found_projection(dynamic raw);
 
   @protected
   CloudSyncStagedChatIdentityCandidate
@@ -3356,6 +3382,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   dco_decode_opt_box_autoadd_cloud_sync_raw_system_fields(dynamic raw);
 
   @protected
+  CloudSyncReceivedFoundProjection?
+  dco_decode_opt_box_autoadd_cloud_sync_received_found_projection(dynamic raw);
+
+  @protected
   CloudSyncStagedChatIdentityCandidate?
   dco_decode_opt_box_autoadd_cloud_sync_staged_chat_identity_candidate(
     dynamic raw,
@@ -4230,6 +4260,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  CloudSyncPreparedReceivedDiscovery
+  sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncPreparedReceivedDiscovery(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   CloudSyncPreparedReceivedInspection
   sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncPreparedReceivedInspection(
     SseDeserializer deserializer,
@@ -4580,6 +4616,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   CloudSyncPreparedMessageCreateHandle
   sse_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncPreparedMessageCreateHandle(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  CloudSyncPreparedReceivedDiscovery
+  sse_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncPreparedReceivedDiscovery(
     SseDeserializer deserializer,
   );
 
@@ -4999,6 +5041,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   CloudSyncPreparedMessageCreateHandle
   sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncPreparedMessageCreateHandle(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  CloudSyncPreparedReceivedDiscovery
+  sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncPreparedReceivedDiscovery(
     SseDeserializer deserializer,
   );
 
@@ -5665,6 +5713,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   CloudSyncRawSystemFields sse_decode_box_autoadd_cloud_sync_raw_system_fields(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  CloudSyncReceivedFoundProjection
+  sse_decode_box_autoadd_cloud_sync_received_found_projection(
     SseDeserializer deserializer,
   );
 
@@ -7602,6 +7656,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  CloudSyncReceivedFoundProjection?
+  sse_decode_opt_box_autoadd_cloud_sync_received_found_projection(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   CloudSyncStagedChatIdentityCandidate?
   sse_decode_opt_box_autoadd_cloud_sync_staged_chat_identity_candidate(
     SseDeserializer deserializer,
@@ -8651,6 +8711,13 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void
+  sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncPreparedReceivedDiscovery(
+    CloudSyncPreparedReceivedDiscovery self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void
   sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncPreparedReceivedInspection(
     CloudSyncPreparedReceivedInspection self,
     SseSerializer serializer,
@@ -9059,6 +9126,13 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void
   sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncPreparedMessageCreateHandle(
     CloudSyncPreparedMessageCreateHandle self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void
+  sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncPreparedReceivedDiscovery(
+    CloudSyncPreparedReceivedDiscovery self,
     SseSerializer serializer,
   );
 
@@ -9552,6 +9626,13 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void
   sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncPreparedMessageCreateHandle(
     CloudSyncPreparedMessageCreateHandle self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void
+  sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncPreparedReceivedDiscovery(
+    CloudSyncPreparedReceivedDiscovery self,
     SseSerializer serializer,
   );
 
@@ -10316,6 +10397,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_box_autoadd_cloud_sync_raw_system_fields(
     CloudSyncRawSystemFields self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_box_autoadd_cloud_sync_received_found_projection(
+    CloudSyncReceivedFoundProjection self,
     SseSerializer serializer,
   );
 
@@ -12602,6 +12689,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_opt_box_autoadd_cloud_sync_received_found_projection(
+    CloudSyncReceivedFoundProjection? self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_opt_box_autoadd_cloud_sync_staged_chat_identity_candidate(
     CloudSyncStagedChatIdentityCandidate? self,
     SseSerializer serializer,
@@ -14045,6 +14138,22 @@ class RustLibWire implements BaseWire {
       );
 
   void
+  rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncPreparedReceivedDiscovery(
+    int ptr,
+  ) => wasmModule
+      .rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncPreparedReceivedDiscovery(
+        ptr,
+      );
+
+  void
+  rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncPreparedReceivedDiscovery(
+    int ptr,
+  ) => wasmModule
+      .rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncPreparedReceivedDiscovery(
+        ptr,
+      );
+
+  void
   rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncPreparedReceivedInspection(
     int ptr,
   ) => wasmModule
@@ -14798,6 +14907,16 @@ extension type RustLibWasmModule._(JSObject _) implements JSObject {
 
   external void
   rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncPreparedMessageCreateHandle(
+    int ptr,
+  );
+
+  external void
+  rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncPreparedReceivedDiscovery(
+    int ptr,
+  );
+
+  external void
+  rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncPreparedReceivedDiscovery(
     int ptr,
   );
 

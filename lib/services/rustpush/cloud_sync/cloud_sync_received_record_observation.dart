@@ -8,6 +8,11 @@ enum CloudSyncReceivedRecordState {
   conflictingIdentity,
   absent,
   unresolved,
+  /// Source-bound discovery adopted without parent proof. Never equivalence:
+  /// the adopted pending inbox row stays retained until the ordinary reader
+  /// projects it under a proven parent. Appended last so existing stored
+  /// indices are unchanged.
+  discoveryRetained,
 }
 
 /// Bound read evidence only. Even Absent is not a durable create permit.
@@ -39,10 +44,10 @@ final class CloudSyncReceivedRecordObservation {
         !_sha.hasMatch(sourceSha256) ||
         !_hash.hasMatch(logicalEntityKeyHash) ||
         !_hash.hasMatch(serverRecordIdHash) ||
-        generation <= 0 ||
-        observedAtMs <= 0 ||
-        parentBinding.isEmpty ||
-        parentBinding.length > 1536 ||
+    generation <= 0 ||
+    observedAtMs <= 0 ||
+    (parentBinding.isEmpty && state != CloudSyncReceivedRecordState.discoveryRetained) ||
+    parentBinding.length > 1536 ||
         (found
             ? etagHash == null ||
                   !_hash.hasMatch(etagHash!) ||

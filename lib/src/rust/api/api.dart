@@ -224,6 +224,60 @@ cloudSyncPrepareReceivedArchiveInspection({
   chatSource: chatSource,
 );
 
+/// Authenticated read-only record discovery for a protected received source.
+///
+/// Separation of the parent-bound inspection above: no chat parent is decoded,
+/// projected, or required here. The protected source is opened and hash-verified
+/// exactly as above, the deterministic record name is derived from its GUID plus
+/// the authenticated container identity, and the record resolves through the
+/// existing read-only inspector with its receipt and raw-wire checks. A validated
+/// find returns its original raw bytes alongside the observation for a future
+/// protected staging step that is not yet wired. The normal protected reader
+/// pipeline still owns equivalence, projection, and ownership. NotFound is a
+/// separate payload-free observation with no create grant. No writes, no IDS activity.
+Future<CloudSyncPreparedReceivedDiscovery>
+cloudSyncDiscoverReceivedRecordExact({
+  required ArcCloudMessagesClientDefaultAnisetteProvider cloudMessagesClient,
+  required BigInt nativeWriterPauseToken,
+  required String storageDirectory,
+  required CloudSyncNativeAuthMetadata expectedAuth,
+  required CloudSyncNativeReceivedArchiveSourceBinding receivedSource,
+  required BigInt messageGeneration,
+}) => RustLib.instance.api.crateApiApiCloudSyncDiscoverReceivedRecordExact(
+  cloudMessagesClient: cloudMessagesClient,
+  nativeWriterPauseToken: nativeWriterPauseToken,
+  storageDirectory: storageDirectory,
+  expectedAuth: expectedAuth,
+  receivedSource: receivedSource,
+  messageGeneration: messageGeneration,
+);
+
+/// Validated discovery find -> the existing protected reader change shape. Only
+/// a prepared result still holding its original raw bytes can stage: Absent,
+/// transport-failure, and expired results fail without touching storage. No
+/// parent is required or invented; the returned change carries the same
+/// record-id/ETag-hash validation and lease rollback as ordinary fetched
+/// history. Caller owns local exclusion through journal adoption and lease
+/// commit, then uses the normal projector. No remote I/O here.
+Future<CloudSyncReceivedFoundProjection?>
+cloudSyncStageDiscoveredReceivedRecord({
+  required CloudSyncPreparedReceivedDiscovery prepared,
+  required BigInt nativeWriterPauseToken,
+}) => RustLib.instance.api.crateApiApiCloudSyncStageDiscoveredReceivedRecord(
+  prepared: prepared,
+  nativeWriterPauseToken: nativeWriterPauseToken,
+);
+
+/// Releases an unused discovery result or no-ops after staging consumed it. No
+/// disk or account operation occurs, including after identity validation fails.
+/// Every prepared holder must reach this or the staging call above; dropping
+/// the Dart handle alone never stages, adopts, or projects anything.
+Future<void> cloudSyncDiscardReceivedDiscovery({
+  required CloudSyncPreparedReceivedDiscovery prepared,
+}) => RustLib.instance.api.crateApiApiCloudSyncDiscardReceivedDiscovery(
+  prepared: prepared,
+);
+
 /// Local-only stage. The caller must hold its cross-engine local-store lease
 /// from this call through durable adoption and commit/rollback. Keep the exact
 /// read session alive; a replaced client/container/source never yields a file.
@@ -2590,6 +2644,10 @@ abstract class CloudSyncPreparedAttachmentUploadHandle
 
 // Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<CloudSyncPreparedMessageCreateHandle>>
 abstract class CloudSyncPreparedMessageCreateHandle
+    implements RustOpaqueInterface {}
+
+// Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<CloudSyncPreparedReceivedDiscovery>>
+abstract class CloudSyncPreparedReceivedDiscovery
     implements RustOpaqueInterface {}
 
 // Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<CloudSyncPreparedReceivedInspection>>

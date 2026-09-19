@@ -40,6 +40,7 @@ void main() {
     const windowsSource = 'lib/cloud_sync_v2_windows_local_write.dart';
     const receivedSource = 'lib/services/rustpush/cloud_sync/cloud_sync_received_inspection_adapter.dart';
     const receivedReader = 'lib/services/rustpush/cloud_sync/cloud_sync_received_reader_adapter.dart';
+    const receivedDiscovery = 'lib/services/rustpush/cloud_sync/cloud_sync_received_discovery_retain_adapter.dart';
 
     for (final entity in Directory('lib').listSync(recursive: true)) {
       if (entity is! File || !entity.path.endsWith('.dart')) continue;
@@ -61,10 +62,36 @@ void main() {
         .toList(growable: false);
     expect(
       normalized,
-      unorderedEquals([allowed, localSource, windowsSource, receivedSource, receivedReader]),
+      unorderedEquals([allowed, localSource, windowsSource, receivedSource, receivedReader, receivedDiscovery]),
       reason:
-          'only reviewed canary adapters, source staging and received inspection/reader handoff construct this transport',
+          'only reviewed canary adapters, source staging, received inspection/reader handoff and source-bound discovery construct this transport',
     );
+    final discovery = File(receivedDiscovery).readAsStringSync();
+    for (final gate in [
+      'CloudSyncDevGate.receivedArchiveCaptureEnabled',
+      'CloudSyncDevGate.receivedArchiveInspectionEnabled',
+      'CloudSyncDevGate.manualSemanticPullEnabled',
+      'CloudKitWriterOwnership.v2MutationsEnabled',
+      'runProtectedStoreExclusive',
+      'runLocalProtectedStoreExclusive',
+      'rollbackProtectedPageLease',
+      'quiesceNativeOperations',
+      'cloudSyncDiscardReceivedDiscovery',
+    ]) {
+      expect(discovery, contains(gate), reason: 'source-bound discovery must keep $gate');
+    }
+    expect(RegExp('NativeProtectedCloudSyncTransport\\\(').allMatches(discovery).length, 1);
+    for (final forbidden in [
+      'requireCloudSyncRestoredDirectChat',
+      'validateReaderAdmission',
+      'journalReceivedFound(',
+      'markReaderAdopted',
+      'cloudSyncPrepareReceivedArchiveInspection',
+      'cloudSyncStageReceivedFoundProjection',
+    ]) {
+      expect(discovery, isNot(contains(forbidden)),
+        reason: 'discovery must never use parent-bound admission $forbidden');
+    }
 
     final adapter = File(allowed).readAsStringSync();
     final windows = File(windowsSource).readAsStringSync();

@@ -2667,6 +2667,193 @@ void main() {
       throwsStateError,
     );
   });
+  group('source-bound discovery admission', () {
+    late ObjectBoxCloudSyncStore durable;
+    late CloudCoordinatorLeaseFence fence;
+    late CloudSyncNativeAuthSnapshot auth;
+    late CloudSyncReceivedArchiveSourceBinding discoverySource;
+    late int discoveryIntentId;
+    CloudSyncScope discoveryScope() => CloudSyncScope(
+      accountFingerprint: _account,
+      container: 'com.apple.messages.cloud',
+      database: 'private',
+      zone: 'messageManateeZone',
+      persistenceLane: CloudSyncPersistenceLane.semantic,
+    );
+    Future<int> currentGeneration() async =>
+        (await durable.readCheckpoint(discoveryScope())).generation;
+    CloudFetchedChange discoveryChange() => CloudFetchedChange(
+      changeId: _a43('D'),
+      recordIdHash: _a43('R'),
+      etagHash: _a43('E'),
+      type: CloudChangeType.save,
+      isTombstone: false,
+      encryptedServerRecordId: 'obcs2.ref.${_a43('I')}',
+      protectedSystemFieldsReference: 'obcs2.ref.${_a43('J')}',
+      encryptedPayloadReference: 'obcs2.ref.${_a43('Y')}',
+      payloadSha256: _h64('d'),
+      serverModifiedAt: _time(2),
+    );
+    Future<void> seedDiscovery(String messageGuid) async {
+      discoverySource = _staged(messageGuid, 'original', chat);
+      discoveryIntentId = journal.saveReceivedCapture(
+        wire: _wire(id: messageGuid, text: 'original', sentAt: _time(2).millisecondsSinceEpoch),
+        liveContext: _live,
+        localChatId: chat.id!,
+        persistMessage: () =>
+            store.box<Message>().put(_fresh(messageGuid, 'original', chat)),
+        source: discoverySource,
+        capturedAuth: auth,
+        stillCurrent: () => true,
+        now: _time(3),
+      );
+      journal.markSourceMaterialized(
+        intentId: discoveryIntentId,
+        source: discoverySource,
+        currentAuth: auth,
+        stillCurrent: () => true,
+      );
+    }
+    bool adoptDiscovery({CloudFetchedChange? change, int? generation, CloudSyncNativeAuthSnapshot? currentAuth}) =>
+        durable.journalDiscoveredFound(
+          scope: discoveryScope(),
+          change: change ?? discoveryChange(),
+          generation: generation ?? 0,
+          batchId: _a43('B'),
+          leaseReference: _lease('1'),
+          leaseFence: fence,
+          journal: journal,
+          intentId: discoveryIntentId,
+          source: discoverySource,
+          currentAuth: currentAuth ?? auth,
+          stillCurrent: () => true,
+        );
+    CloudSyncReceivedArchiveIntentEntity discoveryIntent() =>
+        store.box<CloudSyncReceivedArchiveIntentEntity>().get(discoveryIntentId)!;
+    setUp(() async {
+      auth = _auth(Object());
+      durable = ObjectBoxCloudSyncStore(
+        store: store,
+        protector: _ReceivedTestProtector(),
+        receivedArchiveJournal: journal,
+        clock: () => _time(4),
+      );
+      await durable.recordPullSuccess(discoveryScope(), now: _time(1));
+      fence = (await durable.tryAcquireCoordinatorLease(discoveryScope(),
+        ownerId: 'discovery-admission-test', now: _time(4),
+        leaseDuration: const Duration(hours: 1)))!;
+      final prior = await durable.readCheckpoint(discoveryScope());
+      await durable.journalFetchedBatch(
+        CloudFetchBatch(scope: discoveryScope(), changes: const [],
+          batchId: 'synthetic-discovery-baseline',
+          generation: prior.generation,
+          nextToken: 'synthetic-discovery-cursor', hasMore: false),
+        now: _time(4), leaseFence: fence,
+        expectedGeneration: prior.generation,
+        expectedFetchedToken: prior.fetchedToken,
+        expectedFetchDirection: prior.fetchDirection,
+      );
+    });
+    test('state1 discovery intent adopts into pending inbox without parent proof', () async {
+      await seedDiscovery('discovery-guid-1');
+      expect(discoveryIntent().state, 1);
+      expect(discoveryIntent().readerChangeId, isNull);
+      expect(adoptDiscovery(generation: await currentGeneration()), isTrue);
+      expect(discoveryIntent().state, 4);
+      expect(discoveryIntent().readerChangeId, _a43('D'));
+      final inbox = store.box<CloudInboxChangeEntity>().getAll()
+          .where((row) => row.serverRecordIdHash == _a43('R'))
+          .toList();
+      expect(inbox, hasLength(1));
+      expect(inbox.single.status, CloudInboxStatus.pending.index);
+      expect(adoptDiscovery(generation: await currentGeneration()), isFalse);
+    });
+    test('generation drift rejects without writes', () async {
+      await seedDiscovery('discovery-guid-2');
+      expect(
+        () => adoptDiscovery(generation: 999),
+        throwsA(isA<CloudSyncFailure>().having((e) => e.safeCode, 'safeCode', 'generation_mismatch')),
+      );
+      expect(discoveryIntent().readerChangeId, isNull);
+      expect(store.box<CloudInboxChangeEntity>().count(), 0);
+    });
+    test('drifted source binding rejects', () async {
+      await seedDiscovery('discovery-guid-3');
+      final other = _staged('other-guid-3', 'original', chat);
+      final gen3 = await currentGeneration();
+      expect(
+        () => durable.journalDiscoveredFound(
+          scope: discoveryScope(),
+          change: discoveryChange(),
+          generation: gen3,
+          batchId: _a43('B'),
+          leaseReference: _lease('1'),
+          leaseFence: fence,
+          journal: journal,
+          intentId: discoveryIntentId,
+          source: other,
+          currentAuth: auth,
+          stillCurrent: () => true,
+        ),
+        throwsStateError,
+      );
+    });
+    test('newer local edit blocks adoption', () async {
+      await seedDiscovery('discovery-guid-4');
+      final message = store.box<Message>().query(Message_.guid.equals('discovery-guid-4')).build().findFirst()!;
+      message.dateEdited = _time(5);
+      store.box<Message>().put(message);
+      final gen4 = await currentGeneration();
+      expect(() => adoptDiscovery(generation: gen4), throwsStateError);
+      expect(discoveryIntent().readerChangeId, isNull);
+    });
+    test('tombstone change cannot adopt', () async {
+      await seedDiscovery('discovery-guid-5');
+      final tombstone = CloudFetchedChange(
+        changeId: _a43('D'),
+        recordIdHash: _a43('R'),
+        etagHash: null,
+        type: CloudChangeType.delete,
+        isTombstone: true,
+        encryptedServerRecordId: 'obcs2.ref.${_a43('I')}',
+        protectedSystemFieldsReference: 'obcs2.ref.${_a43('J')}',
+        encryptedPayloadReference: null,
+        payloadSha256: null,
+        serverModifiedAt: _time(2),
+      );
+      final gen5 = await currentGeneration();
+      expect(
+        () => adoptDiscovery(change: tombstone, generation: gen5),
+        throwsA(isA<CloudSyncFailure>().having((e) => e.safeCode, 'safeCode', 'received_found_reader_input_invalid')),
+      );
+      expect(discoveryIntent().readerChangeId, isNull);
+    });
+    test('adopted discovery row survives reopen and reader recovery accepts it', () async {
+      await seedDiscovery('discovery-guid-6');
+      expect(adoptDiscovery(generation: await currentGeneration()), isTrue);
+      journal.markReaderAttemptConsidered(intentId: discoveryIntentId, now: _time(6));
+      await reopen();
+      journal.markReaderAttemptConsidered(intentId: discoveryIntentId, now: _time(7));
+      final row = discoveryIntent();
+      expect(row.state, 4);
+      final obs = CloudSyncReceivedRecordObservation.decode(row.recordObservationBinding!);
+      expect(obs.state, CloudSyncReceivedRecordState.discoveryRetained);
+      obs.requireSource(discoverySource);
+    });
+    test('rotated current auth rejects with zero writes', () async {
+      await seedDiscovery('discovery-guid-7');
+      final rotated = CloudSyncNativeAuthSnapshot.fromNative(
+        nativeSessionId: 'native-session',
+        accountFingerprint: 'BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB',
+        protectedStoreIdentity: _storeId,
+        cloudMessagesClient: Object(),
+      );
+      final gen = await currentGeneration();
+      expect(() => adoptDiscovery(generation: gen, currentAuth: rotated), throwsStateError);
+      expect(discoveryIntent().readerChangeId, isNull);
+      expect(store.box<CloudInboxChangeEntity>().count(), 0);
+    });
+  });
 }
 
 /// Synthetic token protection for the restored-chat fixture. No native keys
