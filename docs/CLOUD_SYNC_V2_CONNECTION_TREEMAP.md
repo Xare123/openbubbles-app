@@ -288,9 +288,15 @@ auth checks or repeat a full sweep merely to work around this missing preflight.
   writer defines and auto-send runtime absent, zero runners remain. Not
   covered here: the 7 received-record discovery Rust unit tests and the
   journal discovery Dart file (covered locally and on the parent GCE run).
-- Open: live account/relay observation (installed f439 still predates the new
-  calls and must not run them); ordinary-reader projection of retained v2
-  rows; the remaining release gates below. Build green is not end-to-end proof.
+- Offline import/smoke of that bundle into the isolated dev profile passed:
+  prior test-host binaries snapshotted to rollback, new DLL and test exe
+  signed by the approved engineering cert, receipt rebound to d3cdca8, and
+  the 7 received-record discovery plus 2 chat1 native cases pass on the
+  imported ARM64 DLL with zero profile-data writes outside the test host.
+  Installed f439 app bundle retained untouched as rollback.
+- Open: live account/relay observation; ordinary-reader projection of
+  retained v2 rows; the remaining release gates below. Offline green is not
+  end-to-end proof.
 
 ### Retained architecture and unresolved work
 
