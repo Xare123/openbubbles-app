@@ -396,6 +396,10 @@ mod tests {
         let mut command = tokio::process::Command::new(std::env::current_exe().unwrap());
         command
             .kill_on_drop(true)
+            // Capture the holder's stdio separately so its own test-harness
+            // formatting can never interleave this invocation's named result.
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
             .args([
                 "--exact",
                 "cloud_sync_local_store_lock::tests::cross_process_child_holds_lock",
@@ -429,7 +433,9 @@ mod tests {
             .unwrap_err();
         assert_eq!(err.to_string(), ERR_BUSY);
         child.start_kill().expect("kill lock child");
-        child.wait().await.expect("reap lock child");
+        // Drain the separately captured holder output instead of letting it
+        // share this invocation's console.
+        let _holder_output = child.wait_with_output().await.expect("reap lock child");
         // The OS releases the child lock with the process; poll briefly
         // rather than assuming a fixed teardown delay.
         let lease = tokio::time::timeout(Duration::from_secs(10), async {
