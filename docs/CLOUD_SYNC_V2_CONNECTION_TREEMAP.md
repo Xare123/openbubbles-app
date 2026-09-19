@@ -319,15 +319,25 @@ auth checks or repeat a full sweep merely to work around this missing preflight.
   the rebound receipt; the ordinary app installation is a separate directory
   and was never written. Signer: CN=OpenBubbles ARM64 Development, thumbprint
   8240557965890665F3B49E5FEC83D511CA4F2C9D, valid to 2028-07-28.
-- Reader-fixture result: a retained v2 discovery row keeps readable synthetic
-  content pending for a specific absent parent (zero record maps for the
-  record, no parent-bound observation) across reopen, and replays preserve
-  the single inbox row. Journal suite 87/87 locally.
-- Known environmental failure, unrelated to discovery: the full packaged
-  native run is 798 pass / 1 fail / 1 ignored, the single failure being
-  cross_process_lock_reports_busy (expects busy, host reports unavailable),
-  deterministic on this machine in an untouched lock module the CI smoke
-  does not execute. No code change made for it.
+- Reader-fixture result: a retained discovery-shaped row defers with the
+  actual semantic_parent_missing reason for a named absent message parent,
+  stays retained across a restart simulation, then projects the same record
+  exactly once (one message, one change, readable synthetic body) when the
+  parent is supplied through the normal fixture path, with no refetch or
+  duplicate. The v2 journal test proves retained shape and replay
+  preservation only, not the parent cause. Inbox applier suite 56/56 and
+  journal suite 87/87 locally.
+- Unclassified Windows contention failure with a confirmed cause and a
+  narrow unvalidated fix: the full packaged native run is 798 pass / 1 fail
+  / 1 ignored, the single failure being cross_process_lock_reports_busy.
+  A direct LockFileEx probe on this machine proves contention returns raw
+  code 33 while the bridge reports unavailable, so the WouldBlock-only match
+  misses real contention; open and metadata succeed identically in both
+  processes. The fix also matches raw code 33 to busy, leaving every other
+  error (including permission failures) unavailable. Local rustc is
+  policy-blocked so the fix is syntax- and format-checked only; validation
+  needs a hosted run that actually executes this test (neither the GCE Linux
+  suite nor the curated Windows smoke does).
 - Open: live account/relay observation; ordinary-reader projection of
   retained v2 rows; the remaining release gates below. Offline green is not
   end-to-end proof.

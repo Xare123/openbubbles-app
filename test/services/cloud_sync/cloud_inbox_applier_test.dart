@@ -494,6 +494,101 @@ void main() {
       expect(store.retainedTransactionCount, 1);
     },
   );
+  test(
+    'retained reply defers for a missing message parent, then projects it',
+    () async {
+      // Mirrors a discovery-retained inbox row: the record is present but
+      // its message parent has no evidence. The SAME entry object is
+      // replayed throughout: no refetch, no re-stage, no duplicate.
+      final inbox = retainedEntry(1);
+      final snapshot = message(parentKey: 'reply-parent-key');
+      final replyPayload = CloudMessageEntityPayload(
+        logicalEntityKeyHash: snapshot.logicalEntityKeyHash,
+        canonicalGuid: 'reply-message-guid',
+        chatAliasKeyHash: 'chat-key',
+        chatIdentifier: 'iMessage;-;chat',
+        body: 'reply body',
+        senderHandle: 'sender@example.invalid',
+        replyParentLogicalKeyHash: 'reply-parent-key',
+        replyParentCanonicalGuid: 'parent-message-guid',
+        replyParentPart: '0',
+      );
+      decodeUpsert(inbox, snapshot, payload: replyPayload);
+      store.retainedEntries.add(inbox);
+      final diagnostics = <String>[];
+      applier = TransactionalCloudInboxApplier(
+        decoder: decoder,
+        store: store,
+        identityRegistrar: _IdentityRegistrar(),
+        diagnosticRecorder: diagnostics.add,
+      );
+      var result = await applier.reprojectRetainedUnprojected(
+        scope: scope,
+        generation: 3,
+        leaseFence: _testLeaseFence,
+        limit: 256,
+      );
+      expect(result.examined, 1);
+      expect(result.reprojected, 0);
+      expect(result.retained, 1);
+      expect(diagnostics, contains('semantic_parent_missing'));
+      expect(store.retainedEntries.single.status, CloudInboxStatus.retainedUnprojected);
+      expect(store.retainedEntries.single.attemptCount, 1);
+      expect(store.transaction.appliedChanges, isEmpty);
+      expect(store.transaction.entityApplyCount, 0);
+      // Restart continuity: only the retained row survives; decode runs
+      // again and the still-missing parent keeps it retained.
+      final restartedDecoder = _Decoder();
+      final restartedStore = _MemorySemanticStore(scope: scope, generation: 3);
+      restartedStore.transaction.existingEntities.add((CloudEntityKind.chat, 'chat-key'));
+      restartedStore.retainedEntries.add(inbox);
+      restartedDecoder.values[inbox.change.changeId] = CloudDecodedMutation.upsert(
+        scope: scope,
+        generation: inbox.generation,
+        changeId: inbox.change.changeId,
+        snapshot: snapshot,
+        payload: replyPayload,
+      );
+      var restarted = TransactionalCloudInboxApplier(
+        decoder: restartedDecoder,
+        store: restartedStore,
+        identityRegistrar: _IdentityRegistrar(),
+      );
+      result = await restarted.reprojectRetainedUnprojected(
+        scope: scope,
+        generation: 3,
+        leaseFence: _testLeaseFence,
+        limit: 256,
+      );
+      expect(result.examined, 1);
+      expect(result.reprojected, 0);
+      expect(result.retained, 1);
+      expect(restartedDecoder.decodeCalls, 1);
+      expect(restartedStore.retainedEntries.single.status, CloudInboxStatus.retainedUnprojected);
+      // Supply the exact missing parent through the normal fixture path and
+      // replay the same retained record: the distinguishable synthetic
+      // remote content applies exactly once.
+      restartedStore.transaction.existingEntities.add((CloudEntityKind.message, 'reply-parent-key'));
+      restarted = TransactionalCloudInboxApplier(
+        decoder: restartedDecoder,
+        store: restartedStore,
+        identityRegistrar: _IdentityRegistrar(),
+      );
+      result = await restarted.reprojectRetainedUnprojected(
+        scope: scope,
+        generation: 3,
+        leaseFence: _testLeaseFence,
+        limit: 256,
+      );
+      expect(result.examined, 1);
+      expect(result.reprojected, 1);
+      expect(result.retained, 0);
+      expect(restartedStore.retainedEntries.single.status, CloudInboxStatus.applied);
+      expect(restartedStore.transaction.snapshot('message-key'), snapshot);
+      expect(restartedStore.transaction.appliedChanges, {inbox.change.changeId});
+      expect(restartedStore.transaction.entityApplyCount, 1);
+    },
+  );
 
   test(
     'returns a typed out-of-scope result without canonical mutation',

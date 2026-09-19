@@ -3320,16 +3320,17 @@ void main() {
       expect(discoveryIntent().state, 1);
       expect(store.box<CloudInboxChangeEntity>().count(), 0);
     });
-    test('retained v2 row keeps readable content pending for an absent parent', () async {
+    test('retained v2 row preserves content and pending state across reopen', () async {
       await seedDiscovery('discovery-guid-30');
       final gen = await currentGeneration();
       expect(adoptDiscovery(generation: gen), isTrue);
-      // Readable synthetic content stays visible in the local store.
+      // Readable synthetic content stays visible in the local store. The
+      // assertions below describe the retained shape (no record map, no
+      // parent-bound observation, one pending row); the missing-parent cause
+      // and ordinary-reader deferral are proved by the inbox applier test.
       final message = _byGuid('discovery-guid-30')!;
       expect(message.text, 'original');
       expect(message.attributedBody.single.string, 'original');
-      // Pending-ness is attributable to a specific absence: no record map
-      // projects this record, and no parent-bound observation exists.
       expect(recordMapCountForZone(store, discoveryScope().zone), 0);
       expect(
         () => CloudSyncReceivedRecordObservation.decode(discoveryIntent().recordObservationBinding!),

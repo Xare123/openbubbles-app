@@ -35,6 +35,11 @@ pub const ERR_CLOSED: &str = "cloud_sync_local_store_lock_closed";
 /// Lock file inside the private store directory. It carries no data; the OS
 /// advisory lock on it is the cross-process gate.
 const LOCK_FILE_NAME: &str = "protected_store.lock";
+/// Raw Win32 ERROR_LOCK_VIOLATION reported by LockFileEx with
+/// LOCKFILE_FAIL_IMMEDIATELY on contention. Unix contention already surfaces
+/// as WouldBlock through flock.
+#[cfg(target_os = "windows")]
+const ERROR_LOCK_VIOLATION_RAW: i32 = 33;
 const MAX_LIVE_DIRECTORIES: usize = 128;
 
 type DirSlot = tokio::sync::Mutex<()>;
@@ -120,6 +125,14 @@ fn open_and_lock(key: &Path) -> anyhow::Result<std::fs::File> {
     match fs2::FileExt::try_lock_exclusive(&file) {
         Ok(()) => Ok(file),
         Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+            Err(anyhow!("{}", ERR_BUSY))
+        }
+        // LockFileEx reports contention as raw ERROR_LOCK_VIOLATION (33).
+        // Match that code as well so cross-process contention reports busy
+        // regardless of standard-library ErrorKind mapping. Every other
+        // error, including permission failures, stays unavailable.
+        #[cfg(target_os = "windows")]
+        Err(error) if error.raw_os_error() == Some(ERROR_LOCK_VIOLATION_RAW) => {
             Err(anyhow!("{}", ERR_BUSY))
         }
         Err(_) => Err(anyhow!("{}", ERR_UNAVAILABLE)),
