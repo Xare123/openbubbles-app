@@ -8524,11 +8524,15 @@ class RustPushService extends GetxService {
           for (final discoveryIntentId in discovery) {
             await validate();
             try {
-              readerPending = readerPending || await retainCloudSyncDiscoveredReceivedFound(
+              // Evaluate first: readerPending may already be true from the
+              // ordinary found handoff above, and || would short-circuit the
+              // discovery call away. The one-per-pass bound still holds.
+              final discovered = await retainCloudSyncDiscoveredReceivedFound(
                 intentId: discoveryIntentId,
                 privateStorageDirectory: storagePath,
                 readActiveClient: () => state?.icloudServices?.cloudMessagesClient,
                 stillCurrent: stillCurrent);
+              readerPending = readerPending || discovered;
             } catch (error) {
               if (!stillCurrent()) rethrow;
               _cloudSyncV2ReceivedPassDeferred = true;
