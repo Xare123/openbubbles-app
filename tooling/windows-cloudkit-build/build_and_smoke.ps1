@@ -137,6 +137,17 @@ $nativeDiscoveryCases = @(
     'cloud_sync_native_fetch::tests::chat1_discovery_is_disjoint_from_semantic_fetch_and_requires_permit',
     'cloud_sync_native_fetch::tests::chat1_discovery_has_a_smaller_page_budget_without_weakening_existing_limits'
 )
+# Local-store lease contention and release behavior, including the
+# cross-process busy classification. Symlink-privilege cases stay out of the
+# hosted smoke; the child-holding helper runs only when spawned by its parent.
+$nativeLockCases = @(
+    'cloud_sync_local_store_lock::tests::same_directory_tasks_exclude_through_release',
+    'cloud_sync_local_store_lock::tests::distinct_directories_are_independent',
+    'cloud_sync_local_store_lock::tests::release_is_idempotent_and_close_is_visible',
+    'cloud_sync_local_store_lock::tests::invalid_paths_are_rejected_without_path_detail',
+    'cloud_sync_local_store_lock::tests::waiter_timeout_never_takes_ownership',
+    'cloud_sync_local_store_lock::tests::cross_process_lock_reports_busy'
+)
 
 # Extension-metadata qualification: full helper/converter/DTO scopes plus the
 # repair-digest and system-event regressions wired by the parent. Minimums allow
@@ -261,13 +272,14 @@ if ($ArtifactMode -eq 'native-test-host') {
             throw "Reviewed source lacks the pending diagnostic regression: $case. Commit it before dispatch."
         }
     }
-    foreach ($case in @($nativeExtensionSpotCases + $nativeConverterSpotCases + $nativeDtoSpotCases + $nativeRepairDigestCases + $nativeSystemEventCases + $nativeDiscoveryCases)) {
+    foreach ($case in @($nativeExtensionSpotCases + $nativeConverterSpotCases + $nativeDtoSpotCases + $nativeRepairDigestCases + $nativeSystemEventCases + $nativeDiscoveryCases + $nativeLockCases)) {
         $extensionSource = if ($case.StartsWith('cloud_sync_extension_payload::')) { 'rust/src/cloud_sync_extension_payload.rs' }
             elseif ($case.StartsWith('cloud_sync_canonical_converter::tests::heading_tests::')) { 'rust/src/cloud_sync_heading_tests.rs' }
             elseif ($case.StartsWith('cloud_sync_canonical_converter::')) { 'rust/src/cloud_sync_canonical_converter.rs' }
             elseif ($case.StartsWith('cloud_sync_canonical_dto::')) { 'rust/src/cloud_sync_canonical_dto.rs' }
             elseif ($case.StartsWith('api::api::')) { 'rust/src/api/api.rs' }
             elseif ($case.StartsWith('cloud_sync_native_fetch::')) { 'rust/src/cloud_sync_native_fetch.rs' }
+            elseif ($case.StartsWith('cloud_sync_local_store_lock::')) { 'rust/src/cloud_sync_local_store_lock.rs' }
             else { 'rust/src/cloud_sync_transient_bridge.rs' }
         $extensionText = Get-Content -LiteralPath (Join-Path $source $extensionSource) -Raw
         if (-not $extensionText.Contains('fn ' + ($case -split '::')[-1] + '(')) {
@@ -364,6 +376,7 @@ foreach ($name in @(
 
 $sourceInputPaths = @(
     'rust/src/cloud_sync_native_fetch.rs',
+    'rust/src/cloud_sync_local_store_lock.rs',
     'test/services/cloud_sync/native_protected_bridge_source_contract_test.dart',
     'rust/src/cloud_sync_extension_metadata.rs',
     'rust/cloud_sync_protector_harness/Cargo.toml',
@@ -533,6 +546,7 @@ $nativeComposeBuildLog = Join-Path $output 'native-compose-build.log'
 $nativeComposeTestLog = Join-Path $output 'native-compose-tests.log'
 $nativeDiagnosticTestLog = Join-Path $output 'native-diagnostic-tests.log'
 $nativeDiscoveryTestLog = Join-Path $output 'native-discovery-tests.log'
+$nativeLockTestLog = Join-Path $output 'native-lock-tests.log'
 $nativeExtensionTestLog = Join-Path $output 'native-extension-tests.log'
 $nativeConverterTestLog = Join-Path $output 'native-converter-tests.log'
 $nativeDtoTestLog = Join-Path $output 'native-dto-tests.log'
@@ -720,6 +734,13 @@ if ($ArtifactMode -eq 'native-test-host') {
         $caseExit = $LASTEXITCODE
         $caseOutput | Tee-Object -FilePath $nativeDiscoveryTestLog -Append
         if ($caseExit -ne 0) { throw "Native discovery test failed: $case" }
+        Assert-NativeTestResults -OutputText ($caseOutput -join "`n") -ExpectedNames @($case)
+    }
+    foreach ($case in $nativeLockCases) {
+        $caseOutput = & (Join-Path $bundle 'native-compose-tests.exe') $case --exact --test-threads=1 --format=pretty 2>&1
+        $caseExit = $LASTEXITCODE
+        $caseOutput | Tee-Object -FilePath $nativeLockTestLog -Append
+        if ($caseExit -ne 0) { throw "Native lock test failed: $case" }
         Assert-NativeTestResults -OutputText ($caseOutput -join "`n") -ExpectedNames @($case)
     }
     & (Join-Path $bundle 'native-compose-tests.exe') $nativeExtensionScope --test-threads=4 --format=pretty 2>&1 |
@@ -951,6 +972,12 @@ $provenance = [ordered]@{
             result = $nativeComposeResult
             expected_names = $nativeDiscoveryCases
             expected_test_count = $nativeDiscoveryCases.Count
+            executable = if ($ArtifactMode -eq 'native-test-host') { 'bundle/native-compose-tests.exe' } else { $null }
+        }
+        native_local_store_lock_tests = [ordered]@{
+            result = $nativeComposeResult
+            expected_names = $nativeLockCases
+            expected_test_count = $nativeLockCases.Count
             executable = if ($ArtifactMode -eq 'native-test-host') { 'bundle/native-compose-tests.exe' } else { $null }
         }
         native_extension_payload_tests = [ordered]@{
