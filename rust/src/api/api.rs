@@ -983,7 +983,7 @@ impl std::fmt::Debug for CloudSyncPreparedReceivedDiscovery {
 pub async fn cloud_sync_stage_discovered_received_record(
     prepared: &CloudSyncPreparedReceivedDiscovery,
     native_writer_pause_token: u64,
-) -> anyhow::Result<CloudSyncReceivedFoundProjection> {
+) -> anyhow::Result<Option<CloudSyncReceivedFoundProjection>> {
     let mut pending = prepared.pending.lock().await.take()
         .ok_or_else(|| anyhow!("cloud_sync_received_archive_inspection_consumed"))?;
     if pending.prepared_at.elapsed() > std::time::Duration::from_secs(120) {
@@ -1001,6 +1001,9 @@ pub async fn cloud_sync_stage_discovered_received_record(
     crate::cloud_sync_received_source_stage::open_received_archive_source(
         PathBuf::from(&pending.storage_directory), auth.account_fingerprint.clone(), &pending.source)
         .map_err(|_| anyhow!("cloud_sync_received_archive_protected_source_changed"))?;
+    if pending.observation.disposition == CloudSyncReceivedRecordDisposition::Absent {
+        return Ok(None);
+    }
     let (record, raw) = pending.raw_found.take()
         .ok_or_else(|| anyhow!("cloud_sync_received_archive_found_projection_not_ready"))?;
     if pending.prepared_at.elapsed() > std::time::Duration::from_secs(120) {
@@ -1017,13 +1020,13 @@ pub async fn cloud_sync_stage_discovered_received_record(
             PathBuf::from(&pending.storage_directory), &page);
         return Err(anyhow!("cloud_sync_received_archive_record_mismatch"));
     }
-    Ok(CloudSyncReceivedFoundProjection {
+    Ok(Some(CloudSyncReceivedFoundProjection {
         message_guid_hash: pending.source.message_guid_hash,
         source_sha256: pending.source.source_sha256,
         generation: page.generation(), batch_id: page.batch_id().to_owned(),
         lease_reference: page.page_lease_reference().to_owned(),
         change: map_cloud_sync_protected_change(&page.changes()[0]),
-    })
+    }))
 }
 
 /// Releases an unused discovery result or no-ops after staging consumed it. No
