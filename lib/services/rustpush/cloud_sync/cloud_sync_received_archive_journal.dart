@@ -202,6 +202,15 @@ final class CloudSyncReceivedArchiveJournal {
       messageGuidHash: intent.messageGuidHash,
       sourceSha256: intent.sourceSha256,
     );
+    // Bind the reopened source to the CURRENT protected store as well as the
+    // stored intent fields: a same-account row from another store must not
+    // adopt here.
+    nowSource.requireOrigin(
+      accountFingerprint: currentAuth.accountFingerprint,
+      messageGuidHash: intent.messageGuidHash,
+      sourceSha256: intent.sourceSha256,
+      protectedStoreIdentity: currentAuth.protectedStoreIdentity,
+    );
     if (nowSource.encode() != source.encode()) {
       throw StateError('cloud_sync_received_archive_admission_changed');
     }
@@ -221,22 +230,17 @@ final class CloudSyncReceivedArchiveJournal {
     // between validation and put, and a second _readBoundIntent would reject
     // the state-4 row this adoption is about to write (no observation exists
     // until the ordinary reader proves a parent).
-    // Explicit discovery-reader representation: the state-4 row carries a
-    // discoveryRetained observation so later journal reads, recovery scans,
-    // and reopen validate it instead of rejecting a parentless adoption.
-    // logicalEntityKeyHash reuses the server record hash: the install-keyed
-    // logical hash is native-only and no discovery read path compares this
-    // field (create-path comparisons never see discoveryRetained rows).
-    final observation = CloudSyncReceivedRecordObservation(
-      state: CloudSyncReceivedRecordState.discoveryRetained,
+    // Explicit version-2 discovery-reader representation: the state-4 row
+    // carries a marker with NO logical hash and NO parent binding, so later
+    // journal reads, recovery scans, and reopen validate it without ever
+    // mistaking it for a parent-bound observation.
+    final observation = CloudSyncReceivedDiscoveryObservation(
       accountFingerprint: source.accountFingerprint,
       protectedStoreIdentity: source.protectedStoreIdentity,
       messageGuidHash: source.messageGuidHash,
       sourceSha256: source.sourceSha256,
-      logicalEntityKeyHash: change.recordIdHash,
       serverRecordIdHash: change.recordIdHash,
       generation: generation,
-      parentBinding: '',
       observedAtMs: observedAtMs,
     );
     observation.requireSource(source);
@@ -245,6 +249,68 @@ final class CloudSyncReceivedArchiveJournal {
       ..recordObservationBinding = observation.encode()
       ..state = 4;
     _store.box<CloudSyncReceivedArchiveIntentEntity>().put(row);
+  }
+
+  /// Validates a duplicate discovery report without mutating: the supplied
+  /// intent/source/auth triple must be bound exactly as an adoption would
+  /// require, and a state-4 row must already own this exact change. A
+  /// normal-history inbox row owned by another adoption still reports
+  /// duplicate, but only after the triple proves linked. Anything else
+  /// throws instead of reporting a benign duplicate.
+  void validateDiscoveryDuplicate({
+    required Store transactionStore, required CloudSyncScope scope,
+    required int intentId,
+    required CloudSyncReceivedArchiveSourceBinding source,
+    required CloudSyncNativeAuthSnapshot currentAuth, required bool Function() stillCurrent,
+    required CloudFetchedChange change,
+  }) {
+    if (!identical(transactionStore, _store) || !stillCurrent() ||
+        scope.accountFingerprint != _binding.scope.accountFingerprint ||
+        scope.container != 'com.apple.messages.cloud' || scope.database != 'private' ||
+        scope.zone != 'messageManateeZone' || scope.persistenceLane != CloudSyncPersistenceLane.semantic) {
+      throw StateError('cloud_sync_received_archive_admission_changed');
+    }
+    _verifyOwnership();
+    if (currentAuth.accountFingerprint != _binding.scope.accountFingerprint) {
+      throw StateError('cloud_sync_received_archive_identity_changed');
+    }
+    final intent = _readBoundIntent(intentId);
+    if (intent.admittedOperationId != null ||
+        intent.messageGuidHash != source.messageGuidHash ||
+        intent.sourceSha256 != source.sourceSha256) {
+      throw StateError('cloud_sync_received_archive_admission_changed');
+    }
+    final nowSource = CloudSyncReceivedArchiveSourceBinding.decode(
+      intent.protectedSourceBinding,
+    );
+    nowSource.requireOrigin(
+      accountFingerprint: intent.accountFingerprint,
+      messageGuidHash: intent.messageGuidHash,
+      sourceSha256: intent.sourceSha256,
+    );
+    nowSource.requireOrigin(
+      accountFingerprint: currentAuth.accountFingerprint,
+      messageGuidHash: intent.messageGuidHash,
+      sourceSha256: intent.sourceSha256,
+      protectedStoreIdentity: currentAuth.protectedStoreIdentity,
+    );
+    if (nowSource.encode() != source.encode()) {
+      throw StateError('cloud_sync_received_archive_admission_changed');
+    }
+    if (intent.state == 4) {
+      // The adopted row must already own this exact change under the same
+      // source-bound marker; otherwise the triple is not linked to it.
+      if (intent.readerChangeId != change.changeId ||
+          !_isDiscoveryRetained(intent, source)) {
+        throw StateError('cloud_sync_received_archive_admission_changed');
+      }
+      return;
+    }
+    // A valid unadopted discovery intent whose record the inbox already owns
+    // through normal history still reports duplicate after the linkage above.
+    if (intent.state != 1 && intent.state != 2 || intent.readerChangeId != null) {
+      throw StateError('cloud_sync_received_archive_admission_changed');
+    }
   }
 
   List<CloudSyncReceivedArchiveAdmissionSource> readCreateCandidates({
@@ -1284,9 +1350,18 @@ final class CloudSyncReceivedArchiveJournal {
       );
       if (intent.state >= 1 && source.isSeed) return false;
       final observation = _observationFor(intent, source);
+      final isDiscovery = _isDiscoveryRetained(intent, source);
+      // Version-2 discovery markers are only valid on adopted state-4 rows.
+      // A marker in the wrong state, a malformed marker, or one bound to a
+      // different source fails closed instead of passing as an unobserved row.
+      if (CloudSyncReceivedDiscoveryObservation.isEncoded(intent.recordObservationBinding) &&
+          (intent.state != 4 || !isDiscovery)) {
+        return false;
+      }
       if (intent.state >= 2 &&
           (observation == null ||
-              observation.state == CloudSyncReceivedRecordState.unresolved)) {
+              observation.state == CloudSyncReceivedRecordState.unresolved) &&
+          !(intent.state == 4 && isDiscovery)) {
         return false;
       }
       if (intent.state == 3 &&
@@ -1296,10 +1371,11 @@ final class CloudSyncReceivedArchiveJournal {
       }
     if (intent.state == 4 &&
         (intent.readerChangeId == null ||
-         (observation?.state != CloudSyncReceivedRecordState.equivalent &&
-          observation?.state != CloudSyncReceivedRecordState.needsProjection &&
-          observation?.state != CloudSyncReceivedRecordState.discoveryRetained) ||
-         intent.admittedOperationId != null)) {
+            ((observation?.state != CloudSyncReceivedRecordState.equivalent &&
+                    observation?.state !=
+                        CloudSyncReceivedRecordState.needsProjection) &&
+                !_isDiscoveryRetained(intent, source)) ||
+            intent.admittedOperationId != null)) {
       return false;
     }
       source.requireOrigin(
@@ -1313,12 +1389,35 @@ final class CloudSyncReceivedArchiveJournal {
     return true;
   }
 
+  /// Accepts a version-2 source-bound discovery marker as a valid durable
+  /// discovery-owned record. Anything else, including a malformed marker or
+  /// one bound to a different source, fails closed like any other check.
+  static bool _isDiscoveryRetained(
+    CloudSyncReceivedArchiveIntentEntity intent,
+    CloudSyncReceivedArchiveSourceBinding source,
+  ) {
+    try {
+      final value = intent.recordObservationBinding;
+      if (!CloudSyncReceivedDiscoveryObservation.isEncoded(value)) {
+        return false;
+      }
+      CloudSyncReceivedDiscoveryObservation.decode(value!).requireSource(source);
+      return true;
+    } on StateError {
+      return false;
+    }
+  }
+
   static CloudSyncReceivedRecordObservation? _observationFor(
     CloudSyncReceivedArchiveIntentEntity intent,
     CloudSyncReceivedArchiveSourceBinding source,
   ) {
     final value = intent.recordObservationBinding;
     if (value == null) return null;
+    // Version-2 discovery markers are a different representation, never a
+    // parent-bound observation. Callers needing discovery state decode it
+    // explicitly so the two can never be mistaken.
+    if (CloudSyncReceivedDiscoveryObservation.isEncoded(value)) return null;
     final observation = CloudSyncReceivedRecordObservation.decode(value);
     observation.requireSource(source);
     return observation;

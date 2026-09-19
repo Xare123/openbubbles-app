@@ -8,11 +8,6 @@ enum CloudSyncReceivedRecordState {
   conflictingIdentity,
   absent,
   unresolved,
-  /// Source-bound discovery adopted without parent proof. Never equivalence:
-  /// the adopted pending inbox row stays retained until the ordinary reader
-  /// projects it under a proven parent. Appended last so existing stored
-  /// indices are unchanged.
-  discoveryRetained,
 }
 
 /// Bound read evidence only. Even Absent is not a durable create permit.
@@ -46,7 +41,7 @@ final class CloudSyncReceivedRecordObservation {
         !_hash.hasMatch(serverRecordIdHash) ||
     generation <= 0 ||
     observedAtMs <= 0 ||
-    (parentBinding.isEmpty && state != CloudSyncReceivedRecordState.discoveryRetained) ||
+    parentBinding.isEmpty ||
     parentBinding.length > 1536 ||
         (found
             ? etagHash == null ||
@@ -179,4 +174,101 @@ final class CloudSyncReceivedRecordObservation {
 
   @override
   String toString() => 'CloudSyncReceivedRecordObservation(redacted)';
+}
+
+/// Source-bound discovery adoption marker. Version 2 encoding carries NO
+/// logical-entity hash and NO parent binding: both are unavailable without
+/// a proven parent, and this representation makes that absence explicit
+/// instead of fabricating values into the v1 codec. Readers must check
+/// the version tag before interpreting it as a parent-bound observation.
+final class CloudSyncReceivedDiscoveryObservation {
+  CloudSyncReceivedDiscoveryObservation({
+    required this.accountFingerprint,
+    required this.protectedStoreIdentity,
+    required this.messageGuidHash,
+    required this.sourceSha256,
+    required this.serverRecordIdHash,
+    required this.generation,
+    required this.observedAtMs,
+  }) {
+    if (!_hash.hasMatch(accountFingerprint) ||
+        !_store.hasMatch(protectedStoreIdentity) ||
+        !_sha.hasMatch(messageGuidHash) ||
+        !_sha.hasMatch(sourceSha256) ||
+        !_hash.hasMatch(serverRecordIdHash) ||
+        generation <= 0 ||
+        observedAtMs <= 0 ||
+        encode().length > 4096) {
+      throw StateError('cloud_sync_received_archive_observation_invalid');
+    }
+  }
+
+  final String accountFingerprint;
+  final String protectedStoreIdentity;
+  final String messageGuidHash;
+  final String sourceSha256;
+  final String serverRecordIdHash;
+  final int generation;
+  final int observedAtMs;
+  static final _hash = CloudSyncReceivedRecordObservation._hash;
+  static final _sha = CloudSyncReceivedRecordObservation._sha;
+  static final _store = CloudSyncReceivedRecordObservation._store;
+  void requireSource(CloudSyncReceivedArchiveSourceBinding source) {
+    if (source.isSeed ||
+        accountFingerprint != source.accountFingerprint ||
+        protectedStoreIdentity != source.protectedStoreIdentity ||
+        messageGuidHash != source.messageGuidHash ||
+        sourceSha256 != source.sourceSha256) {
+      throw StateError('cloud_sync_received_archive_observation_changed');
+    }
+  }
+
+  String encode() => jsonEncode([
+    2,
+    accountFingerprint,
+    protectedStoreIdentity,
+    messageGuidHash,
+    sourceSha256,
+    serverRecordIdHash,
+    generation,
+    observedAtMs,
+  ]);
+  static CloudSyncReceivedDiscoveryObservation decode(String encoded) {
+    if (encoded.length > 4096) {
+      throw StateError('cloud_sync_received_archive_observation_invalid');
+    }
+    dynamic v;
+    try {
+      v = jsonDecode(encoded);
+    } on FormatException {
+      throw StateError('cloud_sync_received_archive_observation_invalid');
+    }
+    if (v is! List ||
+        v.length != 8 ||
+        v[0] != 2 ||
+        v.sublist(1, 6).any((f) => f is! String) ||
+        v[6] is! int ||
+        v[7] is! int) {
+      throw StateError('cloud_sync_received_archive_observation_invalid');
+    }
+    final result = CloudSyncReceivedDiscoveryObservation(
+      accountFingerprint: v[1],
+      protectedStoreIdentity: v[2],
+      messageGuidHash: v[3],
+      sourceSha256: v[4],
+      serverRecordIdHash: v[5],
+      generation: v[6],
+      observedAtMs: v[7],
+    );
+    if (result.encode() != encoded) {
+      throw StateError('cloud_sync_received_archive_observation_invalid');
+    }
+    return result;
+  }
+
+  static bool isEncoded(String? encoded) =>
+      encoded != null && encoded.startsWith('[2,');
+
+  @override
+  String toString() => 'CloudSyncReceivedDiscoveryObservation(redacted)';
 }

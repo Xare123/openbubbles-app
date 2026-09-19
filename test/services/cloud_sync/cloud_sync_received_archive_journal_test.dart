@@ -2830,15 +2830,17 @@ void main() {
     });
     test('adopted discovery row survives reopen and reader recovery accepts it', () async {
       await seedDiscovery('discovery-guid-6');
-      expect(adoptDiscovery(generation: await currentGeneration()), isTrue);
+      final adoptedGen = await currentGeneration();
+      expect(adoptDiscovery(generation: adoptedGen), isTrue);
       journal.markReaderAttemptConsidered(intentId: discoveryIntentId, now: _time(6));
       await reopen();
       journal.markReaderAttemptConsidered(intentId: discoveryIntentId, now: _time(7));
       final row = discoveryIntent();
       expect(row.state, 4);
-      final obs = CloudSyncReceivedRecordObservation.decode(row.recordObservationBinding!);
-      expect(obs.state, CloudSyncReceivedRecordState.discoveryRetained);
+      final obs = CloudSyncReceivedDiscoveryObservation.decode(row.recordObservationBinding!);
       obs.requireSource(discoverySource);
+      expect(obs.serverRecordIdHash, _a43('R'));
+      expect(obs.generation, adoptedGen);
     });
     test('rotated current auth rejects with zero writes', () async {
       await seedDiscovery('discovery-guid-7');
@@ -2852,6 +2854,146 @@ void main() {
       expect(() => adoptDiscovery(generation: gen, currentAuth: rotated), throwsStateError);
       expect(discoveryIntent().readerChangeId, isNull);
       expect(store.box<CloudInboxChangeEntity>().count(), 0);
+    });
+    test('same-account wrong-store source rejects with zero writes', () async {
+      await seedDiscovery('discovery-guid-8');
+      final foreign = CloudSyncReceivedArchiveSourceBinding(
+        accountFingerprint: discoverySource.accountFingerprint,
+        protectedStoreIdentity: 'obcs2.store.BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB',
+        messageGuidHash: discoverySource.messageGuidHash,
+        sourceSha256: discoverySource.sourceSha256,
+        protectedReference: discoverySource.protectedReference,
+        leaseReference: discoverySource.leaseReference,
+        payloadSha256: discoverySource.payloadSha256,
+        payloadLength: discoverySource.payloadLength,
+      );
+      final gen = await currentGeneration();
+      expect(
+        () => durable.journalDiscoveredFound(
+          scope: discoveryScope(),
+          change: discoveryChange(),
+          generation: gen,
+          batchId: _a43('B'),
+          leaseReference: _lease('1'),
+          leaseFence: fence,
+          journal: journal,
+          intentId: discoveryIntentId,
+          source: foreign,
+          currentAuth: auth,
+          stillCurrent: () => true,
+        ),
+        throwsStateError,
+      );
+      expect(discoveryIntent().readerChangeId, isNull);
+      expect(store.box<CloudInboxChangeEntity>().count(), 0);
+    });
+    test('v2 adoption survives production inventory and reopen', () async {
+      await seedDiscovery('discovery-guid-9');
+      final adoptedGen = await currentGeneration();
+      expect(adoptDiscovery(generation: adoptedGen), isTrue);
+      // Production lease/reference inventory must accept the v2 marker row:
+      // the source lease stays owned while the marker contributes no raw refs.
+      expect(
+        await durable.readLiveProtectedOutboundLeaseReferences(maximumCount: 4096),
+        contains(discoverySource.leaseReference),
+      );
+      final before = await durable.readLiveProtectedReferences(maximumCount: 131072);
+      expect(before.isComplete, isTrue);
+      expect(before.references, contains(discoverySource.protectedReference));
+      await reopen();
+      durable = ObjectBoxCloudSyncStore(
+        store: store,
+        protector: _ReceivedTestProtector(),
+        receivedArchiveJournal: journal,
+        clock: () => _time(4),
+      );
+      expect(
+        await durable.readLiveProtectedOutboundLeaseReferences(maximumCount: 4096),
+        contains(discoverySource.leaseReference),
+      );
+      final after = await durable.readLiveProtectedReferences(maximumCount: 131072);
+      expect(after.isComplete, isTrue);
+      expect(after.references, contains(discoverySource.protectedReference));
+      expect(discoveryIntent().state, 4);
+    });
+    test('v2 marker in the wrong state is rejected', () async {
+      await seedDiscovery('discovery-guid-10');
+      expect(adoptDiscovery(generation: await currentGeneration()), isTrue);
+      final row = discoveryIntent();
+      row.state = 1;
+      store.box<CloudSyncReceivedArchiveIntentEntity>().put(row);
+      expect(
+        () => journal.markReaderAttemptConsidered(intentId: discoveryIntentId, now: _time(6)),
+        throwsStateError,
+      );
+    });
+    test('malformed v2 marker fails closed in reads and inventory', () async {
+      await seedDiscovery('discovery-guid-11');
+      expect(adoptDiscovery(generation: await currentGeneration()), isTrue);
+      final row = discoveryIntent();
+      row.recordObservationBinding = '[2,"truncated"';
+      store.box<CloudSyncReceivedArchiveIntentEntity>().put(row);
+      expect(
+        () => journal.markReaderAttemptConsidered(intentId: discoveryIntentId, now: _time(6)),
+        throwsStateError,
+      );
+      await expectLater(
+        durable.readLiveProtectedOutboundLeaseReferences(maximumCount: 4096),
+        throwsStateError,
+      );
+    });
+    test('duplicate with a crossed intent and source throws', () async {
+      await seedDiscovery('discovery-guid-12');
+      final adoptedGen = await currentGeneration();
+      final adoptedSource = discoverySource;
+      expect(adoptDiscovery(generation: adoptedGen), isTrue);
+      await seedDiscovery('discovery-guid-13');
+      expect(
+        () => durable.journalDiscoveredFound(
+          scope: discoveryScope(),
+          change: discoveryChange(),
+          generation: adoptedGen,
+          batchId: _a43('B'),
+          leaseReference: _lease('1'),
+          leaseFence: fence,
+          journal: journal,
+          intentId: discoveryIntentId,
+          source: adoptedSource,
+          currentAuth: auth,
+          stillCurrent: () => true,
+        ),
+        throwsStateError,
+      );
+      expect(store.box<CloudInboxChangeEntity>().count(), 1);
+      expect(discoveryIntent().readerChangeId, isNull);
+    });
+    test('duplicate with rotated auth throws', () async {
+      await seedDiscovery('discovery-guid-14');
+      final adoptedGen = await currentGeneration();
+      expect(adoptDiscovery(generation: adoptedGen), isTrue);
+      final rotated = CloudSyncNativeAuthSnapshot.fromNative(
+        nativeSessionId: 'native-session',
+        accountFingerprint: 'BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB',
+        protectedStoreIdentity: _storeId,
+        cloudMessagesClient: Object(),
+      );
+      expect(
+        () => durable.journalDiscoveredFound(
+          scope: discoveryScope(),
+          change: discoveryChange(),
+          generation: adoptedGen,
+          batchId: _a43('B'),
+          leaseReference: _lease('1'),
+          leaseFence: fence,
+          journal: journal,
+          intentId: discoveryIntentId,
+          source: discoverySource,
+          currentAuth: rotated,
+          stillCurrent: () => true,
+        ),
+        throwsStateError,
+      );
+      expect(store.box<CloudInboxChangeEntity>().count(), 1);
     });
   });
 }

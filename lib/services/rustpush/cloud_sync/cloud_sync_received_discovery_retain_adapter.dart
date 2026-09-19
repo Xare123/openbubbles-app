@@ -204,35 +204,35 @@ Future<bool> retainCloudSyncDiscoveredReceivedFound({
             if (result == null) {
               return false;
             }
-            final raw = result.change;
-            if (result.messageGuidHash != source.messageGuidHash ||
-                result.sourceSha256 != source.sourceSha256 ||
-                result.generation.toInt() != checkpoint.generation ||
-                raw.kind != api.CloudSyncProtectedChangeKind.save ||
-                raw.preflightCode != null ||
-                raw.isTombstone) {
-              throw StateError(
-                'cloud_sync_received_archive_record_mismatch',
-              );
-            }
-            final change = CloudFetchedChange(
-              changeId: raw.changeId,
-              recordIdHash: raw.recordIdHash,
-              etagHash: raw.etagHash,
-              type: CloudChangeType.save,
-              encryptedServerRecordId: raw.protectedRecordIdentityReference,
-              encryptedPayloadReference: raw.protectedRawEnvelopeReference,
-              payloadSha256: raw.payloadSha256,
-              serverModifiedAt: raw.serverModifiedAtMillis == null
-                  ? null
-                  : DateTime.fromMillisecondsSinceEpoch(
-                      raw.serverModifiedAtMillis!.toInt(),
-                      isUtc: true,
-                    ),
-            );
-            await validate();
             var adopted = false;
             try {
+              final raw = result.change;
+              if (result.messageGuidHash != source.messageGuidHash ||
+                  result.sourceSha256 != source.sourceSha256 ||
+                  result.generation.toInt() != checkpoint.generation ||
+                  raw.kind != api.CloudSyncProtectedChangeKind.save ||
+                  raw.preflightCode != null ||
+                  raw.isTombstone) {
+                throw StateError(
+                  'cloud_sync_received_archive_record_mismatch',
+                );
+              }
+              final change = CloudFetchedChange(
+                changeId: raw.changeId,
+                recordIdHash: raw.recordIdHash,
+                etagHash: raw.etagHash,
+                type: CloudChangeType.save,
+                encryptedServerRecordId: raw.protectedRecordIdentityReference,
+                encryptedPayloadReference: raw.protectedRawEnvelopeReference,
+                payloadSha256: raw.payloadSha256,
+                serverModifiedAt: raw.serverModifiedAtMillis == null
+                    ? null
+                    : DateTime.fromMillisecondsSinceEpoch(
+                        raw.serverModifiedAtMillis!.toInt(),
+                        isUtc: true,
+                      ),
+              );
+              await validate();
               final owned = durable.journalDiscoveredFound(
                 scope: scope,
                 change: change,

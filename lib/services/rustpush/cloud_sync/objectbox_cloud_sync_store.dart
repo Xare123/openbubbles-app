@@ -961,8 +961,11 @@ class ObjectBoxCloudSyncStore
       }
       // Existing reader owns its original references; roll back new lease.
       // No re-marking: the inbox row and the adopted intent were written
-      // atomically by the owning adoption, and re-reading a state-4 intent
-      // with no parent-bound observation is correctly rejected elsewhere.
+      // atomically by the owning adoption. The supplied triple must still
+      // prove linked to the owned change instead of reporting duplicate.
+      journal.validateDiscoveryDuplicate(transactionStore: _store, scope: scope,
+        intentId: intentId, source: source, currentAuth: currentAuth,
+        stillCurrent: stillCurrent, change: change);
       return false;
     }
     final mapQuery = _recordMaps.query(CloudRecordMapEntity_.scopeKey.equals(_scopeKey(scope))
@@ -1015,6 +1018,14 @@ class ObjectBoxCloudSyncStore
   ) {
     final encoded=intent.recordObservationBinding;
     if(encoded==null) return null;
+    if (CloudSyncReceivedDiscoveryObservation.isEncoded(encoded)) {
+      // Version-2 discovery markers carry no raw references: validate the
+      // marker and its source binding, then contribute nothing to the
+      // raw-reference inventory. Malformed or foreign markers throw here
+      // instead of being silently skipped.
+      CloudSyncReceivedDiscoveryObservation.decode(encoded).requireSource(source);
+      return null;
+    }
     final value=CloudSyncReceivedRecordObservation.decode(encoded);
     value.requireSource(source);
     return value;
