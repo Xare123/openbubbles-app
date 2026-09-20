@@ -7030,6 +7030,56 @@ mod tests {
     }
 
     #[test]
+    fn user_info_pointer_absence_shapes_are_distinguished() {
+        use CloudAttachmentDiagnosticCode as Code;
+        let hasher = CloudSemanticIdentifierHasher::new(b"fixture-key").unwrap();
+        let base = AttachmentMeta {
+            guid: "standalone-attachment-guid".to_owned(),
+            total_bytes: 42,
+            ..Default::default()
+        };
+        // Absent ui converts without user-info validation.
+        let mut attachment = base.clone();
+        attachment.user_info = None;
+        let (outcome, detail) = convert_attachment_with_diagnostic(
+            &context(&hasher, "server-attachment-ui-shapes", None),
+            &attachment_presence(),
+            &attachment,
+        );
+        assert!(matches!(outcome, CloudCanonicalConversionOutcome::Ready(_)));
+        assert_eq!(detail, None);
+        // Present-but-pointerless shapes currently quarantine alike.
+        let descriptive_only = MMCSAttachmentMeta {
+            uti_type: Some("public.png".to_owned()),
+            mime_type: Some("image/png".to_owned()),
+            name: Some("fixture-name".to_owned()),
+            ..Default::default()
+        };
+        for user_info in [MMCSAttachmentMeta::default(), descriptive_only] {
+            let mut attachment = base.clone();
+            attachment.user_info = Some(user_info);
+            let (outcome, detail) = convert_attachment_with_diagnostic(
+                &context(&hasher, "server-attachment-ui-shapes", None),
+                &attachment_presence(),
+                &attachment,
+            );
+            assert_eq!(outcome, CloudCanonicalConversionOutcome::Quarantined(CloudCanonicalQuarantineReason::MalformedRecord));
+            assert_eq!(detail, Some(Code::UserInfoEmpty));
+        }
+        // Serde ignores unrecognized keys.
+        for raw_key in ["some-future-pointer", "mmcs_signature_hex"] {
+            let raw = format!("<plist><dict><key>{raw_key}</key><string>aa</string></dict></plist>");
+            let decoded: MMCSAttachmentMeta = plist::from_bytes(raw.as_bytes()).expect("fixture ui plist decodes");
+            assert_eq!(decoded.mmcs_signature_hex, None);
+            assert_eq!(decoded.mmcs_owner, None);
+            assert_eq!(decoded.mmcs_url, None);
+            assert_eq!(decoded.decryption_key, None);
+            assert_eq!(decoded.inline_attachment, None);
+            assert_eq!(decoded.message_part, None);
+        }
+    }
+
+    #[test]
     fn tombstone_supports_present_or_missing_server_time() {
         let hasher = CloudSemanticIdentifierHasher::new(b"fixture-key").unwrap();
         for expected in [Some(1_720_000_000_999), None] {
