@@ -2102,7 +2102,7 @@ class CloudSyncV2WindowsHarnessState extends State<CloudSyncV2WindowsHarness> {
           selected = <String, Object?>{
             'record_hash': row.serverRecordIdHash, 'mime': mime, 'bytes': bytes, 'file_name': payload.fileName,
             'entry_change_id': row.changeIdHash, 'entry_etag': row.etagHash,
-            'entry_payload_sha': row.payloadSha256, 'entry_envelope': row.encryptedPayloadRef, 'entry_server_record': row.encryptedServerRecordId, 'entry_sysref': row.protectedSystemFieldsRef, 'entry_sequence': row.fetchSequence, 'entry_batch': row.batchId, 'entry_attempts': row.retryCount, 'entry_created_ms': row.createdAtMs,
+            'entry_payload_sha': row.payloadSha256, 'entry_envelope': row.encryptedPayloadRef, 'entry_server_record': row.encryptedServerRecordId, 'entry_sysref': row.protectedSystemFieldsRef, 'entry_sequence': row.fetchSequence, 'entry_batch': row.batchId, 'entry_attempts': row.retryCount, 'entry_created_ms': row.createdAtMs, 'entry_modified': cloudInboxCanonicalServerModifiedAt(row)?.toUtc().millisecondsSinceEpoch,
             'logical_key': payload.logicalEntityKeyHash, 'canonical_guid': payload.canonicalGuid,
           };
           break;
@@ -2124,7 +2124,7 @@ class CloudSyncV2WindowsHarnessState extends State<CloudSyncV2WindowsHarness> {
             etagHash: selected['entry_etag'] as String, type: CloudChangeType.save,
             encryptedServerRecordId: selected['entry_server_record'] as String?, protectedSystemFieldsReference: selected['entry_sysref'] as String?,
             encryptedPayloadReference: selected['entry_envelope'] as String,
-            payloadSha256: selected['entry_payload_sha'] as String, serverModifiedAt: null,
+            payloadSha256: selected['entry_payload_sha'] as String, serverModifiedAt: selected['entry_modified'] == null ? null : DateTime.fromMillisecondsSinceEpoch(selected['entry_modified'] as int, isUtc: true),
           ),
         ),
         logicalEntityKeyHash: selected['logical_key'] as String,
