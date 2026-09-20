@@ -3595,6 +3595,12 @@ fn convert_attachment_internal(
                 materialization_capability = CloudCanonicalAttachmentMaterializationCapability::
                     MetadataOnlyUnsupportedMediaCredentials;
             }
+            // Present-but-unrecognized ui holds no MMCS or inline credentials,
+            // so like absent ui it does not decide body availability: the
+            // protected lqa/ALL_ASSETS lane re-fetches by identity under ETag,
+            // account, permit, and size guards. Owner, media-field, size, and
+            // canonical stages below still run.
+            Err(CloudAttachmentDiagnosticCode::UserInfoEmpty) => {}
             Err(detail) => {
                 *stage = detail;
                 return CloudCanonicalConversionOutcome::Quarantined(
@@ -7062,7 +7068,6 @@ mod tests {
             ..Default::default()
         };
         let mut cases = vec![
-            (MMCSAttachmentMeta::default(), Code::UserInfoEmpty),
             (MMCSAttachmentMeta {
                 inline_attachment: Some("ia-0".to_owned()),
                 ..valid_mmcs.clone()
@@ -7101,7 +7106,8 @@ mod tests {
                 &context(&hasher, "server-attachment-diagnostic", None),
                 &attachment_presence(), &attachment));
         }
-        for user_info in [None, Some(valid_mmcs), Some(valid_inline)] {
+        // Absent, unrecognized-only, valid MMCS, and valid inline ui convert.
+        for user_info in [None, Some(MMCSAttachmentMeta::default()), Some(valid_mmcs), Some(valid_inline)] {
             let mut attachment = base.clone();
             attachment.user_info = user_info;
             let (outcome, detail) = convert_attachment_with_diagnostic(
@@ -7164,8 +7170,9 @@ mod tests {
             total_bytes: 42,
             ..Default::default()
         };
+        // Unrecognized-only ui now converts (covered in the diagnostics test);
+        // only incomplete, mixed, or malformed credential sets quarantine here.
         let cases = [
-            MMCSAttachmentMeta::default(),
             MMCSAttachmentMeta {
                 mmcs_signature_hex: Some("aa".repeat(32)),
                 mmcs_owner: Some("owner".to_owned()),
@@ -7216,7 +7223,6 @@ mod tests {
 
     #[test]
     fn user_info_pointer_absence_shapes_are_distinguished() {
-        use CloudAttachmentDiagnosticCode as Code;
         let hasher = CloudSemanticIdentifierHasher::new(b"fixture-key").unwrap();
         let base = AttachmentMeta {
             guid: "standalone-attachment-guid".to_owned(),
@@ -7233,7 +7239,8 @@ mod tests {
         );
         assert!(matches!(outcome, CloudCanonicalConversionOutcome::Ready(_)));
         assert_eq!(detail, None);
-        // Present-but-pointerless shapes currently quarantine alike.
+        // Present-but-pointerless shapes convert like absent ui: no recognized
+        // credentials means the lqa lane stays authoritative for the body.
         let descriptive_only = MMCSAttachmentMeta {
             uti_type: Some("public.png".to_owned()),
             mime_type: Some("image/png".to_owned()),
@@ -7248,8 +7255,8 @@ mod tests {
                 &attachment_presence(),
                 &attachment,
             );
-            assert_eq!(outcome, CloudCanonicalConversionOutcome::Quarantined(CloudCanonicalQuarantineReason::MalformedRecord));
-            assert_eq!(detail, Some(Code::UserInfoEmpty));
+            assert!(matches!(outcome, CloudCanonicalConversionOutcome::Ready(_)));
+            assert_eq!(detail, None);
         }
         // Serde ignores unrecognized keys.
         for raw_key in ["some-future-pointer", "mmcs_signature_hex"] {
@@ -7379,6 +7386,41 @@ mod tests {
         assert!(!label.contains("secret"));
         assert!(!label.contains("example"));
         assert!(!label.contains("token"));
+    }
+
+    #[test]
+    fn unknown_only_ui_converts_ready_materializable_through_typed_decode() {
+        fn cm_xml(guid: &str, ui_inner: Option<&str>) -> Vec<u8> {
+            let ui = ui_inner.map(|inner| format!("<key>ui</key><dict>{inner}</dict>")).unwrap_or_default();
+            format!("<plist version=\"1.0\"><dict><key>aguid</key><string>{guid}</string><key>tb</key><integer>42</integer><key>ig</key><false/><key>sdt</key><integer>0</integer><key>st</key><integer>0</integer><key>is</key><false/><key>ha</key><false/><key>vers</key><integer>1</integer><key>cdt</key><integer>0</integer>{ui}</dict></plist>").into_bytes()
+        }
+        fn convert_cm(bytes: &[u8]) -> (CloudCanonicalConversionOutcome, Option<CloudAttachmentDiagnosticCode>) {
+            let attachment: AttachmentMeta = plist::from_bytes(bytes).expect("fixture cm decodes to typed attachment");
+            let hasher = CloudSemanticIdentifierHasher::new(b"fixture-key").unwrap();
+            convert_attachment_with_diagnostic(&context(&hasher, "server-attachment-unknown-ui", None), &attachment_presence(), &attachment)
+        }
+        // Absent, empty, descriptive-only, and unknown-only ui convert exactly
+        // like absent ui: Ready and Materializable with no diagnostic.
+        let variants: [Option<&str>; 5] = [
+            None,
+            Some(""),
+            Some("<key>uti-type</key><string>public.png</string><key>mime-type</key><string>image/png</string><key>name</key><string>photo.png</string>"),
+            Some("<key>future-a</key><string>x</string><key>future-b</key><string>y</string><key>future-c</key><string>z</string>"),
+            Some("<key>future-a</key><string>x</string><key>future-b</key><string>y</string><key>future-c</key><string>z</string><key>future-d</key><string>w</string>"),
+        ];
+        for ui in variants {
+            let (outcome, detail) = convert_cm(&cm_xml("standalone-attachment-guid", ui));
+            assert_eq!(detail, None);
+            assert!(matches!(&outcome, CloudCanonicalConversionOutcome::Ready(_)));
+            assert_eq!(ready_attachment_payload(outcome).materialization_capability(), CloudCanonicalAttachmentMaterializationCapability::Materializable);
+        }
+        // The exception cannot bypass later rules: empty ui plus a malformed
+        // owner guid still quarantines as a malformed parent.
+        let (outcome, detail) = convert_cm(&cm_xml("at_malformed", Some("")));
+        assert_eq!(outcome, CloudCanonicalConversionOutcome::Quarantined(CloudCanonicalQuarantineReason::MalformedParent));
+        assert_eq!(detail, Some(CloudAttachmentDiagnosticCode::Owner));
+        // Wrong-type recognized ui fields still fail typed decoding.
+        assert!(plist::from_bytes::<AttachmentMeta>(&cm_xml("standalone-attachment-guid", Some("<key>mmcs-url</key><integer>42</integer>"))).is_err());
     }
 
     #[test]
