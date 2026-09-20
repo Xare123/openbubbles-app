@@ -146,6 +146,35 @@ if (-not $testDirectory.StartsWith(
 }
 New-Item -ItemType Directory -Path $testDirectory | Out-Null
 
+$syntheticChild = Join-Path $testDirectory "synthetic-auth-probe-child.ps1"
+
+function Wait-SyntheticAuthProbePublished {
+    param([Parameter(Mandatory)][string] $StatusPath)
+    $readyDeadline = [datetime]::UtcNow.AddSeconds(15)
+    $lastLength = -1
+    $stablePolls = 0
+    while ([datetime]::UtcNow -lt $readyDeadline) {
+        $item = Get-Item -LiteralPath $StatusPath -Force -ErrorAction SilentlyContinue
+        if ($null -ne $item -and -not $item.PSIsContainer -and $item.Length -gt 0 -and $item.Length -eq $lastLength) {
+            $stablePolls++
+        }
+        else {
+            $stablePolls = 0
+        }
+        if ($null -ne $item -and -not $item.PSIsContainer) {
+            $lastLength = $item.Length
+        }
+        if ($stablePolls -ge 2 -and $lastLength -gt 0) {
+            try {
+                $null = Get-Content -LiteralPath $StatusPath -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+                return
+            }
+            catch { }
+        }
+        Start-Sleep -Milliseconds 100
+    }
+    throw 'Synthetic auth probe child did not publish its status.'
+}
 try {
     Assert-True `
         -Condition (Test-AuthProbeParameterPreservation -Launcher $launcher) `
@@ -650,7 +679,6 @@ try {
         $profileLock.Dispose()
     }
 
-    $syntheticChild = Join-Path $testDirectory "synthetic-auth-probe-child.ps1"
     @'
 param(
     [Parameter(Mandatory)][string] $StatusPath,
@@ -826,6 +854,7 @@ exit $ExitCode
             "-HoldSeconds", "5"
         ) `
         -PassThru
+    Wait-SyntheticAuthProbePublished -StatusPath $syntheticStatus
     $progressTimeoutFailure = Invoke-ExpectedFailure {
         Wait-AuthProbeTerminalProcess `
             -Process $progressProcess `
@@ -837,7 +866,7 @@ exit $ExitCode
     Assert-True `
         -Condition ($progressTimeoutFailure -eq
             "Windows authentication probe timed out at allowlisted stage: aps-setup") `
-        -Message "The controlled lifecycle did not report its last allowlisted progress stage."
+        -Message ("The controlled lifecycle did not report its last allowlisted progress stage. Actual: " + $progressTimeoutFailure)
     $progressProcess.Refresh()
     Assert-True `
         -Condition $progressProcess.HasExited `
@@ -863,6 +892,7 @@ exit $ExitCode
             "-UpdatedUtc", $staleTimeoutUpdatedUtc
         ) `
         -PassThru
+    Wait-SyntheticAuthProbePublished -StatusPath $syntheticStatus
     $staleTimeoutFailure = Invoke-ExpectedFailure {
         Wait-AuthProbeTerminalProcess `
             -Process $staleTimeoutProcess `
@@ -874,7 +904,7 @@ exit $ExitCode
     Assert-True `
         -Condition ($staleTimeoutFailure -eq
             "Windows authentication probe timed out at allowlisted stage: status-invalid-timestamp-window") `
-        -Message "A stale status influenced authentication probe timeout reporting."
+        -Message ("A stale status influenced authentication probe timeout reporting. Actual: " + $staleTimeoutFailure)
 
     Remove-Item -LiteralPath $syntheticStatus -Force
     $mismatchedTimeoutLaunchId = New-CryptographicLaunchId
@@ -892,6 +922,7 @@ exit $ExitCode
             "-StatusLaunchId", (New-CryptographicLaunchId)
         ) `
         -PassThru
+    Wait-SyntheticAuthProbePublished -StatusPath $syntheticStatus
     $mismatchedTimeoutFailure = Invoke-ExpectedFailure {
         Wait-AuthProbeTerminalProcess `
             -Process $mismatchedTimeoutProcess `
@@ -903,7 +934,39 @@ exit $ExitCode
     Assert-True `
         -Condition ($mismatchedTimeoutFailure -eq
             "Windows authentication probe timed out at allowlisted stage: status-invalid-identity") `
-        -Message "A mismatched status influenced authentication probe timeout reporting."
+        -Message ("A mismatched status influenced authentication probe timeout reporting. Actual: " + $mismatchedTimeoutFailure)
+
+    Remove-Item -LiteralPath $syntheticStatus -Force
+    # Delayed startup beyond the measured window still reaches the intended
+    # classification: slow publication is setup cost, not timeout evidence.
+    $delayedChildCommand = "Start-Sleep -Seconds 3; & `"$syntheticChild`" @args"
+
+    $delayedTimeoutLaunchId = New-CryptographicLaunchId
+    $delayedTimeoutProcess = Start-Process `
+        -FilePath $pwshExecutable `
+        -ArgumentList @(
+            '-NoProfile', '-Command', $delayedChildCommand,
+            "-StatusPath", $syntheticStatus,
+            "-LaunchId", $delayedTimeoutLaunchId,
+            "-ExitCode", "0",
+            "-State", "running",
+            "-Stage", "aps-setup",
+            "-SafeCode", "none",
+            "-HoldSeconds", "5"
+        ) `
+        -PassThru
+    Wait-SyntheticAuthProbePublished -StatusPath $syntheticStatus
+    $delayedTimeoutFailure = Invoke-ExpectedFailure {
+        Wait-AuthProbeTerminalProcess `
+            -Process $delayedTimeoutProcess `
+            -StatusPath $syntheticStatus `
+            -LaunchId $delayedTimeoutLaunchId `
+            -ExpectedExecutable $pwshExecutable `
+            -TimeoutSeconds 1
+    }
+    Assert-True `
+        -Condition ($delayedTimeoutFailure -ceq "Windows authentication probe timed out at allowlisted stage: aps-setup") `
+        -Message ("Delayed startup was misclassified. Actual: " + $delayedTimeoutFailure)
 
     @{
         version = "cloud-sync-v2-windows-auth-probe-status-v1"
