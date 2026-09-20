@@ -886,6 +886,188 @@ pub(crate) enum CloudNestedPresence {
     Present,
 }
 
+/// Fixed kebab-case ui keys for the attachment raw-shape diagnostic.
+/// Internal only; key names are never emitted.
+const ATTACHMENT_UI_POINTER_KEYS: [&str; 6] = [
+    "mmcs-signature-hex",
+    "mmcs-owner",
+    "mmcs-url",
+    "decryption-key",
+    "inline-attachment",
+    "message-part",
+];
+
+const ATTACHMENT_UI_DESCRIPTIVE_KEYS: [&str; 4] =
+    ["file-size", "uti-type", "mime-type", "name"];
+
+/// Closed raw shape of one retained attachment ui dictionary.
+/// Bit positions follow the internal key order; no names, values,
+/// filenames, URLs, tokens, crypto material, or raw bytes ever leave here.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum CloudAttachmentUiShapeKind {
+    Absent,
+    Dictionary,
+    WrongType,
+    Unavailable,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct CloudAttachmentUiShape {
+    pub(crate) kind: CloudAttachmentUiShapeKind,
+    pub(crate) pointer_mask: [bool; 6],
+    pub(crate) descriptive_mask: [bool; 4],
+    pub(crate) pointer_types_ok: bool,
+    pub(crate) descriptive_types_ok: bool,
+    pub(crate) unknown_count: u8,
+    pub(crate) empty: bool,
+}
+
+fn ui_shape_unavailable() -> CloudAttachmentUiShape {
+    CloudAttachmentUiShape {
+        kind: CloudAttachmentUiShapeKind::Unavailable,
+        pointer_mask: [false; 6],
+        descriptive_mask: [false; 4],
+        pointer_types_ok: false,
+        descriptive_types_ok: false,
+        unknown_count: 0,
+        empty: false,
+    }
+}
+
+fn ui_value_is_string(value: &PlistValue) -> bool {
+    matches!(value, PlistValue::String(_))
+}
+
+fn ui_value_is_file_size(value: &PlistValue) -> bool {
+    matches!(value, PlistValue::Integer(_) | PlistValue::String(_) | PlistValue::Boolean(_))
+}
+
+/// Observational raw-shape capture for one retained attachment ui value.
+/// Parses the already-bounded decrypted cm plist again; never alters
+/// conversion, never rejects, never retains names, values, or raw bytes.
+pub(crate) fn capture_attachment_ui_shape(decrypted_cm_plist: &[u8]) -> CloudAttachmentUiShape {
+    if decrypted_cm_plist.len() > MAX_NESTED_PLIST_BYTES {
+        return ui_shape_unavailable();
+    }
+    let value = match PlistValue::from_reader(Cursor::new(decrypted_cm_plist)) {
+        Ok(value) => value,
+        Err(_) => return ui_shape_unavailable(),
+    };
+    let dictionary = match value.into_dictionary() {
+        Some(dictionary) => dictionary,
+        None => return ui_shape_unavailable(),
+    };
+    if dictionary.len() > MAX_RAW_FIELDS {
+        return ui_shape_unavailable();
+    }
+    let ui = match dictionary.get("ui") {
+        None => {
+            return CloudAttachmentUiShape {
+                kind: CloudAttachmentUiShapeKind::Absent,
+                pointer_mask: [false; 6],
+                descriptive_mask: [false; 4],
+                pointer_types_ok: true,
+                descriptive_types_ok: true,
+                unknown_count: 0,
+                empty: false,
+            };
+        }
+        Some(ui) => ui,
+    };
+    let map = match ui {
+        PlistValue::Dictionary(map) => map,
+        _ => {
+            return CloudAttachmentUiShape {
+                kind: CloudAttachmentUiShapeKind::WrongType,
+                pointer_mask: [false; 6],
+                descriptive_mask: [false; 4],
+                pointer_types_ok: false,
+                descriptive_types_ok: false,
+                unknown_count: 0,
+                empty: false,
+            };
+        }
+    };
+    if map.len() > MAX_RAW_FIELDS {
+        return ui_shape_unavailable();
+    }
+    let mut shape = CloudAttachmentUiShape {
+        kind: CloudAttachmentUiShapeKind::Dictionary,
+        pointer_mask: [false; 6],
+        descriptive_mask: [false; 4],
+        pointer_types_ok: true,
+        descriptive_types_ok: true,
+        unknown_count: 0,
+        empty: map.is_empty(),
+    };
+    for (key, value) in map.iter() {
+        let mut known = false;
+        for (index, known_key) in ATTACHMENT_UI_POINTER_KEYS.iter().enumerate() {
+            if key.as_str() == *known_key {
+                shape.pointer_mask[index] = true;
+                if !ui_value_is_string(value) {
+                    shape.pointer_types_ok = false;
+                }
+                known = true;
+                break;
+            }
+        }
+        if known {
+            continue;
+        }
+        if key.as_str() == ATTACHMENT_UI_DESCRIPTIVE_KEYS[0] {
+            shape.descriptive_mask[0] = true;
+            if !ui_value_is_file_size(value) {
+                shape.descriptive_types_ok = false;
+            }
+            continue;
+        }
+        let mut descriptive = false;
+        for (index, known_key) in ATTACHMENT_UI_DESCRIPTIVE_KEYS[1..].iter().enumerate() {
+            if key.as_str() == *known_key {
+                shape.descriptive_mask[index + 1] = true;
+                if !ui_value_is_string(value) {
+                    shape.descriptive_types_ok = false;
+                }
+                descriptive = true;
+                break;
+            }
+        }
+        if descriptive {
+            continue;
+        }
+        if shape.unknown_count < 99 {
+            shape.unknown_count += 1;
+        }
+    }
+    shape
+}
+
+/// Fixed-vocabulary rendering of a ui shape for the content-free log channel.
+/// Bit positions follow the internal key order; the rendering carries no names,
+/// values, or raw bytes.
+pub(crate) fn attachment_ui_shape_label(shape: &CloudAttachmentUiShape) -> String {
+    fn bits(values: &[bool]) -> String {
+        values.iter().map(|present| if *present { "1" } else { "0" }).collect()
+    }
+    let kind = match shape.kind {
+        CloudAttachmentUiShapeKind::Absent => "absent",
+        CloudAttachmentUiShapeKind::Dictionary => "dictionary",
+        CloudAttachmentUiShapeKind::WrongType => "wrong_type",
+        CloudAttachmentUiShapeKind::Unavailable => "unavailable",
+    };
+    format!(
+        "kind={} pointers={} descriptive={} pointer_types_ok={} descriptive_types_ok={} unknown={} empty={}",
+        kind,
+        bits(&shape.pointer_mask),
+        bits(&shape.descriptive_mask),
+        shape.pointer_types_ok,
+        shape.descriptive_types_ok,
+        shape.unknown_count,
+        shape.empty
+    )
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum CloudCanonicalDeferredReason {
     NestedPresenceUnavailable,
@@ -7079,6 +7261,53 @@ mod tests {
         }
     }
 
+    #[test]
+    fn attachment_ui_shape_capture_reports_fixed_presence() {
+        fn cm_bytes(ui: Option<PlistValue>) -> Vec<u8> {
+            let mut cm = plist::Dictionary::new();
+            cm.insert("aguid".to_owned(), PlistValue::String("fixture-guid".to_owned()));
+            if let Some(ui) = ui {
+                cm.insert("ui".to_owned(), ui);
+            }
+            let mut bytes = Vec::new();
+            plist::to_writer_binary(&mut bytes, &PlistValue::Dictionary(cm)).expect("fixture cm plist");
+            bytes
+        }
+        fn ui_dict(pairs: Vec<(&str, PlistValue)>) -> PlistValue {
+            let mut map = plist::Dictionary::new();
+            for (key, value) in pairs {
+                map.insert(key.to_owned(), value);
+            }
+            PlistValue::Dictionary(map)
+        }
+        let shape = capture_attachment_ui_shape(&cm_bytes(None));
+        assert_eq!(shape.kind, CloudAttachmentUiShapeKind::Absent);
+        assert_eq!(shape.unknown_count, 0);
+        assert!(!shape.empty);
+        let shape = capture_attachment_ui_shape(&cm_bytes(Some(ui_dict(vec![]))));
+        assert_eq!(shape.kind, CloudAttachmentUiShapeKind::Dictionary);
+        assert!(shape.empty);
+        assert_eq!(shape.pointer_mask, [false; 6]);
+        assert_eq!(shape.descriptive_mask, [false; 4]);
+        let shape = capture_attachment_ui_shape(&cm_bytes(Some(ui_dict(vec![("uti-type", PlistValue::String("public.png".to_owned())), ("mime-type", PlistValue::String("image/png".to_owned()))]))));
+        assert_eq!(shape.kind, CloudAttachmentUiShapeKind::Dictionary);
+        assert_eq!(shape.pointer_mask, [false; 6]);
+        assert_eq!(shape.descriptive_mask, [false, true, true, false]);
+        let shape = capture_attachment_ui_shape(&cm_bytes(Some(ui_dict(vec![("mmcs_signature_hex", PlistValue::String("aa".to_owned())), ("some-future-pointer", PlistValue::String("aa".to_owned()))]))));
+        assert_eq!(shape.pointer_mask, [false; 6]);
+        assert_eq!(shape.unknown_count, 2);
+        let shape = capture_attachment_ui_shape(&cm_bytes(Some(ui_dict(vec![("mmcs-url", PlistValue::Boolean(true))]))));
+        assert!(shape.pointer_mask[2]);
+        assert!(!shape.pointer_types_ok);
+        let shape = capture_attachment_ui_shape(&cm_bytes(Some(PlistValue::String("not-a-dict".to_owned()))));
+        assert_eq!(shape.kind, CloudAttachmentUiShapeKind::WrongType);
+        let shape = capture_attachment_ui_shape(b"not a plist");
+        assert_eq!(shape.kind, CloudAttachmentUiShapeKind::Unavailable);
+        let label = attachment_ui_shape_label(&shape);
+        assert!(label.starts_with("kind=unavailable "));
+    }
+        assert!(shape.descriptive_types_ok);
+        assert!(!shape.empty);
     #[test]
     fn tombstone_supports_present_or_missing_server_time() {
         let hasher = CloudSemanticIdentifierHasher::new(b"fixture-key").unwrap();

@@ -500,6 +500,7 @@ function Get-DartApplierContentFreeNativeDiagnostics {
     $conversionOutcomes = @{}
     $unsupportedServices = @{}
     $extensionNameShapes = @{}
+    $attachmentUiShapes = @{}
 
     $retainedPattern =
         'CloudKit V2 transient message retained_shape absent_mask=([0-9a-f]{3}) without_value_mask=([0-9a-f]{3}) guid_empty=(true|false) chat_empty=(true|false) sender_empty=(true|false) from_me=(true|false) body_present=(true|false) attributed_present=(true|false) extension_class=(no_payload|empty_payload|url_balloon|apple_other|other_provider|provider_absent) reply_present=(true|false)'
@@ -574,6 +575,18 @@ function Get-DartApplierContentFreeNativeDiagnostics {
             $match.Groups[5].Value, $match.Groups[6].Value
         $extensionNameShapes[$key] = [long]($extensionNameShapes[$key] ?? 0) + 1
     }
+    $attachmentUiPattern =
+        'CloudKit V2 transient attachment ui_shape kind=(absent|dictionary|wrong_type|unavailable) pointers=([01]{6}) descriptive=([01]{4}) pointer_types_ok=(true|false) descriptive_types_ok=(true|false) unknown=([0-9]{1,2}) empty=(true|false)'
+    foreach ($match in [regex]::Matches(
+        $Stdout, $attachmentUiPattern, [Text.RegularExpressions.RegexOptions]::CultureInvariant
+    )) {
+        $key = 'kind={0};pointers={1};descriptive={2};pointer_types={3};descriptive_types={4};unknown={5};empty={6}' -f
+            $match.Groups[1].Value, $match.Groups[2].Value,
+            $match.Groups[3].Value, $match.Groups[4].Value,
+            $match.Groups[5].Value, $match.Groups[6].Value,
+            $match.Groups[7].Value
+        $attachmentUiShapes[$key] = [long]($attachmentUiShapes[$key] ?? 0) + 1
+    }
 
     return [pscustomobject][ordered]@{
         schema_version = 4
@@ -594,6 +607,9 @@ function Get-DartApplierContentFreeNativeDiagnostics {
         )
         extension_name_shapes = [object[]]@(
             ConvertTo-DartApplierDiagnosticCountRows $extensionNameShapes
+        )
+        retained_attachment_ui_shapes = [object[]]@(
+            ConvertTo-DartApplierDiagnosticCountRows $attachmentUiShapes
         )
     }
 }

@@ -181,6 +181,11 @@ CloudKit V2 extension name contract name_shape=absent url_shape=ns_url app_id_sh
 CloudKit V2 extension name contract name_shape=absent url_shape=ns_url app_id_shape=other_scalar display_shape=string layout_shape=string user_info_shape=ns_dictionary message=must-not-escape
 CloudKit V2 extension name contract name_shape=private-name url_shape=ns_url app_id_shape=other_scalar display_shape=string layout_shape=string user_info_shape=ns_dictionary
 CloudKit V2 extension name contract name_shape=absent url_shape=ns_url app_id_shape=other_scalar display_shape=string layout_shape=string user_info_shape=ns_dictionary-private-class
+CloudKit V2 transient attachment ui_shape kind=dictionary pointers=000000 descriptive=1111 pointer_types_ok=true descriptive_types_ok=true unknown=2 empty=false
+CloudKit V2 transient attachment ui_shape kind=dictionary pointers=000000 descriptive=1111 pointer_types_ok=true descriptive_types_ok=true unknown=2 empty=false
+CloudKit V2 transient attachment ui_shape kind=absent pointers=000000 descriptive=0000 pointer_types_ok=true descriptive_types_ok=true unknown=0 empty=false
+CloudKit V2 transient attachment ui_shape kind=dictionary pointers=10102 descriptive=1111 pointer_types_ok=true descriptive_types_ok=true unknown=2 empty=false
+CloudKit V2 transient attachment ui_shape kind=dictionary pointers=000000 descriptive=1111 pointer_types_ok=true descriptive_types_ok=true unknown=2 empty=false secret=must-not-escape
 '@
 Assert-Check 'native-shape-diagnostics-aggregated' (
     $nativeDiagnostics.schema_version -eq 4 -and
@@ -196,6 +201,14 @@ Assert-Check 'extension-name-shapes-closed-aggregates' (
     $nativeDiagnostics.extension_name_shapes[0].count -eq 2 -and
     $nativeDiagnostics.extension_name_shapes[0].shape -ceq
         'name=absent;url=ns_url;app_id=other_scalar;display=string;layout=string;user_info=ns_dictionary')
+Assert-Check 'attachment-ui-shapes-closed-aggregates' (
+    $nativeDiagnostics.retained_attachment_ui_shapes.Count -eq 2 -and
+    $nativeDiagnostics.retained_attachment_ui_shapes[0].count -eq 1 -and
+    $nativeDiagnostics.retained_attachment_ui_shapes[0].shape -ceq
+        'kind=absent;pointers=000000;descriptive=0000;pointer_types=true;descriptive_types=true;unknown=0;empty=false' -and
+    $nativeDiagnostics.retained_attachment_ui_shapes[1].count -eq 3 -and
+    $nativeDiagnostics.retained_attachment_ui_shapes[1].shape -ceq
+        'kind=dictionary;pointers=000000;descriptive=1111;pointer_types=true;descriptive_types=true;unknown=2;empty=false')
 Assert-Check 'native-shape-diagnostics-redacted' (
     -not (($nativeDiagnostics | ConvertTo-Json -Depth 8) -match 'must-not-escape'))
 
