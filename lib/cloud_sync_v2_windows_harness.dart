@@ -2043,6 +2043,8 @@ class CloudSyncV2WindowsHarnessState extends State<CloudSyncV2WindowsHarness> {
         widget.operation != CloudSyncV2WindowsHarnessOperation.interactive) {
       throw StateError('cloud_sync_windows_dev_test_host_invalid');
     }
+    const expectedRecordHash = String.fromEnvironment('EXPECTED_RETAINED_RECORD_HASH');
+    if (expectedRecordHash.isEmpty) throw StateError('cloud_retained_body_expected_hash_missing');
     return _adapter!.sampler.runConfirmedReadOnlyObservation((auth, pause) async {
       final scope = CloudSyncScope(
         accountFingerprint: auth.accountFingerprint,
@@ -2065,90 +2067,64 @@ class CloudSyncV2WindowsHarnessState extends State<CloudSyncV2WindowsHarness> {
           .and(CloudInboxChangeEntity_.zone.equals('attachmentManateeZone'))
           .and(CloudInboxChangeEntity_.scopeKey.equals(scopeKey))
           .and(CloudInboxChangeEntity_.generation.equals(checkpoint.generation))
+          .and(CloudInboxChangeEntity_.serverRecordIdHash.equals(expectedRecordHash))
           .and(CloudInboxChangeEntity_.status.equals(CloudInboxStatus.retainedUnprojected.index))
           .and(CloudInboxChangeEntity_.changeType.equals('save'))
           .and(CloudInboxChangeEntity_.isTombstone.equals(false)),
       )..order(CloudInboxChangeEntity_.fetchSequence)).build();
-      Map<String, Object?>? selected;
+      CloudInboxEntry? source;
+      CloudAttachmentEntityPayload? attachment;
       try {
-        for (final row in query.find()) {
-          if (row.encryptedPayloadRef == null || row.payloadSha256 == null || row.etagHash == null) continue;
-          final entry = CloudInboxEntry(
-            scope: scope, sequence: row.fetchSequence, generation: row.generation, batchId: row.batchId,
-            status: CloudInboxStatus.retainedUnprojected, attemptCount: row.retryCount,
-            createdAt: DateTime.fromMillisecondsSinceEpoch(row.createdAtMs, isUtc: true),
-            change: CloudFetchedChange(
-              changeId: row.changeIdHash, recordIdHash: row.serverRecordIdHash, etagHash: row.etagHash,
-              type: CloudChangeType.save, encryptedServerRecordId: row.encryptedServerRecordId,
-              protectedSystemFieldsReference: row.protectedSystemFieldsRef,
-              encryptedPayloadReference: row.encryptedPayloadRef, payloadSha256: row.payloadSha256,
-              serverModifiedAt: cloudInboxCanonicalServerModifiedAt(row),
-            ),
-          );
-          final decoded = await RustCloudSemanticDecoder(
-            readAuthSnapshot: () async => auth, storageDirectory: fs.appDocDir.path,
-            nativeWriterPauseToken: pause as BigInt,
-            bindings: _RetainedInspectionBindings({'zone': 'attachmentManateeZone'}),
-            diagnosticRecorder: (_) {},
-          ).decode(entry);
-          final payload = decoded.payload;
-          if (payload is! CloudAttachmentEntityPayload) continue;
-          if (payload.bodyCapability != CloudAttachmentBodyCapability.materializable) continue;
-          final bytes = payload.totalBytes;
-          if (bytes == null || bytes <= 0 || bytes > 10485760) continue;
-          final mime = payload.mimeType ?? '';
-          if (!mime.startsWith('image/')) continue;
-          if (payload.ownerCanonicalGuid == null || payload.ownerPart == null) continue;
-          selected = <String, Object?>{
-            'record_hash': row.serverRecordIdHash, 'mime': mime, 'bytes': bytes, 'file_name': payload.fileName,
-            'entry_change_id': row.changeIdHash, 'entry_etag': row.etagHash,
-            'entry_payload_sha': row.payloadSha256, 'entry_envelope': row.encryptedPayloadRef, 'entry_server_record': row.encryptedServerRecordId, 'entry_sysref': row.protectedSystemFieldsRef, 'entry_sequence': row.fetchSequence, 'entry_batch': row.batchId, 'entry_attempts': row.retryCount, 'entry_created_ms': row.createdAtMs, 'entry_modified': cloudInboxCanonicalServerModifiedAt(row)?.toUtc().millisecondsSinceEpoch,
-            'logical_key': payload.logicalEntityKeyHash, 'canonical_guid': payload.canonicalGuid,
-          };
-          break;
+        final rows = query.find();
+        if (rows.isEmpty) throw StateError('cloud_retained_body_row_missing');
+        if (rows.length > 2) throw StateError('cloud_retained_body_row_ambiguous');
+        final row = rows.first;
+        if (row.encryptedPayloadRef == null || row.payloadSha256 == null || row.etagHash == null) {
+          throw StateError('cloud_retained_body_provenance_missing');
         }
+        source = CloudInboxEntry(
+          scope: scope, sequence: row.fetchSequence, generation: row.generation, batchId: row.batchId,
+          status: CloudInboxStatus.retainedUnprojected, attemptCount: row.retryCount,
+          createdAt: DateTime.fromMillisecondsSinceEpoch(row.createdAtMs, isUtc: true),
+          change: CloudFetchedChange(
+            changeId: row.changeIdHash, recordIdHash: row.serverRecordIdHash, etagHash: row.etagHash,
+            type: CloudChangeType.save, encryptedServerRecordId: row.encryptedServerRecordId,
+            protectedSystemFieldsReference: row.protectedSystemFieldsRef,
+            encryptedPayloadReference: row.encryptedPayloadRef, payloadSha256: row.payloadSha256,
+            serverModifiedAt: cloudInboxCanonicalServerModifiedAt(row),
+          ),
+        );
+        final probeLabels = <String>[];
+        final decoded = await RustCloudSemanticDecoder(
+          readAuthSnapshot: () async => auth, storageDirectory: fs.appDocDir.path,
+          nativeWriterPauseToken: pause as BigInt,
+          bindings: _RetainedInspectionBindings({'zone': 'attachmentManateeZone'}),
+          diagnosticRecorder: probeLabels.add,
+        ).decode(source);
+        final payload = decoded.payload;
+        if (payload is! CloudAttachmentEntityPayload) throw StateError('cloud_retained_body_not_attachment');
+        if (payload.bodyCapability != CloudAttachmentBodyCapability.materializable) throw StateError('cloud_retained_body_not_materializable');
+        final bytes = payload.totalBytes;
+        if (bytes == null || bytes <= 0 || bytes > 10485760) throw StateError('cloud_retained_body_size_missing');
+        if (payload.ownerCanonicalGuid == null || payload.ownerPart == null) throw StateError('cloud_retained_body_origin_missing');
+        attachment = payload;
       } finally {
         query.close();
       }
-      if (selected == null) return <String, Object?>{'completed': false, 'reason': 'no_candidate_with_filename_size_origin'};
-      final recordIdHash = selected['record_hash'] as String;
-      final expectedBytes = selected['bytes'] as int;
       final request = CloudAttachmentBodyNativeRequest(
         authSnapshot: auth, nativeWriterPauseToken: pause as BigInt,
         storageDirectory: fs.appDocDir.path, applicationDocumentsDirectory: fs.appDocDir.path,
-        source: CloudInboxEntry(
-          scope: scope, sequence: selected['entry_sequence'] as int, generation: checkpoint.generation, batchId: selected['entry_batch'] as String,
-          status: CloudInboxStatus.retainedUnprojected, attemptCount: selected['entry_attempts'] as int, createdAt: DateTime.fromMillisecondsSinceEpoch(selected['entry_created_ms'] as int, isUtc: true),
-          change: CloudFetchedChange(
-            changeId: selected['entry_change_id'] as String, recordIdHash: recordIdHash,
-            etagHash: selected['entry_etag'] as String, type: CloudChangeType.save,
-            encryptedServerRecordId: selected['entry_server_record'] as String?, protectedSystemFieldsReference: selected['entry_sysref'] as String?,
-            encryptedPayloadReference: selected['entry_envelope'] as String,
-            payloadSha256: selected['entry_payload_sha'] as String, serverModifiedAt: selected['entry_modified'] == null ? null : DateTime.fromMillisecondsSinceEpoch(selected['entry_modified'] as int, isUtc: true),
-          ),
-        ),
-        logicalEntityKeyHash: selected['logical_key'] as String,
-        expectedCanonicalGuidSha256: CloudAttachmentSourceResolver.destinationCanonicalGuidSha256ForTest(selected['canonical_guid'] as String),
-        expectedBytes: expectedBytes,
+        source: source!, logicalEntityKeyHash: attachment!.logicalEntityKeyHash,
+        expectedCanonicalGuidSha256: CloudAttachmentSourceResolver.destinationCanonicalGuidSha256ForTest(attachment!.canonicalGuid),
+        expectedBytes: attachment!.totalBytes!,
       );
-      final probeLabels = <String>[];
-      final probeDecoded = await RustCloudSemanticDecoder(
-        readAuthSnapshot: () async => auth, storageDirectory: fs.appDocDir.path,
-        nativeWriterPauseToken: pause as BigInt,
-        bindings: _RetainedInspectionBindings({'zone': 'attachmentManateeZone'}),
-        diagnosticRecorder: probeLabels.add,
-      ).decode(request.source);
-      final probePayload = probeDecoded.payload;
-      if (probePayload is! CloudAttachmentEntityPayload) {
-        return <String, Object?>{'completed': false, 'reason': 'synth_entry_not_attachment', 'labels': probeLabels};
-      }
       final outcome = await FrbCloudAttachmentBodyNativeBindings().materialize(request);
-      return <String, Object?>{        'completed': outcome.completed, 'verified_bytes': outcome.verifiedBytes, 'failure': outcome.failure?.name,
-        'record_hash': recordIdHash, 'mime': selected['mime'], 'bytes': expectedBytes, 'file_name': selected['file_name'],
+      return <String, Object?>{
+        'completed': outcome.completed, 'verified_bytes': outcome.verifiedBytes, 'failure': outcome.failure?.name,
+        'record_hash': expectedRecordHash, 'mime': attachment!.mimeType, 'bytes': attachment!.totalBytes,
       };
     });
   }
-
   Future<void> _initialize() async {
     _resumeAfterTwoFactor =
         _CloudSyncV2WindowsHarnessResumeOperation.initialize;
