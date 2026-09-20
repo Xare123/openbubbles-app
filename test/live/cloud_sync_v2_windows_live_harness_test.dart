@@ -117,6 +117,7 @@ void main() {
         'probe-message-feed',
         'inspect-edit-conflict',
         'inspect-retained',
+        'materialize-retained-body',
         'inspect-chat-parents',
         'inspect-chat1-discovery',
       };
@@ -136,6 +137,11 @@ void main() {
                               .CloudSyncV2WindowsHarnessOperation
                               .interactive,
                     'inspect-retained' =>
+                      candidate ==
+                          harness
+                              .CloudSyncV2WindowsHarnessOperation
+                              .interactive,
+                    'materialize-retained-body' =>
                       candidate ==
                           harness
                               .CloudSyncV2WindowsHarnessOperation
