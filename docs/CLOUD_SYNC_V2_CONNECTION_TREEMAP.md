@@ -80,7 +80,7 @@ Flutter/Dart/OpenBubbles process and C: has 26.75 GiB free. The prior qualificat
 and device observations below remain dated evidence, not fresh live state.
 
 Next: verify exclusive relay availability, then run the
-existing attachment diagnostic without refetch/projection/writes. Stop the live action only if the relay is unavailable, a competitor is active, or Windows auth needs refresh/2FA/registration. If the live
+existing attachment diagnostic without refetch/projection/writes. Stop the live action only if the relay is unavailable, a competitor is active, or Windows auth needs more than the approved same-account routine token renewal/cache update; new sign-in/2FA, IDS registration/repair, hardware changes, key setup, and message writes/uploads remain excluded. If the live
 preflight is unavailable, advance a specific offline-testable production gap,
 not repeated unchanged polls or a duplicate APK build. Report evidence and the
 next decision at a checkpoint; all unfinished release gates remain unfinished.
@@ -91,7 +91,7 @@ The same unknown Canary sign-in state remained through three consecutive goal
 turns after the diagnostic runtime was ready. Checks on September 17 showed no ADB
 device, no local test process, both qualification jobs terminal/successful and
 zero GitHub runners. The goal was marked blocked, not completed, to stop idle repetition.
-Canary/Pixel physical availability is coordination only, not a Windows cached-record technical dependency when Rami confirms an exclusive Windows-only relay window by direct message; missing Pixel attachment or unavailable Canary UI alone does not block. User must confirm whether Canary is still at activation/sign-in or now signed in,
+Canary/Pixel physical availability is coordination only, not a Windows cached-record technical dependency when Rami confirms an exclusive Windows-only relay window by direct message; missing Pixel attachment or unavailable Canary UI alone does not block. On September 17 the user had been asked whether Canary is still at activation/sign-in or now signed in (superseded by the Pixel-independent prerequisite above);
 or reconnect the Pixel for a fresh check. Then reserve the shared relay and run
 the already-qualified cached attachment probe. Do not rebuild, reset data, weaken
 auth checks or repeat a full sweep merely to work around this missing preflight.
