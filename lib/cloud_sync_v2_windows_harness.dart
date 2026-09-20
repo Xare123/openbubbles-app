@@ -2102,7 +2102,7 @@ class CloudSyncV2WindowsHarnessState extends State<CloudSyncV2WindowsHarness> {
           selected = <String, Object?>{
             'record_hash': row.serverRecordIdHash, 'mime': mime, 'bytes': bytes, 'file_name': payload.fileName,
             'entry_change_id': row.changeIdHash, 'entry_etag': row.etagHash,
-            'entry_payload_sha': row.payloadSha256, 'entry_envelope': row.encryptedPayloadRef,
+            'entry_payload_sha': row.payloadSha256, 'entry_envelope': row.encryptedPayloadRef, 'entry_sequence': row.fetchSequence, 'entry_batch': row.batchId, 'entry_attempts': row.retryCount, 'entry_created_ms': row.createdAtMs,
             'logical_key': payload.logicalEntityKeyHash, 'canonical_guid': payload.canonicalGuid,
           };
           break;
@@ -2117,8 +2117,8 @@ class CloudSyncV2WindowsHarnessState extends State<CloudSyncV2WindowsHarness> {
         authSnapshot: auth, nativeWriterPauseToken: pause as BigInt,
         storageDirectory: fs.appDocDir.path, applicationDocumentsDirectory: fs.appDocDir.path,
         source: CloudInboxEntry(
-          scope: scope, sequence: 0, generation: checkpoint.generation, batchId: '',
-          status: CloudInboxStatus.retainedUnprojected, attemptCount: 0, createdAt: DateTime.now().toUtc(),
+          scope: scope, sequence: selected['entry_sequence'] as int, generation: checkpoint.generation, batchId: selected['entry_batch'] as String,
+          status: CloudInboxStatus.retainedUnprojected, attemptCount: selected['entry_attempts'] as int, createdAt: DateTime.fromMillisecondsSinceEpoch(selected['entry_created_ms'] as int, isUtc: true),
           change: CloudFetchedChange(
             changeId: selected['entry_change_id'] as String, recordIdHash: recordIdHash,
             etagHash: selected['entry_etag'] as String, type: CloudChangeType.save,
