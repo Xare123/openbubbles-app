@@ -8,8 +8,8 @@ delegated agents. They supplement, not replace, inherited project instructions.
 ## Primary implementation and checkpoint review (September 18)
 
 - User assigned primary remaining OpenBubbles implementation to existing task
-  `01a0abe1-9bbe-71b2-a9ce-4d4578022b0e` (facetime & find my), using
-  `meta-model/muse-spark-1.3-contributor` at max effort. CloudKit production
+  `01a0abe1-9bbe-71b2-a9ce-4d4578022b0e` (facetime & find my), using the
+  Muse model selected in that task. CloudKit production
   readiness is the priority; existing FaceTime/Find My work remains preserved.
 - That task now owns edits in this CloudKit checkout and its current branch.
   This explicitly replaces the earlier read-only restriction. Keep independent
@@ -58,11 +58,38 @@ delegated agents. They supplement, not replace, inherited project instructions.
 
 ## Helper model preference
 
-For newly spawned Muse helper agents, use
-`meta-model/muse-spark-1.3-contributor` with `reasoning_effort: max` unless the
-user explicitly requests a different model or effort. Keep assignments bounded
-and review their work before integration. Higher effort does not justify extra
-parallel agents without useful independent work.
+Respect the user's selected Muse route and its actual effort support:
+`meta-muse/muse-spark-1.3` is the subscription choice at `max`;
+`meta-model/muse-spark-1.3-contributor` is the API choice at `xhigh`.
+Do not request Contributor at `max` or silently change routes when one is rate
+limited. An explicit user model/effort choice overrides a saved preference.
+Keep assignments bounded and review their work before integration. Higher
+effort does not justify extra parallel agents without useful independent work.
+
+## Goal continuity and active jobs
+
+- A queued or running CI job, shell session, or child task with a usable handle
+  is ongoing work. Keep the goal active and use the declared wait/poll tools.
+  Preserve the handle across turns. An unchanged running job is not a blocker,
+  and sending a progress update does not end the monitoring responsibility.
+- Use integer milliseconds for timer arguments, for example
+  `clock.sleep` with `{"duration_ms":30000}`. If a tool rejects the shape,
+  correct it or use another declared bounded wait mechanism; do not repeatedly
+  send the same invalid argument or mark the goal blocked because one timer failed.
+- In code mode, `ALL_TOOLS` lists tools callable through `functions.exec`, not
+  every directly declared tool namespace. Check the current direct declarations
+  before concluding that a clock or collaboration tool is unavailable. Call a
+  direct tool through its declared namespace, never by inventing a `tools.*` alias.
+- Before requesting blocked status, check live handles and permitted independent
+  work. Apply the existing three-consecutive-goal-turn audit only to a real
+  external blocker. A resumed goal starts a fresh audit; do not inherit its
+  previous count. A pending checkpoint review is not a reason to stop unrelated
+  permitted work. Genuine approval and physical-device gates remain in force.
+- Transient provider failures and usage limits are separate from goal completion.
+  Report the actual error and reset time when available, preserve the checkpoint,
+  and use supported bounded retry/wait behavior. Do not invent a completion or
+  hide a transport error behind a blocked label. Do not pause the goal without
+  the user's request, and do not broaden permissions, spend, or model routing.
 
 ## Delegation and test efficiency
 
@@ -77,8 +104,8 @@ and [test calibration guidance](https://developers.openai.com/api/docs/guides/la
   acceptance check and concise return format. Prefer a small context packet to
   the full conversation. Return findings and changed paths, not raw tool logs.
 - Use one helper per distinct task. Reuse a relevant helper for follow-up; do not
-  grow a standing pool or recursive review chain. Muse Contributor max remains
-  the user's selected helper configuration, not a general OpenAI recommendation.
+  grow a standing pool or recursive review chain. The user's selected model and
+  effort remain authoritative; they are not a general OpenAI recommendation.
 - Read-heavy exploration and test triage can run in parallel. Coding helpers
   need disjoint write scopes. Do not create duplicate dependency trees, worktrees
   or builds for a task that only needs source inspection or one test file.
