@@ -215,6 +215,13 @@ void main() {
           expect(proof?['retracted_part_count'], 1);
         }
       }
+      if (Platform.environment['OPENBUBBLES_MATERIALIZE_RETAINED_BODY'] == '1') {
+        final bodied = await tester.runAsync<Map<String, Object?>>(
+          () => harnessKey.currentState!.materializeRetainedBodyForTestHost(),
+        );
+        debugPrint('windows_retained_body=' + jsonEncode(bodied));
+        expect(bodied?['completed'], isTrue);
+      }
       if (Platform.environment['OPENBUBBLES_INSPECT_RETAINED'] == '1') {
         final observed = await tester.runAsync<Map<String, Object?>>(
           () => harnessKey.currentState!.inspectRetainedForTestHost(),

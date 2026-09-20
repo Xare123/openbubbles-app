@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:meta/meta.dart';
 
 import 'package:bluebubbles/database/models.dart';
 import 'package:crypto/crypto.dart';
@@ -798,6 +799,9 @@ final class CloudAttachmentSourceResolver {
   static String _protectedPayloadReferenceHash(String reference) =>
       _digest('semantic-payload-reference\u001f$reference');
 
+  @visibleForTesting
+  static String destinationCanonicalGuidSha256ForTest(String canonicalGuid) =>
+      _destinationCanonicalGuidSha256(canonicalGuid);
   static String _destinationCanonicalGuidSha256(String canonicalGuid) {
     final bytes = utf8.encode(canonicalGuid);
     return _digest(

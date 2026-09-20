@@ -8,6 +8,9 @@ import 'package:bluebubbles/database/database.dart';
 import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/services/backend/filesystem/filesystem_service.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_attachment_download_coordinator.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_attachment_body_materializer.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_attachment_body_native_adapter.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_attachment_source_resolver.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_attachment_production_adapter.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_attachment_provenance.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_dev_gate.dart';
@@ -2029,6 +2032,109 @@ class CloudSyncV2WindowsHarnessState extends State<CloudSyncV2WindowsHarness> {
         'window_offset': offset,
         'limit_per_category': 8,
         'cases': observations,
+      };
+    });
+  }
+
+  Future<Map<String, Object?>> materializeRetainedBodyForTestHost() async {
+    if (Platform.environment['OPENBUBBLES_MATERIALIZE_RETAINED_BODY'] != '1' ||
+        Platform.environment['OPENBUBBLES_CLOUD_SYNC_V2_TEST_HOST'] != '1' ||
+        widget.autoStart || _busy || _adapter == null ||
+        widget.operation != CloudSyncV2WindowsHarnessOperation.interactive) {
+      throw StateError('cloud_sync_windows_dev_test_host_invalid');
+    }
+    return _adapter!.sampler.runConfirmedReadOnlyObservation((auth, pause) async {
+      final scope = CloudSyncScope(
+        accountFingerprint: auth.accountFingerprint,
+        container: 'com.apple.messages.cloud',
+        database: 'private',
+        zone: 'attachmentManateeZone',
+        persistenceLane: CloudSyncPersistenceLane.semantic,
+      );
+      final scopeKey = cloudSyncPersistentScopeKey(scope);
+      final checkpoints = Database.store.box<CloudSyncCheckpointEntity>().query(CloudSyncCheckpointEntity_.checkpointKey.equals(scopeKey)).build();
+      final CloudSyncCheckpointEntity? checkpoint;
+      try {
+        checkpoint = checkpoints.findUnique();
+      } finally {
+        checkpoints.close();
+      }
+      if (checkpoint == null) throw StateError('cloud_sync_windows_dev_observation_checkpoint_missing');
+      final query = (Database.store.box<CloudInboxChangeEntity>().query(
+        CloudInboxChangeEntity_.accountFingerprint.equals(auth.accountFingerprint)
+          .and(CloudInboxChangeEntity_.zone.equals('attachmentManateeZone'))
+          .and(CloudInboxChangeEntity_.scopeKey.equals(scopeKey))
+          .and(CloudInboxChangeEntity_.generation.equals(checkpoint.generation))
+          .and(CloudInboxChangeEntity_.status.equals(CloudInboxStatus.retainedUnprojected.index))
+          .and(CloudInboxChangeEntity_.changeType.equals('save'))
+          .and(CloudInboxChangeEntity_.isTombstone.equals(false)),
+      )..order(CloudInboxChangeEntity_.fetchSequence)).build();
+      Map<String, Object?>? selected;
+      try {
+        for (final row in query.find()) {
+          if (row.encryptedPayloadRef == null || row.payloadSha256 == null || row.etagHash == null) continue;
+          final entry = CloudInboxEntry(
+            scope: scope, sequence: row.fetchSequence, generation: row.generation, batchId: row.batchId,
+            status: CloudInboxStatus.retainedUnprojected, attemptCount: row.retryCount,
+            createdAt: DateTime.fromMillisecondsSinceEpoch(row.createdAtMs, isUtc: true),
+            change: CloudFetchedChange(
+              changeId: row.changeIdHash, recordIdHash: row.serverRecordIdHash, etagHash: row.etagHash,
+              type: CloudChangeType.save, encryptedServerRecordId: row.encryptedServerRecordId,
+              protectedSystemFieldsReference: row.protectedSystemFieldsRef,
+              encryptedPayloadReference: row.encryptedPayloadRef, payloadSha256: row.payloadSha256,
+              serverModifiedAt: cloudInboxCanonicalServerModifiedAt(row),
+            ),
+          );
+          final decoded = await RustCloudSemanticDecoder(
+            readAuthSnapshot: () async => auth, storageDirectory: fs.appDocDir.path,
+            nativeWriterPauseToken: pause as BigInt,
+            bindings: _RetainedInspectionBindings({'zone': 'attachmentManateeZone'}),
+            diagnosticRecorder: (_) {},
+          ).decode(entry);
+          final payload = decoded.payload;
+          if (payload is! CloudAttachmentEntityPayload) continue;
+          if (payload.bodyCapability != CloudAttachmentBodyCapability.materializable) continue;
+          final bytes = payload.totalBytes;
+          if (bytes == null || bytes <= 0 || bytes > 10485760) continue;
+          final mime = payload.mimeType ?? '';
+          if (!mime.startsWith('image/')) continue;
+          if (payload.ownerCanonicalGuid == null || payload.ownerPart == null) continue;
+          selected = <String, Object?>{
+            'record_hash': row.serverRecordIdHash, 'mime': mime, 'bytes': bytes, 'file_name': payload.fileName,
+            'entry_change_id': row.changeIdHash, 'entry_etag': row.etagHash,
+            'entry_payload_sha': row.payloadSha256, 'entry_envelope': row.encryptedPayloadRef,
+            'logical_key': payload.logicalEntityKeyHash, 'canonical_guid': payload.canonicalGuid,
+          };
+          break;
+        }
+      } finally {
+        query.close();
+      }
+      if (selected == null) return <String, Object?>{'completed': false, 'reason': 'no_candidate_with_filename_size_origin'};
+      final recordIdHash = selected['record_hash'] as String;
+      final expectedBytes = selected['bytes'] as int;
+      final request = CloudAttachmentBodyNativeRequest(
+        authSnapshot: auth, nativeWriterPauseToken: pause as BigInt,
+        storageDirectory: fs.appDocDir.path, applicationDocumentsDirectory: fs.appDocDir.path,
+        source: CloudInboxEntry(
+          scope: scope, sequence: 0, generation: checkpoint.generation, batchId: '',
+          status: CloudInboxStatus.retainedUnprojected, attemptCount: 0, createdAt: DateTime.now().toUtc(),
+          change: CloudFetchedChange(
+            changeId: selected['entry_change_id'] as String, recordIdHash: recordIdHash,
+            etagHash: selected['entry_etag'] as String, type: CloudChangeType.save,
+            encryptedServerRecordId: null, protectedSystemFieldsReference: null,
+            encryptedPayloadReference: selected['entry_envelope'] as String,
+            payloadSha256: selected['entry_payload_sha'] as String, serverModifiedAt: null,
+          ),
+        ),
+        logicalEntityKeyHash: selected['logical_key'] as String,
+        expectedCanonicalGuidSha256: CloudAttachmentSourceResolver.destinationCanonicalGuidSha256ForTest(selected['canonical_guid'] as String),
+        expectedBytes: expectedBytes,
+      );
+      final outcome = await FrbCloudAttachmentBodyNativeBindings().materialize(request);
+      return <String, Object?>{
+        'completed': outcome.completed, 'verified_bytes': outcome.verifiedBytes, 'failure': outcome.failure?.name,
+        'record_hash': recordIdHash, 'mime': selected['mime'], 'bytes': expectedBytes, 'file_name': selected['file_name'],
       };
     });
   }
