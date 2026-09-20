@@ -2074,6 +2074,7 @@ class CloudSyncV2WindowsHarnessState extends State<CloudSyncV2WindowsHarness> {
       )..order(CloudInboxChangeEntity_.fetchSequence)).build()..limit = 2;
       CloudInboxEntry? source;
       CloudAttachmentEntityPayload? attachment;
+      int? selectedInboxId;
       try {
         final rows = query.find();
         if (rows.isEmpty) throw StateError('cloud_retained_body_row_missing');
@@ -2112,8 +2113,56 @@ class CloudSyncV2WindowsHarnessState extends State<CloudSyncV2WindowsHarness> {
         if (fileName == null || fileName.isEmpty) throw StateError('cloud_retained_body_filename_missing');
         if (payload.ownerCanonicalGuid == null || payload.ownerPart == null) throw StateError('cloud_retained_body_origin_missing');
         attachment = payload;
+        selectedInboxId = row.id;
       } finally {
         query.close();
+      }
+      String syncSnapshot() {
+        final checkpoints = Database.store
+            .box<CloudSyncCheckpointEntity>()
+            .getAll()
+          ..sort((a, b) => a.id.compareTo(b.id));
+        final outbox = Database.store
+            .box<CloudOutboxOperationEntity>()
+            .getAll()
+          ..sort((a, b) => a.id.compareTo(b.id));
+        final inboxRow = selectedInboxId == null
+            ? null
+            : Database.store.box<CloudInboxChangeEntity>().get(selectedInboxId);
+        return jsonEncode([
+          checkpoints
+              .map(
+                (r) => [
+                  r.id,
+                  r.generation,
+                  r.fetchedSequence,
+                  r.appliedSequence,
+                  r.fetchedTokenCiphertext,
+                  r.pendingFetchedTokenCiphertext,
+                  r.pendingBatchId,
+                ],
+              )
+              .toList(),
+          outbox
+              .map((r) => [r.id, r.operationId, r.state, r.updatedAtMs])
+              .toList(),
+          inboxRow == null
+              ? null
+              : [
+                  inboxRow.id,
+                  inboxRow.status,
+                  inboxRow.retryCount,
+                  inboxRow.changeIdHash,
+                  inboxRow.serverRecordIdHash,
+                  inboxRow.etagHash,
+                  inboxRow.payloadSha256,
+                  inboxRow.encryptedPayloadRef,
+                  inboxRow.encryptedServerRecordId,
+                  inboxRow.protectedSystemFieldsRef,
+                  inboxRow.serverModifiedAtMs,
+                  inboxRow.serverModifiedAtFormatVersion,
+                ],
+        ]);
       }
       final request = CloudAttachmentBodyNativeRequest(
         authSnapshot: auth, nativeWriterPauseToken: pause as BigInt,
@@ -2122,10 +2171,13 @@ class CloudSyncV2WindowsHarnessState extends State<CloudSyncV2WindowsHarness> {
         expectedCanonicalGuidSha256: CloudAttachmentSourceResolver.destinationCanonicalGuidSha256ForTest(attachment.canonicalGuid),
         expectedBytes: attachment.totalBytes!,
       );
+      final before = syncSnapshot();
       final outcome = await FrbCloudAttachmentBodyNativeBindings().materialize(request);
+      final unchanged = before == syncSnapshot();
       return <String, Object?>{
         'completed': outcome.completed, 'verified_bytes': outcome.verifiedBytes, 'failure': outcome.failure?.name,
         'record_hash': expectedRecordHash, 'mime': attachment.mimeType, 'bytes': attachment.totalBytes,
+        'durable_state_unchanged': unchanged,
       };
     });
   }

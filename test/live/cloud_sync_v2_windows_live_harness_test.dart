@@ -227,6 +227,7 @@ void main() {
         );
         debugPrint('windows_retained_body=' + jsonEncode(bodied));
         expect(bodied?['completed'], isTrue);
+        expect(bodied?['durable_state_unchanged'], isTrue);
       }
       if (Platform.environment['OPENBUBBLES_INSPECT_RETAINED'] == '1') {
         final observed = await tester.runAsync<Map<String, Object?>>(
