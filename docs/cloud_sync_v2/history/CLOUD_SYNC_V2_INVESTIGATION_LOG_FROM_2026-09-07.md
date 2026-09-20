@@ -7150,3 +7150,12 @@ Historical tests do not establish current-device behavior.
   compatible repair, service-state preservation and actual Muse tool/compaction
   verification. Application work stays pending until that checkpoint succeeds;
   no access safeguard bypass or unrelated configuration change is authorized.
+
+## September 20: unknown-only attachment ui policy fix qualified and live-compared
+
+- Policy commit c7924eb6b: present-but-unrecognized ui (no recognized MMCS/inline fields) continues conversion like absent ui; the protected lqa/ALL_ASSETS lane stays authoritative for the body. validate_attachment_user_info and all other rejection branches unchanged. New raw-cm test proves Ready AND Materializable through typed decode for absent/empty/descriptive/unknown-3/unknown-4 ui, plus malformed-owner continuation and wrong-type decode failure.
+- Fixture correction baba20b16: synthetic auth-probe status handshake before timed waits; delayed-startup case; actual failure codes surfaced. Probe file passes locally. Production launcher untouched.
+- Qualification run 35537790499 success (sidecar 5d16015, native-test-host read-only): converter 99 green incl. new policy fixture, all six lock cases, encoder 51, diagnostic 17, timestamp 7, zero failures. Artifact/source/provenance hashes verified; signer 82405579; import and local smoke green (lock 8/8, shape 2/2, policy 1/1).
+- Offset0 comparison sample c78014c2 vs baseline 4df5a8f7 (LocateParents=false both): 37 cases, all 37 record hashes match; the exact 8 UserInfoEmpty attachments each match one new Ready case. Ready total 23 (16 attachments, 4 messages, 3 reactions); remaining malformed-parent/unsupported-type/service/SMS persist. Rejection-only shape log empty as predicted. Durable unchanged, remote writes off, cleanup confirmed, raw streams removed.
+- Decoder Ready is proven for these 8; body download, projection, and UI restoration are not. Auth cache renewed FCC94201 to 49410c50 (routine same-account renewal); message/data hashes unchanged. Rollback bytes and receipts preserved in staging.
+
