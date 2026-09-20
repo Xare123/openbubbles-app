@@ -2102,7 +2102,7 @@ class CloudSyncV2WindowsHarnessState extends State<CloudSyncV2WindowsHarness> {
           selected = <String, Object?>{
             'record_hash': row.serverRecordIdHash, 'mime': mime, 'bytes': bytes, 'file_name': payload.fileName,
             'entry_change_id': row.changeIdHash, 'entry_etag': row.etagHash,
-            'entry_payload_sha': row.payloadSha256, 'entry_envelope': row.encryptedPayloadRef, 'entry_sequence': row.fetchSequence, 'entry_batch': row.batchId, 'entry_attempts': row.retryCount, 'entry_created_ms': row.createdAtMs,
+            'entry_payload_sha': row.payloadSha256, 'entry_envelope': row.encryptedPayloadRef, 'entry_server_record': row.encryptedServerRecordId, 'entry_sysref': row.protectedSystemFieldsRef, 'entry_sequence': row.fetchSequence, 'entry_batch': row.batchId, 'entry_attempts': row.retryCount, 'entry_created_ms': row.createdAtMs,
             'logical_key': payload.logicalEntityKeyHash, 'canonical_guid': payload.canonicalGuid,
           };
           break;
@@ -2122,7 +2122,7 @@ class CloudSyncV2WindowsHarnessState extends State<CloudSyncV2WindowsHarness> {
           change: CloudFetchedChange(
             changeId: selected['entry_change_id'] as String, recordIdHash: recordIdHash,
             etagHash: selected['entry_etag'] as String, type: CloudChangeType.save,
-            encryptedServerRecordId: null, protectedSystemFieldsReference: null,
+            encryptedServerRecordId: selected['entry_server_record'] as String?, protectedSystemFieldsReference: selected['entry_sysref'] as String?,
             encryptedPayloadReference: selected['entry_envelope'] as String,
             payloadSha256: selected['entry_payload_sha'] as String, serverModifiedAt: null,
           ),
@@ -2131,9 +2131,19 @@ class CloudSyncV2WindowsHarnessState extends State<CloudSyncV2WindowsHarness> {
         expectedCanonicalGuidSha256: CloudAttachmentSourceResolver.destinationCanonicalGuidSha256ForTest(selected['canonical_guid'] as String),
         expectedBytes: expectedBytes,
       );
+      final probeLabels = <String>[];
+      final probeDecoded = await RustCloudSemanticDecoder(
+        readAuthSnapshot: () async => auth, storageDirectory: fs.appDocDir.path,
+        nativeWriterPauseToken: pause as BigInt,
+        bindings: _RetainedInspectionBindings({'zone': 'attachmentManateeZone'}),
+        diagnosticRecorder: probeLabels.add,
+      ).decode(request.source);
+      final probePayload = probeDecoded.payload;
+      if (probePayload is! CloudAttachmentEntityPayload) {
+        return <String, Object?>{'completed': false, 'reason': 'synth_entry_not_attachment', 'labels': probeLabels};
+      }
       final outcome = await FrbCloudAttachmentBodyNativeBindings().materialize(request);
-      return <String, Object?>{
-        'completed': outcome.completed, 'verified_bytes': outcome.verifiedBytes, 'failure': outcome.failure?.name,
+      return <String, Object?>{        'completed': outcome.completed, 'verified_bytes': outcome.verifiedBytes, 'failure': outcome.failure?.name,
         'record_hash': recordIdHash, 'mime': selected['mime'], 'bytes': expectedBytes, 'file_name': selected['file_name'],
       };
     });
