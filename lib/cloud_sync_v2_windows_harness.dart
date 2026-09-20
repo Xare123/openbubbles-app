@@ -2071,14 +2071,14 @@ class CloudSyncV2WindowsHarnessState extends State<CloudSyncV2WindowsHarness> {
           .and(CloudInboxChangeEntity_.status.equals(CloudInboxStatus.retainedUnprojected.index))
           .and(CloudInboxChangeEntity_.changeType.equals('save'))
           .and(CloudInboxChangeEntity_.isTombstone.equals(false)),
-      )..order(CloudInboxChangeEntity_.fetchSequence)).build();
+      )..order(CloudInboxChangeEntity_.fetchSequence)).build()..limit = 2;
       CloudInboxEntry? source;
       CloudAttachmentEntityPayload? attachment;
       try {
         final rows = query.find();
         if (rows.isEmpty) throw StateError('cloud_retained_body_row_missing');
-        if (rows.length > 2) throw StateError('cloud_retained_body_row_ambiguous');
-        final row = rows.first;
+        if (rows.length != 1) throw StateError('cloud_retained_body_row_ambiguous');
+        final row = rows.single;
         if (row.encryptedPayloadRef == null || row.payloadSha256 == null || row.etagHash == null) {
           throw StateError('cloud_retained_body_provenance_missing');
         }
@@ -2106,6 +2106,10 @@ class CloudSyncV2WindowsHarnessState extends State<CloudSyncV2WindowsHarness> {
         if (payload.bodyCapability != CloudAttachmentBodyCapability.materializable) throw StateError('cloud_retained_body_not_materializable');
         final bytes = payload.totalBytes;
         if (bytes == null || bytes <= 0 || bytes > 10485760) throw StateError('cloud_retained_body_size_missing');
+        final mime = payload.mimeType ?? '';
+        if (!mime.startsWith('image/')) throw StateError('cloud_retained_body_type_missing');
+        final fileName = payload.fileName;
+        if (fileName == null || fileName.isEmpty) throw StateError('cloud_retained_body_filename_missing');
         if (payload.ownerCanonicalGuid == null || payload.ownerPart == null) throw StateError('cloud_retained_body_origin_missing');
         attachment = payload;
       } finally {
@@ -2114,14 +2118,14 @@ class CloudSyncV2WindowsHarnessState extends State<CloudSyncV2WindowsHarness> {
       final request = CloudAttachmentBodyNativeRequest(
         authSnapshot: auth, nativeWriterPauseToken: pause as BigInt,
         storageDirectory: fs.appDocDir.path, applicationDocumentsDirectory: fs.appDocDir.path,
-        source: source!, logicalEntityKeyHash: attachment!.logicalEntityKeyHash,
-        expectedCanonicalGuidSha256: CloudAttachmentSourceResolver.destinationCanonicalGuidSha256ForTest(attachment!.canonicalGuid),
-        expectedBytes: attachment!.totalBytes!,
+        source: source, logicalEntityKeyHash: attachment.logicalEntityKeyHash,
+        expectedCanonicalGuidSha256: CloudAttachmentSourceResolver.destinationCanonicalGuidSha256ForTest(attachment.canonicalGuid),
+        expectedBytes: attachment.totalBytes!,
       );
       final outcome = await FrbCloudAttachmentBodyNativeBindings().materialize(request);
       return <String, Object?>{
         'completed': outcome.completed, 'verified_bytes': outcome.verifiedBytes, 'failure': outcome.failure?.name,
-        'record_hash': expectedRecordHash, 'mime': attachment!.mimeType, 'bytes': attachment!.totalBytes,
+        'record_hash': expectedRecordHash, 'mime': attachment.mimeType, 'bytes': attachment.totalBytes,
       };
     });
   }
