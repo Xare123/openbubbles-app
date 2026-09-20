@@ -7159,3 +7159,11 @@ Historical tests do not establish current-device behavior.
 - Offset0 comparison sample c78014c2 vs baseline 4df5a8f7 (LocateParents=false both): 37 cases, all 37 record hashes match; the exact 8 UserInfoEmpty attachments each match one new Ready case. Ready total 23 (16 attachments, 4 messages, 3 reactions); remaining malformed-parent/unsupported-type/service/SMS persist. Rejection-only shape log empty as predicted. Durable unchanged, remote writes off, cleanup confirmed, raw streams removed.
 - Decoder Ready is proven for these 8; body download, projection, and UI restoration are not. Auth cache renewed FCC94201 to 49410c50 (routine same-account renewal); message/data hashes unchanged. Rollback bytes and receipts preserved in staging.
 
+
+## September 20: protected-native body proof for one unblocked attachment
+
+- Caller commits 278e7479e/09b135dea/87191bc91/5efa84ff1/6a9e0c9f4 (test-only Dart, no native/API/FRB changes): guarded dev-harness method scans retained attachment rows, decodes each, selects one image <=10MiB with valid origin, and calls the existing guarded native materializer unchanged.
+- Result: IMG_0169.heic, completed:true, verified_bytes=1163741, failure null. Exact-record ALL_ASSETS lookup with preserved account/ETag/permit/size checks; MMCS evidence asset_bytes=1171456 validation_ok. Placed file byte-identical; ftypheic plus full meta tree plus mdat plus Exif; ffmpeg decoded a real frame to PNG proof in staging.
+- Fixes along the way: synthesized request entries must carry verbatim row identity (sequence/batch/attempts/created/server-record/sysref/modified); zeros fail bind. Synth-entry self-decode check added for future diagnostics.
+- Scoped as protected-native body proof from a retained record, not the ordinary projected-row UI flow. Cache writes only in the private test profile; no projection/drain, no remote writes, no auth changes. Rollback bytes and receipts preserved.
+
