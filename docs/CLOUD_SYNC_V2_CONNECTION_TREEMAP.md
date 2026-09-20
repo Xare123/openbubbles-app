@@ -96,6 +96,14 @@ or reconnect the Pixel for a fresh check. Then reserve the shared relay and run
 the already-qualified cached attachment probe. Do not rebuild, reset data, weaken
 auth checks or repeat a full sweep merely to work around this missing preflight.
 
+### Retained observation result, September 20
+
+- LIVE-PROVEN observation 981c613bd37c1210494a632f3f6738d2 (Dart 4c412533d, native b7fe0cc53, DLL b3c7f18b, offset 0, limit 8 per category, LocateParents on): 37 cases, durable state unchanged, content not exposed, remote writes false, owned-process cleanup confirmed, raw output deleted by wrapper. Evidence retained-981c613bd37c1210494a632f3f6738d2.
+- Corrected dispositions: 15 Ready (8 attachments, 7 messages); 21 quarantined (8 attachment malformed-record, 1 message malformed-parent, 7 unsupported message type, 5 unsupported service); 1 SMS-family exclusion. Ready means decoder-ready, not projected or restored.
+- Boundary traced: all 8 malformed attachment cases carry exactly native_attachment_conversion_user_info_empty, fired when the stored ui dict has none of the six pointer keys. Serde preserves stored keys so this is Apple stored state, not decode loss; ui lives in cm metadata so NO_ASSETS paging does not explain it. Unclassified shape: tests cover all-None and malformed-pointer variants but not descriptive-only metadata without pointers; absent ui converts Ready while present pointer-less ui quarantines. Demotion to MetadataOnlyUnsupportedMediaCredentials (already used for zero-byte and absent-size bodies) is the consistent candidate; the ALL_ASSETS materializer stays the authority on actual downloadability. Repair needs review and regression tests before runtime enablement.
+- Resolved for this observation only: Canary sign-in preflight, exclusive-window contention, and routine same-account token renewal (cache renewed 0227D731 to FCC94201; message, keystore, and FindMy data unchanged). Safeguards stand for future bounded observations: exclusive window, no new sign-in or 2FA, no registration repair, no hardware changes, no key setup, no writes or uploads, no normal pull, drain, or projection.
+- Unexplained preflight event: the first wrapper invocation failed expected_provenance_rejected with values later verified correct (request probe showed all pins intact; direct guard call passed; rerun passed every guard). Exact invocation, values, and verified lack of effects are recorded; cause not established and no hypothesis is promoted. No live run was used to diagnose it.
+
 ### Next discriminating test: attachment quarantine details
 
 - Sourceba47b1f09 adds secondary, closed attachment rejection details at missing
