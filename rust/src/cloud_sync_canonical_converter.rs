@@ -945,6 +945,9 @@ fn ui_value_is_file_size(value: &PlistValue) -> bool {
 /// Observational raw-shape capture for one retained attachment ui value.
 /// Parses the already-bounded decrypted cm plist again; never alters
 /// conversion, never rejects, never retains names, values, or raw bytes.
+/// Unknown-key tally saturates at 99, so unknown=99 reads 99-or-more.
+/// Oversized or unparseable inputs yield kind=unavailable; there is no
+/// error path, so capture can never become a new rejection.
 pub(crate) fn capture_attachment_ui_shape(decrypted_cm_plist: &[u8]) -> CloudAttachmentUiShape {
     if decrypted_cm_plist.len() > MAX_NESTED_PLIST_BYTES {
         return ui_shape_unavailable();
@@ -7293,6 +7296,8 @@ mod tests {
         assert_eq!(shape.kind, CloudAttachmentUiShapeKind::Dictionary);
         assert_eq!(shape.pointer_mask, [false; 6]);
         assert_eq!(shape.descriptive_mask, [false, true, true, false]);
+        assert!(shape.descriptive_types_ok);
+        assert!(!shape.empty);
         let shape = capture_attachment_ui_shape(&cm_bytes(Some(ui_dict(vec![("mmcs_signature_hex", PlistValue::String("aa".to_owned())), ("some-future-pointer", PlistValue::String("aa".to_owned()))]))));
         assert_eq!(shape.pointer_mask, [false; 6]);
         assert_eq!(shape.unknown_count, 2);
@@ -7306,8 +7311,76 @@ mod tests {
         let label = attachment_ui_shape_label(&shape);
         assert!(label.starts_with("kind=unavailable "));
     }
+
+    #[test]
+    fn attachment_ui_shape_capture_reports_bounds_and_privacy() {
+        fn cm_bytes(ui: Option<PlistValue>) -> Vec<u8> {
+            let mut cm = plist::Dictionary::new();
+            cm.insert("aguid".to_owned(), PlistValue::String("fixture-guid".to_owned()));
+            if let Some(ui) = ui {
+                cm.insert("ui".to_owned(), ui);
+            }
+            let mut bytes = Vec::new();
+            plist::to_writer_binary(&mut bytes, &PlistValue::Dictionary(cm)).expect("fixture cm plist");
+            bytes
+        }
+        fn ui_dict(pairs: Vec<(&str, PlistValue)>) -> PlistValue {
+            let mut map = plist::Dictionary::new();
+            for (key, value) in pairs {
+                map.insert(key.to_owned(), value);
+            }
+            PlistValue::Dictionary(map)
+        }
+        let shape = capture_attachment_ui_shape(&cm_bytes(Some(ui_dict(vec![
+            ("mmcs-signature-hex", PlistValue::String("aa".to_owned())),
+            ("mmcs-owner", PlistValue::String("bb".to_owned())),
+            ("mmcs-url", PlistValue::String("cc".to_owned())),
+            ("decryption-key", PlistValue::String("dd".to_owned())),
+            ("inline-attachment", PlistValue::String("ee".to_owned())),
+            ("message-part", PlistValue::String("ff".to_owned())),
+            ("file-size", PlistValue::Boolean(true)),
+            ("uti-type", PlistValue::String("public.png".to_owned())),
+            ("mime-type", PlistValue::String("image/png".to_owned())),
+            ("name", PlistValue::String("photo.png".to_owned())),
+        ]))));
+        assert_eq!(shape.kind, CloudAttachmentUiShapeKind::Dictionary);
+        assert_eq!(shape.pointer_mask, [true; 6]);
+        assert!(shape.pointer_types_ok);
+        assert_eq!(shape.descriptive_mask, [true; 4]);
         assert!(shape.descriptive_types_ok);
         assert!(!shape.empty);
+        assert_eq!(shape.unknown_count, 0);
+        let shape = capture_attachment_ui_shape(&cm_bytes(Some(ui_dict(vec![
+            ("mime-type", PlistValue::Boolean(true)),
+            ("file-size", PlistValue::Data(vec![1])),
+        ]))));
+        assert_eq!(shape.kind, CloudAttachmentUiShapeKind::Dictionary);
+        assert_eq!(shape.descriptive_mask, [true, false, true, false]);
+        assert!(!shape.descriptive_types_ok);
+        let mut map = plist::Dictionary::new();
+        for index in 0..120 {
+            map.insert(format!("future-key-{index}"), PlistValue::String("x".to_owned()));
+        }
+        let mut cm = plist::Dictionary::new();
+        cm.insert("aguid".to_owned(), PlistValue::String("fixture-guid".to_owned()));
+        cm.insert("ui".to_owned(), PlistValue::Dictionary(map));
+        let mut bytes = Vec::new();
+        plist::to_writer_binary(&mut bytes, &PlistValue::Dictionary(cm)).expect("fixture cm plist");
+        let shape = capture_attachment_ui_shape(&bytes);
+        assert_eq!(shape.kind, CloudAttachmentUiShapeKind::Dictionary);
+        assert_eq!(shape.unknown_count, 99);
+        let shape = capture_attachment_ui_shape(&vec![0u8; MAX_NESTED_PLIST_BYTES + 1]);
+        assert_eq!(shape.kind, CloudAttachmentUiShapeKind::Unavailable);
+        let shape = capture_attachment_ui_shape(&cm_bytes(Some(ui_dict(vec![
+            ("mmcs-url", PlistValue::String("https://secret.example/token".to_owned())),
+            ("name", PlistValue::String("contact-secret-must-not-escape".to_owned())),
+        ]))));
+        let label = attachment_ui_shape_label(&shape);
+        assert!(!label.contains("secret"));
+        assert!(!label.contains("example"));
+        assert!(!label.contains("token"));
+    }
+
     #[test]
     fn tombstone_supports_present_or_missing_server_time() {
         let hasher = CloudSemanticIdentifierHasher::new(b"fixture-key").unwrap();

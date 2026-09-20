@@ -2880,11 +2880,6 @@ async fn cloud_sync_decode_transient_record_with_pcs_access(
                     CloudTransientQuarantineDiagnostic::AttachmentMetadataPresence(reason),
                 );
             }
-            let ui_shape = capture_attachment_ui_shape(&decompressed);
-            debug!(
-                "CloudKit V2 transient attachment ui_shape {}",
-                attachment_ui_shape_label(&ui_shape)
-            );
             let strict_record_key = StrictCloudKitV2Decryptor { inner: &record_key };
             let attachment = match decode_cloud_attachment_record(&record, &strict_record_key) {
                 Ok(value) => value,
@@ -2892,6 +2887,19 @@ async fn cloud_sync_decode_transient_record_with_pcs_access(
             };
             let (converted, diagnostic) =
                 convert_attachment_with_diagnostic(&context, &presence, &attachment.cm.0);
+            // Content-free raw-shape capture for the exact UserInfoEmpty
+            // rejection only. Reparses the preserved original cm bytes (never
+            // typed meta), and only when the debug channel is enabled, so
+            // normal runs pay nothing. Never alters conversion.
+            if diagnostic == Some(CloudAttachmentDiagnosticCode::UserInfoEmpty)
+                && log::log_enabled!(log::Level::Debug)
+            {
+                let ui_shape = capture_attachment_ui_shape(&decompressed);
+                debug!(
+                    "CloudKit V2 transient attachment ui_shape {}",
+                    attachment_ui_shape_label(&ui_shape)
+                );
+            }
             let converter_quarantined =
                 matches!(&converted, CloudCanonicalConversionOutcome::Quarantined(_));
             let outcome = normalize_conversion(
