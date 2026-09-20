@@ -40,9 +40,19 @@ delegated agents. They supplement, not replace, inherited project instructions.
   or different operating systems do not establish independent relay identities.
   Do not treat a displaced registration as a proved CloudKit regression.
 - No upstream PR/draft without explicit user confirmation. User renewed GCE
-  approval on September 17; use the established source-only runner through
-  owner task `01a0ac53-985b-7713-a21c-79251501c75c` for justified bounded runs.
+  approval on September 17 and on September 18 assigned direct operation of
+  the established source-only GCE workflow to the primary Muse task. It owns
+  its authorized commits, source publication, preflight, dispatch, monitoring,
+  log/artifact review, and cleanup verification itself. A separate dispatcher
+  or supervisor is not required for those routine operations. This supersedes
+  the earlier requirement to route every run through task
+  `01a0ac53-985b-7713-a21c-79251501c75c`.
+- Follow [the direct GCE workflow guide](docs/GCE_SOURCE_ONLY_WORKFLOW.md).
+  Use one justified bounded source-only run for an immutable reviewed revision;
+  adopt an existing run rather than dispatching a duplicate. Preserve the
+  current workflow, primary lane, Spot limits, automatic cleanup and lifetime.
   Do not modify infrastructure, IAM, secrets or billing, or upload credentials.
+  High-risk integration and release review requirements above still apply.
   The primary implementation task manages its own helpers and current goal;
   the supervisor tracks checkpoint reviews and integration readiness.
 
@@ -99,6 +109,11 @@ and [test calibration guidance](https://developers.openai.com/api/docs/guides/la
 - Use apply_patch with exact absolute forward-slash paths for isolated edits.
   If the routed tool rejects the path, return the patch to the parent. Do not
   create Desktop probe files or bypass the editing rule with shell file writes.
+- The primary task runs its own Git and authenticated CI commands. If a
+  sandboxed command is denied, use the declared tool's supported scoped
+  approval path when available; do not assume another model must run it. In
+  full-access sessions omit sandbox_permissions entirely. Keep any Git
+  safe.directory override specific to the verified user-owned checkout.
 - Avoid whole-file formatter churn in existing files. Keep prototype changes
   isolated until review and executed tests. Use the established GCE qualification
   and GitHub-hosted Windows/signing paths under the authorization above.
