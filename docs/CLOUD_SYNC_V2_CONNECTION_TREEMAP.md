@@ -79,11 +79,7 @@ runtime, account, queue or device. Fresh local check found no matching
 Flutter/Dart/OpenBubbles process and C: has 26.75 GiB free. The prior qualification
 and device observations below remain dated evidence, not fresh live state.
 
-Next: verify exclusive relay availability, then run the
-existing attachment diagnostic without refetch/projection/writes. Stop the live action only if the relay is unavailable, a competitor is active, or Windows auth needs more than the approved same-account routine token renewal/cache update; new sign-in/2FA, IDS registration/repair, hardware changes, key setup, and message writes/uploads remain excluded. If the live
-preflight is unavailable, advance a specific offline-testable production gap,
-not repeated unchanged polls or a duplicate APK build. Report evidence and the
-next decision at a checkpoint; all unfinished release gates remain unfinished.
+ Next (current September 23): source-only durable-inbox worker check, synthetic data only. Determine whether the normal durable-inbox worker, not just direct adapter calls, retries a retained attachment after its parent arrives and survives restart without duplicates or loss. Inspect existing coverage first and reuse it; implement only a demonstrated missing behavior with the smallest regression plus one warranted integration batch. No live-account, device, projection, drain, flag, or infra actions. Accepted source-level slice (2274fb44f, run 35877531607) is recorded below; live-app display stays OPEN.
 
 ### Last live-test blocker, September 17
 
@@ -353,9 +349,9 @@ auth checks or repeat a full sweep merely to work around this missing preflight.
 
 - ACCEPTED (supervisor verified run 35864689802): synthetic gateway journal projection links to production resolver with exact hash assertions; SAME-payload parent-arrival retry fails closed then commits without duplicate replay. Run 35864689802: named 3 of 3 pass, 3978 Dart pass with 5 skips, 785 app-Rust pass, exact source, cleanup success, VM deleted. No APK or signing ran. Not full live sync, automatic durable-inbox retry, or decoded-image proof.
 - Test fixtures, not one mock only: the file-local _Resolver and seeded chat, message, checkpoint, journal, and lease-fence prerequisites are test fixtures. Owner retry stays scoped to adapter-level behavior.
-- Local-file branch covered: real MediaGalleryCard renders the cached synthetic file through ImageDisplay with no download and no exception. Decoded-frame and live-app display remain OPEN.
-- Rendering harness correction in flight: FakeAsync-started image loads stay pending when later code uses runAsync (SDK image_test evict during precache plus runAsync precache pattern; runAsync docs; FileImage async length plus ImmutableBuffer in image_provider). Prior outside-runAsync attempts were inconclusive. Wording is observed test stall, cause not yet proved.
-- Focused correction in source: evict the wrong-zone attempt, then pump and precache plus await readiness inside runAsync on the exact widget provider including ResizeImage, finite 30 second timeout, non-null decoded 1 by 1 frame, listeners disposed, takeException surfaced. No MemoryImage substitution. One existing source-only hosted batch, smallest mode, no new native or APK or infra change.
+- TEST-PROVEN cached-image display (supervisor-accepted source 2274fb44f, run 35877531607): real MediaGalleryCard renders the cached synthetic file through ImageDisplay with no download and no exception, and the card subtree paints a non-null decoded 1 by 1 RawImage frame. Run: 3978 Dart pass with 5 skips, app-Rust success, all 3 named tests green, exact source, cleanup with zero VMs and runners, no APK or signing. Live-app display on device remains OPEN; this is not live ordinary-app or Pixel proof.
+- Rendering harness correction complete: FakeAsync-started loads evicted by actual ResizeImageKey with explicit key-match assertion, fresh card subtree re-pumped in runAsync with new-Element assertion, shared-stream readiness under finite timeouts, listener disposal, takeException surfaced.
+- Shared-fixture defect closed in the same batch: corrupt PNG replaced with valid bytes across the three widget tests; gallery suites green.
 
 ### Synthetic fixture PNG defect confirmed, September 23
 

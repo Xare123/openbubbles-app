@@ -7186,3 +7186,5 @@ Historical tests do not establish current-device behavior.
 ## September 23: synthetic widget-fixture PNG defect confirmed and replaced
 - Shared 70-byte 1x1 fixture PNG had corrupt IDAT data; strict inflate fails, so the Linux CI codec rejection in run 35874007248 was a fixture defect, not missing codec support.
 - Run 35874007248 on f97f0858a: app_rust success, Dart single widget-leg failure at line 510, gateway and retry legs green, no APK or signing, cleanup zero VMs and runners.
+## September 23: cached-image display slice accepted; inbox-worker retry is the current next step
+- Supervisor accepted source-level projection, resolver, and cached-image display at 2274fb44f (run 35877531607 green); live-app display stays open. Superseded Sep-18 live-diagnostic Next replaced by a source-only durable-inbox worker retry and restart check with synthetic data.
