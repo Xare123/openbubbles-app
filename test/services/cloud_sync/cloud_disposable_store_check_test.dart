@@ -197,6 +197,14 @@ void main() {
       ),
       CloudCanonicalSemanticMutationReceipt.committed,
     );
+    _seedExactOwnershipProof(
+      store,
+      scope: scope,
+      generation: _generation,
+      kind: CloudEntityKind.attachment,
+      logicalEntityKeyHash: _attachmentHash,
+      canonicalGuid: _attachmentGuid,
+    );
     return store.box<Attachment>().getAll().single.id!;
   }
 
