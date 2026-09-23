@@ -136,14 +136,15 @@ void main() {
       CloudCanonicalSemanticMutationReceipt.committed,
     );
     final chatId = store.box<Chat>().getAll().single.id!;
-    _seedChatOwnershipAndAlias(
+    // Seed ownership proof only: the chat apply above already created the
+    // alias row, and re-seeding it would violate the unique bindingKey.
+    _seedExactOwnershipProof(
       store,
       scope: scope,
       generation: _generation,
+      kind: CloudEntityKind.chat,
       logicalEntityKeyHash: _chatHash,
       canonicalGuid: _chatGuid,
-      chatIdentifier: _chatIdentifier,
-      chatId: chatId,
     );
     expect(
       adapter.applyEntity(
@@ -270,14 +271,15 @@ void main() {
       CloudCanonicalSemanticMutationReceipt.committed,
     );
     final chatId = store.box<Chat>().getAll().single.id!;
-    _seedChatOwnershipAndAlias(
+    // Seed ownership proof only: the chat apply above already created the
+    // alias row, and re-seeding it would violate the unique bindingKey.
+    _seedExactOwnershipProof(
       store,
       scope: scope,
       generation: _generation,
+      kind: CloudEntityKind.chat,
       logicalEntityKeyHash: _chatHash,
       canonicalGuid: _chatGuid,
-      chatIdentifier: _chatIdentifier,
-      chatId: chatId,
     );
     expect(
       () => adapter.applyEntity(
