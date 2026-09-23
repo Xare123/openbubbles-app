@@ -4239,6 +4239,8 @@ void main() {
         ..put(scope: attachmentScope, generation: attachmentGeneration, kind: CloudEntityKind.attachment, logicalEntityKeyHash: attachmentHash, canonicalGuid: attachmentGuid);
       ObjectBoxCanonicalSemanticEntityAdapter buildMessageAdapter() => ObjectBoxCanonicalSemanticEntityAdapter(store: objectBox, activeScopeProvider: () => CloudCanonicalActiveScope(scope: messageScope, generation: messageGeneration), identityResolver: resolver, chatDependencyScope: CloudCanonicalActiveScope(scope: chatScope, generation: messageGeneration), semanticApplyEnabled: true, allowChatUpserts: true, allowMessageUpserts: true);
       ObjectBoxCloudSemanticStoreGateway buildMessageGateway() => ObjectBoxCloudSemanticStoreGateway(store: objectBox, canonicalAdapter: buildMessageAdapter(), clock: () => now);
+      ObjectBoxCanonicalSemanticEntityAdapter buildChatAdapter() => ObjectBoxCanonicalSemanticEntityAdapter(store: objectBox, activeScopeProvider: () => CloudCanonicalActiveScope(scope: chatScope, generation: messageGeneration), identityResolver: resolver, semanticApplyEnabled: true, allowChatUpserts: true);
+      ObjectBoxCloudSemanticStoreGateway buildChatGateway() => ObjectBoxCloudSemanticStoreGateway(store: objectBox, canonicalAdapter: buildChatAdapter(), clock: () => now);
       ObjectBoxCanonicalSemanticEntityAdapter buildAttachmentAdapter() => ObjectBoxCanonicalSemanticEntityAdapter(store: objectBox, activeScopeProvider: () => CloudCanonicalActiveScope(scope: attachmentScope, generation: attachmentGeneration), identityResolver: resolver, messageDependencyScope: CloudCanonicalActiveScope(scope: messageScope, generation: messageGeneration), semanticApplyEnabled: true, allowAttachmentMetadataUpserts: true);
       ObjectBoxCloudSemanticStoreGateway buildAttachmentGateway() => ObjectBoxCloudSemanticStoreGateway(store: objectBox, canonicalAdapter: buildAttachmentAdapter(), clock: () => now);
       TransactionalCloudInboxApplier buildAttachmentApplier(TransientCloudCanonicalIdentityRegistry registry) => TransactionalCloudInboxApplier(decoder: _FixedDecoder(CloudDecodedMutation.upsert(scope: attachmentScope, generation: attachmentGeneration, changeId: attachmentEntry.change.changeId, snapshot: attachmentSnapshot, payload: attachmentPayload)), store: buildAttachmentGateway(), identityRegistrar: registry, activeScopeRevalidator: () async => true);
@@ -4249,7 +4251,14 @@ void main() {
         final registry = TransientCloudCanonicalIdentityRegistry();
         final lease = registry.bind(CloudDecodedMutation.upsert(scope: entry.scope, generation: entry.generation, changeId: entry.change.changeId, snapshot: snapshot, payload: payload));
         try {
-          final target = entry.scope == attachmentScope ? buildAttachmentGateway() : buildMessageGateway();
+          final ObjectBoxCloudSemanticStoreGateway target;
+          if (entry.scope == attachmentScope) {
+            target = buildAttachmentGateway();
+          } else if (entry.scope == chatScope) {
+            target = buildChatGateway();
+          } else {
+            target = buildMessageGateway();
+          }
           await target.writeTransaction<void>(entry: entry, leaseFence: fence, action: (transaction) { transaction.applyEntity(payload: payload, snapshot: snapshot); transaction.markChangeApplied(entry.change.changeId); });
         } finally {
           lease.release();
