@@ -4250,9 +4250,6 @@ void main() {
         row.persistenceLane = laneScope.persistenceLane.name;
         box.put(row);
       }
-      void seedOwnershipProof({required CloudSyncScope proofScope, required int proofGeneration, required CloudEntityKind kind, required String hash, required String guid}) {
-        objectBox.box<CloudSemanticSnapshotEntity>().put(CloudSemanticSnapshotEntity(snapshotKey: 'ownership-proof:$proofGeneration:${kind.name}:$hash', scopeGenerationKey: _scopeGenerationKey(proofScope, proofGeneration), scopeKey: _scopeKey(proofScope), accountFingerprint: proofScope.accountFingerprint, container: proofScope.container, database: proofScope.database, zone: proofScope.zone, streamKind: proofScope.streamKind.name, schemaVersion: proofScope.schemaVersion, generation: proofGeneration, entityKind: kind.name, logicalEntityKeyHash: hash, canonicalGuidHash: CloudCanonicalIdentityDigest.forCanonicalGuid(scope: proofScope, generation: proofGeneration, kind: kind, logicalEntityKeyHash: hash, canonicalGuid: guid), canonicalGuidLookupHash: CloudCanonicalIdentityDigest.forCanonicalGuidLookup(scope: proofScope, generation: proofGeneration, canonicalGuid: guid), updatedAtMs: now.millisecondsSinceEpoch));
-      }
       Future<void> applyThroughWorker({required CloudInboxEntry entry, required CloudCoordinatorLeaseFence fence, required CloudSemanticEntityPayload payload, required CloudSemanticSnapshot snapshot}) async {
         final registry = TransientCloudCanonicalIdentityRegistry();
         final lease = registry.bind(CloudDecodedMutation.upsert(scope: entry.scope, generation: entry.generation, changeId: entry.change.changeId, snapshot: snapshot, payload: payload));
@@ -4273,7 +4270,6 @@ void main() {
       _seedDurableFence(objectBox, entry: chatEntry, leaseFence: messageFence, now: now);
       stampPersistenceLane(chatScope);
       await applyThroughWorker(entry: chatEntry, fence: messageFence, payload: chatPayload, snapshot: chatSnapshot);
-      seedOwnershipProof(proofScope: chatScope, proofGeneration: messageGeneration, kind: CloudEntityKind.chat, hash: chatHash, guid: chatGuid);
       _seedDurableFence(objectBox, entry: attachmentEntry, leaseFence: attachmentFence, now: now);
       stampPersistenceLane(attachmentScope);
       final inboxBox = objectBox.box<CloudInboxChangeEntity>();
@@ -4292,7 +4288,6 @@ void main() {
       _seedDurableFence(objectBox, entry: messageEntry, leaseFence: messageFence, now: now);
       stampPersistenceLane(messageScope);
       await applyThroughWorker(entry: messageEntry, fence: messageFence, payload: messagePayload, snapshot: messageSnapshot);
-      seedOwnershipProof(proofScope: messageScope, proofGeneration: messageGeneration, kind: CloudEntityKind.message, hash: messageHash, guid: messageGuid);
       final second = await buildAttachmentApplier(TransientCloudCanonicalIdentityRegistry()).reprojectRetainedUnprojected(scope: attachmentScope, generation: attachmentGeneration, leaseFence: attachmentFence, limit: 8);
       expect(second.examined, 1);
       expect(second.reprojected, 1);
