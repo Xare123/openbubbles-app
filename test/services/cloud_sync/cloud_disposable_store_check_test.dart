@@ -431,33 +431,41 @@ void main() {
     );
     await tester.pumpAndSettle();
     expect(find.byType(ImageDisplay), findsOneWidget);
-    // The decoded frame must actually resolve, not just mount a loader.
-    await tester.runAsync(() => Future<void>.delayed(Duration.zero));
-    await tester.pump();
-    final imageDisplays = tester
-        .widgetList<ImageDisplay>(find.byType(ImageDisplay))
-        .toList();
-    expect(imageDisplays, hasLength(1));
-    // The frame must actually decode to the synthetic 1x1 PNG dimensions;
-    // a mounted loader or error-only state fails here, boundedly.
+    // Flush real async work, then require decoded bytes in the image cache:
+    // a mounted loader or error-only state leaves it empty and fails here.
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 500)),
+    );
+    expect(
+      PaintingBinding.instance.imageCache.currentSizeBytes,
+      greaterThan(0),
+    );
+    // Resolve the rendered frame itself and assert the synthetic dimensions.
+    // onError surfaces a real decode failure instead of timing out silently.
     final decodedCompleter = Completer<ui.Image>();
+    late final ImageStreamListener decodeListener;
+    decodeListener = ImageStreamListener(
+      (info, _) {
+        if (!decodedCompleter.isCompleted) {
+          decodedCompleter.complete(info.image);
+        }
+      },
+      onError: (Object error, StackTrace? stackTrace) {
+        if (!decodedCompleter.isCompleted) {
+          decodedCompleter.completeError(error, stackTrace);
+        }
+      },
+    );
     tester
         .widget<Image>(find.byType(Image))
         .image
         .resolve(const ImageConfiguration())
-        .addListener(
-          ImageStreamListener((info, _) {
-            if (!decodedCompleter.isCompleted) {
-              decodedCompleter.complete(info.image);
-            }
-          }),
-        );
+        .addListener(decodeListener);
     final decoded = await tester.runAsync(
       () => decodedCompleter.future.timeout(const Duration(seconds: 10)),
     );
-    expect(decoded, isNotNull);
-    expect(decoded!.width, 1);
-    expect(decoded!.height, 1);
+    expect(decoded.width, 1);
+    expect(decoded.height, 1);
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox());
     PaintingBinding.instance.imageCache.clear();
