@@ -464,8 +464,9 @@ void main() {
     final decoded = await tester.runAsync(
       () => decodedCompleter.future.timeout(const Duration(seconds: 10)),
     );
-    expect(decoded.width, 1);
-    expect(decoded.height, 1);
+    expect(decoded, isNotNull);
+    expect(decoded!.width, 1);
+    expect(decoded!.height, 1);
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox());
     PaintingBinding.instance.imageCache.clear();
