@@ -431,11 +431,15 @@ void main() {
     );
     await tester.pumpAndSettle();
     expect(find.byType(ImageDisplay), findsOneWidget);
-    // Flush real async work, then require decoded bytes in the image cache:
-    // a mounted loader or error-only state leaves it empty and fails here.
-    await tester.runAsync(
-      () => Future<void>.delayed(const Duration(milliseconds: 500)),
-    );
+    // Wait boundedly for the file decode to land bytes in the image cache:
+    // a mounted loader or error-only state never does and fails here.
+    await tester.runAsync(() async {
+      final deadline = DateTime.now().add(const Duration(seconds: 10));
+      while (PaintingBinding.instance.imageCache.currentSizeBytes == 0 &&
+          DateTime.now().isBefore(deadline)) {
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+      }
+    });
     expect(
       PaintingBinding.instance.imageCache.currentSizeBytes,
       greaterThan(0),
