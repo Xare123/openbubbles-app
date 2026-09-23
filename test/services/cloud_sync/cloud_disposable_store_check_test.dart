@@ -457,8 +457,10 @@ void main() {
     final decoded = await tester.runAsync(
       () => decodedCompleter.future.timeout(const Duration(seconds: 30)),
     );
-    expect(decoded.width, 1);
-    expect(decoded.height, 1);
+    expect(decoded, isNotNull, reason: 'synthetic frame must decode');
+    final ui.Image frame = decoded!;
+    expect(frame.width, 1);
+    expect(frame.height, 1);
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox());
     PaintingBinding.instance.imageCache.clear();
