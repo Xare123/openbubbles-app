@@ -428,15 +428,73 @@ void main() {
         ),
       ),
     );
-    await tester.pumpAndSettle();
+    await tester.pump();
     // The card takes the local-file branch (ImageDisplay) for the cached
-    // file, starts no download, and raises no exception.
-    // Concrete environment barrier, proven over three runs: Image.file
-    // decode never completes inside flutter_test on the Linux CI runner
-    // (bounded 30s wait, zero cache bytes, no error surfaced), while the
-    // identical bytes decode via the memory path in the established gallery
-    // suite. Frame-dimension assertions stay out until a host that decodes
-    // files in widget tests is available.
+    // file and starts no download. Observed test stall (cause not yet
+    // proved): a FileImage load started in the FakeAsync zone stays pending
+    // when later code uses runAsync; earlier attempts that only awaited the
+    // existing completer or cache bytes inside runAsync were inconclusive.
+    // Follow the installed SDK pattern in image_test.dart (evict an image
+    // during precache): evict the wrong-zone pending attempt, then start
+    // pump/precache AND await readiness inside runAsync on the exact
+    // widget provider (including ResizeImage).
+    expect(find.byType(ImageDisplay), findsOneWidget);
+    final ImageProvider initialProvider =
+        tester.widget<Image>(find.byType(Image)).image;
+    ImageInfo? decoded;
+    Object? loadError;
+    await tester.runAsync(() async {
+      PaintingBinding.instance.imageCache.evict(initialProvider);
+      await tester.pumpWidget(
+        GetMaterialApp(
+          home: Scaffold(
+            body: Center(
+              child: SizedBox(
+                width: 220,
+                height: 220,
+                child: MediaGalleryCard(
+                  key: ValueKey(attachment.guid),
+                  attachment: attachment,
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      final Element displayElement = tester.element(find.byType(ImageDisplay));
+      final ImageProvider provider =
+          tester.widget<Image>(find.byType(Image)).image;
+      PaintingBinding.instance.imageCache.evict(provider);
+      final ImageStream stream =
+          provider.resolve(createLocalImageConfiguration(displayElement));
+      final Completer<ImageInfo> ready = Completer<ImageInfo>();
+      late ImageStreamListener listener;
+      listener = ImageStreamListener(
+        (ImageInfo info, bool syncCall) {
+          if (!ready.isCompleted) ready.complete(info);
+        },
+        onError: (Object error, StackTrace? stackTrace) {
+          if (!ready.isCompleted) ready.completeError(error, stackTrace);
+        },
+      );
+      stream.addListener(listener);
+      try {
+        decoded = await ready.future.timeout(const Duration(seconds: 30));
+      } catch (error) {
+        loadError = error;
+      } finally {
+        stream.removeListener(listener);
+      }
+      if (loadError == null) {
+        await precacheImage(provider, displayElement)
+            .timeout(const Duration(seconds: 30));
+      }
+    });
+    expect(loadError, isNull);
+    expect(decoded, isNotNull);
+    expect(decoded!.image.width, 1);
+    expect(decoded!.image.height, 1);
+    await tester.pump();
     expect(find.byType(ImageDisplay), findsOneWidget);
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox());

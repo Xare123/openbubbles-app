@@ -349,6 +349,14 @@ auth checks or repeat a full sweep merely to work around this missing preflight.
   retained v2 rows; the remaining release gates below. Offline green is not
   end-to-end proof.
 
+### Disposable-store gateway and source-lookup tests, September 23
+
+- ACCEPTED (supervisor verified run 35864689802): synthetic gateway journal projection links to production resolver with exact hash assertions; SAME-payload parent-arrival retry fails closed then commits without duplicate replay. Run 35864689802: named 3 of 3 pass, 3978 Dart pass with 5 skips, 785 app-Rust pass, exact source, cleanup success, VM deleted. No APK or signing ran. Not full live sync, automatic durable-inbox retry, or decoded-image proof.
+- Test fixtures, not one mock only: the file-local _Resolver and seeded chat, message, checkpoint, journal, and lease-fence prerequisites are test fixtures. Owner retry stays scoped to adapter-level behavior.
+- Local-file branch covered: real MediaGalleryCard renders the cached synthetic file through ImageDisplay with no download and no exception. Decoded-frame and live-app display remain OPEN.
+- Rendering harness correction in flight: FakeAsync-started image loads stay pending when later code uses runAsync (SDK image_test evict during precache plus runAsync precache pattern; runAsync docs; FileImage async length plus ImmutableBuffer in image_provider). Prior outside-runAsync attempts were inconclusive. Wording is observed test stall, cause not yet proved.
+- Focused correction in source: evict the wrong-zone attempt, then pump and precache plus await readiness inside runAsync on the exact widget provider including ResizeImage, finite 30 second timeout, non-null decoded 1 by 1 frame, listeners disposed, takeException surfaced. No MemoryImage substitution. One existing source-only hosted batch, smallest mode, no new native or APK or infra change.
+
 ### Retained architecture and unresolved work
 
 - The cached-only native parent locator derives an exact keyed parent identity
