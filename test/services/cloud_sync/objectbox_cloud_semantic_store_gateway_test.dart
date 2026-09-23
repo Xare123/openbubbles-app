@@ -4204,6 +4204,7 @@ void main() {
       final aliasHash = _digestValue('A');
       final messageHash = _digestValue('M');
       final attachmentHash = _digestValue('L');
+      final chatScope = _scope(zone: 'chatManateeZone', persistenceLane: CloudSyncPersistenceLane.semanticV2);
       final messageScope = _scope(
         zone: 'messageManateeZone',
         persistenceLane: CloudSyncPersistenceLane.semanticV2,
@@ -4222,7 +4223,7 @@ void main() {
         ownerId: 'retained-worker-owner',
         generation: attachmentGeneration,
       );
-      final chatEntry = _entry(scope: messageScope, sequence: 1, generation: messageGeneration, changeId: _digestValue('C'));
+      final chatEntry = _entry(scope: chatScope, sequence: 1, generation: messageGeneration, changeId: _digestValue('C'));
       final messageEntry = _entry(scope: messageScope, sequence: 2, generation: messageGeneration, changeId: _digestValue('D'));
       final attachmentEntry = _entry(scope: attachmentScope, sequence: 1, generation: attachmentGeneration, changeId: _digestValue('F'));
       final chatPayload = _chatPayload(includeServiceIdentifierAlias: true, logicalEntityKeyHash: chatHash, canonicalGuid: chatGuid, chatIdentifier: chatIdentifier, aliasKeyHash: aliasHash, participantHandles: [senderHandle]);
@@ -4232,11 +4233,11 @@ void main() {
       final attachmentPayload = CloudAttachmentEntityPayload(logicalEntityKeyHash: attachmentHash, canonicalGuid: attachmentGuid, ownerLogicalKeyHash: messageHash, ownerCanonicalGuid: messageGuid, ownerPart: 0, fileName: 'worker-photo.png', mimeType: 'image/png', bodyCapability: CloudAttachmentBodyCapability.materializable, protectedLocalReference: _protectedReference('A'));
       final attachmentSnapshot = CloudSemanticSnapshot(kind: CloudEntityKind.attachment, logicalEntityKeyHash: attachmentHash, parentLogicalKeyHash: messageHash, immutableContentDigest: _digestValue('I'), etagHash: attachmentEntry.change.etagHash, encryptedRawRecordReference: attachmentEntry.change.encryptedPayloadReference);
       final resolver = _ExactCanonicalResolver()
-        ..put(scope: messageScope, generation: messageGeneration, kind: CloudEntityKind.chat, logicalEntityKeyHash: chatHash, canonicalGuid: chatGuid)
+        ..put(scope: chatScope, generation: messageGeneration, kind: CloudEntityKind.chat, logicalEntityKeyHash: chatHash, canonicalGuid: chatGuid)
         ..put(scope: messageScope, generation: messageGeneration, kind: CloudEntityKind.message, logicalEntityKeyHash: messageHash, canonicalGuid: messageGuid)
         ..put(scope: attachmentScope, generation: attachmentGeneration, kind: CloudEntityKind.message, logicalEntityKeyHash: messageHash, canonicalGuid: messageGuid)
         ..put(scope: attachmentScope, generation: attachmentGeneration, kind: CloudEntityKind.attachment, logicalEntityKeyHash: attachmentHash, canonicalGuid: attachmentGuid);
-      ObjectBoxCanonicalSemanticEntityAdapter buildMessageAdapter() => ObjectBoxCanonicalSemanticEntityAdapter(store: objectBox, activeScopeProvider: () => CloudCanonicalActiveScope(scope: messageScope, generation: messageGeneration), identityResolver: resolver, semanticApplyEnabled: true, allowChatUpserts: true, allowMessageUpserts: true);
+      ObjectBoxCanonicalSemanticEntityAdapter buildMessageAdapter() => ObjectBoxCanonicalSemanticEntityAdapter(store: objectBox, activeScopeProvider: () => CloudCanonicalActiveScope(scope: messageScope, generation: messageGeneration), identityResolver: resolver, chatDependencyScope: CloudCanonicalActiveScope(scope: chatScope, generation: messageGeneration), semanticApplyEnabled: true, allowChatUpserts: true, allowMessageUpserts: true);
       ObjectBoxCloudSemanticStoreGateway buildMessageGateway() => ObjectBoxCloudSemanticStoreGateway(store: objectBox, canonicalAdapter: buildMessageAdapter(), clock: () => now);
       ObjectBoxCanonicalSemanticEntityAdapter buildAttachmentAdapter() => ObjectBoxCanonicalSemanticEntityAdapter(store: objectBox, activeScopeProvider: () => CloudCanonicalActiveScope(scope: attachmentScope, generation: attachmentGeneration), identityResolver: resolver, messageDependencyScope: CloudCanonicalActiveScope(scope: messageScope, generation: messageGeneration), semanticApplyEnabled: true, allowAttachmentMetadataUpserts: true);
       ObjectBoxCloudSemanticStoreGateway buildAttachmentGateway() => ObjectBoxCloudSemanticStoreGateway(store: objectBox, canonicalAdapter: buildAttachmentAdapter(), clock: () => now);
@@ -4256,7 +4257,7 @@ void main() {
       }
       _seedDurableFence(objectBox, entry: chatEntry, leaseFence: messageFence, now: now);
       await applyThroughWorker(entry: chatEntry, fence: messageFence, payload: chatPayload, snapshot: chatSnapshot);
-      seedOwnershipProof(proofScope: messageScope, proofGeneration: messageGeneration, kind: CloudEntityKind.chat, hash: chatHash, guid: chatGuid);
+      seedOwnershipProof(proofScope: chatScope, proofGeneration: messageGeneration, kind: CloudEntityKind.chat, hash: chatHash, guid: chatGuid);
       _seedDurableFence(objectBox, entry: attachmentEntry, leaseFence: attachmentFence, now: now);
       final inboxBox = objectBox.box<CloudInboxChangeEntity>();
       final retainedRow = inboxBox.getAll().singleWhere((row) => row.changeIdHash == attachmentEntry.change.changeId);
