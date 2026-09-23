@@ -524,7 +524,7 @@ CloudMessageEntityPayload _messagePayload({
   logicalEntityKeyHash: logicalEntityKeyHash,
   canonicalGuid: canonicalGuid,
   chatIdentifier: chatIdentifier,
-  chatAliasKeyHash: chatAliasKeyHash,
+  chatAliasKeyHash: chatAliasKeyHash ?? _testChatAliasHash(chatIdentifier),
   chatIdExactGuidLogicalKeyHash: chatIdExactGuidLogicalKeyHash,
   chatIdBareDirectServiceIdentifierAliasKeyHash:
       chatIdBareDirectServiceIdentifierAliasKeyHash,
