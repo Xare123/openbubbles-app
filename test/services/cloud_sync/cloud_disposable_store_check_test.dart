@@ -54,7 +54,7 @@ const _chatIdentifier = 'iMessage;-;friend@example.com';
 const _senderHandle = 'mailto:friend@example.com';
 
 CloudSyncScope _messageScope() => CloudSyncScope(
-  accountFingerprint: testAccountFingerprintA,
+  accountFingerprint: _digestValue('A'),
   container: 'container',
   database: 'private',
   zone: 'messageManateeZone',
@@ -62,7 +62,7 @@ CloudSyncScope _messageScope() => CloudSyncScope(
 );
 
 CloudSyncScope _attachmentScope() => CloudSyncScope(
-  accountFingerprint: testAccountFingerprintA,
+  accountFingerprint: _digestValue('A'),
   container: 'container',
   database: 'private',
   zone: 'attachmentManateeZone',
@@ -368,10 +368,10 @@ void main() {
       snapshot: snapshot,
     );
     // The parent message row is absent, so this exact payload must fail
-    // closed with the owner-unproven safe code.
+    // closed at the attachment upsert with the owner-unavailable safe code.
     expect(
       applySame,
-      throwsA(_failureCode('canonical_identity_owner_unproven')),
+      throwsA(_failureCode('canonical_attachment_owner_unavailable')),
     );
     expect(store.box<Attachment>().count(), 0);
     // Parent arrives through the pipeline; the SAME payload then commits,
