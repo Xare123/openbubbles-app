@@ -435,16 +435,26 @@ void main() {
     // when later code uses runAsync; earlier attempts that only awaited the
     // existing completer or cache bytes inside runAsync were inconclusive.
     // Follow the installed SDK pattern in image_test.dart (evict an image
-    // during precache): evict the wrong-zone pending attempt, then start
-    // pump/precache AND await readiness inside runAsync on the exact
-    // widget provider (including ResizeImage).
+    // during precache): evict the wrong-zone pending attempt by its actual
+    // cache key, then re-pump AND await readiness inside runAsync and
+    // assert the decoded frame inside the card's own subtree.
     expect(find.byType(ImageDisplay), findsOneWidget);
-    final ImageProvider initialProvider =
-        tester.widget<Image>(find.byType(Image)).image;
+    expect(find.byType(Image), findsOneWidget);
+    final Element firstImage = tester.element(find.byType(Image));
+    final ImageProvider initialProvider = (firstImage.widget as Image).image;
     ImageInfo? decoded;
     Object? loadError;
+    bool evicted = false;
     await tester.runAsync(() async {
-      PaintingBinding.instance.imageCache.evict(initialProvider);
+      final ImageConfiguration firstConfig =
+          createLocalImageConfiguration(firstImage);
+      // Image.file wraps FileImage in ResizeImage, whose cache key is a
+      // ResizeImageKey: evicting the provider object itself would miss the
+      // pending wrong-zone load. provider.evict obtains the actual key first.
+      evicted = await initialProvider.evict(
+        cache: PaintingBinding.instance.imageCache,
+        configuration: firstConfig,
+      );
       await tester.pumpWidget(
         GetMaterialApp(
           home: Scaffold(
@@ -461,12 +471,12 @@ void main() {
           ),
         ),
       );
-      final Element displayElement = tester.element(find.byType(ImageDisplay));
-      final ImageProvider provider =
-          tester.widget<Image>(find.byType(Image)).image;
-      PaintingBinding.instance.imageCache.evict(provider);
+      final Element cardImage = tester.element(find.byType(Image));
+      final ImageProvider provider = (cardImage.widget as Image).image;
+      // Resolve with the card Image's own configuration so this listener
+      // shares the exact stream the card subscribed to on re-pump.
       final ImageStream stream =
-          provider.resolve(createLocalImageConfiguration(displayElement));
+          provider.resolve(createLocalImageConfiguration(cardImage));
       final Completer<ImageInfo> ready = Completer<ImageInfo>();
       late ImageStreamListener listener;
       listener = ImageStreamListener(
@@ -486,16 +496,27 @@ void main() {
         stream.removeListener(listener);
       }
       if (loadError == null) {
-        await precacheImage(provider, displayElement)
+        await precacheImage(provider, cardImage)
             .timeout(const Duration(seconds: 30));
       }
     });
+    expect(evicted, isTrue, reason: 'wrong-zone pending load cached under resolved key');
     expect(loadError, isNull);
     expect(decoded, isNotNull);
     expect(decoded!.image.width, 1);
     expect(decoded!.image.height, 1);
+    // Let the card paint, then assert the decoded frame inside its subtree.
     await tester.pump();
     expect(find.byType(ImageDisplay), findsOneWidget);
+    final Finder rawInCard = find.descendant(
+      of: find.byType(ImageDisplay),
+      matching: find.byType(RawImage),
+    );
+    expect(rawInCard, findsOneWidget);
+    final RawImage raw = tester.widget<RawImage>(rawInCard);
+    expect(raw.image, isNotNull);
+    expect(raw.image!.width, 1);
+    expect(raw.image!.height, 1);
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox());
     PaintingBinding.instance.imageCache.clear();
