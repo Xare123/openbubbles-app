@@ -44,9 +44,11 @@ final Uint8List _kPng = base64Decode(
 
 const _messageGeneration = 5;
 const _attachmentGeneration = 7;
-const _chatHash = 'disposable-chat-hash';
-const _messageHash = 'disposable-message-hash';
-const _attachmentHash = 'disposable-attachment-hash';
+// Logical keys must be 43-char digests: the gateway journal validates every
+// snapshot hash with the external-digest pattern.
+final String _chatHash = _digestValue('H');
+final String _messageHash = _digestValue('M');
+final String _attachmentHash = _digestValue('L');
 const _chatGuid = 'disposable-chat-guid';
 const _messageGuid = 'disposable-message-guid';
 const _attachmentGuid = 'disposable-message-guid_0';
