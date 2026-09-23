@@ -4193,6 +4193,107 @@ void main() {
   );
 
   test(
+    'retained attachment worker retry commits after parent arrival and restart',
+    () async {
+      const chatGuid = 'retained-worker-chat';
+      const messageGuid = 'retained-worker-message';
+      const attachmentGuid = 'retained-worker-message_0';
+      const chatIdentifier = 'iMessage;-;worker-chat';
+      const senderHandle = 'worker-friend@example.com';
+      final chatHash = _digestValue('H');
+      final aliasHash = _digestValue('A');
+      final messageHash = _digestValue('M');
+      final attachmentHash = _digestValue('L');
+      final messageScope = _scope(
+        zone: 'messageManateeZone',
+        persistenceLane: CloudSyncPersistenceLane.semanticV2,
+      );
+      final attachmentScope = _scope(
+        zone: 'attachmentManateeZone',
+        persistenceLane: CloudSyncPersistenceLane.semanticV2,
+      );
+      const messageGeneration = 5;
+      const attachmentGeneration = 7;
+      const messageFence = CloudCoordinatorLeaseFence(
+        ownerId: 'retained-worker-owner',
+        generation: messageGeneration,
+      );
+      const attachmentFence = CloudCoordinatorLeaseFence(
+        ownerId: 'retained-worker-owner',
+        generation: attachmentGeneration,
+      );
+      final chatEntry = _entry(scope: messageScope, sequence: 1, generation: messageGeneration, changeId: _digestValue('C'));
+      final messageEntry = _entry(scope: messageScope, sequence: 2, generation: messageGeneration, changeId: _digestValue('D'));
+      final attachmentEntry = _entry(scope: attachmentScope, sequence: 1, generation: attachmentGeneration, changeId: _digestValue('F'));
+      final chatPayload = _chatPayload(includeServiceIdentifierAlias: true, logicalEntityKeyHash: chatHash, canonicalGuid: chatGuid, chatIdentifier: chatIdentifier, aliasKeyHash: aliasHash, participantHandles: [senderHandle]);
+      final chatSnapshot = _chatSnapshot(logicalEntityKeyHash: chatHash, etagHash: chatEntry.change.etagHash!, encryptedRawRecordReference: chatEntry.change.encryptedPayloadReference!);
+      final messagePayload = CloudMessageEntityPayload(logicalEntityKeyHash: messageHash, canonicalGuid: messageGuid, chatAliasKeyHash: aliasHash, chatIdentifier: chatIdentifier, body: 'retained worker body', senderHandle: senderHandle);
+      final messageSnapshot = CloudSemanticSnapshot(kind: CloudEntityKind.message, logicalEntityKeyHash: messageHash, immutableContentDigest: _digestValue('I'), createdAt: now, etagHash: messageEntry.change.etagHash!, encryptedRawRecordReference: messageEntry.change.encryptedPayloadReference!);
+      final attachmentPayload = CloudAttachmentEntityPayload(logicalEntityKeyHash: attachmentHash, canonicalGuid: attachmentGuid, ownerLogicalKeyHash: messageHash, ownerCanonicalGuid: messageGuid, ownerPart: 0, fileName: 'worker-photo.png', mimeType: 'image/png', bodyCapability: CloudAttachmentBodyCapability.materializable, protectedLocalReference: _protectedReference('A'));
+      final attachmentSnapshot = CloudSemanticSnapshot(kind: CloudEntityKind.attachment, logicalEntityKeyHash: attachmentHash, parentLogicalKeyHash: messageHash, immutableContentDigest: _digestValue('I'), etagHash: attachmentEntry.change.etagHash, encryptedRawRecordReference: attachmentEntry.change.encryptedPayloadReference);
+      final resolver = _ExactCanonicalResolver()
+        ..put(scope: messageScope, generation: messageGeneration, kind: CloudEntityKind.chat, logicalEntityKeyHash: chatHash, canonicalGuid: chatGuid)
+        ..put(scope: messageScope, generation: messageGeneration, kind: CloudEntityKind.message, logicalEntityKeyHash: messageHash, canonicalGuid: messageGuid)
+        ..put(scope: attachmentScope, generation: attachmentGeneration, kind: CloudEntityKind.message, logicalEntityKeyHash: messageHash, canonicalGuid: messageGuid)
+        ..put(scope: attachmentScope, generation: attachmentGeneration, kind: CloudEntityKind.attachment, logicalEntityKeyHash: attachmentHash, canonicalGuid: attachmentGuid);
+      ObjectBoxCanonicalSemanticEntityAdapter buildMessageAdapter() => ObjectBoxCanonicalSemanticEntityAdapter(store: objectBox, activeScopeProvider: () => CloudCanonicalActiveScope(scope: messageScope, generation: messageGeneration), identityResolver: resolver, semanticApplyEnabled: true, allowChatUpserts: true, allowMessageUpserts: true);
+      ObjectBoxCloudSemanticStoreGateway buildMessageGateway() => ObjectBoxCloudSemanticStoreGateway(store: objectBox, canonicalAdapter: buildMessageAdapter(), clock: () => now);
+      ObjectBoxCanonicalSemanticEntityAdapter buildAttachmentAdapter() => ObjectBoxCanonicalSemanticEntityAdapter(store: objectBox, activeScopeProvider: () => CloudCanonicalActiveScope(scope: attachmentScope, generation: attachmentGeneration), identityResolver: resolver, messageDependencyScope: CloudCanonicalActiveScope(scope: messageScope, generation: messageGeneration), semanticApplyEnabled: true, allowAttachmentMetadataUpserts: true);
+      ObjectBoxCloudSemanticStoreGateway buildAttachmentGateway() => ObjectBoxCloudSemanticStoreGateway(store: objectBox, canonicalAdapter: buildAttachmentAdapter(), clock: () => now);
+      TransactionalCloudInboxApplier buildAttachmentApplier(TransientCloudCanonicalIdentityRegistry registry) => TransactionalCloudInboxApplier(decoder: _FixedDecoder(CloudDecodedMutation.upsert(scope: attachmentScope, generation: attachmentGeneration, changeId: attachmentEntry.change.changeId, snapshot: attachmentSnapshot, payload: attachmentPayload)), store: buildAttachmentGateway(), identityRegistrar: registry, activeScopeRevalidator: () async => true);
+      void seedOwnershipProof({required CloudSyncScope proofScope, required int proofGeneration, required CloudEntityKind kind, required String hash, required String guid}) {
+        objectBox.box<CloudSemanticSnapshotEntity>().put(CloudSemanticSnapshotEntity(snapshotKey: 'ownership-proof:$proofGeneration:${kind.name}:$hash', scopeGenerationKey: _scopeGenerationKey(proofScope, proofGeneration), scopeKey: _scopeKey(proofScope), accountFingerprint: proofScope.accountFingerprint, container: proofScope.container, database: proofScope.database, zone: proofScope.zone, streamKind: proofScope.streamKind.name, schemaVersion: proofScope.schemaVersion, generation: proofGeneration, entityKind: kind.name, logicalEntityKeyHash: hash, canonicalGuidHash: CloudCanonicalIdentityDigest.forCanonicalGuid(scope: proofScope, generation: proofGeneration, kind: kind, logicalEntityKeyHash: hash, canonicalGuid: guid), canonicalGuidLookupHash: CloudCanonicalIdentityDigest.forCanonicalGuidLookup(scope: proofScope, generation: proofGeneration, canonicalGuid: guid), updatedAtMs: now.millisecondsSinceEpoch));
+      }
+      Future<void> applyThroughWorker({required CloudInboxEntry entry, required CloudCoordinatorLeaseFence fence, required CloudSemanticEntityPayload payload, required CloudSemanticSnapshot snapshot}) async {
+        final registry = TransientCloudCanonicalIdentityRegistry();
+        final lease = registry.bind(CloudDecodedMutation.upsert(scope: entry.scope, generation: entry.generation, changeId: entry.change.changeId, snapshot: snapshot, payload: payload));
+        try {
+          final target = entry.scope == attachmentScope ? buildAttachmentGateway() : buildMessageGateway();
+          await target.writeTransaction<void>(entry: entry, leaseFence: fence, action: (transaction) { transaction.applyEntity(payload: payload, snapshot: snapshot); transaction.markChangeApplied(entry.change.changeId); });
+        } finally {
+          lease.release();
+        }
+      }
+      _seedDurableFence(objectBox, entry: chatEntry, leaseFence: messageFence, now: now);
+      await applyThroughWorker(entry: chatEntry, fence: messageFence, payload: chatPayload, snapshot: chatSnapshot);
+      seedOwnershipProof(proofScope: messageScope, proofGeneration: messageGeneration, kind: CloudEntityKind.chat, hash: chatHash, guid: chatGuid);
+      _seedDurableFence(objectBox, entry: attachmentEntry, leaseFence: attachmentFence, now: now);
+      final inboxBox = objectBox.box<CloudInboxChangeEntity>();
+      final retainedRow = inboxBox.getAll().singleWhere((row) => row.changeIdHash == attachmentEntry.change.changeId);
+      retainedRow.status = CloudInboxStatus.retainedUnprojected.index;
+      retainedRow.retryCount = 0;
+      retainedRow.failureCategory = CloudFailureCategory.dependency.name;
+      retainedRow.nextEligibleAtMs = 0;
+      retainedRow.completedAtMs = now.millisecondsSinceEpoch;
+      inboxBox.put(retainedRow);
+      final first = await buildAttachmentApplier(TransientCloudCanonicalIdentityRegistry()).reprojectRetainedUnprojected(scope: attachmentScope, generation: attachmentGeneration, leaseFence: attachmentFence, limit: 8);
+      expect(first.examined, 1);
+      expect(first.reprojected, 0);
+      expect(first.retained, 1);
+      expect(objectBox.box<Attachment>().count(), 0);
+      _seedDurableFence(objectBox, entry: messageEntry, leaseFence: messageFence, now: now);
+      await applyThroughWorker(entry: messageEntry, fence: messageFence, payload: messagePayload, snapshot: messageSnapshot);
+      seedOwnershipProof(proofScope: messageScope, proofGeneration: messageGeneration, kind: CloudEntityKind.message, hash: messageHash, guid: messageGuid);
+      final second = await buildAttachmentApplier(TransientCloudCanonicalIdentityRegistry()).reprojectRetainedUnprojected(scope: attachmentScope, generation: attachmentGeneration, leaseFence: attachmentFence, limit: 8);
+      expect(second.examined, 1);
+      expect(second.reprojected, 1);
+      expect(second.retained, 0);
+      expect(second.hasRemaining, isFalse);
+      expect(objectBox.box<Attachment>().getAll(), hasLength(1));
+      expect(objectBox.box<Attachment>().getAll().single.guid, attachmentGuid);
+      expect(objectBox.box<CloudSemanticReplayEntity>().count(), 1);
+      expect(objectBox.box<CloudSemanticReplayEntity>().getAll().single.terminalOutcome, 'applied');
+      objectBox.close();
+      objectBox = await openStore(directory: directory.path);
+      final third = await buildAttachmentApplier(TransientCloudCanonicalIdentityRegistry()).reprojectRetainedUnprojected(scope: attachmentScope, generation: attachmentGeneration, leaseFence: attachmentFence, limit: 8);
+      expect(third.examined, 0);
+      expect(third.reprojected, 0);
+      expect(objectBox.box<Attachment>().count(), 1);
+      expect(objectBox.box<CloudSemanticReplayEntity>().count(), 1);
+    },
+  );
+
+  test(
     'retained repair advances through exact-applied rows and stops at next retained gap',
     () async {
       final firstEntry = _entry(scope: scope);
