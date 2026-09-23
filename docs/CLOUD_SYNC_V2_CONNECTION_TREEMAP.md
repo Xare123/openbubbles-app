@@ -299,7 +299,7 @@ auth checks or repeat a full sweep merely to work around this missing preflight.
   signed by the approved engineering cert, receipt rebound to d3cdca8, and
   the 7 received-record discovery plus 2 chat1 native cases pass on the
   imported ARM64 DLL with zero profile-data writes outside the test host.
-  Installed f439 app bundle retained untouched as rollback.
+  Installed f439 app bundle retained untouched as rollback ONLY. It predates the repaired canonical converter, bridge bindings, and reader/discovery changes and does not exercise them; its recorded DLL differs from the repaired native. Never mistake rollback for the active qualified runtime and never copy a new DLL into it. No GUI bundle embedding the repaired stack currently exists.
 
 ### Full-length verification record, September 19
 
