@@ -36,9 +36,10 @@ import 'package:get/get.dart';
 
 import 'cloud_sync_test_helpers.dart';
 
-// Tiny synthetic 1x1 PNG. Never a user photo.
+// Synthetic opaque-red 1x1 RGBA PNG with valid chunk CRCs and zlib checksum.
+// Never a user photo.
 final Uint8List _kPng = base64Decode(
-  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg==',
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP4z8DwHwAFAAH/VscvDQAAAABJRU5ErkJggg==',
 );
 
 const _messageGeneration = 5;

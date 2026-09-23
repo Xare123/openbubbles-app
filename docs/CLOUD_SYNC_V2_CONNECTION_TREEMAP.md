@@ -357,6 +357,11 @@ auth checks or repeat a full sweep merely to work around this missing preflight.
 - Rendering harness correction in flight: FakeAsync-started image loads stay pending when later code uses runAsync (SDK image_test evict during precache plus runAsync precache pattern; runAsync docs; FileImage async length plus ImmutableBuffer in image_provider). Prior outside-runAsync attempts were inconclusive. Wording is observed test stall, cause not yet proved.
 - Focused correction in source: evict the wrong-zone attempt, then pump and precache plus await readiness inside runAsync on the exact widget provider including ResizeImage, finite 30 second timeout, non-null decoded 1 by 1 frame, listeners disposed, takeException surfaced. No MemoryImage substitution. One existing source-only hosted batch, smallest mode, no new native or APK or infra change.
 
+### Synthetic fixture PNG defect confirmed, September 23
+
+- The 70-byte synthetic 1x1 PNG shared by three widget tests had a corrupt IDAT (stored CRC 49c2dbb4 vs computed 9973e8e5; strict inflate fails). The Linux CI codec rejection in run 35874007248 was this fixture defect, not missing codec support. Replacement is the same intended opaque-red 1x1 RGBA with valid CRCs and zlib checksum, verified by signature/dimension/chunk/CRC/inflate checks plus independent decode. Files: cloud_disposable_store_check_test, media_gallery_card_auto_download_test, attachment_reply_layout_test.
+- Run 35874007248 on f97f0858a: app_rust success, Dart single failure (widget leg codec rejection at line 510), gateway and retry legs green, no APK or signing, cleanup verified with zero VMs and runners. Timeout-to-codec-error progression shows the evict plus fresh-subtree harness correction works; decode now reaches the codec.
+
 ### Retained architecture and unresolved work
 
 - The cached-only native parent locator derives an exact keyed parent identity
