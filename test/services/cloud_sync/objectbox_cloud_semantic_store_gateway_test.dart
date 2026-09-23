@@ -4295,15 +4295,16 @@ void main() {
       expect(second.hasRemaining, isFalse);
       expect(objectBox.box<Attachment>().getAll(), hasLength(1));
       expect(objectBox.box<Attachment>().getAll().single.guid, attachmentGuid);
-      expect(objectBox.box<CloudSemanticReplayEntity>().count(), 1);
-      expect(objectBox.box<CloudSemanticReplayEntity>().getAll().single.terminalOutcome, 'applied');
+      expect(objectBox.box<CloudSemanticReplayEntity>().count(), 3);
+      final attachmentReplay = objectBox.box<CloudSemanticReplayEntity>().getAll().singleWhere((row) => row.logicalEntityKeyHash == attachmentHash);
+      expect(attachmentReplay.terminalOutcome, 'applied');
       objectBox.close();
       objectBox = await openStore(directory: directory.path);
       final third = await buildAttachmentApplier(TransientCloudCanonicalIdentityRegistry()).reprojectRetainedUnprojected(scope: attachmentScope, generation: attachmentGeneration, leaseFence: attachmentFence, limit: 8);
       expect(third.examined, 0);
       expect(third.reprojected, 0);
       expect(objectBox.box<Attachment>().count(), 1);
-      expect(objectBox.box<CloudSemanticReplayEntity>().count(), 1);
+      expect(objectBox.box<CloudSemanticReplayEntity>().count(), 3);
     },
   );
 
