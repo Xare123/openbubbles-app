@@ -268,9 +268,18 @@ void main() {
       entry: entry,
       leaseFence: leaseFence,
       action: (transaction) {
+        // The gateway validates digest formats, so this snapshot carries
+        // entry-bound valid digests instead of the unit placeholder.
         transaction.applyEntity(
           payload: _imagePayload(),
-          snapshot: _imageSnapshot(),
+          snapshot: CloudSemanticSnapshot(
+            kind: CloudEntityKind.attachment,
+            logicalEntityKeyHash: _attachmentHash,
+            parentLogicalKeyHash: _messageHash,
+            immutableContentDigest: _digestValue('I'),
+            etagHash: entry.change.etagHash,
+            encryptedRawRecordReference: entry.change.encryptedPayloadReference,
+          ),
         );
         transaction.markChangeApplied(entry.change.changeId);
         return const CloudInboxApplyResult.applied(inboxStatusPersisted: true);
