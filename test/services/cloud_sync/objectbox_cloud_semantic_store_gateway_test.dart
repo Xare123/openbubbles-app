@@ -4244,6 +4244,12 @@ void main() {
       ObjectBoxCanonicalSemanticEntityAdapter buildAttachmentAdapter() => ObjectBoxCanonicalSemanticEntityAdapter(store: objectBox, activeScopeProvider: () => CloudCanonicalActiveScope(scope: attachmentScope, generation: attachmentGeneration), identityResolver: resolver, messageDependencyScope: CloudCanonicalActiveScope(scope: messageScope, generation: messageGeneration), semanticApplyEnabled: true, allowAttachmentMetadataUpserts: true);
       ObjectBoxCloudSemanticStoreGateway buildAttachmentGateway() => ObjectBoxCloudSemanticStoreGateway(store: objectBox, canonicalAdapter: buildAttachmentAdapter(), clock: () => now);
       TransactionalCloudInboxApplier buildAttachmentApplier(TransientCloudCanonicalIdentityRegistry registry) => TransactionalCloudInboxApplier(decoder: _FixedDecoder(CloudDecodedMutation.upsert(scope: attachmentScope, generation: attachmentGeneration, changeId: attachmentEntry.change.changeId, snapshot: attachmentSnapshot, payload: attachmentPayload)), store: buildAttachmentGateway(), identityRegistrar: registry, activeScopeRevalidator: () async => true);
+      void stampPersistenceLane(CloudSyncScope laneScope) {
+        final box = objectBox.box<CloudSyncCheckpointEntity>();
+        final row = box.getAll().singleWhere((candidate) => candidate.checkpointKey == _scopeKey(laneScope));
+        row.persistenceLane = laneScope.persistenceLane.name;
+        box.put(row);
+      }
       void seedOwnershipProof({required CloudSyncScope proofScope, required int proofGeneration, required CloudEntityKind kind, required String hash, required String guid}) {
         objectBox.box<CloudSemanticSnapshotEntity>().put(CloudSemanticSnapshotEntity(snapshotKey: 'ownership-proof:$proofGeneration:${kind.name}:$hash', scopeGenerationKey: _scopeGenerationKey(proofScope, proofGeneration), scopeKey: _scopeKey(proofScope), accountFingerprint: proofScope.accountFingerprint, container: proofScope.container, database: proofScope.database, zone: proofScope.zone, streamKind: proofScope.streamKind.name, schemaVersion: proofScope.schemaVersion, generation: proofGeneration, entityKind: kind.name, logicalEntityKeyHash: hash, canonicalGuidHash: CloudCanonicalIdentityDigest.forCanonicalGuid(scope: proofScope, generation: proofGeneration, kind: kind, logicalEntityKeyHash: hash, canonicalGuid: guid), canonicalGuidLookupHash: CloudCanonicalIdentityDigest.forCanonicalGuidLookup(scope: proofScope, generation: proofGeneration, canonicalGuid: guid), updatedAtMs: now.millisecondsSinceEpoch));
       }
@@ -4265,9 +4271,11 @@ void main() {
         }
       }
       _seedDurableFence(objectBox, entry: chatEntry, leaseFence: messageFence, now: now);
+      stampPersistenceLane(chatScope);
       await applyThroughWorker(entry: chatEntry, fence: messageFence, payload: chatPayload, snapshot: chatSnapshot);
       seedOwnershipProof(proofScope: chatScope, proofGeneration: messageGeneration, kind: CloudEntityKind.chat, hash: chatHash, guid: chatGuid);
       _seedDurableFence(objectBox, entry: attachmentEntry, leaseFence: attachmentFence, now: now);
+      stampPersistenceLane(attachmentScope);
       final inboxBox = objectBox.box<CloudInboxChangeEntity>();
       final retainedRow = inboxBox.getAll().singleWhere((row) => row.changeIdHash == attachmentEntry.change.changeId);
       retainedRow.status = CloudInboxStatus.retainedUnprojected.index;
@@ -4282,6 +4290,7 @@ void main() {
       expect(first.retained, 1);
       expect(objectBox.box<Attachment>().count(), 0);
       _seedDurableFence(objectBox, entry: messageEntry, leaseFence: messageFence, now: now);
+      stampPersistenceLane(messageScope);
       await applyThroughWorker(entry: messageEntry, fence: messageFence, payload: messagePayload, snapshot: messageSnapshot);
       seedOwnershipProof(proofScope: messageScope, proofGeneration: messageGeneration, kind: CloudEntityKind.message, hash: messageHash, guid: messageGuid);
       final second = await buildAttachmentApplier(TransientCloudCanonicalIdentityRegistry()).reprojectRetainedUnprojected(scope: attachmentScope, generation: attachmentGeneration, leaseFence: attachmentFence, limit: 8);
