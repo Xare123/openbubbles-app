@@ -79,7 +79,8 @@ runtime, account, queue or device. Fresh local check found no matching
 Flutter/Dart/OpenBubbles process and C: has 26.75 GiB free. The prior qualification
 and device observations below remain dated evidence, not fresh live state.
 
- Next (current September 23): source-only durable-inbox worker check, synthetic data only. Determine whether the normal durable-inbox worker, not just direct adapter calls, retries a retained attachment after its parent arrives and survives restart without duplicates or loss. Inspect existing coverage first and reuse it; implement only a demonstrated missing behavior with the smallest regression plus one warranted integration batch. No live-account, device, projection, drain, flag, or infra actions. Accepted source-level slice (2274fb44f, run 35877531607) is recorded below; live-app display stays OPEN.
+ Next (current September 23): worker retry proved green at 10cca2362 (run 35896118856). Remaining production path is live-app display and device verification per the release gates below; no live-account, device, projection, drain, flag, or infra actions are authorized here. Accepted slices (2274fb44f display, 10cca2362 worker retry) are recorded below; live-app display stays OPEN.
+ TEST-PROVEN worker retry of retained attachments (supervisor-directed check, source 10cca2362, run 35896118856): real TransactionalCloudInboxApplier.reprojectRetainedUnprojected against the real gateway and ObjectBox store keeps a retained attachment without its parent, commits exactly once after the parent message arrives through the worker transaction, and a close plus reopen plus re-sweep finds nothing with still one attachment and one applied replay. Run: 3979 Dart pass with 5 skips, app-Rust success, exact source, cleanup with zero VMs and runners, no APK or signing.
 
 ### Last live-test blocker, September 17
 

@@ -7188,3 +7188,5 @@ Historical tests do not establish current-device behavior.
 - Run 35874007248 on f97f0858a: app_rust success, Dart single widget-leg failure at line 510, gateway and retry legs green, no APK or signing, cleanup zero VMs and runners.
 ## September 23: cached-image display slice accepted; inbox-worker retry is the current next step
 - Supervisor accepted source-level projection, resolver, and cached-image display at 2274fb44f (run 35877531607 green); live-app display stays open. Superseded Sep-18 live-diagnostic Next replaced by a source-only durable-inbox worker retry and restart check with synthetic data.
+## September 23: durable-inbox worker retry for retained attachments proved green
+- Source 10cca2362, run 35896118856 green: real applier reprojection keeps the retained attachment, commits exactly once after parent arrival, restart plus re-sweep finds nothing with one attachment and one applied replay. 3979 Dart pass with 5 skips, app-Rust success, exact source, zero VMs and runners, no APK or signing.
