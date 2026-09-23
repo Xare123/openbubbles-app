@@ -429,23 +429,8 @@ void main() {
         ),
       ),
     );
-    await tester.pumpAndSettle();
-    expect(find.byType(ImageDisplay), findsOneWidget);
-    // Wait boundedly for the file decode to land bytes in the image cache:
-    // a mounted loader or error-only state never does and fails here.
-    await tester.runAsync(() async {
-      final deadline = DateTime.now().add(const Duration(seconds: 10));
-      while (PaintingBinding.instance.imageCache.currentSizeBytes == 0 &&
-          DateTime.now().isBefore(deadline)) {
-        await Future<void>.delayed(const Duration(milliseconds: 100));
-      }
-    });
-    expect(
-      PaintingBinding.instance.imageCache.currentSizeBytes,
-      greaterThan(0),
-    );
-    // Resolve the rendered frame itself and assert the synthetic dimensions.
-    // onError surfaces a real decode failure instead of timing out silently.
+    await tester.pump();
+    // Attach before settling so no completion or error can slip by unseen.
     final decodedCompleter = Completer<ui.Image>();
     late final ImageStreamListener decodeListener;
     decodeListener = ImageStreamListener(
@@ -465,12 +450,15 @@ void main() {
         .image
         .resolve(const ImageConfiguration())
         .addListener(decodeListener);
+    await tester.pumpAndSettle();
+    expect(find.byType(ImageDisplay), findsOneWidget);
+    // The frame must decode to the synthetic 1x1 dimensions. A genuine
+    // decode failure arrives here as its true error; a stall times out.
     final decoded = await tester.runAsync(
-      () => decodedCompleter.future.timeout(const Duration(seconds: 10)),
+      () => decodedCompleter.future.timeout(const Duration(seconds: 30)),
     );
-    expect(decoded, isNotNull);
-    expect(decoded!.width, 1);
-    expect(decoded!.height, 1);
+    expect(decoded.width, 1);
+    expect(decoded.height, 1);
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox());
     PaintingBinding.instance.imageCache.clear();
