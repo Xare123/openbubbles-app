@@ -124,6 +124,20 @@ class SetupViewController extends StatefulController {
 
   bool goingTo2fa = true;
   bool success = false;
+  Object? backgroundStartupError;
+  /// Publishes registration success for [attempt], refusing stale attempts.
+  /// Returns true when this attempt owns the published success.
+  bool publishLoginSuccess({int? attempt}) {
+    if (!_isCurrentOrUntracked(attempt)) return false;
+    success = true;
+    return true;
+  }
+  /// Records a background startup failure distinctly from credential errors.
+  /// Never clears success or forces re-authentication by itself.
+  void noteBackgroundStartupError(Object error) {
+    backgroundStartupError = error;
+    Logger.warn('Login background startup failed distinctly', error: error);
+  }
   bool triedBattery = false;
 
   api.LoginState state = const api.LoginState.needsLogin();
@@ -594,7 +608,7 @@ class SetupViewController extends StatefulController {
         [account],
         () async {
           ss.settings.userName.value = await api.getUserName(state: account);
-          await doRegister();
+          await doRegister(attempt: attempt);
         },
       );
     }
@@ -635,7 +649,8 @@ class SetupViewController extends StatefulController {
     return result;
   }
 
-  Future<void> doRegister() async {
+  Future<void> doRegister({int? attempt}) async {
+    if (_isCurrentOrUntracked(attempt)) success = false;
     List<api.IdsUser> users = [];
 
     if (currentAppleUser != null) {
@@ -743,7 +758,7 @@ class SetupViewController extends StatefulController {
         pushService.doPoll(watcher.$3, pollState);
       }
 
-      success = true;
+      if (!publishLoginSuccess(attempt: attempt)) return;
       // persisting SMS auth certs is actually really useful
       clearHardwareTransferMaterial();
       Logger.debug("Success registered!");
@@ -769,7 +784,10 @@ class SetupViewController extends StatefulController {
       }
 
       Logger.debug("Finishing!");
-      setup.finishSetup();
+      setup.finishSetup().then(
+        (_) {},
+        onError: (Object error) => noteBackgroundStartupError(error),
+      );
   }
 
   Future<(List<api.IdsUser>?, api.SupportAlert?)> _registerIdsWithRetry(
