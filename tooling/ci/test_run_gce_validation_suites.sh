@@ -28,12 +28,30 @@ wait_proc_end() {
   done
   return 1
 }
+pst_start() {
+  local s
+  s="$(cat "/proc/$1/stat" 2>/dev/null)" || return 1
+  s="${s##*)}"
+  set -- $s
+  printf '%s' "${20}"
+}
+same_proc() {
+  local pid="$1" start="$2" cur
+  if [[ -z "$pid" || -z "$start" ]]; then return 1; fi
+  cur="$(pst_start "$pid")" || return 1
+  [[ -n "$cur" && "$cur" == "$start" ]]
+}
+verified_kill_file="$HARNESS_ROOT/verified_killable"
+: > "$verified_kill_file"
+record_verified() {
+  printf '%s %s\n' "$1" "$2" >> "$verified_kill_file"
+}
 cleanup_case_pids() {
-  local f p
-  for f in "$HARNESS_ROOT"/*/suite.pids; do
-    [ -f "$f" ] || continue
-    for p in $(cat "$f"); do kill -KILL "$p" 2>/dev/null || true; done
-  done
+  local pid start
+  [ -f "$verified_kill_file" ] || return 0
+  while read -r pid start; do
+    if same_proc "$pid" "$start"; then kill -KILL "$pid" 2>/dev/null || true; fi
+  done < "$verified_kill_file"
 }
 trap cleanup_case_pids EXIT
 make_stubs() {
@@ -101,20 +119,27 @@ make_stubs "$stubs"
 PATH="$stubs:$PATH" STUB_FLUTTER_SLEEP=60 STUB_FLUTTER_EXIT=0 STUB_CARGO_EXIT=0 bash "$script" > "$case_root/stdout.log" 2>&1 &
 script_pid=$!
 sleep 3
+proceed=yes
 pidfile="$case_root/suite.pids"
- [ -f "$pidfile" ] || fail "stub did not record suite pids"
-read -r sub_pid sleep_pid < "$pidfile"
-in_tree "$sub_pid" "$script_pid" || fail "recorded suite pid outside harness tree"
-kill -KILL "$sub_pid" 2>/dev/null || fail "could not kill recorded suite pid"
-if wait_proc_end "$script_pid" 30; then waited=yes; else waited=no; fi
- [ "$waited" = yes ] || { fail "script did not end after suite kill"; kill -KILL "$script_pid" 2>/dev/null || true; }
-wait "$script_pid"
-code=$?
- [ "$code" != 0 ] || fail "no-receipt run exited 0"
- [ "$(cat "$RUNNER_TEMP/gce-validation-suites/dart.status")" = failure ] || fail "no-receipt dart status not failure"
-grep -q "exited without receipt" "$case_root/stdout.log" || fail "missing no-receipt notice"
- [ "$(cat "$RUNNER_TEMP/gce-validation-suites/app_rust.status")" = success ] || fail "sibling app_rust evidence missing"
-kill -KILL "$sleep_pid" 2>/dev/null || true
+ [ -f "$pidfile" ] || { fail "stub did not record suite pids"; proceed=no; }
+if [ "$proceed" = yes ]; then read -r sub_pid sleep_pid < "$pidfile"; [ -n "${sub_pid:-}" ] || { fail "empty suite pid record"; proceed=no; }; fi
+if [ "$proceed" = yes ]; then in_tree "$sub_pid" "$script_pid" || { fail "recorded suite pid outside harness tree"; proceed=no; }; fi
+if [ "$proceed" = yes ]; then sub_start="$(pst_start "$sub_pid")"; sleep_start="$(pst_start "${sleep_pid:-0}")"; [ -n "$sub_start" ] || { fail "suite pid already gone before validation"; proceed=no; }; fi
+if [ "$proceed" = yes ]; then record_verified "$sub_pid" "$sub_start"; record_verified "$sleep_pid" "$sleep_start"; same_proc "$sub_pid" "$sub_start" || { fail "suite pid changed before signal"; proceed=no; }; fi
+if [ "$proceed" = yes ]; then
+  kill -KILL "$sub_pid"
+  if wait_proc_end "$script_pid" 30; then waited=yes; else waited=no; fi
+  [ "$waited" = yes ] || { fail "script did not end after suite kill"; kill -KILL "$script_pid" 2>/dev/null || true; }
+  wait "$script_pid"
+  code=$?
+  [ "$code" != 0 ] || fail "no-receipt run exited 0"
+  [ "$(cat "$RUNNER_TEMP/gce-validation-suites/dart.status")" = failure ] || fail "no-receipt dart status not failure"
+  grep -q "exited without receipt" "$case_root/stdout.log" || fail "missing no-receipt notice"
+  [ "$(cat "$RUNNER_TEMP/gce-validation-suites/app_rust.status")" = success ] || fail "sibling app_rust evidence missing"
+else
+  kill -KILL "$script_pid" 2>/dev/null || true
+  wait "$script_pid" 2>/dev/null || true
+fi
 note "case 6: empty, missing and malformed receipts classify as failure"
 classifier="$(sed -n '/^classify_suite_receipt() {/,/^}/p' "$script")"
  [ -n "$classifier" ] || fail "classifier not found in script source"
