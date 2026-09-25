@@ -524,7 +524,7 @@ class _ProfilePanelState extends OptimizedState<ProfilePanel> with WidgetsBindin
                           pushService.cloudSyncV2ProgressUnavailableMessage,
                     ),
                   ]),
-                if (pushService.state?.icloudServices?.keychain != null)
+                if (CloudSyncProfileEntry.showV2Card(v2Visible: pushService.cloudSyncV2ProgressVisible) && pushService.state?.icloudServices?.keychain != null)
                   const CloudSyncKeychainCard(),
                 Obx(() {
                   // Normal iCloud sync entry: the V2 history card above is the

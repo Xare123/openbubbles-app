@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:bluebubbles/app/layouts/settings/pages/profile/cloud_sync_keychain_card.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -100,6 +101,81 @@ void main() {
     await tester.tap(find.text('Change code'));
     await tester.pumpAndSettle();
     expect(find.text('Change iCloud Keychain code'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+  testWidgets('change is disabled until ready', (tester) async {
+    await pumpCard(tester, check: () async => false, hasDefault: () => false, change: (_) async {});
+    expect(find.textContaining('Not ready'), findsOneWidget);
+    expect(find.text('Code status is not confirmed. Nothing was changed.'), findsOneWidget);
+    final button = tester.widget<TextButton>(find.widgetWithText(TextButton, 'Change code'));
+    expect(button.onPressed, isNull);
+    expect(tester.takeException(), isNull);
+  });
+  testWidgets('change is disabled while checking', (tester) async {
+    final gate = Completer<bool?>();
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body: CloudSyncKeychainCard(checkReadiness: () => gate.future, hasDefaultCode: () => true, changeCode: (_) async {}))));
+    await tester.pump();
+    expect(find.text('Checking encryption status...'), findsOneWidget);
+    expect(find.text('Code status will be confirmed after the readiness check.'), findsOneWidget);
+    final button = tester.widget<TextButton>(find.widgetWithText(TextButton, 'Change code'));
+    expect(button.onPressed, isNull);
+    gate.complete(true);
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+  });
+  testWidgets('passcode entry enforces six digits and masks by default', (tester) async {
+    final codes = <String>[];
+    await pumpCard(tester, check: () async => true, hasDefault: () => true, change: (code) async { codes.add(code); });
+    await tester.tap(find.text('Change code'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), '12');
+    await tester.pump();
+    await tester.tap(find.text('OK'));
+    await tester.pump();
+    expect(find.text('Enter the six-digit numeric code.'), findsOneWidget);
+    expect(codes, isEmpty);
+    await tester.enterText(find.byType(TextField), '123456');
+    await tester.pump();
+    expect(find.text('1'), findsNothing);
+    await tester.tap(find.text('Show code'));
+    await tester.pump();
+    expect(find.text('1'), findsOneWidget);
+    await tester.tap(find.text('OK'));
+    await tester.pumpAndSettle();
+    expect(codes, ['123456']);
+    expect(tester.takeException(), isNull);
+  });
+  testWidgets('marker save failure reports a distinct status', (tester) async {
+    await pumpCard(tester, check: () async => true, hasDefault: () => true, change: (_) async { throw const KeychainMarkerSaveException('marker was not stored'); });
+    await tester.tap(find.text('Change code'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Use password'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), 'secret-1');
+    await tester.pump();
+    await tester.tap(find.text('OK'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('could not save that status'), findsOneWidget);
+    expect(find.text('Change iCloud Keychain code'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+  testWidgets('barrier tap during pending change does not dismiss', (tester) async {
+    final gate = Completer<void>();
+    await pumpCard(tester, check: () async => true, hasDefault: () => true, change: (_) => gate.future);
+    await tester.tap(find.text('Change code'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Use password'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), 'secret-1');
+    await tester.pump();
+    await tester.tap(find.text('OK'));
+    await tester.pump();
+    await tester.tapAt(const Offset(10, 10));
+    await tester.pump();
+    expect(find.text('Change iCloud Keychain code'), findsOneWidget);
+    gate.complete();
+    await tester.pumpAndSettle();
+    expect(find.text('Change iCloud Keychain code'), findsNothing);
     expect(tester.takeException(), isNull);
   });
 }
