@@ -156,7 +156,7 @@ void main() {
     await tester.pump();
     await tester.tap(find.text('OK'));
     await tester.pumpAndSettle();
-    expect(find.textContaining('could not save that status'), findsOneWidget);
+    expect(find.textContaining('could not save its status'), findsOneWidget);
     expect(find.text('Change iCloud Keychain code'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
