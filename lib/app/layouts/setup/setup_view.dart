@@ -164,20 +164,14 @@ class SetupViewController extends StatefulController {
     final handlesLoader = loadHandles ?? () => api.getHandles(state: pushService.state!.client);
     final handleSaver = saveDefaultHandle ?? (String phone) async {
       ss.settings.defaultHandle.value = phone;
-      await ss.settings.saveOne('defaultHandle');
-      if (ss.prefs.getString('defaultHandle') != phone) {
-        throw StateError('defaultHandle was not stored');
-      }
+      await checkedPreferenceWrite(() => ss.prefs.setString('defaultHandle', phone), 'defaultHandle');
     };
     final encryption = setupEncryption ?? () async {
       final keychain = pushService.state?.icloudServices?.keychain;
       if (keychain == null || circleSession == null) return;
       final defaultPassword = Random.secure().nextInt(1000000).toString().padLeft(6, '0');
       ss.settings.keychainDefaultPassword.value = defaultPassword;
-      await ss.settings.saveOne('keychainDefaultPassword');
-      if (ss.prefs.getString('keychainDefaultPassword') != defaultPassword) {
-        throw StateError('keychain password marker was not stored');
-      }
+      await checkedPreferenceWrite(() => ss.prefs.setString('keychainDefaultPassword', defaultPassword), 'keychain password marker');
       await api.circleSetupClique(client: pushService.state!.clientSession, keychain: keychain, devicePassword: defaultPassword);
     };
     final persist = persistCompletion ?? () => setup.persistSetupCompletion();

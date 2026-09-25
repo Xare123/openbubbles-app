@@ -4,6 +4,12 @@ import 'package:bluebubbles/services/services.dart';
 import 'package:get/get.dart';
 
 SetupService setup = Get.isRegistered<SetupService>() ? Get.find<SetupService>() : Get.put(SetupService());
+/// Awaits one platform preference write and treats a false return as failure.
+/// This is platform-reported success, not crash-safe durability.
+Future<void> checkedPreferenceWrite(Future<bool> Function() write, String label) async {
+  final stored = await write();
+  if (!stored) throw StateError(label + ' was not stored');
+}
 
 class SetupService extends GetxService {
   Future<void> startSetup(int numberOfMessagesPerPage, bool skipEmptyChats, bool saveToDownloads) async {
@@ -18,10 +24,7 @@ class SetupService extends GetxService {
     final prior = ss.settings.finishedSetup.value;
     ss.settings.finishedSetup.value = true;
     try {
-      await ss.settings.saveOne('finishedSetup');
-      if (ss.prefs.getBool('finishedSetup') != true) {
-        throw StateError('finishedSetup was not stored');
-      }
+      await checkedPreferenceWrite(() => ss.prefs.setBool('finishedSetup', true), 'finishedSetup');
     } catch (_) {
       ss.settings.finishedSetup.value = prior;
       rethrow;

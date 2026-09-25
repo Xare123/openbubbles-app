@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:bluebubbles/app/layouts/setup/setup_view.dart';
+import 'package:bluebubbles/services/backend/setup/setup_service.dart';
 import 'package:flutter_test/flutter_test.dart';
 void main() {
   test('required persist failure is not background', () async {
@@ -98,5 +99,11 @@ void main() {
     expect(c.success, isTrue);
     expect(order, <String>['configured', 'handles', 'handle', 'encryption', 'persist']);
     expect(launched, isTrue);
+  });
+  test('checkedPreferenceWrite rejects a false platform result', () async {
+    await expectLater(checkedPreferenceWrite(() async => false, 'probe'), throwsStateError);
+  });
+  test('checkedPreferenceWrite rethrows writer errors', () async {
+    await expectLater(checkedPreferenceWrite(() => throw StateError('io'), 'probe'), throwsStateError);
   });
 }
