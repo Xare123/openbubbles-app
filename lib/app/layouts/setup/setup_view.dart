@@ -138,6 +138,61 @@ class SetupViewController extends StatefulController {
     backgroundStartupError = error;
     Logger.warn('Login background startup failed distinctly', error: error);
   }
+  @visibleForTesting
+  Future<void> completeLoginRegistration({
+    int? attempt,
+    Future<void> Function()? ensureConfigured,
+    Future<List<String>> Function()? loadHandles,
+    Future<void> Function(String phone)? saveDefaultHandle,
+    Future<void> Function()? setupEncryption,
+    Future<void> Function()? persistCompletion,
+    void Function()? startBackground,
+    void Function()? clearTransferMaterial,
+    bool Function()? isHostedDevice,
+  }) async {
+    if (attempt != null && !isLoginAttemptCurrent(attempt)) return;
+    final ensure = ensureConfigured ?? () => pushService.configured();
+    final handlesLoader = loadHandles ?? () => api.getHandles(state: pushService.state!.client);
+    final handleSaver = saveDefaultHandle ?? (String phone) async {
+      ss.settings.defaultHandle.value = phone;
+      await ss.saveSettings();
+    };
+    final encryption = setupEncryption ?? () async {
+      final keychain = pushService.state?.icloudServices?.keychain;
+      if (keychain == null || circleSession == null) return;
+      final defaultPassword = Random.secure().nextInt(1000000).toString().padLeft(6, '0');
+      ss.settings.keychainDefaultPassword.value = defaultPassword;
+      await ss.saveSettings();
+      await api.circleSetupClique(client: pushService.state!.clientSession, keychain: keychain, devicePassword: defaultPassword);
+    };
+    final persist = persistCompletion ?? () => setup.persistSetupCompletion();
+    final background = startBackground ?? () {
+      setup.runBackgroundStartup().then(
+        (_) {},
+        onError: (Object error) => noteBackgroundStartupError(error),
+      );
+    };
+    await ensure();
+    if (attempt != null && !isLoginAttemptCurrent(attempt)) return;
+    final handles = await handlesLoader();
+    if (attempt != null && !isLoginAttemptCurrent(attempt)) return;
+    final phone = handles.firstWhereOrNull((h) => h.startsWith('tel:'));
+    if (phone != null) {
+      await handleSaver(phone);
+      if (attempt != null && !isLoginAttemptCurrent(attempt)) return;
+    }
+    await encryption();
+    if (attempt != null && !isLoginAttemptCurrent(attempt)) return;
+    await persist();
+    if (!publishLoginSuccess(attempt: attempt)) return;
+    (clearTransferMaterial ?? clearHardwareTransferMaterial)();
+    Logger.debug('Success registered!');
+    if ((isHostedDevice ?? () => ss.settings.deviceIsHosted.value)()) {
+      pushService.mixpanel?.track('hosted-setup-success');
+    }
+    Logger.debug('Finishing!');
+    background();
+  }
   bool triedBattery = false;
 
   api.LoginState state = const api.LoginState.needsLogin();
@@ -758,36 +813,7 @@ class SetupViewController extends StatefulController {
         pushService.doPoll(watcher.$3, pollState);
       }
 
-      if (!publishLoginSuccess(attempt: attempt)) return;
-      // persisting SMS auth certs is actually really useful
-      clearHardwareTransferMaterial();
-      Logger.debug("Success registered!");
-      if (ss.settings.deviceIsHosted.value) {
-        pushService.mixpanel?.track("hosted-setup-success");
-      }
-      await pushService.configured();
-
-      var handles = await api.getHandles(state: pushService.state!.client);
-      var phone = handles.firstWhereOrNull((h) => h.startsWith("tel:"));
-      if (phone != null) {
-        ss.settings.defaultHandle.value = phone;
-        ss.saveSettings();
-      }
-
-      var keychain = pushService.state?.icloudServices?.keychain;
-      if (keychain != null && circleSession != null) {
-        var defaultPassword = Random.secure().nextInt(1000000).toString().padLeft(6, '0');
-        ss.settings.keychainDefaultPassword.value = defaultPassword;
-        ss.saveSettings();
-
-        await api.circleSetupClique(client: pushService.state!.clientSession, keychain: keychain, devicePassword: defaultPassword);
-      }
-
-      Logger.debug("Finishing!");
-      setup.finishSetup().then(
-        (_) {},
-        onError: (Object error) => noteBackgroundStartupError(error),
-      );
+      await completeLoginRegistration(attempt: attempt);
   }
 
   Future<(List<api.IdsUser>?, api.SupportAlert?)> _registerIdsWithRetry(

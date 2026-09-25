@@ -14,11 +14,16 @@ class SetupService extends GetxService {
     await finishSetup();
   }
 
-  Future<void> finishSetup() async {
+  Future<void> persistSetupCompletion() async {
     ss.settings.finishedSetup.value = true;
     await ss.saveSettings();
-
+  }
+  Future<void> runBackgroundStartup() async {
     await StartupTasks.onStartup();
     await NetworkTasks.onConnect();
+  }
+  Future<void> finishSetup() async {
+    await persistSetupCompletion();
+    await runBackgroundStartup();
   }
 }
