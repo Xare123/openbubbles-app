@@ -15,8 +15,17 @@ class SetupService extends GetxService {
   }
 
   Future<void> persistSetupCompletion() async {
+    final prior = ss.settings.finishedSetup.value;
     ss.settings.finishedSetup.value = true;
-    await ss.saveSettings();
+    try {
+      await ss.settings.saveOne('finishedSetup');
+      if (ss.prefs.getBool('finishedSetup') != true) {
+        throw StateError('finishedSetup was not stored');
+      }
+    } catch (_) {
+      ss.settings.finishedSetup.value = prior;
+      rethrow;
+    }
   }
   Future<void> runBackgroundStartup() async {
     await StartupTasks.onStartup();

@@ -138,6 +138,15 @@ class SetupViewController extends StatefulController {
     backgroundStartupError = error;
     Logger.warn('Login background startup failed distinctly', error: error);
   }
+  void launchBackgroundStartupOperation(int? attempt, Future<void> Function() operation) {
+    Future<void>.sync(operation).then(
+      (_) {},
+      onError: (Object error) {
+        if (attempt != null && !isLoginAttemptCurrent(attempt)) return;
+        noteBackgroundStartupError(error);
+      },
+    );
+  }
   @visibleForTesting
   Future<void> completeLoginRegistration({
     int? attempt,
@@ -146,7 +155,7 @@ class SetupViewController extends StatefulController {
     Future<void> Function(String phone)? saveDefaultHandle,
     Future<void> Function()? setupEncryption,
     Future<void> Function()? persistCompletion,
-    void Function()? startBackground,
+    Future<void> Function()? startBackground,
     void Function()? clearTransferMaterial,
     bool Function()? isHostedDevice,
   }) async {
@@ -155,23 +164,24 @@ class SetupViewController extends StatefulController {
     final handlesLoader = loadHandles ?? () => api.getHandles(state: pushService.state!.client);
     final handleSaver = saveDefaultHandle ?? (String phone) async {
       ss.settings.defaultHandle.value = phone;
-      await ss.saveSettings();
+      await ss.settings.saveOne('defaultHandle');
+      if (ss.prefs.getString('defaultHandle') != phone) {
+        throw StateError('defaultHandle was not stored');
+      }
     };
     final encryption = setupEncryption ?? () async {
       final keychain = pushService.state?.icloudServices?.keychain;
       if (keychain == null || circleSession == null) return;
       final defaultPassword = Random.secure().nextInt(1000000).toString().padLeft(6, '0');
       ss.settings.keychainDefaultPassword.value = defaultPassword;
-      await ss.saveSettings();
+      await ss.settings.saveOne('keychainDefaultPassword');
+      if (ss.prefs.getString('keychainDefaultPassword') != defaultPassword) {
+        throw StateError('keychain password marker was not stored');
+      }
       await api.circleSetupClique(client: pushService.state!.clientSession, keychain: keychain, devicePassword: defaultPassword);
     };
     final persist = persistCompletion ?? () => setup.persistSetupCompletion();
-    final background = startBackground ?? () {
-      setup.runBackgroundStartup().then(
-        (_) {},
-        onError: (Object error) => noteBackgroundStartupError(error),
-      );
-    };
+    final background = startBackground ?? () => setup.runBackgroundStartup();
     await ensure();
     if (attempt != null && !isLoginAttemptCurrent(attempt)) return;
     final handles = await handlesLoader();
@@ -191,7 +201,7 @@ class SetupViewController extends StatefulController {
       pushService.mixpanel?.track('hosted-setup-success');
     }
     Logger.debug('Finishing!');
-    background();
+    launchBackgroundStartupOperation(attempt, background);
   }
   bool triedBattery = false;
 
@@ -705,7 +715,9 @@ class SetupViewController extends StatefulController {
   }
 
   Future<void> doRegister({int? attempt}) async {
-    if (_isCurrentOrUntracked(attempt)) success = false;
+    if (attempt != null && !isLoginAttemptCurrent(attempt)) return;
+    success = false;
+    backgroundStartupError = null;
     List<api.IdsUser> users = [];
 
     if (currentAppleUser != null) {
