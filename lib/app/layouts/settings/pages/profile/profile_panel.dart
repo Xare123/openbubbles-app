@@ -6,6 +6,7 @@ import 'dart:typed_data';
 import 'package:bluebubbles/app/components/avatars/contact_avatar_widget.dart';
 import 'package:bluebubbles/app/layouts/settings/pages/profile/posterkit.dart';
 import 'package:bluebubbles/app/layouts/settings/pages/profile/profile_scaffold.dart';
+import 'package:bluebubbles/app/layouts/settings/pages/profile/cloud_sync_keychain_card.dart';
 import 'package:bluebubbles/app/layouts/settings/pages/profile/cloud_sync_progress_card.dart';
 import 'package:bluebubbles/app/layouts/settings/pages/profile/cloud_sync_profile_entry.dart';
 import 'package:bluebubbles/app/layouts/settings/pages/profile/registration_repair_dialog.dart';
@@ -523,6 +524,8 @@ class _ProfilePanelState extends OptimizedState<ProfilePanel> with WidgetsBindin
                           pushService.cloudSyncV2ProgressUnavailableMessage,
                     ),
                   ]),
+                if (pushService.state?.icloudServices?.keychain != null)
+                  const CloudSyncKeychainCard(),
                 Obx(() {
                   // Normal iCloud sync entry: the V2 history card above is the
                   // normal path when its capability gate allows it. An enabled
