@@ -51,6 +51,7 @@ start_suite() {
     result=$?
     finished="$(date +%s)"
     printf '%s\n' "$((finished - started))" > "$suite_dir/$name.seconds"
+    printf '%s\n' "$result" > "$suite_dir/$name.rc"
     exit "$result"
   ) > "$suite_dir/$name.log" 2>&1 &
   pids["$name"]=$!
@@ -79,18 +80,51 @@ case "$VALIDATION_MODE" in
     ;;
 esac
 
-failed=0
 for name in "${selected[@]}"; do
-  if wait "${pids[$name]}"; then
-    statuses["$name"]='success'
-  else
-    statuses["$name"]='failure'
-    failed=1
-  fi
-  echo "::group::${name} validation suite"
-  cat "$suite_dir/$name.log"
-  echo '::endgroup::'
+  echo "Suite started: $name (log: $suite_dir/$name.log)"
 done
+progress_ticker() {
+  while true; do
+    sleep 300
+    for tick_name in "${selected[@]}"; do
+      if [[ ! -f "$suite_dir/$tick_name.status" ]]; then
+        tick_elapsed=$(( $(date +%s) - tick_start ))
+        echo "Suite progress: $tick_name still running after ${tick_elapsed}s; last log lines:"
+        tail -n 3 "$suite_dir/$tick_name.log" 2>/dev/null || true
+      fi
+    done
+  done
+}
+tick_start="$(date +%s)"
+progress_ticker &
+ticker_pid=$!
+failed=0
+declare -A recorded=()
+remaining=${#selected[@]}
+while (( remaining > 0 )); do
+  wait -n 2>/dev/null || true
+  progressed=0
+  for name in "${selected[@]}"; do
+    if [[ -z "${recorded[$name]:-}" && -f "$suite_dir/$name.rc" ]]; then
+      recorded[$name]=1
+      if [[ "$(cat "$suite_dir/$name.rc")" -eq 0 ]] 2>/dev/null; then
+        statuses["$name"]='success'
+      else
+        statuses["$name"]='failure'
+        failed=1
+      fi
+      printf '%s\n' "${statuses[$name]}" > "$suite_dir/$name.status"
+      echo "Suite finished: $name outcome=${statuses[$name]}"
+      echo "::group::${name} validation suite"
+      cat "$suite_dir/$name.log"
+      echo '::endgroup::'
+      progressed=1
+      remaining=$((remaining - 1))
+    fi
+  done
+  (( progressed )) || break
+done
+kill "$ticker_pid" 2>/dev/null || true
 
 for name in dart app_rust rustpush protector; do
   printf '%s=%s\n' "$name" "${statuses[$name]}" >> "$GITHUB_OUTPUT"
