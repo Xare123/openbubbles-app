@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:bluebubbles/services/rustpush/rustpush_service.dart';
 import 'package:bluebubbles/services/services.dart';
 import 'package:bluebubbles/src/rust/api/api.dart' as api;
 import 'package:flutter/material.dart';
