@@ -99,6 +99,8 @@ void main() {
     addTearDown(tester.binding.platformDispatcher.clearTextScaleFactorTestValue);
     await pumpCard(tester, check: () async => true, hasDefault: () => true, change: (_) async {});
     expect(find.text('iCloud Keychain code'), findsOneWidget);
+    await tester.ensureVisible(find.text('Change code'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Change code'));
     await tester.pumpAndSettle();
     expect(find.text('Change iCloud Keychain code'), findsOneWidget);
