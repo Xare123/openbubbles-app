@@ -47,13 +47,9 @@ class _CloudSyncKeychainCardState extends State<CloudSyncKeychainCard> {
     await api.changeEscrowPassword(keychain: keychain, devicePassword: code);
     ss.settings.keychainDefaultPassword.value = null;
     try {
-      await ss.settings.saveOne('keychainDefaultPassword');
-      if (ss.prefs.getString('keychainDefaultPassword') != null) {
-        throw const KeychainMarkerSaveException('local marker was not stored');
-      }
-    } catch (e) {
-      if (e is KeychainMarkerSaveException) rethrow;
-      throw KeychainMarkerSaveException('local marker save failed: ' + e.toString());
+      await checkedPreferenceWrite(() => ss.prefs.remove('keychainDefaultPassword'), 'keychain password marker');
+    } catch (_) {
+      throw const KeychainMarkerSaveException('local marker was not stored');
     }
   }
   bool get _canChange => !_checking && !_changing && _ready == true;
@@ -136,20 +132,20 @@ class _CloudSyncCodeDialogState extends State<CloudSyncCodeDialog> {
     return null;
   }
   Future<void> _submit() async {
-    if (_loading) return;
+    if (_loading || _markerMismatch) return;
     final validation = _validate();
     if (validation != null) {
-      setState(() { _error = validation; _markerMismatch = false; });
+      setState(() { _error = validation; });
       return;
     }
-    setState(() { _loading = true; _error = null; _markerMismatch = false; });
+    setState(() { _loading = true; _error = null; });
     try {
       await widget.submit(_code.text);
       if (!mounted) return;
       Navigator.of(context).pop(true);
-    } on KeychainMarkerSaveException catch (e) {
+    } on KeychainMarkerSaveException catch (_) {
       if (!mounted) return;
-      setState(() { _loading = false; _markerMismatch = true; _error = 'The code was changed, but this device could not save that status. Do not submit again yet; use Check again first. (' + e.message + ')'; });
+      setState(() { _loading = false; _markerMismatch = true; _error = 'The code changed, but this app could not save its status. Keep your new code.'; });
     } catch (_) {
       if (!mounted) return;
       setState(() { _loading = false; _markerMismatch = false; _error = 'Could not change the code. Check the entry and try again.'; });
@@ -159,6 +155,6 @@ class _CloudSyncCodeDialogState extends State<CloudSyncCodeDialog> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final entered = _code.text.length;
-    return PopScope(canPop: !_loading, child: AlertDialog(title: const Text('Change iCloud Keychain code'), content: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [Text(_passcode ? 'Enter a new six-digit passcode.' : 'Enter a new password.'), const SizedBox(height: 12), if (_passcode) Semantics(label: 'New passcode, $entered digits entered', child: ExcludeSemantics(child: Row(children: List.generate(6, (index) { final digit = index < entered ? _code.text[index] : ''; final shown = digit.isEmpty ? '' : (_obscure ? '*' : digit); final active = index == entered; return Expanded(child: Container(constraints: const BoxConstraints(minHeight: 50), margin: const EdgeInsets.all(3), decoration: BoxDecoration(border: Border.all(color: active ? theme.colorScheme.primary : theme.colorScheme.outline, width: active ? 2 : 1), borderRadius: BorderRadius.circular(10)), child: Center(child: FittedBox(fit: BoxFit.scaleDown, child: Text(shown, style: theme.textTheme.titleLarge))))); })))), if (_passcode) Opacity(opacity: 0, child: TextField(controller: _code, decoration: const InputDecoration(labelText: 'New passcode'), keyboardType: TextInputType.number, textInputAction: TextInputAction.done, autofocus: true, obscureText: _obscure, onChanged: (_) => setState(() {}), onSubmitted: (_) => _submit())), if (!_passcode) TextField(controller: _code, decoration: InputDecoration(labelText: 'New password', suffixIcon: IconButton(tooltip: _obscure ? 'Show password' : 'Hide password', icon: Icon(_obscure ? Icons.visibility_off : Icons.visibility), onPressed: () => setState(() => _obscure = !_obscure))), obscureText: _obscure, autofocus: true, textInputAction: TextInputAction.done, onSubmitted: (_) => _submit()), if (_passcode) TextButton(onPressed: () => setState(() => _obscure = !_obscure), child: Text(_obscure ? 'Show code' : 'Hide code')), if (_error != null) ...[const SizedBox(height: 8), Semantics(label: _markerMismatch ? 'Keychain status-save warning' : 'Keychain change error', child: ExcludeSemantics(child: Text(_error!, style: TextStyle(color: theme.colorScheme.error))))], if (_loading) ...[const SizedBox(height: 8), const LinearProgressIndicator()]])), actions: [TextButton(onPressed: _loading ? null : () => setState(() => _passcode = !_passcode), child: Text(_passcode ? 'Use password' : 'Use passcode')), TextButton(onPressed: _loading ? null : () => Navigator.of(context).pop(false), child: const Text('Cancel')), TextButton(onPressed: _loading ? null : _submit, child: const Text('OK'))]));
+    return PopScope(canPop: !_loading, child: AlertDialog(title: const Text('Change iCloud Keychain code'), content: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [Text(_passcode ? 'Enter a new six-digit passcode.' : 'Enter a new password.'), const SizedBox(height: 12), if (_passcode) Semantics(label: 'New passcode, $entered digits entered', child: ExcludeSemantics(child: Row(children: List.generate(6, (index) { final digit = index < entered ? _code.text[index] : ''; final shown = digit.isEmpty ? '' : (_obscure ? '*' : digit); final active = index == entered; return Expanded(child: Container(constraints: const BoxConstraints(minHeight: 50), margin: const EdgeInsets.all(3), decoration: BoxDecoration(border: Border.all(color: active ? theme.colorScheme.primary : theme.colorScheme.outline, width: active ? 2 : 1), borderRadius: BorderRadius.circular(10)), child: Center(child: FittedBox(fit: BoxFit.scaleDown, child: Text(shown, style: theme.textTheme.titleLarge))))); })))), if (_passcode) Opacity(opacity: 0, child: TextField(controller: _code, decoration: const InputDecoration(labelText: 'New passcode'), keyboardType: TextInputType.number, textInputAction: TextInputAction.done, autofocus: true, obscureText: _obscure, onChanged: (_) => setState(() {}), onSubmitted: (_) => _submit())), if (!_passcode) TextField(controller: _code, decoration: InputDecoration(labelText: 'New password', suffixIcon: IconButton(tooltip: _obscure ? 'Show password' : 'Hide password', icon: Icon(_obscure ? Icons.visibility_off : Icons.visibility), onPressed: () => setState(() => _obscure = !_obscure))), obscureText: _obscure, autofocus: true, textInputAction: TextInputAction.done, onSubmitted: (_) => _submit()), if (_passcode) TextButton(onPressed: () => setState(() => _obscure = !_obscure), child: Text(_obscure ? 'Show code' : 'Hide code')), if (_error != null) ...[const SizedBox(height: 8), Semantics(label: _markerMismatch ? 'Keychain status-save warning' : 'Keychain change error', child: ExcludeSemantics(child: Text(_error!, style: TextStyle(color: theme.colorScheme.error))))], if (_loading) ...[const SizedBox(height: 8), const LinearProgressIndicator()]])), actions: [TextButton(onPressed: _loading ? null : () => setState(() => _passcode = !_passcode), child: Text(_passcode ? 'Use password' : 'Use passcode')), TextButton(onPressed: _loading ? null : () => Navigator.of(context).pop(false), child: const Text('Cancel')), TextButton(onPressed: (_loading || _markerMismatch) ? null : _submit, child: const Text('OK'))]));
   }
 }

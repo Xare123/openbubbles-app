@@ -19,7 +19,8 @@ void main() {
     var calls = 0;
     await pumpCard(tester, check: () async { calls++; return false; }, hasDefault: () => false, change: (_) async {});
     expect(find.textContaining('Not ready'), findsOneWidget);
-    expect(find.text('A custom code is set.'), findsOneWidget);
+    expect(find.text('Code status is not confirmed. Nothing was changed.'), findsOneWidget);
+    expect(find.text('A custom code is set.'), findsNothing);
     expect(calls, 1);
     expect(tester.takeException(), isNull);
   });
@@ -176,6 +177,27 @@ void main() {
     gate.complete();
     await tester.pumpAndSettle();
     expect(find.text('Change iCloud Keychain code'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+  testWidgets('second submit after partial success is blocked', (tester) async {
+    var calls = 0;
+    await pumpCard(tester, check: () async => true, hasDefault: () => true, change: (_) async { calls++; throw const KeychainMarkerSaveException('marker was not stored'); });
+    await tester.tap(find.text('Change code'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Use password'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), 'secret-1');
+    await tester.pump();
+    await tester.tap(find.text('OK'));
+    await tester.pumpAndSettle();
+    expect(calls, 1);
+    expect(find.textContaining('could not save its status'), findsOneWidget);
+    final ok = tester.widget<TextButton>(find.widgetWithText(TextButton, 'OK'));
+    expect(ok.onPressed, isNull);
+    await tester.testTextInput.receiveAction(TextInputAction.done);
+    await tester.pump();
+    expect(calls, 1);
+    expect(find.text('Change iCloud Keychain code'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 }
