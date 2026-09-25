@@ -102,10 +102,13 @@ failed=0
 declare -A recorded=()
 remaining=${#selected[@]}
 while (( remaining > 0 )); do
-  wait -n 2>/dev/null || true
-  progressed=0
+  sleep 5
   for name in "${selected[@]}"; do
-    if [[ -z "${recorded[$name]:-}" && -f "$suite_dir/$name.rc" ]]; then
+    if [[ -n "${recorded[$name]:-}" ]]; then
+      continue
+    fi
+    outcome_note=""
+    if [[ -f "$suite_dir/$name.rc" ]]; then
       recorded[$name]=1
       if [[ "$(cat "$suite_dir/$name.rc")" -eq 0 ]] 2>/dev/null; then
         statuses["$name"]='success'
@@ -113,16 +116,29 @@ while (( remaining > 0 )); do
         statuses["$name"]='failure'
         failed=1
       fi
-      printf '%s\n' "${statuses[$name]}" > "$suite_dir/$name.status"
-      echo "Suite finished: $name outcome=${statuses[$name]}"
-      echo "::group::${name} validation suite"
-      cat "$suite_dir/$name.log"
-      echo '::endgroup::'
-      progressed=1
-      remaining=$((remaining - 1))
+    else
+      proc_state=""
+      if [[ -d /proc && -d "/proc/${pids[$name]}" ]]; then
+        proc_state="$(awk '{print $3}' "/proc/${pids[$name]}/stat" 2>/dev/null)"
+      elif [[ -d /proc ]]; then
+        proc_state="gone"
+      fi
+      if [[ "$proc_state" == gone || "$proc_state" == Z ]]; then
+        recorded[$name]=1
+        statuses["$name"]='failure'
+        failed=1
+        outcome_note=" (exited without receipt)"
+      else
+        continue
+      fi
     fi
+    printf '%s\n' "${statuses[$name]}" > "$suite_dir/$name.status"
+    echo "Suite finished: $name outcome=${statuses[$name]}$outcome_note"
+    echo "::group::${name} validation suite"
+    cat "$suite_dir/$name.log"
+    echo '::endgroup::'
+    remaining=$((remaining - 1))
   done
-  (( progressed )) || break
 done
 kill "$ticker_pid" 2>/dev/null || true
 

@@ -53,6 +53,30 @@ PATH="$stubs:$PATH" STUB_FLUTTER_SLEEP=60 STUB_FLUTTER_EXIT=0 STUB_CARGO_EXIT=0 
 code=$?
 [ "$code" = 124 ] || [ "$code" = 137 ] || fail "interruption exit=$code, want timeout kill"
 [ "$(cat "$RUNNER_TEMP/gce-validation-suites/app_rust.status")" = success ] || fail "completed app_rust evidence missing after kill"
-[ ! -f "$RUNNER_TEMP/gce-validation-suites/dart.status" ] || fail "pending dart must not have a final status"
+ [ ! -f "$RUNNER_TEMP/gce-validation-suites/dart.status" ] || fail "pending dart must not have a final status"
+note "case 4: instantly finished suites are collected under a short timeout"
+fresh_env
+stubs="$case_root/stubs"
+make_stubs "$stubs"
+PATH="$stubs:$PATH" STUB_FLUTTER_EXIT=0 STUB_CARGO_EXIT=0 timeout -s KILL 25 bash "$script" > "$case_root/stdout.log" 2>&1
+code=$?
+ [ "$code" = 0 ] || fail "fast suites under short timeout exit=$code"
+ [ "$(cat "$RUNNER_TEMP/gce-validation-suites/dart.status")" = success ] || fail "fast dart status not success"
+ [ "$(cat "$RUNNER_TEMP/gce-validation-suites/app_rust.status")" = success ] || fail "fast app_rust status not success"
+note "case 5: suite killed without receipt is failure, never skip"
+fresh_env
+stubs="$case_root/stubs"
+make_stubs "$stubs"
+PATH="$stubs:$PATH" STUB_FLUTTER_SLEEP=60 STUB_FLUTTER_EXIT=0 STUB_CARGO_EXIT=0 bash "$script" > "$case_root/stdout.log" 2>&1 &
+script_pid=$!
+sleep 3
+sleeper_pid="$(pgrep -f 'sleep 60' | head -n 1)"
+if [ -z "$sleeper_pid" ]; then fail "no sleeping stub found"; else stub_pid="$(ps -o ppid= -p "$sleeper_pid" | tr -d ' ')"; sub_pid="$(ps -o ppid= -p "$stub_pid" | tr -d ' ')"; kill -KILL "$sub_pid"; fi
+wait "$script_pid"
+code=$?
+ [ "$code" != 0 ] || fail "no-receipt run exited 0"
+ [ "$(cat "$RUNNER_TEMP/gce-validation-suites/dart.status")" = failure ] || fail "no-receipt dart status not failure"
+grep -q "exited without receipt" "$case_root/stdout.log" || fail "missing no-receipt notice"
+ [ "$(cat "$RUNNER_TEMP/gce-validation-suites/app_rust.status")" = success ] || fail "sibling app_rust evidence missing"
 if [ "$failures" = 0 ]; then note "all harness cases passed"; else note "$failures harness case(s) failed"; fi
 exit "$failures"
