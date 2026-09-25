@@ -23,6 +23,16 @@ declare -A statuses=(
   [protector]='skipped'
 )
 
+classify_suite_receipt() {
+  local receipt_path="$1"
+  local receipt=""
+  receipt="$(cat "$receipt_path" 2>/dev/null)" || receipt="UNREADABLE"
+  if [[ "$receipt" == '0' ]]; then
+    printf 'success'
+  else
+    printf 'failure'
+  fi
+}
 run_dart_suite() {
   flutter test &&
     pwsh -NoProfile -File tooling/windows/test_cloudkit_semantic_outbox_contract.ps1
@@ -51,7 +61,8 @@ start_suite() {
     result=$?
     finished="$(date +%s)"
     printf '%s\n' "$((finished - started))" > "$suite_dir/$name.seconds"
-    printf '%s\n' "$result" > "$suite_dir/$name.rc"
+    printf '%s\n' "$result" > "$suite_dir/$name.rc.tmp"
+    mv -f "$suite_dir/$name.rc.tmp" "$suite_dir/$name.rc"
     exit "$result"
   ) > "$suite_dir/$name.log" 2>&1 &
   pids["$name"]=$!
@@ -110,7 +121,7 @@ while (( remaining > 0 )); do
     outcome_note=""
     if [[ -f "$suite_dir/$name.rc" ]]; then
       recorded[$name]=1
-      if [[ "$(cat "$suite_dir/$name.rc")" -eq 0 ]] 2>/dev/null; then
+      if [[ "$(classify_suite_receipt "$suite_dir/$name.rc")" == 'success' ]]; then
         statuses["$name"]='success'
       else
         statuses["$name"]='failure'
@@ -124,6 +135,9 @@ while (( remaining > 0 )); do
         proc_state="gone"
       fi
       if [[ "$proc_state" == gone || "$proc_state" == Z ]]; then
+        if [[ -f "$suite_dir/$name.rc" ]]; then
+          continue
+        fi
         recorded[$name]=1
         statuses["$name"]='failure'
         failed=1
