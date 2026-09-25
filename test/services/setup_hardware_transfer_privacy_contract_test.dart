@@ -25,10 +25,12 @@ void main() {
       expect(earlyReturn, greaterThan(transientRetain));
       expect(persistentWrite, greaterThan(earlyReturn));
 
-      final success = setup.indexOf('success = true;');
-      final clear = setup.indexOf('clearHardwareTransferMaterial();', success);
-      final successLog = setup.indexOf('Success registered!', success);
-      expect(clear, greaterThan(success));
+      final publishCall =
+          setup.indexOf('if (!publishLoginSuccess(attempt: attempt)) return;');
+      expect(publishCall, greaterThanOrEqualTo(0));
+      final clear = setup.indexOf('clearHardwareTransferMaterial', publishCall);
+      final successLog = setup.indexOf('Success registered!', publishCall);
+      expect(clear, greaterThan(publishCall));
       expect(successLog, greaterThan(clear));
       expect(setup, contains('_transientHardwareTransfers.remove(code)'));
     },

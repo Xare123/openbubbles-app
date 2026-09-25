@@ -95,8 +95,10 @@ void main() {
     final c = SetupViewController();
     final order = <String>[];
     var launched = false;
-    await c.completeLoginRegistration(ensureConfigured: () async { order.add('configured'); }, loadHandles: () async { order.add('handles'); return <String>['tel:+1555']; }, saveDefaultHandle: (String phone) async { order.add('handle'); }, setupEncryption: () async { order.add('encryption'); }, persistCompletion: () async { order.add('persist'); }, clearTransferMaterial: () {}, isHostedDevice: () => false, startBackground: () async { launched = true; });
+    var cleared = false;
+    await c.completeLoginRegistration(ensureConfigured: () async { order.add('configured'); }, loadHandles: () async { order.add('handles'); return <String>['tel:+1555']; }, saveDefaultHandle: (String phone) async { order.add('handle'); }, setupEncryption: () async { order.add('encryption'); }, persistCompletion: () async { order.add('persist'); }, clearTransferMaterial: () { cleared = true; }, isHostedDevice: () => false, startBackground: () async { launched = true; });
     expect(c.success, isTrue);
+    expect(cleared, isTrue);
     expect(order, <String>['configured', 'handles', 'handle', 'encryption', 'persist']);
     expect(launched, isTrue);
   });
