@@ -228,8 +228,8 @@ void main() {
     native.rawReadbackResult = frb_api.CloudSyncOutboundReconcileResult(disposition: frb_api.CloudSyncOutboundReconcileDisposition.committed, protectedProofReference: testProtectedReference('T'), serverRecordIdHash: digestFor('S'), etagHash: receiptEtagValue, protectedCurrentRawRecordReference: testProtectedReference('Q'), protectedCurrentRawRecordLeaseReference: testProtectedLeaseReference('c'), rawGeneration: BigInt.from(1));
   }
   test('settled create with audit rows runs exact readback to settled preflight', () async {
-    await seedAccount();
     await provisionV2();
+    await seedAccount();
     await seedSettledRow(logicalCharacter: 'A', revision: 1, uuidIndex: 1, serverCharacter: 'K');
     await seedSettledRow(logicalCharacter: 'B', revision: 2, uuidIndex: 2, serverCharacter: 'L');
     final targetId = await seedSubmittedTarget();
@@ -256,8 +256,8 @@ void main() {
     expect(native.unexpectedCalls, 0);
   });
   test('notApplied clears Apple IDs and stays pending with no resend', () async {
-    await seedAccount();
     await provisionV2();
+    await seedAccount();
     final targetId = await seedSubmittedTarget();
     native.reconcileResult = frb_api.CloudSyncOutboundReconcileResult(disposition: frb_api.CloudSyncOutboundReconcileDisposition.notApplied, protectedProofReference: testProtectedReference('T'));
     final result = await runCheck();
@@ -277,8 +277,8 @@ void main() {
     expect(native.unexpectedCalls, 0);
   });
   test('unresolved remains retained with identities intact', () async {
-    await seedAccount();
     await provisionV2();
+    await seedAccount();
     final targetId = await seedSubmittedTarget();
     native.reconcileResult = const frb_api.CloudSyncOutboundReconcileResult(disposition: frb_api.CloudSyncOutboundReconcileDisposition.unresolved);
     final result = await runCheck();
@@ -297,8 +297,8 @@ void main() {
     expect(native.unexpectedCalls, 0);
   });
   test('restart at confirmed retained receipt finalizes to settled', () async {
-    await seedAccount();
     await provisionV2();
+    await seedAccount();
     final targetId = await seedSubmittedTarget();
     await durable().commitOutboxCreateReceipt(scope(), leaseId: 'previous-upload-seed', receipt: CloudOutboxCreateReceipt(operationId: targetId, logicalEntityKeyHash: digestFor('T'), serverRecordIdHash: digestFor('S'), etagHash: receiptEtagValue), retainProtectedLeaseReference: true, now: testEpoch);
     currentTime = testEpoch.add(const Duration(minutes: 5));
@@ -316,8 +316,8 @@ void main() {
     expect(native.unexpectedCalls, 0);
   });
   test('restart at pending raw readback resumes finalize without verify', () async {
-    await seedAccount();
     await provisionV2();
+    await seedAccount();
     final targetId = await seedSubmittedTarget();
     await durable().commitOutboxCreateReceipt(scope(), leaseId: 'previous-upload-seed', receipt: CloudOutboxCreateReceipt(operationId: targetId, logicalEntityKeyHash: digestFor('T'), serverRecordIdHash: digestFor('S'), etagHash: receiptEtagValue), retainProtectedLeaseReference: true, now: testEpoch);
     final confirmed = (await durable().readOutboxEntries(scope())).single;
@@ -338,8 +338,8 @@ void main() {
     expect(native.unexpectedCalls, 0);
   });
   test('auth replacement stops the check with bindings unchanged', () async {
-    await seedAccount();
     await provisionV2();
+    await seedAccount();
     await seedSubmittedTarget();
     flipSessionId = 'F' * 43;
     flipAfterReads = 1;
@@ -354,8 +354,8 @@ void main() {
     expect(native.unexpectedCalls, 0);
   });
   test('revoked runtime stops the check before any outbox mutation', () async {
-    await seedAccount();
     await provisionV2();
+    await seedAccount();
     await seedSubmittedTarget();
     runtimeBudget = 2;
     await expectLater(runCheck(), throwsA(isA<StateError>().having((StateError e) => e.message, 'message', 'cloud_sync_receipt_check_preflight_blocked')));
@@ -366,8 +366,8 @@ void main() {
     expect(native.unexpectedCalls, 0);
   });
   test('multiple unresolved rows reject before any reconcile', () async {
-    await seedAccount();
     await provisionV2();
+    await seedAccount();
     await seedSubmittedTarget();
     final second = buildOp(logicalCharacter: 'U', revision: 8, payloadShaCharacter: '8', leaseCharacter: 'e');
     await durable().enqueueOutbox(second);
@@ -378,8 +378,8 @@ void main() {
     expect(native.unexpectedCalls, 0);
   });
   test('foreign account rows reject before any reconcile', () async {
-    await seedAccount();
     await provisionV2();
+    await seedAccount();
     await seedSubmittedTarget();
     final foreignScope = CloudSyncScope(accountFingerprint: testAccountFingerprintB, container: 'com.apple.messages.cloud', database: 'private', zone: 'messageManateeZone', streamKind: CloudSyncStreamKind.messages, schemaVersion: 2, persistenceLane: CloudSyncPersistenceLane.semantic);
     objectBox.box<CloudOutboxOperationEntity>().put(CloudOutboxOperationEntity(operationId: CloudOperationIdentity.forInitialCreate(scope: foreignScope, logicalEntityKeyHash: digestFor('F'), payloadVersion: cloudSyncOutboundPayloadVersion), scopeKey: cloudSyncPersistentScopeKey(foreignScope), accountFingerprint: testAccountFingerprintB, zone: 'messageManateeZone', logicalEntityKeyHash: digestFor('F'), action: 0, payloadVersion: cloudSyncOutboundPayloadVersion, mutationRevision: 1, checkpointGeneration: 1, state: CloudOutboxStatus.unknownOutcome.index, appleRequestUuid: requestUuidValue, appleOperationUuid: operationUuidFor(20), protectedLeaseReference: testProtectedLeaseReference('b'), leaseExpiresAtMs: 0, createdAtMs: testEpoch.millisecondsSinceEpoch, updatedAtMs: testEpoch.millisecondsSinceEpoch));
@@ -388,8 +388,8 @@ void main() {
     expect(native.unexpectedCalls, 0);
   });
   test('active lease rejects before any reconcile', () async {
-    await seedAccount();
     await provisionV2();
+    await seedAccount();
     final targetId = await seedSubmittedTarget();
     final leased = await durable().leaseUnknownOutcomes(scope(), now: DateTime.now().toUtc(), limit: 1, leaseId: 'previous-upload-active', leaseDuration: const Duration(hours: 1));
     expect(leased, hasLength(1));

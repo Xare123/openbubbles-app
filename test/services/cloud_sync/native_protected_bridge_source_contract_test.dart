@@ -182,9 +182,9 @@ void main() {
     }
     expect(
       RegExp(r'NativeProtectedCloudSyncTransport\(').allMatches(adapter).length,
-      5,
+      6,
       reason:
-          'shadow, semantic pull, local send, local staged observation, and one-text outbound are the only compositions',
+          'shadow, semantic pull, local send, local staged observation, one-text outbound, and previous-upload receipt check are the only compositions',
     );
     expect(adapter, contains('NativeProtectedCloudSyncBindings?'));
     expect(adapter, isNot(contains('RustCloudSyncTransport(')));
@@ -204,12 +204,21 @@ void main() {
     final stagedStart = adapter.indexOf(
       'Future<T> cloudSyncObserveStagedChat<T>',
     );
+    final previousUploadStart = adapter.indexOf(
+      'Future<CloudSyncPreviousUploadResult> checkCloudSyncPreviousMessageUpload(',
+    );
+    final previousUploadEnd = adapter.indexOf(
+      'typedef _CanaryOutboxRead',
+      previousUploadStart,
+    );
     expect(shadowStart, greaterThanOrEqualTo(0));
     expect(semanticStart, greaterThan(shadowStart));
     expect(localSendStart, greaterThan(semanticStart));
     expect(outboundStart, greaterThan(localSendStart));
     expect(stagedStart, greaterThan(localSendStart));
     expect(outboundStart, greaterThan(stagedStart));
+    expect(previousUploadStart, greaterThan(outboundStart));
+    expect(previousUploadEnd, greaterThan(previousUploadStart));
     final shadowComposition = adapter.substring(shadowStart, semanticStart);
     final semanticComposition = adapter.substring(
       semanticStart,
@@ -217,6 +226,44 @@ void main() {
     );
     final localSendComposition = adapter.substring(localSendStart, stagedStart);
     final stagedComposition = adapter.substring(stagedStart, outboundStart);
+    final outboundComposition = adapter.substring(outboundStart, previousUploadStart);
+    final previousUploadComposition = adapter.substring(
+      previousUploadStart,
+      previousUploadEnd,
+    );
+    final previousUploadTransportStart = previousUploadComposition.indexOf(
+      'NativeProtectedCloudSyncTransport(',
+    );
+    expect(previousUploadTransportStart, greaterThan(0));
+    final previousUploadGate = previousUploadComposition.substring(
+      0,
+      previousUploadTransportStart,
+    );
+    for (final gate in [
+      '!runtimeAllowed()',
+      'bindings is! CloudKitWriterReconciliationBinding',
+      'interlock.runExclusive(kind: CloudKitOperationKind.v2ReadWrite',
+      'await requireReady()',
+      'candidates.length != 1',
+      "throw StateError('cloud_sync_receipt_check_lease_active')",
+    ]) {
+      expect(previousUploadGate, contains(gate));
+    }
+    expect(previousUploadComposition, contains('guard.reconcileUnknownOutcome('));
+    expect(previousUploadComposition, contains('transport.verifyConfirmedMessageCreateNoSave('));
+    expect(previousUploadComposition, contains('await transport.quiesceNativeOperations()'));
+    for (final forbidden in [
+      'CloudSyncEngine(',
+      'flushOutbox(',
+      'admitProtectedOutbound',
+      'stageOutboundMessage(',
+      'stageOutboundChat(',
+      'pushOperations(',
+      'sendMsg(',
+      'provisionInitialOwner(',
+    ]) {
+      expect(previousUploadComposition, isNot(contains(forbidden)));
+    }
     expect(
       stagedComposition.indexOf('!CloudSyncDevGate.manualSemanticPullEnabled'),
       lessThan(stagedComposition.indexOf('NativeProtectedCloudSyncTransport(')),
@@ -289,7 +336,8 @@ void main() {
       semanticComposition,
       localSendComposition,
       stagedComposition,
-      adapter.substring(outboundStart),
+      outboundComposition,
+      previousUploadComposition,
     ]) {
       expect(
         RegExp(

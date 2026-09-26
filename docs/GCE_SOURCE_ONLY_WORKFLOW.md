@@ -6,7 +6,7 @@ it is not the routine Git, dispatch, monitoring, or cleanup operator.
 
 ## Established configuration
 
-Verified on September 18, 2026. Recheck remote state before each dispatch.
+Verified on September 26, 2026 against the live refs below. Recheck remote state before each dispatch.
 
 | Setting | Value |
 | --- | --- |
@@ -14,7 +14,7 @@ Verified on September 18, 2026. Recheck remote state before each dispatch.
 | Workflow | `GCE runner pilot`, ID `345678579` |
 | Workflow file | `.github/workflows/gce-runner-pilot.yml` |
 | Workflow ref | `agent/gce-runner-pilot` |
-| Reviewed workflow commit | `fab604fc7119b7d489caf39e96619d59d3c3e697` |
+| Reviewed workflow commit | `1ff3a0cb837c52beaeef0a71059ca7e4888051e9` |
 | Trusted source branch | `agent/cloudkit-v2-received-origin-20260916` |
 | Machine / provisioning | `n2d-standard-16` / `spot` |
 | Zone / lane | `us-west1-b` / `primary` |
@@ -26,6 +26,9 @@ The selected mode runs Dart/Flutter/PowerShell plus app Rust and the workflow's
 generated-binding checks. It does not select rustpush or protector suites and
 does not build an APK or run signing. The inherited job title "Build beta APK on
 GCE" is not proof that an APK was built; report the actual selected steps.
+For a Dart-only correction batch, dispatch the same command with
+validation_mode=dart-only: it installs the same pinned ObjectBox, runs the Dart suite,
+and skips the Rust, bridge, and Android steps. This changes no workflow file.
 
 ## Tools and permissions
 
