@@ -5,6 +5,7 @@ import 'dart:ui' as ui;
 import 'package:bluebubbles/app/layouts/settings/pages/profile/cloud_sync_progress_card.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_progress.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_semantic_drain_controller.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_profile_readiness.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_user_copy.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
@@ -611,6 +612,44 @@ void main() {
     );
     expect(find.text('Restart needed before resuming'), findsOneWidget);
     expect(find.textContaining('Fully close and restart'), findsOneWidget);
+    expect(
+      tester.widget<FilledButton>(find.byType(FilledButton)).onPressed,
+      isNull,
+    );
+    expect(tester.takeException(), isNull);
+  });
+  testWidgets('exact outbox blocker fixture shows typed reason without invitation', (
+    tester,
+  ) async {
+    final p = CloudSyncProgress();
+    const reason = CloudSyncProfileReadiness.unfinishedUploads;
+    await tester.pumpWidget(
+      host(
+        p,
+        (_) async => fail('must not start while blocked'),
+        availability: () => false,
+        unavailableMessage: () => reason.message,
+      ),
+    );
+    expect(find.text('Sync is not available right now'), findsOneWidget);
+    expect(find.textContaining('Outgoing iCloud updates still need confirmation'), findsOneWidget);
+    expect(find.text('Ready to sync'), findsNothing);
+    expect(
+      tester.widget<FilledButton>(find.byType(FilledButton)).onPressed,
+      isNull,
+    );
+    expect(tester.takeException(), isNull);
+  });
+  testWidgets('blocked sign-in copy keeps recovery text without invitation', (
+    tester,
+  ) async {
+    final p = CloudSyncProgress();
+    p.safeFailure = 'cloudkit_authorization';
+    await tester.pumpWidget(
+      host(p, (_) async => fail('must not start while blocked'), availability: () => false),
+    );
+    expect(find.text('Sign-in or device check needed'), findsOneWidget);
+    expect(find.textContaining('Tap Start / resume to try again'), findsNothing);
     expect(
       tester.widget<FilledButton>(find.byType(FilledButton)).onPressed,
       isNull,

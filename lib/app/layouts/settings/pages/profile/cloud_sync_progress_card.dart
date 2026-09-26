@@ -131,10 +131,7 @@ class _CloudSyncProgressCardState extends State<CloudSyncProgressCard> {
       final readyWhileBlocked =
           blocked && notice.state == CloudSyncUserState.ready;
       final unavailableReason = widget.unavailableMessage?.call();
-      const blockedFallback =
-          'Not available right now. This needs the authorized test build, '
-          'your iCloud account signed in, no other sync running, '
-          'and the older sync method switched off.';
+      const blockedFallback = 'Sync is not available right now. Check back shortly.';
       final blockerText = (unavailableReason?.isNotEmpty ?? false)
           ? unavailableReason!
           : blockedFallback;
