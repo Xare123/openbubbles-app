@@ -12,6 +12,8 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_operation_identit
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_send_journal.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_manual_shadow_sampler.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_models.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_outbound_admission.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_outbound_staging.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_production_sampler_adapter.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_manual_semantic_pull_sampler.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_protector.dart';
@@ -27,6 +29,7 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_persistent_k
 import 'package:bluebubbles/src/rust/api/api.dart' as frb_api;
 import 'package:flutter_test/flutter_test.dart';
 import 'cloud_sync_test_helpers.dart';
+import 'cloud_sync_restored_chat_test_fixture.dart';
 // Fake protection bridge. The seam never invokes crypto on these paths, but the
 // production protector type is required, so its native bridge is stubbed out.
 final class FakeProtectionBindings implements RustCloudSyncProtectionBindings {
@@ -49,18 +52,21 @@ final class FakeNativeBindings implements NativeProtectedCloudSyncBindings, Nati
   int prepareCalls = 0;
   int consumeCalls = 0;
   int unexpectedCalls = 0;
+  Future<void> Function()? onReconcile;
   frb_api.CloudSyncOutboundReconcileResult reconcileResult = const frb_api.CloudSyncOutboundReconcileResult(disposition: frb_api.CloudSyncOutboundReconcileDisposition.unresolved);
   frb_api.CloudSyncOutboundReconcileResult rawReadbackResult = const frb_api.CloudSyncOutboundReconcileResult(disposition: frb_api.CloudSyncOutboundReconcileDisposition.unresolved);
   Object? reconcileThrow;
   List<String> events = <String>[];
   Never unexpected(String name) {
     unexpectedCalls++;
+    events.add('unexpected:$name');
     throw StateError('unexpected native call ' + name);
   }
   @override
   Future<frb_api.CloudSyncOutboundReconcileResult> reconcileMessageCreate({required Object cloudMessagesClient, required String storageDirectory, required String expectedAccountFingerprint, required String expectedProtectedStoreIdentity, required String requestUuid, required frb_api.CloudSyncPreparedMessageCreateInput input}) async {
     reconcileCalls++;
     events.add('reconcile');
+    await onReconcile?.call();
     final thrown = reconcileThrow;
     if (thrown != null) throw thrown;
     return reconcileResult;
@@ -129,6 +135,133 @@ final class FakeNativeBindings implements NativeProtectedCloudSyncBindings, Nati
 }
 // Scriptable writer pause. Records pause, warm and resume order through the
 // shared event log to prove the pause is released before writer lookup.
+final class RecoveryNativeBindings extends FakeNativeBindings
+    implements NativeProtectedPreparedReleaseBindings {
+  List<frb_api.CloudSyncPreparedMessageCreateInput> preparedInputs = [];
+  Future<void> Function()? onPrepare;
+  bool uncertainConsume = false;
+  int releaseCalls = 0;
+  String sessionId = 'N' * 43;
+
+  @override
+  Future<CloudSyncNativeAuthMetadata> capture({
+    required Object cloudMessagesClient, required String privateStorageDirectory,
+  }) async => CloudSyncNativeAuthMetadata(nativeSessionId: sessionId,
+    accountFingerprint: testAccountFingerprintA,
+    protectedStoreIdentity: 'obcs2.store.$testAccountFingerprintA');
+
+  RecoveryNativeBindings() {
+    reconcileResult = frb_api.CloudSyncOutboundReconcileResult(
+      disposition: frb_api.CloudSyncOutboundReconcileDisposition.notApplied,
+      protectedProofReference: testProtectedReference('P'),
+    );
+  }
+
+  @override
+  Future<NativeProtectedRecoveryResult> recoverProtectedPageLeases({
+    required String storageDirectory,
+    required List<String> adoptedLeaseReferences,
+    required List<String> liveReferences,
+    required bool liveReferenceEnumerationComplete,
+  }) async => NativeProtectedRecoveryResult(recovery: NativeProtectedRecovery(
+    finalizedAdoptedLeaseReferences: adoptedLeaseReferences,
+    absentAdoptedLeaseReferences: const [],
+    rolledBackCount: 0, removedTemporaryFilesCount: 0, hasMore: false,
+  ));
+
+  @override
+  Future<frb_api.CloudSyncPreparedMessageCreateResult> prepareMessageCreate({
+    required Object cloudMessagesClient,
+    required String storageDirectory,
+    required String expectedAccountFingerprint,
+    required String expectedProtectedStoreIdentity,
+    required String requestUuid,
+    required Duration requestTimeout,
+    required List<frb_api.CloudSyncPreparedMessageCreateInput> inputs,
+  }) async {
+    prepareCalls++;
+    preparedInputs = List.of(inputs);
+    await onPrepare?.call();
+    return frb_api.CloudSyncPreparedMessageCreateResult(
+      handle: _RecoveryHandle(),
+      handleBindingSha256: testSha256('a'),
+    );
+  }
+
+  @override
+  Future<frb_api.CloudSyncOutboundConsumeResult> consumePreparedMessageCreate({
+    required frb_api.CloudSyncPreparedMessageCreateHandle handle,
+    required String mutationCapabilityToken,
+  }) async {
+    consumeCalls++;
+    return frb_api.CloudSyncOutboundConsumeResult(outcomes: [
+      for (final input in preparedInputs)
+        frb_api.CloudSyncOutboundSaveOutcome(
+          localOperationId: input.localOperationId,
+          appleOperationUuid: input.appleOperationUuid,
+          disposition: uncertainConsume
+              ? frb_api.CloudSyncOutboundSaveDisposition.unknownOutcome
+              : frb_api.CloudSyncOutboundSaveDisposition.succeeded,
+          serverRecordIdHash: digestFor('S'),
+          etagHash: receiptEtagValue,
+        ),
+    ]);
+  }
+
+  @override
+  Future<bool> releasePreparedMessageCreate({
+    required frb_api.CloudSyncPreparedMessageCreateHandle handle,
+  }) async {
+    releaseCalls++;
+    return true;
+  }
+}
+
+final class _RecoveryHandle implements frb_api.CloudSyncPreparedMessageCreateHandle {
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+final class _RecoveryMessage implements frb_api.CloudMessage {
+  _RecoveryMessage(Message message)
+      : guid = message.guid!,
+        chatId = message.chat.target!.guid,
+        destinationCallerId = message.chat.target!.usingHandle!.replaceFirst('mailto:', '');
+  @override
+  final String guid;
+  @override
+  final String chatId;
+  @override
+  final String destinationCallerId;
+  @override
+  int get type => 1;
+  @override
+  String get service => 'iMessage';
+  @override
+  String get sender => '';
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+final class _RecoveryStage implements CloudSyncOutboundStagingTransport {
+  @override
+  Future<T> runOutboundAdmissionExclusive<T>(Future<T> Function() action) => action();
+  @override
+  Future<CloudSyncProtectedOutboundStageData> stageOutboundMessage(
+    CloudSyncScope scope, {required frb_api.CloudMessage message}
+  ) async => CloudSyncProtectedOutboundStageData(
+    logicalEntityKeyHash: digestFor('T'),
+    protectedEnvelopeReference: testProtectedReference('P'),
+    payloadSha256: testSha256('a'),
+    serverRecordIdHash: digestFor('S'),
+    leaseReference: testProtectedLeaseReference('a'),
+  );
+  @override
+  Future<void> commitOutboundLease(String leaseReference, String protectedEnvelopeReference) async {}
+  @override
+  Future<void> rollbackOutboundLease(String leaseReference) async {}
+}
+
 final class FakeWriterPause implements CloudSyncNativeWriterPause {
   FakeWriterPause(this.events);
   final List<String> events;
@@ -234,7 +367,8 @@ void main() {
     }
     return false;
   }
-  Future<CloudSyncPreviousUploadResult> runCheck() => checkCloudSyncPreviousMessageUpload(store: objectBox, protector: protector, readAuth: readAuth, readActiveClient: () => activeClient, nativeAuthBinding: native, bindings: native, readPreflight: readPreflight, runtimeAllowed: runtimeAllowed, storageDirectory: directory.path, writerPause: writerPause);
+  Future<CloudSyncPreviousUploadResult> runCheck({bool v2Build = false}) => checkCloudSyncPreviousMessageUpload(store: objectBox, protector: protector, readAuth: readAuth, readActiveClient: () => activeClient, nativeAuthBinding: native, bindings: native, readPreflight: readPreflight, runtimeAllowed: runtimeAllowed, storageDirectory: directory.path, writerPause: writerPause,
+    writerBuildDecisionOverrideForTest: v2Build ? CloudKitWriterOwnership.resolve('v2') : null);
   CloudOutboxOperation buildOp({required String logicalCharacter, required int revision, required String payloadShaCharacter, required String leaseCharacter}) {
     final String logical = digestFor(logicalCharacter);
     final CloudSyncScope active = scope();
@@ -269,6 +403,403 @@ void main() {
     native.reconcileResult = frb_api.CloudSyncOutboundReconcileResult(disposition: frb_api.CloudSyncOutboundReconcileDisposition.committed, protectedProofReference: testProtectedReference('T'), serverRecordIdHash: digestFor('S'), etagHash: receiptEtagValue);
     native.rawReadbackResult = frb_api.CloudSyncOutboundReconcileResult(disposition: frb_api.CloudSyncOutboundReconcileDisposition.committed, protectedProofReference: testProtectedReference('T'), serverRecordIdHash: digestFor('S'), etagHash: receiptEtagValue, protectedCurrentRawRecordReference: testProtectedReference('Q'), protectedCurrentRawRecordLeaseReference: testProtectedLeaseReference('c'), rawGeneration: BigInt.from(1));
   }
+  Future<String> seedAdoptedPendingWithAudits({int auditCount = 8}) async {
+    await provisionV2();
+    for (final zone in ['chatManateeZone', 'messageManateeZone', 'attachmentManateeZone']) {
+      await durable().recordPullSuccess(zoneScope(zone), now: testEpoch);
+    }
+    for (var i = 0; i < auditCount; i++) {
+      await seedSettledRow(
+        logicalCharacter: String.fromCharCode(65 + i), revision: i + 1,
+        uuidIndex: i + 1, serverCharacter: String.fromCharCode(75 + i),
+      );
+    }
+    final authority = ObjectBoxCloudKitWriterAuthority.forTest(
+      store: objectBox, buildDecision: CloudKitWriterOwnership.resolve('v2'),
+    );
+    final journal = CloudSyncLocalSendJournal(
+      store: objectBox, authority: authority,
+      authoritySnapshot: authority.read(writerScope())!,
+    );
+    final handle = Handle(address: 'recipient@example.com', service: 'iMessage',
+      uniqueAddressAndService: 'recipient@example.com/iMessage');
+    objectBox.box<Handle>().put(handle);
+    final chat = Chat(guid: 'iMessage;-;recipient@example.com',
+      chatIdentifier: 'recipient@example.com', usingHandle: 'mailto:sender@example.com',
+      style: 45, participants: [handle])..handles.add(handle);
+    objectBox.box<Chat>().put(chat);
+    const stableGuid = '11111111-1111-4111-8111-111111111111';
+    final message = Message(guid: 'temp-Abc12345', stagingGuid: stableGuid,
+      text: 'synthetic recovery', isFromMe: true, dateCreated: testEpoch,
+      attributedBody: [AttributedBody.raw('synthetic recovery')])..chat.target = chat;
+    final identity = CloudSyncLocalSendIdentity.capture(message, chat, stableGuid)!;
+    journal.saveSubmission(identity: identity, newlyGeneratedGuid: true,
+      persistMessage: () => objectBox.box<Message>().put(message), now: testEpoch);
+    message..guid = stableGuid..stagingGuid = null;
+    journal.saveConfirmedSubmission(identity: identity,
+      persistMessage: () => objectBox.box<Message>().put(message), now: testEpoch);
+    final chatScope = zoneScope('chatManateeZone');
+    final applied = await seedSyntheticRestoredChatAppliedSource(
+      objectBox: objectBox, store: durable(), chatScope: chatScope, now: testEpoch);
+    await seedSyntheticRestoredChatProof(objectBox: objectBox, store: durable(),
+      chatScope: chatScope, chat: chat, appliedSource: applied, now: testEpoch);
+    final coordinator = CloudSyncOutboundAdmissionCoordinator(
+      store: durable(), transport: _RecoveryStage(),
+      ensureProtectedStoreRecovered: () async {},
+    );
+    final operation = await coordinator.admitLocalSend(scope(),
+      intentId: objectBox.box<CloudSyncLocalSendIntentEntity>().getAll().single.id,
+      journal: journal,
+      authFence: CloudSyncLocalSendAuthFence(expected: authSnapshot,
+        capture: () async => authSnapshot, stillCurrent: () => true),
+      encodeMessage: _RecoveryMessage.new,
+    );
+    final ownedStore = ObjectBoxCloudSyncStore(
+      store: objectBox, protector: protector, localSendJournal: journal,
+      clock: () => testEpoch,
+    );
+    // Reproduce the retained row's lifecycle through real store transitions:
+    // seven prior submissions proven not applied, with Apple UUIDs cleared
+    // but the original adopted envelope and protected lease preserved.
+    for (var i = 0; i < 7; i++) {
+      final now = testEpoch.add(Duration(seconds: i + 1));
+      final leaseId = 'synthetic-not-applied-$i';
+      await ownedStore.leaseEligibleOutbox(scope(), now: now, limit: 1,
+        leaseId: leaseId, leaseDuration: const Duration(minutes: 1),
+        allowedActions: const {CloudOutboxAction.save});
+      await ownedStore.markOutboxSubmissionStarted(scope(), leaseId: leaseId,
+        submissionIdentity: testSubmissionIdentity([operation.operationId]), now: now);
+      await ownedStore.applyOutboxTransitions(scope(), leaseId: leaseId,
+        transitions: [CloudOutboxTransition.provenNotApplied(operation.operationId,
+          category: CloudFailureCategory.server, nextEligibleAt: now)], now: now);
+    }
+    return operation.operationId;
+  }
+
+  CloudSyncProductionOutboundCanaryAdapter recoveryAdapter({bool Function()? allowed}) =>
+      CloudSyncProductionOutboundCanaryAdapter(
+    privateStorageDirectory: directory.path,
+    readActiveClient: () => activeClient,
+    readPreflight: () async => CloudSyncShadowPreflightState(
+      platformSupported: true, uiIsolate: true, rustPushReady: true,
+      objectBoxReady: true, privateStorageExists: true, logoutActive: false,
+      legacySyncEnabled: false, legacySyncActive: false,
+      coordinatorLeaseActive: false,
+      outboxCount: objectBox.box<CloudOutboxOperationEntity>().count(),
+      protectorSentinelValid: true,
+    ),
+    nativeAuthBinding: native, transportBindings: native,
+    protectionBindings: FakeProtectionBindings(),
+    quarantineLegacyDeletionQueues: () => throw StateError('unexpected provisioning'),
+    readWriterMeasurements: (_) => throw StateError('unexpected provisioning'),
+    compileGateOverrideForTest: true, v2WriterOverrideForTest: true,
+    storeOverrideForTest: objectBox,
+    writerBuildDecisionOverrideForTest: CloudKitWriterOwnership.resolve('v2'),
+    receiptRecoveryAllowed: allowed ?? () => true,
+    writerPauseOverrideForTest: FakeWriterPause(native.events),
+  );
+
+  test('Profile retry uploads only its pinned pending create and finishes exact readback', () async {
+    final targetId = await seedAdoptedPendingWithAudits();
+    native = RecoveryNativeBindings();
+    native.rawReadbackResult = frb_api.CloudSyncOutboundReconcileResult(
+      disposition: frb_api.CloudSyncOutboundReconcileDisposition.committed,
+      protectedProofReference: testProtectedReference('P'),
+      serverRecordIdHash: digestFor('S'), etagHash: receiptEtagValue,
+      protectedCurrentRawRecordReference: testProtectedReference('Q'),
+      protectedCurrentRawRecordLeaseReference: testProtectedLeaseReference('c'),
+      rawGeneration: BigInt.from(1),
+    );
+    final audits = ObjectBoxCloudSyncPreflightReader.settledAuditFingerprint(
+      objectBox.box<CloudOutboxOperationEntity>().getAll().where((r) => r.operationId != targetId).toList());
+    final adapter = recoveryAdapter();
+    final confirmation = await adapter.armPendingUploadRetry();
+    expect(native.prepareCalls, 0);
+    expect(native.consumeCalls, 0);
+    expect(await adapter.retryPendingUpload(confirmation), CloudSyncPreviousUploadResult.settled);
+    expect(native.consumeCalls, 1);
+    expect(native.stageCalls, 0);
+    expect(native.rawReadbackCalls, 1);
+    expect(ObjectBoxCloudSyncPreflightReader(store: objectBox).read().settledOutboxFingerprint, isNotNull);
+    expect(objectBox.box<CloudOutboxOperationEntity>().count(), 9);
+    expect(ObjectBoxCloudSyncPreflightReader.settledAuditFingerprint(
+      objectBox.box<CloudOutboxOperationEntity>().getAll().where((r) => r.operationId != targetId).toList()), audits);
+    await expectLater(adapter.retryPendingUpload(confirmation), throwsStateError);
+    expect(native.consumeCalls, 1, reason: 'a reused confirmation never writes twice');
+  });
+
+  test('Profile retry cancellation preserves the pending envelope without native work', () async {
+    await seedAdoptedPendingWithAudits();
+    native = RecoveryNativeBindings();
+    final adapter = recoveryAdapter();
+    final before = await durable().readOutboxEntries(scope());
+    final confirmation = await adapter.armPendingUploadRetry();
+    adapter.canary.disarm(confirmation);
+    await expectLater(adapter.retryPendingUpload(confirmation), throwsStateError);
+    final after = await durable().readOutboxEntries(scope());
+    expect(after.length, before.length);
+    for (var i = 0; i < before.length; i++) {
+      expect(after[i].sameDurableSnapshotAs(before[i]), isTrue);
+    }
+    expect(native.prepareCalls, 0);
+    expect(native.consumeCalls, 0);
+  });
+
+  test('Profile retry cannot select an uncertain previous submission', () async {
+    await provisionV2();
+    await seedAccount();
+    await seedSubmittedTarget();
+    final adapter = recoveryAdapter();
+    await expectLater(adapter.armPendingUploadRetry(), throwsStateError);
+    expect(native.consumeCalls, 0);
+    expect(native.reconcileCalls, 0);
+  });
+
+  test('Profile retry becoming unavailable during native prepare never consumes', () async {
+    await seedAdoptedPendingWithAudits();
+    var allowed = true;
+    final recovery = RecoveryNativeBindings()..onPrepare = () async { allowed = false; };
+    native = recovery;
+    final adapter = recoveryAdapter(allowed: () => allowed);
+    final confirmation = await adapter.armPendingUploadRetry();
+    try { await adapter.retryPendingUpload(confirmation); } catch (_) {}
+    expect(native.prepareCalls, 1);
+    expect(native.consumeCalls, 0);
+    expect(recovery.releaseCalls, 1);
+  });
+
+  test('post-retry receipt check rejects a different operation before native work', () async {
+    await provisionV2();
+    await seedAccount();
+    await seedSubmittedTarget();
+    final unrelated = buildOp(logicalCharacter: 'Z', revision: 9,
+      payloadShaCharacter: '9', leaseCharacter: 'a');
+    await expectLater(checkCloudSyncPreviousMessageUpload(
+      store: objectBox, protector: protector, readAuth: readAuth,
+      readActiveClient: () => activeClient, nativeAuthBinding: native,
+      bindings: native, readPreflight: readPreflight, runtimeAllowed: () => true,
+      storageDirectory: directory.path, writerPause: writerPause,
+      expectedOperation: unrelated, expectedAuth: authSnapshot,
+    ), throwsStateError);
+    expect(native.reconcileCalls, 0);
+    expect(native.rawReadbackCalls, 0);
+    expect(native.warmUnderPauseCalls, 0);
+  });
+
+  test('production recovery sends adopted pending with eight audits then settles via receipt check', () async {
+    final targetId = await seedAdoptedPendingWithAudits();
+    final pending = (await durable().readOutboxEntries(scope()))
+      .singleWhere((r) => r.operationId == targetId);
+    expect(pending.mutationRevision, 9);
+    expect(pending.attemptCount, 7);
+    expect(pending.appleRequestUuid, isNull);
+    expect(objectBox.box<CloudSyncLocalSendIntentEntity>().getAll()
+      .single.protectedSourceBinding, isNull, reason: 'legacy text needs no fabricated source proof');
+    final auditRows = objectBox.box<CloudOutboxOperationEntity>().getAll()
+      .where((r) => r.operationId != targetId).toList();
+    final auditPin = ObjectBoxCloudSyncPreflightReader.settledAuditFingerprint(auditRows);
+    expect(auditPin, isNotNull);
+    native = RecoveryNativeBindings();
+    final adapter = recoveryAdapter();
+    final confirmation = await adapter.canary.armRecoveryConfirmed();
+    final report = await adapter.canary.runDoubleConfirmed(confirmation);
+    expect(report.confirmed, 1, reason: '${report.toJson()} / ${native.events} / '
+      '${(await durable().readOutboxEntries(scope())).singleWhere((r) => r.operationId == targetId).lastFailure}');
+    expect(native.consumeCalls, 1);
+    expect(native.prepareCalls, 1);
+    expect(native.stageCalls, 0);
+    expect(native.unexpectedCalls, 0);
+    expect((await durable().readOutboxEntries(scope())).singleWhere(
+      (r) => r.operationId == targetId).protectedLeaseReference, isNotNull);
+    scriptCommitted();
+    native.rawReadbackResult = frb_api.CloudSyncOutboundReconcileResult(
+      disposition: frb_api.CloudSyncOutboundReconcileDisposition.committed,
+      protectedProofReference: testProtectedReference('P'),
+      serverRecordIdHash: digestFor('S'), etagHash: receiptEtagValue,
+      protectedCurrentRawRecordReference: testProtectedReference('Q'),
+      protectedCurrentRawRecordLeaseReference: testProtectedLeaseReference('c'),
+      rawGeneration: BigInt.from(1),
+    );
+    expect(await runCheck(v2Build: true), CloudSyncPreviousUploadResult.settled);
+    expect(ObjectBoxCloudSyncPreflightReader(store: objectBox).read().settledOutboxFingerprint, isNotNull);
+    expect(ObjectBoxCloudSyncPreflightReader.settledAuditFingerprint(
+      objectBox.box<CloudOutboxOperationEntity>().getAll()
+        .where((r) => r.operationId != targetId).toList()), auditPin);
+    expect(objectBox.box<CloudOutboxOperationEntity>().count(), 9);
+    expect(native.consumeCalls, 1, reason: 'receipt lookup never resends');
+  });
+
+  test('manual confirmed replay resumes adopted readback only after postflight', () async {
+    final targetId = await seedAdoptedPendingWithAudits();
+    native = RecoveryNativeBindings();
+    final adapter = recoveryAdapter();
+    final write = await adapter.canary.armRecoveryConfirmed();
+    await adapter.canary.runDoubleConfirmed(write);
+    final confirmed = (await durable().readOutboxEntries(scope()))
+        .singleWhere((r) => r.operationId == targetId);
+    final authority = ObjectBoxCloudKitWriterAuthority.forTest(
+      store: objectBox, buildDecision: CloudKitWriterOwnership.resolve('v2'));
+    final owned = ObjectBoxCloudSyncStore(store: objectBox, protector: protector,
+      localSendJournal: CloudSyncLocalSendJournal(store: objectBox,
+        authority: authority, authoritySnapshot: authority.read(writerScope())!));
+    await owned.commitConfirmedMessageCreateReadback(expectedOperation: confirmed,
+      receipt: CloudOutboxCreateReceipt(operationId: targetId,
+        logicalEntityKeyHash: confirmed.logicalEntityKeyHash,
+        serverRecordIdHash: digestFor('S'), etagHash: receiptEtagValue,
+        protectedCurrentRawRecordReference: testProtectedReference('Q'),
+        protectedCurrentRawRecordLeaseReference: testProtectedLeaseReference('c'), rawGeneration: 1),
+      now: DateTime.now().toUtc());
+    final replay = await adapter.canary.armConfirmedReplay();
+    final report = await adapter.canary.runDoubleConfirmed(replay);
+    expect(report.replayVerification, isTrue);
+    expect(report.confirmed, 0);
+    expect(native.consumeCalls, 1, reason: 'only the initial synthetic write');
+    expect(native.rawReadbackCalls, 0, reason: 'resume the already adopted exact raw readback');
+    expect(ObjectBoxCloudSyncPreflightReader(store: objectBox).read().settledOutboxFingerprint, isNotNull);
+    expect(objectBox.box<CloudOutboxOperationEntity>().count(), 9);
+  });
+
+  test('manual unknown recovery rejects changed audit before committing returned receipt', () async {
+    await provisionV2();
+    await seedAccount();
+    await seedSettledRow(logicalCharacter: 'A', revision: 1, uuidIndex: 1, serverCharacter: 'K');
+    final targetId = await seedSubmittedTarget();
+    // Expired synthetic unknown submission has no active lease after process death.
+    final row = objectBox.box<CloudOutboxOperationEntity>().getAll()
+        .singleWhere((r) => r.operationId == targetId);
+    objectBox.box<CloudOutboxOperationEntity>().put(row..leaseIdHash = null..leaseExpiresAtMs = 0);
+    scriptCommitted();
+    native.onReconcile = () async {
+      final audit = objectBox.box<CloudOutboxOperationEntity>().getAll()
+          .singleWhere((r) => r.operationId != targetId);
+      objectBox.box<CloudOutboxOperationEntity>().put(audit..updatedAtMs += 1);
+    };
+    final adapter = recoveryAdapter();
+    final recovery = await adapter.canary.armRecoveryConfirmed();
+    await expectLater(adapter.canary.runDoubleConfirmed(recovery), throwsStateError);
+    expect(native.reconcileCalls, 1);
+    final target = (await durable().readOutboxEntries(scope())).singleWhere((r) => r.operationId == targetId);
+    expect(target.status, CloudOutboxStatus.unknownOutcome);
+    expect(target.appleRequestUuid, isNotNull);
+    expect(target.protectedLeaseReference, isNotNull);
+    expect(native.rawReadbackCalls, 0);
+    expect(native.consumeCalls, 0);
+  });
+
+  test('production recovery rejects an audit changed after native prepare before consume', () async {
+    final targetId = await seedAdoptedPendingWithAudits();
+    final recovery = RecoveryNativeBindings();
+    native = recovery;
+    recovery.onPrepare = () async {
+      final row = objectBox.box<CloudOutboxOperationEntity>().getAll()
+        .firstWhere((r) => r.operationId != targetId);
+      objectBox.box<CloudOutboxOperationEntity>().put(
+        row..updatedAtMs = row.updatedAtMs + 1,
+      );
+    };
+    final adapter = recoveryAdapter();
+    final confirmation = await adapter.canary.armRecoveryConfirmed();
+    try { await adapter.canary.runDoubleConfirmed(confirmation); } catch (_) {}
+    expect(native.prepareCalls, 1);
+    expect(native.consumeCalls, 0, reason: 'full durable audit pin must precede a remote mutation');
+    expect(objectBox.box<CloudOutboxOperationEntity>().count(), 9);
+  });
+
+  test('production recovery uncertain consume retains pending receipt without blind resend', () async {
+    final targetId = await seedAdoptedPendingWithAudits();
+    native = RecoveryNativeBindings()..uncertainConsume = true;
+    final adapter = recoveryAdapter();
+    final confirmation = await adapter.canary.armRecoveryConfirmed();
+    await expectLater(adapter.canary.runDoubleConfirmed(confirmation), throwsStateError);
+    final target = (await durable().readOutboxEntries(scope())).singleWhere((r) => r.operationId == targetId);
+    expect(target.status, CloudOutboxStatus.unknownOutcome);
+    expect(target.appleRequestUuid, isNotNull);
+    expect(target.appleOperationUuid, isNotNull);
+    expect(target.protectedLeaseReference, isNotNull);
+    expect(native.consumeCalls, 1);
+    expect(native.rawReadbackCalls, 0);
+    expect(ObjectBoxCloudSyncPreflightReader(store: objectBox).read().settledOutboxFingerprint, isNull);
+    await expectLater(adapter.canary.armRecoveryConfirmed(), throwsStateError);
+    await expectLater(runCheck(v2Build: true), throwsStateError);
+    expect(native.consumeCalls, 1, reason: 'an active unknown receipt cannot resend');
+    // Simulate expiry of this synthetic lease without waiting a minute. No
+    // source, request identity or protected receipt is changed.
+    final row = objectBox.box<CloudOutboxOperationEntity>().getAll()
+      .singleWhere((r) => r.operationId == targetId);
+    objectBox.box<CloudOutboxOperationEntity>().put(row..leaseExpiresAtMs = testEpoch.millisecondsSinceEpoch);
+    native.reconcileResult = frb_api.CloudSyncOutboundReconcileResult(
+      disposition: frb_api.CloudSyncOutboundReconcileDisposition.committed,
+      protectedProofReference: testProtectedReference('P'),
+      serverRecordIdHash: digestFor('S'), etagHash: receiptEtagValue,
+    );
+    native.rawReadbackResult = frb_api.CloudSyncOutboundReconcileResult(
+      disposition: frb_api.CloudSyncOutboundReconcileDisposition.committed,
+      protectedProofReference: testProtectedReference('P'),
+      serverRecordIdHash: digestFor('S'), etagHash: receiptEtagValue,
+      protectedCurrentRawRecordReference: testProtectedReference('Q'),
+      protectedCurrentRawRecordLeaseReference: testProtectedLeaseReference('c'),
+      rawGeneration: BigInt.from(1),
+    );
+    expect(await runCheck(v2Build: true), CloudSyncPreviousUploadResult.settled);
+    expect(native.consumeCalls, 1, reason: 'exact receipt recovery must not resend');
+  });
+
+  for (final change in ['adopted source proof', 'checkpoint', 'extra unfinished', 'auth', 'target binding']) {
+    test('production recovery rejects $change change after prepare', () async {
+      final targetId = await seedAdoptedPendingWithAudits();
+      final recovery = RecoveryNativeBindings();
+      native = recovery;
+      recovery.onPrepare = () async {
+        switch (change) {
+          case 'adopted source proof':
+            final intent = objectBox.box<CloudSyncLocalSendIntentEntity>().getAll().single;
+            objectBox.box<CloudSyncLocalSendIntentEntity>().put(
+              intent..admittedBindingSha256 = testSha256('f'));
+          case 'checkpoint':
+            final checkpoint = objectBox.box<CloudSyncCheckpointEntity>().getAll()
+              .singleWhere((c) => c.checkpointKey == cloudSyncPersistentScopeKey(scope()));
+            objectBox.box<CloudSyncCheckpointEntity>().put(checkpoint..generation += 1);
+          case 'extra unfinished':
+            await durable().enqueueOutbox(buildOp(logicalCharacter: 'Z',
+              revision: 99, payloadShaCharacter: 'f', leaseCharacter: 'f'));
+          case 'auth':
+            recovery.sessionId = 'B' * 43;
+          case 'target binding':
+            final row = objectBox.box<CloudOutboxOperationEntity>().getAll()
+              .singleWhere((r) => r.operationId == targetId);
+            objectBox.box<CloudOutboxOperationEntity>().put(row..payloadSha256 = testSha256('f'));
+        }
+      };
+      final adapter = recoveryAdapter();
+      final confirmation = await adapter.canary.armRecoveryConfirmed();
+      // The engine can return failed or the outer tripwire can reject the
+      // run. Neither path may pass a prepared handle to native consumption.
+      try { await adapter.canary.runDoubleConfirmed(confirmation); } catch (_) {}
+      expect(native.prepareCalls, 1);
+      expect(native.consumeCalls, 0);
+      expect(recovery.releaseCalls, 1);
+      expect(native.rawReadbackCalls, 0);
+      expect(objectBox.box<CloudOutboxOperationEntity>().getAll()
+        .singleWhere((r) => r.operationId == targetId).protectedLeaseReference, isNotNull);
+    });
+  }
+
+  test('production recovery checks global inventory even with one scoped row', () async {
+    final targetId = await seedAdoptedPendingWithAudits(auditCount: 0);
+    await durable().enqueueOutbox(buildOp(logicalCharacter: 'Z', revision: 99,
+      payloadShaCharacter: 'f', leaseCharacter: 'f'));
+    final other = objectBox.box<CloudOutboxOperationEntity>().getAll()
+      .singleWhere((r) => r.operationId != targetId);
+    objectBox.box<CloudOutboxOperationEntity>().put(other
+      ..scopeKey = 'different-scope'
+      ..zone = 'attachmentManateeZone');
+    native = RecoveryNativeBindings();
+    final adapter = recoveryAdapter();
+    final confirmation = await adapter.canary.armRecoveryConfirmed();
+    await expectLater(adapter.canary.runDoubleConfirmed(confirmation), throwsStateError);
+    expect(native.prepareCalls, 0);
+    expect(native.consumeCalls, 0);
+  });
   test('settled create with audit rows runs exact readback to settled preflight', () async {
     await provisionV2();
     await seedAccount();

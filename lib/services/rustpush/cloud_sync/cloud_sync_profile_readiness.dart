@@ -117,8 +117,9 @@ enum CloudSyncProfileReadiness {
     localStateUnavailable =>
       'Saved sync status is not available yet. Wait for OpenBubbles to finish opening.',
     unfinishedUploads =>
-      'Outgoing iCloud updates still need confirmation. Let them finish before '
-          'starting history sync. Do not resend those messages.',
+      'Outgoing iCloud updates still need confirmation. Check the previous upload, '
+          'or retry a queued upload when available, before starting history sync. '
+          'Do not resend those messages.',
   };
 
   String get safeCode => switch (this) {

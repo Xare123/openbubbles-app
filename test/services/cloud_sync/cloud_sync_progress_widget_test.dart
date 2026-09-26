@@ -7,6 +7,7 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_progress.dar
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_semantic_drain_controller.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_profile_readiness.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_user_copy.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_upload_retry_action.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
@@ -47,6 +48,8 @@ void main() {
     bool Function()? canCheckPreviousUpload,
     bool Function()? isCheckingPreviousUpload,
     Future<String> Function()? onCheckPreviousUpload,
+    bool Function()? canRetryPendingUpload,
+    Future<CloudSyncUploadRetryAction> Function()? onPrepareUploadRetry,
   }) => MaterialApp(
     theme: ThemeData(fontFamily: 'Inter'),
     debugShowCheckedModeBanner: false,
@@ -63,11 +66,127 @@ void main() {
             canCheckPreviousUpload: canCheckPreviousUpload,
             isCheckingPreviousUpload: isCheckingPreviousUpload,
             onCheckPreviousUpload: onCheckPreviousUpload,
+            canRetryPendingUpload: canRetryPendingUpload,
+            onPrepareUploadRetry: onPrepareUploadRetry,
           ),
         ),
       ),
     ),
   );
+
+  testWidgets('queued upload needs confirmation and settles without auto starting history', (tester) async {
+    final done = Completer<String>();
+    var retries = 0;
+    var cancels = 0;
+    var settled = false;
+    await tester.pumpWidget(host(CloudSyncProgress(), (_) async => fail('no automatic history run'),
+      availability: () => settled, canRetryPendingUpload: () => !settled,
+      onPrepareUploadRetry: () async => CloudSyncUploadRetryAction(
+        cancel: () => cancels++,
+        confirm: () async {
+          retries++;
+          final result = await done.future;
+          settled = true;
+          return result;
+        },
+      )));
+    await tester.ensureVisible(find.text('Retry queued upload'));
+    await tester.tap(find.text('Retry queued upload'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(retries, 0);
+    expect(find.textContaining('does not send a new iMessage'), findsOneWidget);
+    await tester.tap(find.widgetWithText(TextButton, 'Retry queued upload'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(retries, 1);
+    expect(find.text('Retrying the queued upload'), findsOneWidget);
+    expect(tester.widget<FilledButton>(find.byType(FilledButton)).onPressed, isNull);
+    expect(tester.widget<OutlinedButton>(find.byType(OutlinedButton)).onPressed, isNull);
+    done.complete('The queued upload is confirmed in iCloud.');
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 1));
+    expect(find.text('The queued upload is confirmed in iCloud.'), findsOneWidget);
+    expect(find.text('Retry queued upload'), findsNothing);
+    expect(tester.widget<FilledButton>(find.byType(FilledButton)).onPressed, isNotNull);
+    expect(cancels, 0, reason: 'navigation must not cancel a consumed action');
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('cancelled queued upload confirmation only disarms', (tester) async {
+    var cancels = 0;
+    await tester.pumpWidget(host(CloudSyncProgress(), (_) async {}, available: false,
+      canRetryPendingUpload: () => true,
+      onPrepareUploadRetry: () async => CloudSyncUploadRetryAction(
+        confirm: () async => fail('cancel must never submit'), cancel: () => cancels++)));
+    await tester.ensureVisible(find.text('Retry queued upload'));
+    await tester.tap(find.text('Retry queued upload'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.tap(find.text('Cancel'));
+    await tester.pumpAndSettle();
+    expect(cancels, 1);
+    expect(find.byType(LinearProgressIndicator), findsNothing);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('leaving during queued upload preparation disarms when it finishes', (tester) async {
+    final prepared = Completer<CloudSyncUploadRetryAction>();
+    var cancels = 0;
+    await tester.pumpWidget(host(CloudSyncProgress(), (_) async {}, available: false,
+      canRetryPendingUpload: () => true, onPrepareUploadRetry: () => prepared.future));
+    await tester.ensureVisible(find.text('Retry queued upload'));
+    await tester.tap(find.text('Retry queued upload'));
+    await tester.pump();
+    await tester.pumpWidget(const SizedBox.shrink());
+    prepared.complete(CloudSyncUploadRetryAction(
+      confirm: () async => fail('leaving must never submit'), cancel: () => cancels++));
+    await tester.pump();
+    expect(cancels, 1);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('queued upload errors are private and confirmation fits large text', (tester) async {
+    tester.view.physicalSize = const Size(320, 1000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    await tester.pumpWidget(host(CloudSyncProgress(), (_) async {}, available: false, scale: 1.6,
+      canRetryPendingUpload: () => true,
+      onPrepareUploadRetry: () async => CloudSyncUploadRetryAction(
+        confirm: () async => throw StateError('private-account-detail'), cancel: () {})));
+    await tester.ensureVisible(find.text('Retry queued upload'));
+    await tester.tap(find.text('Retry queued upload'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(tester.takeException(), isNull);
+    await tester.ensureVisible(find.widgetWithText(TextButton, 'Retry queued upload'));
+    await tester.tap(find.widgetWithText(TextButton, 'Retry queued upload'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('private-account-detail'), findsNothing);
+    expect(find.textContaining('could not finish safely'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  test('queued upload action rejects duplicate or cancelled confirmation', () async {
+    var confirms = 0;
+    var cancels = 0;
+    final action = CloudSyncUploadRetryAction(confirm: () async { confirms++; return 'done'; },
+      cancel: () { cancels++; });
+    expect(await action.confirm(), 'done');
+    expect(action.confirm, throwsStateError);
+    action.cancel();
+    expect(confirms, 1);
+    expect(cancels, 0);
+    final cancelled = CloudSyncUploadRetryAction(confirm: () async => fail('cancelled'),
+      cancel: () { cancels++; });
+    cancelled.cancel();
+    cancelled.cancel();
+    expect(cancelled.confirm, throwsStateError);
+    expect(cancels, 1);
+  });
 
   testWidgets('receipt check is explicit, single-flight and never starts sync', (tester) async {
     final done = Completer<String>();

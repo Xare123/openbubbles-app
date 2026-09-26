@@ -320,6 +320,118 @@ void main() {
 
     expect(reader.read().coordinatorLeaseActive, isTrue);
   });
+  test('one pending row with eight settled audits never settles', () {
+    CloudOutboxOperationEntity audit(String id) => CloudOutboxOperationEntity(
+      operationId: 'audit-$id',
+      scopeKey: 'scope',
+      accountFingerprint: _fingerprint,
+      zone: 'messageManateeZone',
+      logicalEntityKeyHash: 'logical-$id',
+      action: 0,
+      mutationRevision: 1,
+      checkpointGeneration: 1,
+      state: 2,
+      encryptedPayloadRef: 'protected-payload-$id',
+      payloadSha256: 'payload-hash-$id',
+      serverRecordIdHash: 'server-hash-$id',
+      confirmedAtMs: now.millisecondsSinceEpoch,
+      createdAtMs: now.millisecondsSinceEpoch,
+      updatedAtMs: now.millisecondsSinceEpoch,
+    );
+    final outbox = store.box<CloudOutboxOperationEntity>();
+    for (final id in <String>['1', '2', '3', '4', '5', '6', '7', '8']) {
+      outbox.put(audit(id));
+    }
+    outbox.put(
+      audit('9')
+        ..operationId = 'pending-revision-9'
+        ..state = 0,
+    );
+    expect(reader.read().outboxCount, 9);
+    expect(reader.read().settledOutboxFingerprint, isNull);
+  });
+  test('nine settled audits settle to read-ready', () {
+    CloudOutboxOperationEntity audit(String id) => CloudOutboxOperationEntity(
+      operationId: 'audit-$id',
+      scopeKey: 'scope',
+      accountFingerprint: _fingerprint,
+      zone: 'messageManateeZone',
+      logicalEntityKeyHash: 'logical-$id',
+      action: 0,
+      mutationRevision: 1,
+      checkpointGeneration: 1,
+      state: 2,
+      encryptedPayloadRef: 'protected-payload-$id',
+      payloadSha256: 'payload-hash-$id',
+      serverRecordIdHash: 'server-hash-$id',
+      confirmedAtMs: now.millisecondsSinceEpoch,
+      createdAtMs: now.millisecondsSinceEpoch,
+      updatedAtMs: now.millisecondsSinceEpoch,
+    );
+    final outbox = store.box<CloudOutboxOperationEntity>();
+    for (final id in <String>['1', '2', '3', '4', '5', '6', '7', '8', '9']) {
+      outbox.put(audit(id));
+    }
+    expect(reader.read().outboxCount, 9);
+    expect(reader.read().settledOutboxFingerprint, matches(r'^[0-9a-f]{64}$'));
+  });
+  test('replaced audit evidence unsettles a settled snapshot', () {
+    final outbox = store.box<CloudOutboxOperationEntity>();
+    final id = outbox.put(
+      CloudOutboxOperationEntity(
+        operationId: 'audit-1',
+        scopeKey: 'scope',
+        accountFingerprint: _fingerprint,
+        zone: 'messageManateeZone',
+        logicalEntityKeyHash: 'logical-1',
+        action: 0,
+        mutationRevision: 1,
+        checkpointGeneration: 1,
+        state: 2,
+        encryptedPayloadRef: 'protected-payload-1',
+        payloadSha256: 'payload-hash-1',
+        serverRecordIdHash: 'server-hash-1',
+        confirmedAtMs: now.millisecondsSinceEpoch,
+        createdAtMs: now.millisecondsSinceEpoch,
+        updatedAtMs: now.millisecondsSinceEpoch,
+      ),
+    );
+    final beforeReplacement = reader.read().settledOutboxFingerprint;
+    expect(beforeReplacement, matches(r'^[0-9a-f]{64}$'));
+    final row = outbox.get(id)!;
+    row.serverRecordIdHash = 'server-hash-replaced';
+    outbox.put(row);
+    expect(reader.read().settledOutboxFingerprint, isNot(beforeReplacement));
+  });
+  test('second pending, foreign account and live lease rows never settle', () {
+    CloudOutboxOperationEntity audit(String id) => CloudOutboxOperationEntity(
+      operationId: 'audit-$id',
+      scopeKey: 'scope',
+      accountFingerprint: _fingerprint,
+      zone: 'messageManateeZone',
+      logicalEntityKeyHash: 'logical-$id',
+      action: 0,
+      mutationRevision: 1,
+      checkpointGeneration: 1,
+      state: 2,
+      encryptedPayloadRef: 'protected-payload-$id',
+      payloadSha256: 'payload-hash-$id',
+      serverRecordIdHash: 'server-hash-$id',
+      confirmedAtMs: now.millisecondsSinceEpoch,
+      createdAtMs: now.millisecondsSinceEpoch,
+      updatedAtMs: now.millisecondsSinceEpoch,
+    );
+    final outbox = store.box<CloudOutboxOperationEntity>();
+    outbox.put(audit('1'));
+    expect(reader.read().settledOutboxFingerprint, matches(r'^[0-9a-f]{64}$'));
+    final pendingId = outbox.put(audit('2')..state = 0);
+    expect(reader.read().settledOutboxFingerprint, isNull);
+    outbox.remove(pendingId);
+    final leasedId = outbox.put(audit('3')..leaseIdHash = 'live-lease');
+    expect(reader.read().settledOutboxFingerprint, isNull);
+    outbox.remove(leasedId);
+    expect(reader.read().settledOutboxFingerprint, matches(r'^[0-9a-f]{64}$'));
+  });
 }
 
 const _fingerprint = 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';

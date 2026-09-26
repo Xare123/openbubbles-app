@@ -278,7 +278,11 @@ final class CloudSyncManualOutboundCanary {
     if (_armedConfirmation != null) {
       throw StateError('cloud_sync_outbound_canary_already_armed');
     }
-    _validatePreflight(await _readPreflight(), expectedOutboxCount: 1);
+    _validatePreflight(
+      await _readPreflight(),
+      expectedOutboxCount: 1,
+      skipOutboxCount: true,
+    );
     final auth = await _readAuthSnapshot();
     if (auth == null) throw StateError('account_unavailable');
     final scope = _scopeForAuth(auth);
@@ -326,6 +330,7 @@ final class CloudSyncManualOutboundCanary {
             _validatePreflight(
               await _readPreflight(),
               expectedOutboxCount: confirmation.recovery ? 1 : 0,
+              skipOutboxCount: confirmation.recovery,
             );
             final auth = await _readAuthSnapshot();
             if (!confirmation.authSnapshot.sameIdentity(auth)) {
@@ -352,16 +357,42 @@ final class CloudSyncManualOutboundCanary {
             );
             _requireExactSessionCapability(session, sessionKind);
             final CloudOutboxOperation operation;
+            final List<CloudOutboxOperation> pinnedAudits;
             if (confirmation.recovery) {
-              final currentOperation = _requireSingleRecoverableOperation(
-                await session.readOutbox(),
-                scope,
-                requireConfirmed: confirmation.replayVerification,
-              );
-              operation = _requireSameArmedOperation(
-                currentOperation,
-                confirmation.armedOperation!,
-              );
+              if (confirmation.replayVerification) {
+                final replayOperations = await session.readOutbox();
+                final currentOperation = _requireSingleRecoverableOperation(
+                  replayOperations,
+                  scope,
+                  requireConfirmed: true,
+                );
+                operation = _requireSameArmedOperation(
+                  currentOperation,
+                  confirmation.armedOperation!,
+                );
+                pinnedAudits = replayOperations
+                    .where((entry) => entry.operationId != operation.operationId)
+                    .toList(growable: false);
+              } else {
+                final preFlush = partitionRecoveryOutbox(
+                  await session.readOutbox(),
+                  scope,
+                  eligibleStatuses: const <CloudOutboxStatus>{
+                    CloudOutboxStatus.pending,
+                    CloudOutboxStatus.unknownOutcome,
+                  },
+                  mismatchCode: 'cloud_sync_outbound_canary_recovery_invalid',
+                );
+                final eligible = preFlush.eligible;
+                if (eligible == null) {
+                  throw StateError('cloud_sync_outbound_canary_recovery_invalid');
+                }
+                operation = _requireSameArmedOperation(
+                  eligible,
+                  confirmation.armedOperation!,
+                );
+                pinnedAudits = preFlush.audits;
+              }
             } else {
               final writeSession =
                   session as CloudSyncOutboundCanaryWriteSession;
@@ -370,6 +401,7 @@ final class CloudSyncManualOutboundCanary {
                 createdAt: admission.createdAt.toUtc(),
               );
               _validateAdmission(operation, scope, admission.createdAt.toUtc());
+              pinnedAudits = const <CloudOutboxOperation>[];
             }
             await _requireSameAuth(auth);
 
@@ -407,7 +439,11 @@ final class CloudSyncManualOutboundCanary {
               replayVerification: confirmation.replayVerification,
             );
             await _requireSameAuth(auth);
-            _validatePreflight(await _readPreflight(), expectedOutboxCount: 1);
+            _validatePreflight(
+              await _readPreflight(),
+              expectedOutboxCount: 1,
+              skipOutboxCount: confirmation.recovery,
+            );
             final finalOperations = await session.readOutbox();
             final durableOperation = confirmation.replayVerification
                 ? _requireSameArmedOperation(
@@ -423,13 +459,21 @@ final class CloudSyncManualOutboundCanary {
                     finalOperations,
                     operation,
                     result,
+                    pinnedAudits: pinnedAudits,
                   )
                 : _requireAllowedPostflightOperation(
                     finalOperations,
                     operation,
                     result,
+                    pinnedAudits: pinnedAudits,
                   );
             if (confirmation.replayVerification) {
+              _requireAuditsUnchanged(
+                finalOperations,
+                scope,
+                operation.operationId,
+                pinnedAudits,
+              );
               await (session as CloudSyncOutboundCanaryReplaySession)
                   .finalizeConfirmedReplayProof(
                     operation: durableOperation,
@@ -525,6 +569,7 @@ final class CloudSyncManualOutboundCanary {
   void _validatePreflight(
     CloudSyncShadowPreflightState state, {
     required int expectedOutboxCount,
+    bool skipOutboxCount = false,
   }) {
     if (!state.platformSupported) throw StateError('unsupported_platform');
     if (!state.uiIsolate) throw StateError('not_ui_isolate');
@@ -536,7 +581,7 @@ final class CloudSyncManualOutboundCanary {
       throw StateError('legacy_sync_active');
     }
     if (state.coordinatorLeaseActive) throw StateError('coordinator_active');
-    if (state.outboxCount != expectedOutboxCount) {
+    if (!skipOutboxCount && state.outboxCount != expectedOutboxCount) {
       throw StateError('cloud_sync_outbound_canary_outbox_invalid');
     }
     if (!state.protectorSentinelValid) {
@@ -603,28 +648,108 @@ final class CloudSyncManualOutboundCanary {
     required bool requireConfirmed,
     bool allowConfirmed = false,
   }) {
-    if (operations.length != 1) {
-      throw StateError('cloud_sync_outbound_canary_recovery_invalid');
-    }
-    final operation = operations.single;
-    if (!_hasExactCreateBinding(operation, expectedScope)) {
-      throw StateError('cloud_sync_outbound_canary_recovery_invalid');
-    }
-    if (requireConfirmed) {
-      if (operation.status != CloudOutboxStatus.confirmed ||
-          !_hasValidRecoverableLifecycle(operation)) {
-        throw StateError('cloud_sync_outbound_canary_replay_invalid');
-      }
-    } else {
-      final statusAllowed =
-          operation.status == CloudOutboxStatus.pending ||
-          operation.status == CloudOutboxStatus.unknownOutcome ||
-          (allowConfirmed && operation.status == CloudOutboxStatus.confirmed);
-      if (!statusAllowed || !_hasValidRecoverableLifecycle(operation)) {
+    if (operations.length == 1) {
+      final operation = operations.single;
+      if (!_hasExactCreateBinding(operation, expectedScope)) {
         throw StateError('cloud_sync_outbound_canary_recovery_invalid');
       }
+      if (requireConfirmed) {
+        if (operation.status != CloudOutboxStatus.confirmed ||
+            !_hasValidRecoverableLifecycle(operation)) {
+          throw StateError('cloud_sync_outbound_canary_replay_invalid');
+        }
+      } else {
+        final statusAllowed =
+            operation.status == CloudOutboxStatus.pending ||
+            operation.status == CloudOutboxStatus.unknownOutcome ||
+            (allowConfirmed && operation.status == CloudOutboxStatus.confirmed);
+        if (!statusAllowed || !_hasValidRecoverableLifecycle(operation)) {
+          throw StateError('cloud_sync_outbound_canary_recovery_invalid');
+        }
+      }
+      return operation;
     }
-    return operation;
+    final partition = partitionRecoveryOutbox(
+      operations,
+      expectedScope,
+      eligibleStatuses: requireConfirmed
+          ? const <CloudOutboxStatus>{CloudOutboxStatus.confirmed}
+          : <CloudOutboxStatus>{
+              CloudOutboxStatus.pending,
+              CloudOutboxStatus.unknownOutcome,
+              if (allowConfirmed) CloudOutboxStatus.confirmed,
+            },
+      mismatchCode: 'cloud_sync_outbound_canary_recovery_invalid',
+    );
+    final eligible = partition.eligible;
+    if (eligible == null) {
+      throw StateError('cloud_sync_outbound_canary_recovery_invalid');
+    }
+    return eligible;
+  }
+
+  /// A retained settled audit: same scope and account, terminal-confirmed
+  /// with no lease, retry, failure or protected-lease residue, mirroring
+  /// the entity-level settled-audit fingerprint validity for model reads.
+  /// Entity fingerprint checks remain where a store is available.
+  static bool isPinnedSettledAudit(
+    CloudOutboxOperation operation,
+    CloudSyncScope scope,
+  ) {
+    return operation.scope == scope &&
+        operation.scope.accountFingerprint == scope.accountFingerprint &&
+        operation.status == CloudOutboxStatus.confirmed &&
+        operation.action == CloudOutboxAction.save &&
+        operation.confirmedAt != null &&
+        operation.checkpointGeneration > 0 &&
+        operation.protectedLeaseReference == null &&
+        operation.leaseId == null &&
+        operation.leaseExpiresAt == null &&
+        operation.nextEligibleAt == null &&
+        operation.lastFailure == null &&
+        operation.operationId.isNotEmpty &&
+        operation.logicalEntityKeyHash.isNotEmpty &&
+        operation.serverRecordIdHash != null &&
+        operation.serverRecordIdHash!.isNotEmpty &&
+        operation.encryptedPayloadReference != null &&
+        operation.encryptedPayloadReference!.isNotEmpty &&
+        operation.payloadSha256 != null &&
+        operation.payloadSha256!.isNotEmpty &&
+        operation.payloadVersion > 0 &&
+        operation.mutationRevision >= 0 &&
+        operation.attemptCount >= 0;
+  }
+
+  /// Partitions one scope read into the single eligible pending/unknown
+  /// recovery operation plus retained settled audits. A second eligible row
+  /// or any non-audit row fails closed with [mismatchCode]. Callers pin the
+  /// returned audits across boundaries with sameDurableSnapshotAs.
+  static ({CloudOutboxOperation? eligible, List<CloudOutboxOperation> audits})
+  partitionRecoveryOutbox(
+    List<CloudOutboxOperation> operations,
+    CloudSyncScope scope, {
+    required Set<CloudOutboxStatus> eligibleStatuses,
+    required String mismatchCode,
+  }) {
+    CloudOutboxOperation? eligible;
+    final audits = <CloudOutboxOperation>[];
+    for (final operation in operations) {
+      if (operation.scope == scope &&
+          eligibleStatuses.contains(operation.status) &&
+          _hasExactCreateBinding(operation, scope) &&
+          _hasValidRecoverableLifecycle(operation)) {
+        if (eligible != null) {
+          throw StateError(mismatchCode);
+        }
+        eligible = operation;
+        continue;
+      }
+      if (!isPinnedSettledAudit(operation, scope)) {
+        throw StateError(mismatchCode);
+      }
+      audits.add(operation);
+    }
+    return (eligible: eligible, audits: audits);
   }
 
   CloudOutboxOperation _requireSameArmedOperation(
@@ -640,12 +765,21 @@ final class CloudSyncManualOutboundCanary {
   CloudOutboxOperation _requireAllowedPostflightOperation(
     List<CloudOutboxOperation> operations,
     CloudOutboxOperation expected,
-    CloudSyncRunResult result,
-  ) {
-    if (operations.length != 1) {
+    CloudSyncRunResult result, {
+    required List<CloudOutboxOperation> pinnedAudits,
+  }) {
+    final matches =
+        operations.where((o) => o.operationId == expected.operationId).toList();
+    if (matches.length != 1) {
       throw StateError('cloud_sync_outbound_canary_postflight_invalid');
     }
-    final actual = operations.single;
+    final actual = matches.single;
+    _requireAuditsUnchanged(
+      operations,
+      expected.scope,
+      expected.operationId,
+      pinnedAudits,
+    );
     if (!_hasExactCreateBinding(expected, expected.scope) ||
         actual.scope != expected.scope ||
         actual.operationId != expected.operationId ||
@@ -690,14 +824,25 @@ final class CloudSyncManualOutboundCanary {
   CloudOutboxOperation _requireAllowedUnknownRecoveryPostflightOperation(
     List<CloudOutboxOperation> operations,
     CloudOutboxOperation expected,
-    CloudSyncRunResult result,
-  ) {
+    CloudSyncRunResult result, {
+    required List<CloudOutboxOperation> pinnedAudits,
+  }) {
     if (expected.status != CloudOutboxStatus.unknownOutcome ||
-        operations.length != 1 ||
         result.counters.quarantined != 0) {
       throw StateError('cloud_sync_outbound_canary_postflight_invalid');
     }
-    final actual = operations.single;
+    final matches =
+        operations.where((o) => o.operationId == expected.operationId).toList();
+    if (matches.length != 1) {
+      throw StateError('cloud_sync_outbound_canary_postflight_invalid');
+    }
+    final actual = matches.single;
+    _requireAuditsUnchanged(
+      operations,
+      expected.scope,
+      expected.operationId,
+      pinnedAudits,
+    );
     final immutableBindingMatches =
         _hasExactCreateBinding(expected, expected.scope) &&
         actual.scope == expected.scope &&
@@ -827,7 +972,7 @@ final class CloudSyncManualOutboundCanary {
     };
   }
 
-  bool _hasValidRecoverableLifecycle(CloudOutboxOperation operation) {
+  static bool _hasValidRecoverableLifecycle(CloudOutboxOperation operation) {
     if (operation.leaseId != null || operation.leaseExpiresAt != null) {
       return false;
     }
@@ -858,7 +1003,7 @@ final class CloudSyncManualOutboundCanary {
     };
   }
 
-  bool _hasExactCreateBinding(
+  static bool _hasExactCreateBinding(
     CloudOutboxOperation operation,
     CloudSyncScope expectedScope,
   ) {
@@ -912,6 +1057,34 @@ final class CloudSyncManualOutboundCanary {
   Future<void> _requireSameAuth(CloudSyncNativeAuthSnapshot expected) async {
     if (!expected.sameIdentity(await _readAuthSnapshot())) {
       throw StateError('account_changed');
+    }
+  }
+
+  static void _requireAuditsUnchanged(
+    List<CloudOutboxOperation> operations,
+    CloudSyncScope scope,
+    String eligibleOperationId,
+    List<CloudOutboxOperation> pinnedAudits,
+  ) {
+    final audits = <CloudOutboxOperation>[];
+    for (final operation in operations) {
+      if (operation.operationId == eligibleOperationId) {
+        continue;
+      }
+      if (!isPinnedSettledAudit(operation, scope)) {
+        throw StateError('cloud_sync_outbound_canary_postflight_invalid');
+      }
+      audits.add(operation);
+    }
+    if (audits.length != pinnedAudits.length) {
+      throw StateError('cloud_sync_outbound_canary_postflight_invalid');
+    }
+    for (final audit in audits) {
+      final pinned =
+          pinnedAudits.where((p) => p.operationId == audit.operationId).toList();
+      if (pinned.length != 1 || !audit.sameDurableSnapshotAs(pinned.single)) {
+        throw StateError('cloud_sync_outbound_canary_postflight_invalid');
+      }
     }
   }
 }

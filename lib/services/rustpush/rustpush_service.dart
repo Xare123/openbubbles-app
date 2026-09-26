@@ -74,6 +74,7 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_message_upda
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_observability.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_progress.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_profile_readiness.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_upload_retry_action.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_read_budget.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_pcs_operation.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_chat_presentation_repair.dart';
@@ -10345,6 +10346,100 @@ class RustPushService extends GetxService {
       !_cloudSyncV2ReceiptCheckActive &&
       _cloudSyncV2ProfileReadiness == CloudSyncProfileReadiness.unfinishedUploads;
 
+  bool get cloudSyncV2PendingUploadRetryAvailable {
+    if (!cloudSyncV2ReceiptCheckAvailable ||
+        !CloudSyncDevGate.manualOutboundCanaryEnabled ||
+        !CloudKitWriterOwnership.v2MutationsEnabled) {
+      return false;
+    }
+    // Display hint only. Arming and consuming revalidate the exact operation,
+    // auth, journal, inventory and native admission under the real interlock.
+    try {
+      final rows = Database.store.box<CloudOutboxOperationEntity>().getAll();
+      final pending = rows.where((r) =>
+          r.state == CloudOutboxStatus.pending.index &&
+          r.appleRequestUuid == null && r.appleOperationUuid == null &&
+          r.leaseIdHash == null && r.leaseExpiresAtMs == 0 &&
+          r.protectedLeaseReference != null &&
+          r.nextEligibleAtMs <= DateTime.now().millisecondsSinceEpoch)
+          .toList();
+      if (pending.length != 1) return false;
+      final others = rows.where((r) => r.id != pending.single.id).toList();
+      return rows.every((r) => r.accountFingerprint == pending.single.accountFingerprint) &&
+          (others.isEmpty || ObjectBoxCloudSyncPreflightReader.settledAuditFingerprint(others) != null);
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Profile's explicit retry uses the existing gated one-operation worker.
+  /// It never changes auto-upload settings or creates a fresh IDS message.
+  Future<CloudSyncUploadRetryAction> prepareCloudSyncV2PendingUploadRetry() async {
+    _readCloudSyncV2ProfileReadiness(fresh: true);
+    if (!cloudSyncV2PendingUploadRetryAvailable) {
+      throw StateError('cloud_sync_pending_retry_candidate_required');
+    }
+    final adapter = _cloudSyncV2Outbound();
+    final preparation = adapter.armPendingUploadRetry();
+    _cloudSyncV2OutboundInFlight = preparation;
+    try {
+      final confirmation = await preparation;
+      _cloudSyncV2OutboundConfirmation = confirmation;
+      void cancel() {
+        adapter.canary.disarm(confirmation);
+        if (identical(_cloudSyncV2OutboundConfirmation, confirmation)) {
+          _cloudSyncV2OutboundConfirmation = null;
+        }
+      }
+      return CloudSyncUploadRetryAction(cancel: cancel, confirm: () async {
+        if (!identical(_cloudSyncV2OutboundConfirmation, confirmation)) {
+          cancel();
+          return 'The retry confirmation expired. Nothing was submitted. Try again from iCloud Sync.';
+        }
+        _cloudSyncV2OutboundConfirmation = null;
+        _readCloudSyncV2ProfileReadiness(fresh: true);
+        if (!cloudSyncV2PendingUploadRetryAvailable) {
+          cancel();
+          return 'The queued upload changed or sync is busy. Nothing was submitted. Check its status again.';
+        }
+        final retry = adapter.retryPendingUpload(confirmation);
+        _cloudSyncV2OutboundInFlight = retry;
+        try {
+          final result = await retry;
+          return switch (result) {
+            CloudSyncPreviousUploadResult.settled =>
+              'The queued upload is confirmed in iCloud. You can start or resume history sync. '
+              'No new iMessage was sent and automatic uploads are unchanged.',
+            CloudSyncPreviousUploadResult.notApplied =>
+              'The upload is still queued and is not confirmed in iCloud. '
+              'Wait before retrying. No new iMessage was sent.',
+            CloudSyncPreviousUploadResult.unresolved =>
+              'The upload was attempted, but iCloud has not confirmed it yet. '
+              'Wait, then use Check previous upload. Do not resend the message.',
+          };
+        } catch (error) {
+          Logger.warn('CloudKit queued upload retry: ${cloudSyncPreviousUploadCheckLogCode(error)}');
+          if (CloudKitOperationInterlock.hasPoisonedEngineWork) {
+            return 'Close and reopen OpenBubbles, then check the previous upload. '
+                'Its outcome is not confirmed. Your saved history and upload evidence are kept.';
+          }
+          return 'The retry could not finish safely. Your saved history and upload evidence are kept. '
+              'Wait, then use Check previous upload before trying another upload. Do not resend the message.';
+        } finally {
+          cancel();
+          if (identical(_cloudSyncV2OutboundInFlight, retry)) {
+            _cloudSyncV2OutboundInFlight = null;
+          }
+          _readCloudSyncV2ProfileReadiness(fresh: true);
+        }
+      });
+    } finally {
+      if (identical(_cloudSyncV2OutboundInFlight, preparation)) {
+        _cloudSyncV2OutboundInFlight = null;
+      }
+    }
+  }
+
   /// One explicit, remote-read-only receipt check. This shares outbound's
   /// lifecycle future so reset/sign-out must drain it before disposing Rust.
   Future<String> checkCloudSyncV2PreviousUpload() async {
@@ -10352,6 +10447,10 @@ class RustPushService extends GetxService {
         _readCloudSyncV2ProfileReadiness(fresh: true) !=
         CloudSyncProfileReadiness.unfinishedUploads) {
       return 'The upload check is not available right now. No messages were resent.';
+    }
+    if (cloudSyncV2PendingUploadRetryAvailable) {
+      return 'The previous upload is queued and needs a retry, not another receipt check. '
+          'Use Retry queued upload to finish it. No new iMessage will be sent.';
     }
     _cloudSyncV2ReceiptCheckActive = true;
     Future<CloudSyncPreviousUploadResult>? future;
@@ -10366,7 +10465,8 @@ class RustPushService extends GetxService {
           'No message was resent and upload settings are unchanged.',
         CloudSyncPreviousUploadResult.notApplied =>
           'The previous upload was not saved to iCloud. It remains queued; '
-          'this check did not retry it. History sync is still blocked.',
+          'this check did not retry it. Use Retry queued upload when available. '
+          'History sync is still blocked.',
         CloudSyncPreviousUploadResult.unresolved =>
           'iCloud has not confirmed the previous upload yet. Your saved history '
           'and upload evidence are kept. Wait before checking again; do not resend it.',

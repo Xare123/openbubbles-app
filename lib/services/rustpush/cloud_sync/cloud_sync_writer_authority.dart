@@ -24,6 +24,14 @@ final class ObjectBoxCloudSyncWriterAuthority
   ObjectBoxCloudSyncWriterAuthority({required Store store})
     : _authority = ObjectBoxCloudKitWriterAuthority(store: store);
 
+  ObjectBoxCloudSyncWriterAuthority.forTest({
+    required Store store,
+    required CloudKitWriterOwnershipDecision buildDecision,
+  }) : _authority = ObjectBoxCloudKitWriterAuthority.forTest(
+         store: store,
+         buildDecision: buildDecision,
+       );
+
   final ObjectBoxCloudKitWriterAuthority _authority;
 
   @override

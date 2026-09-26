@@ -1286,6 +1286,199 @@ void main() {
       expect(canary.isActive, isFalse);
     },
   );
+  test(
+    'recovery arms one pending row with retained settled audits',
+    () async {
+      final scope = _scope(_fingerprintA);
+      final pending = _validOperation(scope);
+      final audits = <String>['B', 'C', 'D', 'E', 'F', 'G', 'H', 'I']
+          .map((c) => _auditOperation(scope, c))
+          .toList();
+      final fixture = _CanaryFixture(
+        preflightStates: [_readyState(outboxCount: 9), _readyState(outboxCount: 9)],
+        confirmationRows: [pending, ...audits],
+      );
+      final canary = fixture.build();
+      final confirmation = await canary.armRecoveryConfirmed();
+      expect(confirmation.armedOperation!.operationId, pending.operationId);
+      expect(fixture.sessionFactoryCalls, 0);
+      expect(fixture.session.admitCalls, 0);
+      expect(fixture.session.flushCalls, 0);
+    },
+  );
+  test(
+    'pending recovery runs with retained audits and pins them at postflight',
+    () async {
+      final scope = _scope(_fingerprintA);
+      final pending = _validOperation(scope);
+      final audits = <String>['B', 'C', 'D', 'E', 'F', 'G', 'H', 'I']
+          .map((c) => _auditOperation(scope, c))
+          .toList();
+      final confirmedPending = pending.copyWith(
+        status: CloudOutboxStatus.confirmed,
+        appleRequestUuid: _testRequestUuid,
+        appleOperationUuid: _testOperationUuid,
+        confirmedAt: testEpoch.add(const Duration(seconds: 1)),
+      );
+      final fixture = _CanaryFixture(
+        preflightStates: [
+          _readyState(outboxCount: 9),
+          _readyState(outboxCount: 9),
+          _readyState(outboxCount: 9),
+        ],
+        confirmationRows: [pending, ...audits],
+        outboxReads: [
+          [pending, ...audits],
+          [confirmedPending, ...audits],
+        ],
+      );
+      final canary = fixture.build();
+      final confirmation = await canary.armRecoveryConfirmed();
+      final report = await canary.runDoubleConfirmed(confirmation);
+      expect(report.outboxStatus, CloudOutboxStatus.confirmed);
+      expect(fixture.sessionKinds, [CloudSyncOutboundCanarySessionKind.pendingRecovery]);
+      expect(fixture.session.flushCalls, 1);
+      expect(fixture.session.reconcileUnknownCalls, 0);
+      expect(fixture.session.quiesceCalls, 1);
+    },
+  );
+  test(
+    'postflight rejects a replaced audit row',
+    () async {
+      final scope = _scope(_fingerprintA);
+      final pending = _validOperation(scope);
+      final audits = <String>['B', 'C', 'D', 'E', 'F', 'G', 'H', 'I']
+          .map((c) => _auditOperation(scope, c))
+          .toList();
+      final replaced = _auditOperation(scope, 'B').copyWith(serverRecordIdHash: List.filled(43, 'Z').join());
+      final replacedAudits = [replaced, ...audits.sublist(1)];
+      final confirmedPending = pending.copyWith(status: CloudOutboxStatus.confirmed, appleRequestUuid: _testRequestUuid, appleOperationUuid: _testOperationUuid, confirmedAt: testEpoch.add(const Duration(seconds: 1)));
+      final fixture = _CanaryFixture(
+        preflightStates: [_readyState(outboxCount: 9), _readyState(outboxCount: 9), _readyState(outboxCount: 9)],
+        confirmationRows: [pending, ...audits],
+        outboxReads: [[pending, ...audits], [confirmedPending, ...replacedAudits]],
+      );
+      final canary = fixture.build();
+      final confirmation = await canary.armRecoveryConfirmed();
+      await _expectStateError(canary.runDoubleConfirmed(confirmation), 'cloud_sync_outbound_canary_postflight_invalid');
+      expect(fixture.session.quiesceCalls, 1);
+    },
+  );
+  test(
+    'recovery rejects a second pending row with retained audits',
+    () async {
+      final scope = _scope(_fingerprintA);
+      final pending = _validOperation(scope);
+      final audits = <String>['B', 'C'].map((c) => _auditOperation(scope, c)).toList();
+      final fixture = _CanaryFixture(
+        preflightStates: [_readyState(outboxCount: 4), _readyState(outboxCount: 4)],
+        confirmationRows: [pending, pending, ...audits],
+      );
+      final canary = fixture.build();
+      await _expectStateError(canary.armRecoveryConfirmed(), 'cloud_sync_outbound_canary_recovery_invalid');
+      expect(fixture.session.admitCalls, 0);
+      expect(fixture.session.flushCalls, 0);
+    },
+  );
+  test(
+    'recovery rejects foreign scope and leased rows with retained audits',
+    () async {
+      final scope = _scope(_fingerprintA);
+      final pending = _validOperation(scope);
+      final foreign = _auditOperation(_scope(_fingerprintB), 'X');
+      final leased = pending.copyWith(leaseId: 'lease', leaseExpiresAt: testEpoch.add(const Duration(minutes: 1)));
+      for (final rows in <List<CloudOutboxOperation>>[[pending, foreign], [leased]]) {
+        final fixture = _CanaryFixture(
+          preflightStates: [_readyState(outboxCount: 2), _readyState(outboxCount: 2)],
+          confirmationRows: rows,
+        );
+        final canary = fixture.build();
+        await _expectStateError(canary.armRecoveryConfirmed(), 'cloud_sync_outbound_canary_recovery_invalid');
+        expect(fixture.session.admitCalls, 0);
+        expect(fixture.session.flushCalls, 0);
+      }
+    },
+  );
+  test(
+    'confirmed replay arms one row with retained settled audits',
+    () async {
+      final scope = _scope(_fingerprintA);
+      final confirmed = _confirmedOperation(scope);
+      final audits = <String>['B', 'C'].map((c) => _auditOperation(scope, c)).toList();
+      final fixture = _CanaryFixture(
+        preflightStates: [_readyState(outboxCount: 3), _readyState(outboxCount: 3)],
+        confirmationRows: [confirmed, ...audits],
+      );
+      final canary = fixture.build();
+      final confirmation = await canary.armConfirmedReplay();
+      expect(confirmation.armedOperation!.operationId, confirmed.operationId);
+      expect(fixture.sessionFactoryCalls, 0);
+      expect(fixture.session.admitCalls, 0);
+      expect(fixture.session.flushCalls, 0);
+    },
+  );
+  test(
+    'changed source with retained audits reports operation changed',
+    () async {
+      final scope = _scope(_fingerprintA);
+      final pending = _validOperation(scope);
+      final audits = <String>['B', 'C'].map((c) => _auditOperation(scope, c)).toList();
+      final changed = pending.copyWith(payloadSha256: List.filled(64, 'b').join());
+      final fixture = _CanaryFixture(
+        preflightStates: [_readyState(outboxCount: 3), _readyState(outboxCount: 3), _readyState(outboxCount: 3)],
+        confirmationRows: [pending, ...audits],
+        outboxReads: [[changed, ...audits]],
+      );
+      final canary = fixture.build();
+      final confirmation = await canary.armRecoveryConfirmed();
+      await _expectStateError(canary.runDoubleConfirmed(confirmation), 'cloud_sync_outbound_canary_operation_changed');
+      expect(fixture.session.flushCalls, 0);
+      expect(fixture.session.quiesceCalls, 1);
+    },
+  );
+
+  test('ordinary recovery resumes confirmed replay with retained audits', () async {
+    final scope = _scope(_fingerprintA);
+    final confirmed = _confirmedOperation(scope);
+    final audits = ['B', 'C'].map((c) => _auditOperation(scope, c)).toList();
+    final fixture = _CanaryFixture(
+      operation: confirmed,
+      confirmationRows: [confirmed, ...audits],
+      result: _result(const CloudSyncRunCounters()),
+      preflightStates: List.filled(3, _readyState(outboxCount: 3)),
+      outboxReads: [[confirmed, ...audits], [confirmed, ...audits]],
+    );
+    final canary = fixture.build();
+    final confirmation = await canary.armRecoveryConfirmed();
+    final report = await canary.runDoubleConfirmed(confirmation);
+    expect(report.replayVerification, isTrue);
+    expect(fixture.session.flushCalls, 0);
+    expect(fixture.session.verifyNoSaveCalls, 1);
+    expect(fixture.session.finalizeReplayCalls, 1);
+  });
+
+  test('confirmed replay preserves its receipt if an audit changes after proof', () async {
+    final scope = _scope(_fingerprintA);
+    final confirmed = _confirmedOperation(scope);
+    final audit = _auditOperation(scope, 'B');
+    final fixture = _CanaryFixture(
+      operation: confirmed,
+      confirmationRows: [confirmed, audit],
+      result: _result(const CloudSyncRunCounters()),
+      preflightStates: List.filled(3, _readyState(outboxCount: 2)),
+      outboxReads: [
+        [confirmed, audit],
+        [confirmed, audit.copyWith(payloadSha256: List.filled(64, 'b').join())],
+      ],
+    );
+    final canary = fixture.build();
+    final confirmation = await canary.armConfirmedReplay();
+    await _expectStateError(canary.runDoubleConfirmed(confirmation),
+        'cloud_sync_outbound_canary_postflight_invalid');
+    expect(fixture.session.verifyNoSaveCalls, 1);
+    expect(fixture.session.finalizeReplayCalls, 0);
+    expect(fixture.session.quiesceCalls, 1);
+  });
 }
 
 Future<void> _expectStateError(Future<Object?> future, String message) async {
@@ -1398,6 +1591,31 @@ CloudOutboxOperation _confirmedOperation(CloudSyncScope scope) =>
       appleOperationUuid: _testOperationUuid,
       confirmedAt: testEpoch.add(const Duration(seconds: 1)),
     );
+CloudOutboxOperation _auditOperation(CloudSyncScope scope, String character) {
+  final logicalEntityKeyHash = List.filled(43, character).join();
+  return CloudOutboxOperation(
+    scope: scope,
+    operationId: CloudOperationIdentity.forInitialCreate(
+      scope: scope,
+      logicalEntityKeyHash: logicalEntityKeyHash,
+      payloadVersion: cloudSyncOutboundPayloadVersion,
+    ),
+    logicalEntityKeyHash: logicalEntityKeyHash,
+    action: CloudOutboxAction.save,
+    payloadVersion: cloudSyncOutboundPayloadVersion,
+    mutationRevision: 1,
+    checkpointGeneration: 1,
+    encryptedPayloadReference: 'obcs2.ref.${List.filled(43, 'P').join()}',
+    payloadSha256: List.filled(64, 'a').join(),
+    serverRecordIdHash: List.filled(43, character).join(),
+    appleRequestUuid: _testRequestUuid,
+    appleOperationUuid: _testOperationUuid,
+    status: CloudOutboxStatus.confirmed,
+    confirmedAt: testEpoch.add(const Duration(seconds: 1)),
+    dependencyOperationIds: const [],
+    createdAt: testEpoch,
+  );
+}
 
 final class _CanaryFixture {
   _CanaryFixture({

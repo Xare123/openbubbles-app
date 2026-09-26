@@ -30,6 +30,23 @@ CloudSyncProfileReadiness readiness({
 );
 
 void main() {
+  test('Profile retry refreshes admission before arming and shares shutdown tracking', () {
+    final source = File('lib/services/rustpush/rustpush_service.dart').readAsStringSync();
+    final begin = source.indexOf('Future<CloudSyncUploadRetryAction> prepareCloudSyncV2PendingUploadRetry()');
+    final end = source.indexOf('Future<String> checkCloudSyncV2PreviousUpload()', begin);
+    final retry = source.substring(begin, end);
+    expect(retry.indexOf('_readCloudSyncV2ProfileReadiness(fresh: true)'),
+        lessThan(retry.indexOf('if (!cloudSyncV2PendingUploadRetryAvailable)')));
+    expect(retry, contains('_cloudSyncV2OutboundInFlight = preparation'));
+    expect(retry, contains('_cloudSyncV2OutboundInFlight = retry'));
+    expect(retry, contains('identical(_cloudSyncV2OutboundConfirmation, confirmation)'));
+    expect(retry, contains('adapter.retryPendingUpload(confirmation)'));
+    expect(retry, isNot(contains('ensureWriterOwned(')));
+    expect(retry, isNot(contains('_queueCloudSyncV2LocalSends(')));
+    expect(retry, isNot(contains('cloudSyncingEnabled.value =')));
+    expect(retry, isNot(contains('_cloudSyncV2DeveloperRuntimeAllowed')));
+  });
+
   test('Profile receipt check uses the existing shutdown future and fresh admission', () {
     final source = File('lib/services/rustpush/rustpush_service.dart').readAsStringSync();
     final begin = source.indexOf('Future<String> checkCloudSyncV2PreviousUpload()');

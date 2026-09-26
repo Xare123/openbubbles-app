@@ -19,9 +19,10 @@ abstract final class CloudSyncDevGate {
   );
 
   /// Independent opt-in for the one-existing-text, create-only write canary.
-  /// This gate is insufficient by itself: the build must also select the V2
-  /// writer owner, Developer Mode must be active, and two confirmations are
-  /// required at runtime.
+  /// This gate is insufficient by itself: the build must select the V2 writer
+  /// owner and runtime admission still applies. New diagnostic writes require
+  /// Developer Mode and two confirmations. Profile recovery can retry an exact
+  /// existing pending operation after explicit confirmation without Developer Mode.
   static const bool manualOutboundCanaryEnabled = bool.fromEnvironment(
     'OPENBUBBLES_CLOUD_SYNC_V2_OUTBOUND_CANARY',
     defaultValue: false,

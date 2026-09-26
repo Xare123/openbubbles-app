@@ -146,6 +146,7 @@ void main() {
           .createConfirmedReplaySessionForTest(
             scope: scope,
             readOutbox: () async => <CloudOutboxOperation>[operation],
+            hasPending: (candidate) async => candidate.sameDurableSnapshotAs(operation),
             recoverPending: (candidate) async {
               recoverCalls++;
               expect(candidate.sameDurableSnapshotAs(operation), isTrue);
@@ -162,6 +163,7 @@ void main() {
           );
 
       final proof = await session.verifyConfirmedNoSave(operation: operation);
+      expect(recoverCalls, 0, reason: 'readback finalization follows controller postflight, never discovery');
       await session.finalizeConfirmedReplayProof(
         operation: operation,
         proof: proof,

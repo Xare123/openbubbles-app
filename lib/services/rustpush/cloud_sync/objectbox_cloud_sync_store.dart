@@ -60,7 +60,11 @@ class ObjectBoxCloudSyncStore
     CloudSyncAttachmentUploadJournal? attachmentUploadJournal,
     this._readChatIdentityEvidence,
     CloudSyncSemanticDiagnosticRecorder? recordExistingHistoryDiagnostic,
+    void Function()? validateOutboxDispatch,
   }) : _store = store,
+       // Keep the optional fence parameter public without exposing the field.
+       // ignore: prefer_initializing_formals
+       _validateOutboxDispatch = validateOutboxDispatch,
        _localSendJournal = localSendJournal,
        _receivedArchiveJournal = receivedArchiveJournal,
        _localMutationJournal = localMutationJournal,
@@ -151,6 +155,10 @@ class ObjectBoxCloudSyncStore
   final Box<CloudAttachmentMaterializationEntity> _attachmentMaterializations;
   final Box<CloudSemanticReplayEntity> _semanticReplays;
   final Box<CloudSyncRunEntity> _runs;
+
+  // Optional exact-selection fence, evaluated synchronously in the same
+  // transaction that leases a row or persists its submission identity.
+  final void Function()? _validateOutboxDispatch;
 
   @override
   Future<CloudSyncCheckpoint> readCheckpoint(CloudSyncScope scope) async {
@@ -3302,6 +3310,7 @@ class ObjectBoxCloudSyncStore
     final nowMs = now.millisecondsSinceEpoch;
     final leaseIdHash = _digest('outbox-lease\u001f$leaseId');
     return _store.runInTransaction(TxMode.write, () {
+      _validateOutboxDispatch?.call();
       final checkpoint = _checkpointLocked(scope, nowMs: nowMs);
       _fenceUnsupportedOutboundVersionsLocked(scope, nowMs: nowMs);
       if (_hasBlockingOutboxLocked(scope)) {
@@ -3527,6 +3536,7 @@ class ObjectBoxCloudSyncStore
     final leaseIdHash = _digest('outbox-lease\u001f$leaseId');
     final nowMs = now.millisecondsSinceEpoch;
     return _store.runInTransaction(TxMode.write, () {
+      _validateOutboxDispatch?.call();
       final checkpoint = _checkpointLocked(scope, nowMs: nowMs);
       _fenceUnsupportedOutboundVersionsLocked(scope, nowMs: nowMs);
       if (_localSendJournal == null && _localMutationJournal == null) {

@@ -525,6 +525,8 @@ class _ProfilePanelState extends OptimizedState<ProfilePanel> with WidgetsBindin
                       canCheckPreviousUpload: () => pushService.cloudSyncV2ReceiptCheckAvailable,
                       isCheckingPreviousUpload: () => pushService.cloudSyncV2ReceiptCheckActive,
                       onCheckPreviousUpload: pushService.checkCloudSyncV2PreviousUpload,
+                      canRetryPendingUpload: () => pushService.cloudSyncV2PendingUploadRetryAvailable,
+                      onPrepareUploadRetry: pushService.prepareCloudSyncV2PendingUploadRetry,
                     ),
                   ]),
                 if (CloudSyncProfileEntry.showV2Card(v2Visible: pushService.cloudSyncV2ProgressVisible) && pushService.state?.icloudServices?.keychain != null)

@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_progress.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_user_copy.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_upload_retry_action.dart';
 
 /// iCloud sync status card. Uses the account settings' inherited colors and
 /// typography, so the existing iOS-style settings theme is preserved. No app
@@ -23,6 +24,8 @@ class CloudSyncProgressCard extends StatefulWidget {
     this.canCheckPreviousUpload,
     this.isCheckingPreviousUpload,
     this.onCheckPreviousUpload,
+    this.canRetryPendingUpload,
+    this.onPrepareUploadRetry,
   });
   final CloudSyncProgress progress;
   final bool Function() isAvailable;
@@ -36,6 +39,8 @@ class CloudSyncProgressCard extends StatefulWidget {
   final bool Function()? canCheckPreviousUpload;
   final bool Function()? isCheckingPreviousUpload;
   final Future<String> Function()? onCheckPreviousUpload;
+  final bool Function()? canRetryPendingUpload;
+  final Future<CloudSyncUploadRetryAction> Function()? onPrepareUploadRetry;
 
   @override
   State<CloudSyncProgressCard> createState() => _CloudSyncProgressCardState();
@@ -50,11 +55,16 @@ class _CloudSyncProgressCardState extends State<CloudSyncProgressCard> {
   bool _requestingReceiptCheck = false;
   bool _receiptDialogOpen = false;
   String? _receiptResult;
+  bool _preparingRetry = false;
+  bool _submittingRetry = false;
+  CloudSyncUploadRetryAction? _retryAction;
+  bool get retryBusy => _preparingRetry || _submittingRetry;
   bool get checkingReceipt => _requestingReceiptCheck ||
       (widget.isCheckingPreviousUpload?.call() ?? false);
   String _blockerKey() =>
       '${widget.isAvailable()}|${widget.unavailableMessage?.call() ?? ''}|'
-      '${widget.canCheckPreviousUpload?.call()}|$checkingReceipt';
+      '${widget.canCheckPreviousUpload?.call()}|$checkingReceipt|'
+      '${widget.canRetryPendingUpload?.call()}|$retryBusy';
 
   bool get readingElsewhere =>
       !widget.progress.active && (widget.isReading?.call() ?? false);
@@ -86,6 +96,7 @@ class _CloudSyncProgressCardState extends State<CloudSyncProgressCard> {
   @override
   void dispose() {
     _refreshTimer?.cancel();
+    _retryAction?.cancel();
     super.dispose();
   }
 
@@ -124,14 +135,16 @@ class _CloudSyncProgressCardState extends State<CloudSyncProgressCard> {
     if (mounted &&
         accepted == true &&
         !widget.progress.active &&
-        !readingElsewhere && !checkingReceipt) {
+        !readingElsewhere && !checkingReceipt && !retryBusy) {
       setState(() => speed = CloudSyncSpeed.turbo);
     }
   }
 
   Future<void> checkPreviousUpload() async {
-    if (checkingReceipt || _receiptDialogOpen || widget.progress.active || readingElsewhere ||
-        !(widget.canCheckPreviousUpload?.call() ?? false)) return;
+    if (checkingReceipt || retryBusy || _receiptDialogOpen || widget.progress.active || readingElsewhere ||
+        !(widget.canCheckPreviousUpload?.call() ?? false)) {
+      return;
+    }
     final check = widget.onCheckPreviousUpload;
     if (check == null) return;
     setState(() { _receiptDialogOpen = true; _receiptResult = null; });
@@ -146,20 +159,82 @@ class _CloudSyncProgressCardState extends State<CloudSyncProgressCard> {
             TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
             TextButton(onPressed: () => Navigator.pop(context, true), child: const Text('Check upload')),
           ]));
-      if (!mounted || accepted != true) return;
+      if (!mounted || accepted != true) {
+        return;
+      }
       // Read availability again after the dialog; it is not an authorization.
-      if (!(widget.canCheckPreviousUpload?.call() ?? false)) return;
+      if (!(widget.canCheckPreviousUpload?.call() ?? false)) {
+        return;
+      }
       setState(() { _requestingReceiptCheck = true; _receiptDialogOpen = false; });
       final result = await check();
-      if (mounted) setState(() => _receiptResult = result);
+      if (mounted) {
+        setState(() => _receiptResult = result);
+      }
     } catch (_) {
-      if (mounted) setState(() => _receiptResult =
-          'The upload could not be confirmed. Your saved history is kept. Do not resend it.');
+      if (mounted) {
+        setState(() => _receiptResult =
+            'The upload could not be confirmed. Your saved history is kept. Do not resend it.');
+      }
     } finally {
-      if (mounted) setState(() {
-        _requestingReceiptCheck = false;
-        _receiptDialogOpen = false;
-      });
+      if (mounted) {
+        setState(() {
+          _requestingReceiptCheck = false;
+          _receiptDialogOpen = false;
+        });
+      }
+    }
+  }
+
+  Future<void> retryPendingUpload() async {
+    final prepare = widget.onPrepareUploadRetry;
+    if (prepare == null || retryBusy || checkingReceipt || _receiptDialogOpen ||
+        widget.progress.active || readingElsewhere ||
+        !(widget.canRetryPendingUpload?.call() ?? false)) {
+      return;
+    }
+    setState(() { _preparingRetry = true; _receiptResult = null; });
+    CloudSyncUploadRetryAction? action;
+    try {
+      action = await prepare();
+      if (!mounted) {
+        return;
+      }
+      _retryAction = action;
+      final accepted = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          scrollable: true,
+          title: const Text('Retry queued upload?'),
+          content: const Text('Upload the original queued message to your iCloud history, '
+              'then check that iCloud saved it. This does not send a new iMessage, '
+              'enable automatic uploads, or erase history.'),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
+            TextButton(onPressed: () => Navigator.pop(context, true), child: const Text('Retry queued upload')),
+          ],
+        ),
+      );
+      if (!mounted || accepted != true) {
+        return;
+      }
+      setState(() { _preparingRetry = false; _submittingRetry = true; });
+      // The service revalidates the pinned operation/account at confirmation
+      // and native submission. Display availability is not authority to write.
+      final result = await action.confirm();
+      if (mounted) {
+        setState(() => _receiptResult = result);
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() => _receiptResult = _submittingRetry
+            ? 'The retry could not finish safely. Wait, then check the previous upload. Do not resend the message.'
+            : 'A queued upload could not be selected safely. Nothing was submitted. Check the previous upload first.');
+      }
+    } finally {
+      action?.cancel();
+      _retryAction = null;
+      if (mounted) setState(() { _preparingRetry = false; _submittingRetry = false; });
     }
   }
 
@@ -171,7 +246,7 @@ class _CloudSyncProgressCardState extends State<CloudSyncProgressCard> {
       final available = widget.isAvailable();
       final elsewhere = readingElsewhere;
       final checking = checkingReceipt;
-      final busy = p.active || elsewhere || checking;
+      final busy = p.active || elsewhere || checking || retryBusy;
       final notice = p.userNotice(readingElsewhere: elsewhere);
       final blocked = !available && !busy;
       final readyWhileBlocked =
@@ -181,15 +256,20 @@ class _CloudSyncProgressCardState extends State<CloudSyncProgressCard> {
       final blockerText = (unavailableReason?.isNotEmpty ?? false)
           ? unavailableReason!
           : blockedFallback;
-      final displayHeadline = checking ? 'Checking the previous upload'
+      final displayHeadline = retryBusy
+          ? (_submittingRetry ? 'Retrying the queued upload' : 'Preparing the queued upload')
+          : checking ? 'Checking the previous upload'
           : readyWhileBlocked
           ? 'Sync is not available right now'
           : notice.headline;
-      final displayBody = checking
+      final displayBody = retryBusy
+          ? (_submittingRetry ? 'Uploading the original message and checking iCloud confirmation.'
+              : 'Checking the saved upload before asking you to confirm.')
+          : checking
           ? 'Checking iCloud confirmation without sending the message again.'
           : readyWhileBlocked ? blockerText : notice.body;
       final displayAction =
-          checking || (blocked && notice.canStart) ? null : notice.action;
+          checking || retryBusy || (blocked && notice.canStart) ? null : notice.action;
       final showBlockerText = blocked && !readyWhileBlocked;
       return Padding(
         padding: const EdgeInsets.all(16),
@@ -213,16 +293,16 @@ class _CloudSyncProgressCardState extends State<CloudSyncProgressCard> {
             if (busy) ...[
               const SizedBox(height: 8),
               LinearProgressIndicator(
-                value: checking ? null : p.fraction,
-                semanticsLabel: checking ? 'Checking upload confirmation' : 'Syncing, total size unknown',
+                value: checking || retryBusy ? null : p.fraction,
+                semanticsLabel: retryBusy ? displayHeadline : checking ? 'Checking upload confirmation' : 'Syncing, total size unknown',
               ),
             ],
             const SizedBox(height: 8),
-            if (!elsewhere && !checking)
+            if (!elsewhere && !checking && !retryBusy)
               Text(
                 '${p.fetched} downloaded, ${p.reprojected} restored to your chats',
               ),
-            if (p.hasStarted && !elsewhere && !checking)
+            if (p.hasStarted && !elsewhere && !checking && !retryBusy)
               Text('Elapsed ${elapsedLabel(p.elapsed)}'),
             const SizedBox(height: 8),
             Text(
@@ -275,6 +355,13 @@ class _CloudSyncProgressCardState extends State<CloudSyncProgressCard> {
                     onPressed: busy ? null : checkPreviousUpload,
                     icon: const Icon(Icons.fact_check_outlined),
                     label: const Text('Check previous upload'),
+                  ),
+                if (widget.onPrepareUploadRetry != null &&
+                    (retryBusy || (widget.canRetryPendingUpload?.call() ?? false)))
+                  OutlinedButton.icon(
+                    onPressed: busy ? null : retryPendingUpload,
+                    icon: const Icon(Icons.cloud_upload_outlined),
+                    label: const Text('Retry queued upload'),
                   ),
               ],
             ),
