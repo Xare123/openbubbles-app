@@ -1977,6 +1977,7 @@ Future<CloudSyncPreviousUploadResult> checkCloudSyncPreviousMessageUpload({
   required CloudSyncShadowPreflightReader readPreflight,
   required bool Function() runtimeAllowed,
   required String storageDirectory,
+  CloudSyncNativeWriterPause? writerPause,
 }) async {
   if (!runtimeAllowed() || bindings is! CloudKitWriterReconciliationBinding) {
     throw StateError('cloud_sync_receipt_check_unavailable');
@@ -2106,6 +2107,45 @@ Future<CloudSyncPreviousUploadResult> checkCloudSyncPreviousMessageUpload({
         await validate();
         if (!(await current()).sameDurableSnapshotAs(selected)) {
           throw StateError('cloud_sync_receipt_check_snapshot_changed');
+        }
+        // Cold-boot read-auth bootstrap under a native writer pause. This
+        // populates the restored-read keychain/security containers and PCS
+        // zones that writer PCS lookup consumes. Native read-only work only:
+        // no stage, save, zone, key or trust mutation. The pause is released
+        // before any writer-scoped lookup; failure preserves every row.
+        final pause = writerPause ?? FrbCloudSyncNativeWriterPause();
+        var pauseMayRemainActive = false;
+        try {
+          final Object pauseToken;
+          try {
+            pauseToken = await pause.pause();
+            pauseMayRemainActive = true;
+          } on CloudSyncNativeWriterPauseUncertain {
+            pauseMayRemainActive = true;
+            rethrow;
+          }
+          try {
+            if (pauseToken is! BigInt ||
+                pauseToken <= BigInt.zero ||
+                pauseToken.bitLength > 64) {
+              throw StateError('cloud_sync_native_auth_writer_pause_scope_failed');
+            }
+            await validate();
+            final authBinding = nativeAuthBinding ?? FrbCloudSyncNativeAuthBinding();
+            await authBinding.warmReadAuthenticationUnderWriterPause(
+              cloudMessagesClient: auth.cloudMessagesClient,
+              pauseToken: pauseToken,
+            );
+          } finally {
+            await pause.resume(pauseToken);
+            pauseMayRemainActive = false;
+          }
+          await validate();
+          if (!(await current()).sameDurableSnapshotAs(selected)) {
+            throw StateError('cloud_sync_receipt_check_snapshot_changed');
+          }
+        } finally {
+          if (pauseMayRemainActive) interlock.poisonUntilProcessRestart();
         }
         CloudUnknownOutcomeDisposition? disposition;
         if (selected.status == CloudOutboxStatus.unknownOutcome) {

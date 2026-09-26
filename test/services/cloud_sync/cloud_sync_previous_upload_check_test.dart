@@ -13,10 +13,12 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_send_j
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_manual_shadow_sampler.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_models.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_production_sampler_adapter.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_manual_semantic_pull_sampler.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_protector.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_store.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_writer_authority.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_writer_mutation_guard.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_operation_interlock.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_writer_ownership.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/native_protected_cloud_sync_transport.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/objectbox_cloud_sync_preflight.dart';
@@ -50,6 +52,7 @@ final class FakeNativeBindings implements NativeProtectedCloudSyncBindings, Nati
   frb_api.CloudSyncOutboundReconcileResult reconcileResult = const frb_api.CloudSyncOutboundReconcileResult(disposition: frb_api.CloudSyncOutboundReconcileDisposition.unresolved);
   frb_api.CloudSyncOutboundReconcileResult rawReadbackResult = const frb_api.CloudSyncOutboundReconcileResult(disposition: frb_api.CloudSyncOutboundReconcileDisposition.unresolved);
   Object? reconcileThrow;
+  List<String> events = <String>[];
   Never unexpected(String name) {
     unexpectedCalls++;
     throw StateError('unexpected native call ' + name);
@@ -57,6 +60,7 @@ final class FakeNativeBindings implements NativeProtectedCloudSyncBindings, Nati
   @override
   Future<frb_api.CloudSyncOutboundReconcileResult> reconcileMessageCreate({required Object cloudMessagesClient, required String storageDirectory, required String expectedAccountFingerprint, required String expectedProtectedStoreIdentity, required String requestUuid, required frb_api.CloudSyncPreparedMessageCreateInput input}) async {
     reconcileCalls++;
+    events.add('reconcile');
     final thrown = reconcileThrow;
     if (thrown != null) throw thrown;
     return reconcileResult;
@@ -111,10 +115,43 @@ final class FakeNativeBindings implements NativeProtectedCloudSyncBindings, Nati
   Future<void> ensureReadAuthentication({required Object cloudMessagesClient, required String privateStorageDirectory}) async {}
   @override
   Future<void> warmReadAuthentication({required Object cloudMessagesClient}) async {}
+  int warmUnderPauseCalls = 0;
+  Object? warmUnderPauseThrow;
   @override
-  Future<void> warmReadAuthenticationUnderWriterPause({required Object cloudMessagesClient, required BigInt pauseToken}) async {}
+  Future<void> warmReadAuthenticationUnderWriterPause({required Object cloudMessagesClient, required BigInt pauseToken}) async {
+    warmUnderPauseCalls++;
+    events.add('warm');
+    final thrown = warmUnderPauseThrow;
+    if (thrown != null) throw thrown;
+  }
   @override
   Future<CloudSyncNativeAuthMetadata> capture({required Object cloudMessagesClient, required String privateStorageDirectory}) async => CloudSyncNativeAuthMetadata(nativeSessionId: 'N' * 43, accountFingerprint: testAccountFingerprintA, protectedStoreIdentity: 'obcs2.store.' + testAccountFingerprintA);
+}
+// Scriptable writer pause. Records pause, warm and resume order through the
+// shared event log to prove the pause is released before writer lookup.
+final class FakeWriterPause implements CloudSyncNativeWriterPause {
+  FakeWriterPause(this.events);
+  final List<String> events;
+  int pauseCalls = 0;
+  int resumeCalls = 0;
+  Object? pauseThrow;
+  Object? resumeThrow;
+  BigInt token = BigInt.from(7);
+  @override
+  Future<Object> pause() async {
+    pauseCalls++;
+    events.add('pause');
+    final thrown = pauseThrow;
+    if (thrown != null) throw thrown;
+    return token;
+  }
+  @override
+  Future<void> resume(Object token) async {
+    resumeCalls++;
+    events.add('resume');
+    final thrown = resumeThrow;
+    if (thrown != null) throw thrown;
+  }
 }
 const String requestUuidValue = '11111111-2222-4ABC-8DEF-555555555555';
 const String receiptEtagValue = 'EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE';
@@ -126,6 +163,7 @@ void main() {
   late DateTime currentTime;
   late Object activeClient;
   late FakeNativeBindings native;
+  late FakeWriterPause writerPause;
   late RustCloudSyncProtector protector;
   late CloudSyncNativeAuthSnapshot authSnapshot;
   late int authReads;
@@ -139,6 +177,7 @@ void main() {
     currentTime = testEpoch;
     activeClient = Object();
     native = FakeNativeBindings();
+    writerPause = FakeWriterPause(native.events);
     protector = RustCloudSyncProtector(storageDirectory: directory.path, bindings: FakeProtectionBindings());
     authSnapshot = CloudSyncNativeAuthSnapshot.fromNative(nativeSessionId: 'N' * 43, accountFingerprint: testAccountFingerprintA, protectedStoreIdentity: 'obcs2.store.' + testAccountFingerprintA, cloudMessagesClient: activeClient);
     authReads = 0;
@@ -195,7 +234,7 @@ void main() {
     }
     return false;
   }
-  Future<CloudSyncPreviousUploadResult> runCheck() => checkCloudSyncPreviousMessageUpload(store: objectBox, protector: protector, readAuth: readAuth, readActiveClient: () => activeClient, nativeAuthBinding: native, bindings: native, readPreflight: readPreflight, runtimeAllowed: runtimeAllowed, storageDirectory: directory.path);
+  Future<CloudSyncPreviousUploadResult> runCheck() => checkCloudSyncPreviousMessageUpload(store: objectBox, protector: protector, readAuth: readAuth, readActiveClient: () => activeClient, nativeAuthBinding: native, bindings: native, readPreflight: readPreflight, runtimeAllowed: runtimeAllowed, storageDirectory: directory.path, writerPause: writerPause);
   CloudOutboxOperation buildOp({required String logicalCharacter, required int revision, required String payloadShaCharacter, required String leaseCharacter}) {
     final String logical = digestFor(logicalCharacter);
     final CloudSyncScope active = scope();
@@ -462,6 +501,152 @@ void main() {
     expect(native.stageCalls, 0);
     expect(native.prepareCalls, 0);
     expect(native.consumeCalls, 0);
+    expect(native.unexpectedCalls, 0);
+  });
+  test('cold bootstrap failure surfaces before any lease or reconcile', () async {
+    await provisionV2();
+    await seedAccount();
+    final targetId = await seedSubmittedTarget();
+    final before = (await durable().readOutboxEntries(scope())).singleWhere((CloudOutboxOperation o) => o.operationId == targetId);
+    native.warmUnderPauseThrow = StateError('cloud_sync_native_auth_warm_failed');
+    await expectLater(runCheck(), throwsA(isA<StateError>().having((StateError e) => e.message, 'message', 'cloud_sync_native_auth_warm_failed')));
+    final target = (await durable().readOutboxEntries(scope())).singleWhere((CloudOutboxOperation o) => o.operationId == targetId);
+    expect(target.status, CloudOutboxStatus.unknownOutcome);
+    expect(target.appleRequestUuid, before.appleRequestUuid);
+    expect(target.appleOperationUuid, before.appleOperationUuid);
+    expect(target.serverRecordIdHash, before.serverRecordIdHash);
+    expect(target.protectedLeaseReference, before.protectedLeaseReference);
+    expect(target.leaseId, isNull);
+    expect(writerPause.pauseCalls, 1);
+    expect(writerPause.resumeCalls, 1);
+    expect(native.warmUnderPauseCalls, 1);
+    expect(native.reconcileCalls, 0);
+    expect(native.rawReadbackCalls, 0);
+    expect(native.stageCalls, 0);
+    expect(native.prepareCalls, 0);
+    expect(native.consumeCalls, 0);
+    expect(native.unexpectedCalls, 0);
+  });
+  test('pause released before writer lookup on genuine unresolved path', () async {
+    await provisionV2();
+    await seedAccount();
+    final targetId = await seedSubmittedTarget();
+    native.reconcileResult = const frb_api.CloudSyncOutboundReconcileResult(disposition: frb_api.CloudSyncOutboundReconcileDisposition.unresolved);
+    final result = await runCheck();
+    expect(result, CloudSyncPreviousUploadResult.unresolved);
+    expect(native.events, <String>['pause', 'warm', 'resume', 'reconcile']);
+    expect(writerPause.pauseCalls, 1);
+    expect(writerPause.resumeCalls, 1);
+    final target = (await durable().readOutboxEntries(scope())).singleWhere((CloudOutboxOperation o) => o.operationId == targetId);
+    expect(target.status, CloudOutboxStatus.unknownOutcome);
+    expect(target.appleRequestUuid, isNotNull);
+    expect(native.reconcileCalls, 1);
+    expect(native.unexpectedCalls, 0);
+  });
+  test('identity change across warming stops check with rows preserved', () async {
+    await provisionV2();
+    await seedAccount();
+    final targetId = await seedSubmittedTarget();
+    flipSessionId = 'F' * 43;
+    flipAfterReads = 3;
+    await expectLater(runCheck(), throwsA(isA<StateError>().having((StateError e) => e.message, 'message', 'cloud_sync_receipt_check_binding_changed')));
+    final target = (await durable().readOutboxEntries(scope())).singleWhere((CloudOutboxOperation o) => o.operationId == targetId);
+    expect(target.status, CloudOutboxStatus.unknownOutcome);
+    expect(target.appleRequestUuid, isNotNull);
+    expect(writerPause.pauseCalls, 1);
+    expect(writerPause.resumeCalls, 1);
+    expect(native.reconcileCalls, 0);
+    expect(native.stageCalls, 0);
+    expect(native.prepareCalls, 0);
+    expect(native.consumeCalls, 0);
+    expect(native.unexpectedCalls, 0);
+  });
+  test('ambiguous pause acquisition poisons until test cleanup', () async {
+    await provisionV2();
+    await seedAccount();
+    final targetId = await seedSubmittedTarget();
+    writerPause.pauseThrow = const CloudSyncNativeWriterPauseUncertain();
+    await expectLater(runCheck(), throwsA(isA<CloudSyncNativeWriterPauseUncertain>()));
+    final target = (await durable().readOutboxEntries(scope())).singleWhere((CloudOutboxOperation o) => o.operationId == targetId);
+    expect(target.status, CloudOutboxStatus.unknownOutcome);
+    expect(target.appleRequestUuid, isNotNull);
+    expect(target.appleOperationUuid, isNotNull);
+    expect(target.serverRecordIdHash, digestFor('S'));
+    expect(target.protectedLeaseReference, isNotNull);
+    expect(target.leaseId, isNull);
+    expect(native.warmUnderPauseCalls, 0);
+    expect(native.reconcileCalls, 0);
+    expect(writerPause.pauseCalls, 1);
+    expect(writerPause.resumeCalls, 0);
+    await expectLater(runCheck(), throwsA(isA<CloudKitOperationInterlockException>()));
+    final stillBlocked = (await durable().readOutboxEntries(scope())).singleWhere((CloudOutboxOperation o) => o.operationId == targetId);
+    expect(stillBlocked.status, CloudOutboxStatus.unknownOutcome);
+    await CloudKitOperationInterlock.debugResetPoisonedLocksForTesting();
+    writerPause.pauseThrow = null;
+    final result = await runCheck();
+    expect(result, CloudSyncPreviousUploadResult.unresolved);
+    expect(native.reconcileCalls, 1);
+    expect(native.unexpectedCalls, 0);
+  });
+  test('resume failure after warm poisons with rows preserved', () async {
+    await provisionV2();
+    await seedAccount();
+    final targetId = await seedSubmittedTarget();
+    writerPause.resumeThrow = StateError('cloud_sync_native_writer_resume_failed');
+    await expectLater(runCheck(), throwsA(isA<StateError>().having((StateError e) => e.message, 'message', 'cloud_sync_native_writer_resume_failed')));
+    final target = (await durable().readOutboxEntries(scope())).singleWhere((CloudOutboxOperation o) => o.operationId == targetId);
+    expect(target.status, CloudOutboxStatus.unknownOutcome);
+    expect(target.appleRequestUuid, isNotNull);
+    expect(target.serverRecordIdHash, digestFor('S'));
+    expect(target.protectedLeaseReference, isNotNull);
+    expect(target.leaseId, isNull);
+    expect(native.warmUnderPauseCalls, 1);
+    expect(native.reconcileCalls, 0);
+    expect(writerPause.pauseCalls, 1);
+    expect(writerPause.resumeCalls, 1);
+    await expectLater(runCheck(), throwsA(isA<CloudKitOperationInterlockException>()));
+    await CloudKitOperationInterlock.debugResetPoisonedLocksForTesting();
+    writerPause.resumeThrow = null;
+    final result = await runCheck();
+    expect(result, CloudSyncPreviousUploadResult.unresolved);
+    expect(native.reconcileCalls, 1);
+    expect(native.unexpectedCalls, 0);
+  });
+  test('warm failure with failed resume surfaces resume failure and poisons', () async {
+    await provisionV2();
+    await seedAccount();
+    final targetId = await seedSubmittedTarget();
+    native.warmUnderPauseThrow = StateError('cloud_sync_native_auth_warm_failed');
+    writerPause.resumeThrow = StateError('cloud_sync_native_writer_resume_failed');
+    await expectLater(runCheck(), throwsA(isA<StateError>().having((StateError e) => e.message, 'message', 'cloud_sync_native_writer_resume_failed')));
+    final target = (await durable().readOutboxEntries(scope())).singleWhere((CloudOutboxOperation o) => o.operationId == targetId);
+    expect(target.status, CloudOutboxStatus.unknownOutcome);
+    expect(target.appleRequestUuid, isNotNull);
+    expect(native.warmUnderPauseCalls, 1);
+    expect(native.reconcileCalls, 0);
+    await expectLater(runCheck(), throwsA(isA<CloudKitOperationInterlockException>()));
+    await CloudKitOperationInterlock.debugResetPoisonedLocksForTesting();
+    writerPause.resumeThrow = null;
+    native.warmUnderPauseThrow = null;
+    final result = await runCheck();
+    expect(result, CloudSyncPreviousUploadResult.unresolved);
+    expect(native.unexpectedCalls, 0);
+  });
+  test('warm failure with successful resume permits safe retry', () async {
+    await provisionV2();
+    await seedAccount();
+    final targetId = await seedSubmittedTarget();
+    native.warmUnderPauseThrow = StateError('cloud_sync_native_auth_warm_failed');
+    await expectLater(runCheck(), throwsA(isA<StateError>().having((StateError e) => e.message, 'message', 'cloud_sync_native_auth_warm_failed')));
+    expect(writerPause.resumeCalls, 1);
+    expect(native.reconcileCalls, 0);
+    native.warmUnderPauseThrow = null;
+    final result = await runCheck();
+    expect(result, CloudSyncPreviousUploadResult.unresolved);
+    expect(native.reconcileCalls, 1);
+    final target = (await durable().readOutboxEntries(scope())).singleWhere((CloudOutboxOperation o) => o.operationId == targetId);
+    expect(target.status, CloudOutboxStatus.unknownOutcome);
+    expect(target.appleRequestUuid, isNotNull);
     expect(native.unexpectedCalls, 0);
   });
 }
