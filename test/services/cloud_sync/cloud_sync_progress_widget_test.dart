@@ -649,7 +649,8 @@ void main() {
       host(p, (_) async => fail('must not start while blocked'), availability: () => false),
     );
     expect(find.text('Sign-in or device check needed'), findsOneWidget);
-    expect(find.textContaining('Tap Start / resume to try again'), findsNothing);
+    expect(find.text('Then tap Start / resume to try again.'), findsNothing);
+    expect(find.text('Apple needs to verify this device or account. The app may ask you to choose a trusted Apple device and enter that device\'s passcode. Your downloaded items are still saved.'), findsOneWidget);
     expect(
       tester.widget<FilledButton>(find.byType(FilledButton)).onPressed,
       isNull,
