@@ -542,6 +542,7 @@ void main() {
     expect(find.text('Sync is not available right now'), findsOneWidget);
     expect(find.text('Ready to sync'), findsNothing);
     expect(find.text('Legacy sync is still finishing.'), findsOneWidget);
+    expect(find.textContaining('Start gets encryption ready'), findsNothing);
     expect(
       tester.widget<FilledButton>(find.byType(FilledButton)).onPressed,
       isNull,
@@ -582,6 +583,34 @@ void main() {
     await tester.pump();
     expect(find.text('Second blocker.'), findsOneWidget);
     expect(find.text('First blocker.'), findsNothing);
+    expect(
+      tester.widget<FilledButton>(find.byType(FilledButton)).onPressed,
+      isNull,
+    );
+    expect(tester.takeException(), isNull);
+  });
+  test('cancelled code maps to real paused state', () {
+    final notice = describeCloudSyncUserNotice(
+      phase: CloudSyncProgressPhase.idle,
+      safeFailure: 'cloud_sync_semantic_drain_cancelled',
+      restartRequired: false,
+      pauseRequested: false,
+      readingElsewhere: false,
+      projectionComplete: false,
+    );
+    expect(notice.state, CloudSyncUserState.paused);
+    expect(notice.canStart, isTrue);
+  });
+  testWidgets('blocked restart keeps its repair instruction', (
+    tester,
+  ) async {
+    final p = CloudSyncProgress();
+    p.safeFailure = 'cloud_sync_v2_pcs_restart_required';
+    await tester.pumpWidget(
+      host(p, (_) async => fail('must not start while blocked'), availability: () => false),
+    );
+    expect(find.text('Restart needed before resuming'), findsOneWidget);
+    expect(find.textContaining('Fully close and restart'), findsOneWidget);
     expect(
       tester.widget<FilledButton>(find.byType(FilledButton)).onPressed,
       isNull,

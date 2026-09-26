@@ -58,7 +58,8 @@ class _CloudSyncProgressCardState extends State<CloudSyncProgressCard> {
     _refreshTimer = Timer.periodic(const Duration(seconds: 1), (_) {
       final available = widget.isAvailable();
       final reading = readingElsewhere;
-      final blockerKey = _blockerKey();
+      final reason = widget.unavailableMessage?.call() ?? '';
+      final blockerKey = '$available|$reason';
       if (widget.progress.active ||
           reading != _lastReading ||
           available != _lastAvailable ||
@@ -129,11 +130,21 @@ class _CloudSyncProgressCardState extends State<CloudSyncProgressCard> {
       final blocked = !available && !busy;
       final readyWhileBlocked =
           blocked && notice.state == CloudSyncUserState.ready;
+      final unavailableReason = widget.unavailableMessage?.call();
+      const blockedFallback =
+          'Not available right now. This needs the authorized test build, '
+          'your iCloud account signed in, no other sync running, '
+          'and the older sync method switched off.';
+      final blockerText = (unavailableReason?.isNotEmpty ?? false)
+          ? unavailableReason!
+          : blockedFallback;
       final displayHeadline = readyWhileBlocked
           ? 'Sync is not available right now'
           : notice.headline;
-      final displayAction = blocked ? null : notice.action;
-      final unavailableReason = widget.unavailableMessage?.call();
+      final displayBody = readyWhileBlocked ? blockerText : notice.body;
+      final displayAction =
+          (blocked && notice.canStart) ? null : notice.action;
+      final showBlockerText = blocked && !readyWhileBlocked;
       return Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
@@ -148,7 +159,7 @@ class _CloudSyncProgressCardState extends State<CloudSyncProgressCard> {
             ],
             Semantics(liveRegion: true, child: Text(displayHeadline)),
             const SizedBox(height: 4),
-            Text(notice.body),
+            Text(displayBody),
             if (displayAction != null) ...[
               const SizedBox(height: 4),
               Text(displayAction),
@@ -178,14 +189,7 @@ class _CloudSyncProgressCardState extends State<CloudSyncProgressCard> {
                 'History was saved, but the chat list could not refresh. Restart OpenBubbles to refresh it.',
               ),
             const SizedBox(height: 8),
-            if (!available && !busy)
-              Text(
-                (unavailableReason?.isNotEmpty ?? false)
-                    ? unavailableReason!
-                    : 'Not available right now. This needs the authorized test build, '
-                          'your iCloud account signed in, no other sync running, '
-                          'and the older sync method switched off.',
-              ),
+            if (showBlockerText) Text(blockerText),
             SwitchListTile.adaptive(
               contentPadding: EdgeInsets.zero,
               title: const Text('Turbo'),
