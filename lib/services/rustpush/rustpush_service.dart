@@ -2347,6 +2347,47 @@ final class CloudSyncExactIntentCanarySelection {
   bool _consumed = false;
 }
 
+// Closed-vocabulary log code for previous-upload check failures. Only
+// allowlisted codes are preserved; everything else maps to generic.
+// Never emits raw exception strings or account data.
+String cloudSyncPreviousUploadCheckLogCode(Object error) {
+  const stateCodes = <String>{
+    'cloud_sync_receipt_check_unavailable',
+    'cloud_sync_receipt_check_preflight_blocked',
+    'native_auth_unavailable',
+    'cloud_sync_receipt_check_candidate_required',
+    'cloud_sync_receipt_check_lease_active',
+    'cloud_sync_receipt_check_submission_missing',
+    'cloud_sync_receipt_check_inventory_changed',
+    'cloud_sync_receipt_check_other_uploads_active',
+    'cloud_sync_receipt_check_checkpoint_changed',
+    'cloud_sync_receipt_check_direction_changed',
+    'cloud_sync_receipt_check_binding_changed',
+    'cloud_sync_receipt_check_snapshot_changed',
+    'cloud_sync_receipt_check_receipt_changed',
+    'cloud_sync_receipt_check_owner_required',
+    'cloud_sync_receipt_check_not_settled',
+  };
+  if (error is StateError && stateCodes.contains(error.message)) {
+    return error.message;
+  }
+  if (error is CloudSyncFailure &&
+      error.safeCode == 'cloud_sync_outbound_native_auth_unavailable') {
+    return 'cloud_sync_outbound_native_auth_unavailable';
+  }
+  return 'cloud_sync_receipt_check_failed';
+}
+
+// True when the check itself could not run due to local setup, as opposed
+// to a returned ambiguous result. Covers the known native-auth code and
+// writer-authority failures; never inspects raw strings.
+bool cloudSyncPreviousUploadCheckIsSetupUnavailable(Object error) {
+  if (error is CloudSyncFailure) {
+    return error.safeCode == 'cloud_sync_outbound_native_auth_unavailable';
+  }
+  return error is CloudKitWriterAuthorityFailure;
+}
+
 class RustPushService extends GetxService {
   final Rx<AppleNetworkHealth> appleNetworkHealth =
       AppleNetworkHealth.unknown.obs;
@@ -10332,29 +10373,17 @@ class RustPushService extends GetxService {
       };
     } catch (error) {
       // Native failures can contain account details. Do not surface raw errors.
-      const safeReceiptCodes = <String>{
-        'cloud_sync_receipt_check_unavailable',
-        'cloud_sync_receipt_check_preflight_blocked',
-        'native_auth_unavailable',
-        'cloud_sync_receipt_check_candidate_required',
-        'cloud_sync_receipt_check_lease_active',
-        'cloud_sync_receipt_check_submission_missing',
-        'cloud_sync_receipt_check_inventory_changed',
-        'cloud_sync_receipt_check_other_uploads_active',
-        'cloud_sync_receipt_check_checkpoint_changed',
-        'cloud_sync_receipt_check_direction_changed',
-        'cloud_sync_receipt_check_binding_changed',
-        'cloud_sync_receipt_check_snapshot_changed',
-        'cloud_sync_receipt_check_receipt_changed',
-        'cloud_sync_receipt_check_owner_required',
-        'cloud_sync_receipt_check_not_settled',
-      };
-      final code = error is StateError && safeReceiptCodes.contains(error.message)
-          ? error.message as String : 'cloud_sync_receipt_check_failed';
+      final code = cloudSyncPreviousUploadCheckLogCode(error);
       Logger.warn('CloudKit previous upload check: $code');
       if (CloudKitOperationInterlock.hasPoisonedEngineWork) {
         return 'The check could not finish safely. Close and reopen OpenBubbles '
             'before trying again. Your saved history and upload evidence are kept.';
+      }
+      if (cloudSyncPreviousUploadCheckIsSetupUnavailable(error)) {
+        return 'The app could not check confirmation of the previous upload '
+            'because the sync setup is unavailable. Your saved history and '
+            'upload evidence are kept, and history sync remains blocked. '
+            'Do not resend the message.';
       }
       if (code == 'cloud_sync_receipt_check_candidate_required' ||
           code == 'cloud_sync_receipt_check_other_uploads_active') {

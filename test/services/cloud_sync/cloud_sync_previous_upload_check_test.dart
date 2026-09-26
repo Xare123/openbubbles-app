@@ -49,6 +49,7 @@ final class FakeNativeBindings implements NativeProtectedCloudSyncBindings, Nati
   int unexpectedCalls = 0;
   frb_api.CloudSyncOutboundReconcileResult reconcileResult = const frb_api.CloudSyncOutboundReconcileResult(disposition: frb_api.CloudSyncOutboundReconcileDisposition.unresolved);
   frb_api.CloudSyncOutboundReconcileResult rawReadbackResult = const frb_api.CloudSyncOutboundReconcileResult(disposition: frb_api.CloudSyncOutboundReconcileDisposition.unresolved);
+  Object? reconcileThrow;
   Never unexpected(String name) {
     unexpectedCalls++;
     throw StateError('unexpected native call ' + name);
@@ -56,6 +57,8 @@ final class FakeNativeBindings implements NativeProtectedCloudSyncBindings, Nati
   @override
   Future<frb_api.CloudSyncOutboundReconcileResult> reconcileMessageCreate({required Object cloudMessagesClient, required String storageDirectory, required String expectedAccountFingerprint, required String expectedProtectedStoreIdentity, required String requestUuid, required frb_api.CloudSyncPreparedMessageCreateInput input}) async {
     reconcileCalls++;
+    final thrown = reconcileThrow;
+    if (thrown != null) throw thrown;
     return reconcileResult;
   }
   @override
@@ -396,6 +399,69 @@ void main() {
     expect(leased.single.operationId, targetId);
     await expectLater(runCheck(), throwsA(isA<StateError>().having((StateError e) => e.message, 'message', 'cloud_sync_receipt_check_lease_active')));
     expect(native.reconcileCalls, 0);
+    expect(native.unexpectedCalls, 0);
+  });
+  test('native setup failure preserves exact durable state and surfaces check failure', () async {
+    await provisionV2();
+    await seedAccount();
+    final auditId = await seedSettledRow(logicalCharacter: 'A', revision: 1, uuidIndex: 1, serverCharacter: 'K');
+    final targetId = await seedSubmittedTarget();
+    final before = (await durable().readOutboxEntries(scope())).singleWhere((CloudOutboxOperation o) => o.operationId == targetId);
+    final beforeBinding = cloudKitWriterReconciliationBindingSha256(before);
+    final pin = checkpointPin();
+    final auditBefore = (await durable().readOutboxEntries(scope())).singleWhere((CloudOutboxOperation o) => o.operationId == auditId);
+    final outboxBefore = ObjectBoxCloudSyncPreflightReader(store: objectBox).read().outboxCount;
+    native.reconcileResult = const frb_api.CloudSyncOutboundReconcileResult(failure: frb_api.CloudSyncOutboundSafeCode.nativeAuthUnavailable);
+    await expectLater(runCheck(), throwsA(isA<CloudSyncFailure>().having((CloudSyncFailure e) => e.safeCode, 'safeCode', 'cloud_sync_outbound_native_auth_unavailable')));
+    final target = (await durable().readOutboxEntries(scope())).singleWhere((CloudOutboxOperation o) => o.operationId == targetId);
+    expect(target.status, CloudOutboxStatus.unknownOutcome);
+    expect(target.appleRequestUuid, before.appleRequestUuid);
+    expect(target.appleOperationUuid, before.appleOperationUuid);
+    expect(target.logicalEntityKeyHash, before.logicalEntityKeyHash);
+    expect(target.encryptedPayloadReference, before.encryptedPayloadReference);
+    expect(target.payloadSha256, before.payloadSha256);
+    expect(target.serverRecordIdHash, before.serverRecordIdHash);
+    expect(target.protectedLeaseReference, before.protectedLeaseReference);
+    expect(target.checkpointGeneration, before.checkpointGeneration);
+    expect(cloudKitWriterReconciliationBindingSha256(target), beforeBinding);
+    expect(target.attemptCount, before.attemptCount + 1);
+    expect(target.leaseId, isNull);
+    expect(target.nextEligibleAt, isNotNull);
+    expect(checkpointPin(), pin);
+    final auditAfter = (await durable().readOutboxEntries(scope())).singleWhere((CloudOutboxOperation o) => o.operationId == auditId);
+    expect(auditAfter.status, CloudOutboxStatus.confirmed);
+    expect(auditAfter.serverRecordIdHash, auditBefore.serverRecordIdHash);
+    expect(ObjectBoxCloudSyncPreflightReader(store: objectBox).read().outboxCount, outboxBefore);
+    expect(auditAfter.sameDurableSnapshotAs(auditBefore), isTrue);
+    expect(ObjectBoxCloudSyncPreflightReader(store: objectBox).read().settledOutboxFingerprint, isNull);
+    expect(native.reconcileCalls, 1);
+    expect(native.rawReadbackCalls, 0);
+    expect(native.commitLeaseCalls, 0);
+    expect(native.ackLeaseCalls, 0);
+    expect(native.stageCalls, 0);
+    expect(native.prepareCalls, 0);
+    expect(native.consumeCalls, 0);
+    expect(native.unexpectedCalls, 0);
+  });
+  test('thrown bridge failure preserves unknown operation and surfaces instead of unresolved', () async {
+    await provisionV2();
+    await seedAccount();
+    final targetId = await seedSubmittedTarget();
+    final before = (await durable().readOutboxEntries(scope())).singleWhere((CloudOutboxOperation o) => o.operationId == targetId);
+    native.reconcileThrow = StateError('bridge_simulated_failure');
+    await expectLater(runCheck(), throwsA(isA<StateError>().having((StateError e) => e.message, 'message', 'bridge_simulated_failure')));
+    final target = (await durable().readOutboxEntries(scope())).singleWhere((CloudOutboxOperation o) => o.operationId == targetId);
+    expect(target.status, CloudOutboxStatus.unknownOutcome);
+    expect(target.appleRequestUuid, before.appleRequestUuid);
+    expect(target.appleOperationUuid, before.appleOperationUuid);
+    expect(target.serverRecordIdHash, before.serverRecordIdHash);
+    expect(target.protectedLeaseReference, before.protectedLeaseReference);
+    expect(target.leaseId, isNull);
+    expect(native.reconcileCalls, 1);
+    expect(native.rawReadbackCalls, 0);
+    expect(native.stageCalls, 0);
+    expect(native.prepareCalls, 0);
+    expect(native.consumeCalls, 0);
     expect(native.unexpectedCalls, 0);
   });
 }

@@ -7135,6 +7135,10 @@ async fn cloud_sync_reconcile_message_create_inner(
         {
             Ok(auth) => auth,
             Err(_) => {
+                warn!(
+                    "Cloud Sync reconcile failed stage=auth-snapshot cause=native-auth-unavailable"
+                );
+                log::logger().flush();
                 return cloud_sync_reconcile_failure(
                     CloudSyncOutboundSafeCode::NativeAuthUnavailable,
                 )
@@ -7150,7 +7154,12 @@ async fn cloud_sync_reconcile_message_create_inner(
         .await
     {
         Ok(binding) => binding,
-        Err(_) => {
+        Err(error) => {
+            warn!(
+                "Cloud Sync reconcile failed stage=writer-preparation cause={}",
+                cloud_sync_writer_preparation_failure_code(&error)
+            );
+            log::logger().flush();
             return cloud_sync_reconcile_failure(CloudSyncOutboundSafeCode::NativeAuthUnavailable)
         }
     };
@@ -7160,6 +7169,10 @@ async fn cloud_sync_reconcile_message_create_inner(
         {
             Ok(auth) => auth,
             Err(_) => {
+                warn!(
+                    "Cloud Sync reconcile failed stage=auth-after-preparation cause=native-auth-unavailable"
+                );
+                log::logger().flush();
                 return cloud_sync_reconcile_failure(
                     CloudSyncOutboundSafeCode::NativeAuthUnavailable,
                 )
@@ -7283,6 +7296,10 @@ async fn cloud_sync_reconcile_message_create_inner(
         {
             Ok(auth) => auth,
             Err(_) => {
+                warn!(
+                    "Cloud Sync reconcile failed stage=auth-after-lookup cause=native-auth-unavailable"
+                );
+                log::logger().flush();
                 return cloud_sync_reconcile_failure(
                     CloudSyncOutboundSafeCode::NativeAuthUnavailable,
                 )

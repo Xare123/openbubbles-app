@@ -2390,11 +2390,19 @@ final class _ProductionUnknownOutcomeCanarySession
 
     final leasedOperation = leased.single;
     CloudUnknownOutcomeResolution? resolution;
+    Object? reconcileError;
+    StackTrace? reconcileErrorStack;
     try {
       resolution = await _reconcile(leasedOperation);
-    } catch (_) {
-      // Any readback failure is still ambiguous. Keep the exact Apple UUIDs,
-      // protected receipt, and durable mutation fence for another readback.
+    } catch (error, stackTrace) {
+      // Only a returned unresolved resolution is a genuine ambiguous envelope.
+      // Every thrown failure is a failed check: keep the exact Apple UUIDs,
+      // protected receipt, and durable mutation fence via the unknownOutcome
+      // transition below, then rethrow. Never force that transition past a
+      // changed binding; transition or fence validation failures propagate
+      // as-is.
+      reconcileError = error;
+      reconcileErrorStack = stackTrace;
     }
     final now = DateTime.now().toUtc();
     CloudOutboxTransition? transition;
@@ -2458,6 +2466,10 @@ final class _ProductionUnknownOutcomeCanarySession
       if (resolution?.disposition == CloudUnknownOutcomeDisposition.committed) {
         throw StateError('cloud_sync_unknown_recovery_receipt_missing');
       }
+    }
+    final failure = reconcileError;
+    if (failure != null) {
+      Error.throwWithStackTrace(failure, reconcileErrorStack ?? StackTrace.current);
     }
     return CloudSyncRunResult(
       status: CloudSyncRunStatus.completed,

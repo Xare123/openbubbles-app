@@ -4,7 +4,7 @@ title: Cloud Sync V2 Current Connection Treemap
 description: Current source of truth for CloudKit V2 architecture, safety boundaries, qualification state, and next gates.
 resource: openbubbles-app
 tags: [openbubbles, cloudkit, messages-in-icloud, architecture, recovery, canary]
-timestamp: 2026-09-18
+timestamp: 2026-09-26
 ---
 
 # Cloud Sync V2 current connection treemap
@@ -61,10 +61,74 @@ remaining production gates, and preserves its independent FaceTime/Find My work.
 Supervisor `01a098ec-c448-73a1-a73f-696d142de228` reviews meaningful checkpoints,
 high-risk integration changes and final release evidence, without a competing
  implementation loop. See AGENTS.md for the scope and coordination contract.
-### Unknown-receipt source repair, supervisor-owned service lane (September 26)
-Service and Profile receipt integration is supervisor-owned and its production review is complete with a compatibility fix: Profile receipt availability and the direct service entry are Android ARM64 only, matching the existing outbound preflight, so no unusable button is advertised on Windows; the shared receipt composition stays real-store testable without a phone, with no writer, auth, or native gates expanded. The standalone reporter addition was removed and the InMemory test draft stays uncommitted, rejected, and untouched pending replacement. Ownership here is testing, docs, and CI: real ObjectBox regressions plus ten composition tests for the exact previous-upload seam, all written and reviewed; the composition fixture is corrected to provision before journal seeding after the setup-only failure, still unexecuted since correction. Supervisor approved one source-only qualification: source ed52292c1b68a5bb0350dc979829871b8985f3b4 published fast-forward to agent/cloudkit-v2-received-origin-20260916, workflow 1ff3a0cb837c52beaeef0a71059ca7e4888051e9, run 36212819529 concluded FAILED and monitored through cleanup by this task. Dart 4026 passed with 11 failed and 5 skipped, app-Rust 785 passed with 0 failed, no APK built and signing skipped. All ten new composition tests failed in fixture setup with cloudkit_writer_transition_coordinator_active from provisioning after coordinator-lease acquisition; one source-contract composition-count test expects 5 transport constructions against 6 actual with the new seam. No automatic rerun. Cleanup verified green with zero project VMs remaining. Installed canary f1f77d36 remains blocked with no new build; both private stable snapshots preserved; Alpha unmerged; Pixel currently disconnected and not required, last device measurement historical Sep25, relay live lane stays parent-owned. No APK, install, or live action. Next intended qualification is the existing validation_mode=dart-only on a new reviewed immutable source, not Rust, Android, or signing; no dispatch until the final go-ahead.
+### Current checkpoint: previous-upload recovery (September 26)
 
-Execution is running: primary owner `01a0abe1-9bbe-71b2-a9ce-4d4578022b0e`
+- **TEST-PROVEN, not live-proven:** reviewed source
+  `158f2c1cf6d8b1de10db69052d157afc9a4399f4` passed dart-only run
+  `36214326974`: 4037 passed, 0 failed, 5 skipped. All ten real-store receipt
+  composition tests, four ObjectBox recovery regressions, and the exact transport
+  allowlist contract passed. Supervisor independently verified named results.
+- The preceding source `ed52292c1b68a5bb0350dc979829871b8985f3b4` passed
+  785 app-Rust tests in run `36212819529`; its Dart result was 4026 passed,
+  11 failed, 5 skipped. Ten failures were fixture provisioning order and one
+  was the old five-composition allowlist. The correction changed tests/docs
+  only, not production source or native code. Do not rerun unchanged suites.
+- Workflow `1ff3a0cb837c52beaeef0a71059ca7e4888051e9`, primary Spot
+  `n2d-standard-16`, writer/uploads false. No APK or signing ran. Cleanup deleted
+  `gce-36214326974-1`; supervisor verified zero project VMs and no registered
+  GitHub runners. No active owned run remains at this checkpoint.
+- Canary packaging run `36215501824` on the same immutable source concluded
+  GREEN. Executed: runner creation, Rust, Flutter, Java, Android SDK, Gradle,
+  Cargo, Fairplay keys, and native setup, Gradle memory bound, benchmark APK build,
+  producer identity and native library verification, benchmark upload, Ubuntu
+  finalize-canary signing with app ID `com.bluebubbles.messaging.cloudkitcanary`
+  plus certificate `0ea17c1b67581ca79660d33db45af0a36b71ea36a4cbafec5293d3ae80570d79`
+  with APK Signature Scheme v2, signed APK upload, and idempotent cleanup. Skipped
+  per step conclusions: ObjectBox C library install, FRB generator, bridge
+  regeneration, both normalizations, both drift checks, generated Rust bridge check,
+  every test suite, the suite gate, upload-flag qualification, JVM tests, and
+  rustpush validation. Artifacts present for both producer and signed packages.
+  Cleanup deleted the exact VM; zero project VMs remain and no install, live, or
+  relay action was taken.
+- Profile recovery and direct service entry are Android ARM64 only, matching
+  outbound preflight. The real-store shared composition remains testable without
+  a phone. Auth, writer and native gates were not expanded. The rejected
+  untracked InMemory test and user-owned AGENTS.md remain excluded.
+- **Next:** resolve the native setup failure observed by the real Profile receipt
+  check, then verify its one retained Message CREATE by remote receipt/readback. No new
+  send/save/delete, queue clear, cursor reset or automatic retry is authorized
+  by this recovery step. A successful local reconciliation must enable normal
+  Profile sync without discarding evidence.
+- Installed candidate SHA256 is
+  `1d7003735e4cbb5d20137c34da3b3c048619c897922ae62cdfdabc798e48de02`.
+  USB in-place update succeeded and installed bytes match; sign-in remains ready,
+  legacy off, no active coordinator. Profile's new recovery button is live-proven,
+  but confirmation remains **IN REPAIR**: native result `nativeAuthUnavailable`
+  maps to `cloud_sync_outbound_native_auth_unavailable`, then the session catches
+  it and misleadingly displays unconfirmed. This is not an unresolved Apple
+  receipt envelope. The exact native initialization subcause remains unproven.
+  Temporary debugger observation restored the original pause mode and removed
+  its breakpoint; no APK rebuild or guard bypass was used. Counts remain unchanged.
+  Fresh preinstall snapshot is stable at
+  `device-evidence/receipt-recovery-20260926-preinstall/data.mdb` (135749632 bytes).
+  Baseline: 702 chats, 11917 messages, 2416 attachments; eight confirmed audit
+  rows and one unknown Message CREATE. Final ADB check found no active sync,
+  coordinator, logout, recovery observer or forwards; user was told it is safe
+  to disconnect. Muse is tracing native setup source-only, with no live relay
+  use authorized by this handoff. Old APK `f1f77d36`
+  and private snapshots are preserved; Alpha remains untouched and unmerged.
+- Supervisor owns the receipt adapter/service/Profile review. Muse owns the
+  qualification/build execution after approval and the evidence closeout.
+  Broader production gates below remain open; passing source tests is not a
+  release-readiness claim.
+- Bounded diagnostic fix implemented source-only on top of 158f2c1cf (uncommitted, no CI dispatched, no live/Pixel/relay action). Pinpoint: live proof is nativeAuthUnavailable with null disposition/failureClass, not an Apple unresolved envelope. Rust reconcile had three indistinguishable Err-to-NativeAuthUnavailable sites with no logging; writer prep collapses general-container init plus validate_general_identity, PCS WriterLookupOnly for messageManateeZone, second validate and non-empty user_id, while auth snapshot collapses validated_native_account_identifier DSID/ADSID comparison, two fingerprint_account calls and protected_store_identity. Exact subcause remains unproven without live warn logs. Changes use closed vocabulary only: rust/src/api/api.rs adds stage warn logs auth-snapshot, writer-preparation via existing cloud_sync_writer_preparation_failure_code, auth-after-preparation with envelope unchanged; cloud_sync_production_sampler_adapter.dart preserves unknownOutcome transition then rethrows CloudSyncFailure authorization/localStorage and CloudKitWriterAuthorityFailure instead of swallowing to unresolved; rustpush_service.dart surfaces native setup as distinct check-could-not-be-performed, not Apple unresolved, neither labels ready. No semantic-read container reuse, no guard weakening, no queue clear, resend, reset, legacy or upload change. Checks: previous-upload file 11/11 pass including new native-setup-preserves-and-surfaces test plus genuine unresolved, notApplied, settled and restart recovery; mutation-guard suite pass; flutter analyze clean except pre-existing infos; git diff check clean; cargo check blocked by missing clang/MSVC ring build, not a code verdict. Remaining live test needs approved qualification/build then Pixel Profile check with warn-log stage/cause capture. Requested decision: review this diagnostic diff and approve one coherent qualification/build plus live log-capture plan before any functional init/recovery repair, which remains undesigned pending the failing boundary.
+
+- Correction to the above bullet: four native stages are now covered (auth-snapshot, writer-preparation, auth-after-preparation, auth-after-lookup) with envelope and container selection unchanged; the session retains the caught error, performs the existing unknownOutcome transition unchanged, then rethrows every caught exception so only a returned unresolved follows the genuine path, with transition validation failures propagating as-is; the service preserves the known native-auth code through an explicit allowlist, keeps poisoned-engine restart handling first, and words setup failure as the app could not check confirmation; strengthened exact-preservation, bridge StateError and presentation tests are green with compat suites passing.
+- Correction to the above bullet: four native stages are now covered (auth-snapshot, writer-preparation, auth-after-preparation, auth-after-lookup) with envelope and container selection unchanged; the session retains the caught error, performs the existing unknownOutcome transition unchanged, then rethrows every caught exception so only a returned unresolved follows the genuine path, with transition validation failures propagating as-is; the service preserves the known native-auth code through an explicit allowlist, keeps poisoned-engine restart handling first, and words setup failure as the app could not check confirmation; strengthened exact-preservation including audit same-snapshot and null settled fingerprint, bridge StateError and presentation tests are green with compat suites passing. Supervisor source review accepts this diagnostic diff for qualification; the live native subcause remains unresolved and no repair is claimed.
+### Historical ownership handoff observations (September 18)
+
+The following observations are dated handoff evidence, not current device state.
+Primary owner `01a0abe1-9bbe-71b2-a9ce-4d4578022b0e`
 confirmed takeover on September 18 with real scoped repository reads
 (HEAD `875902829`, clean tree) and a supervisor checkpoint, after the
 provider400 `access_programs` repair was verified by the supervisor.
@@ -81,7 +145,34 @@ runtime, account, queue or device. Fresh local check found no matching
 Flutter/Dart/OpenBubbles process and C: has 26.75 GiB free. The prior qualification
 and device observations below remain dated evidence, not fresh live state.
 
- Next (current September 26): Pixel 57170DLCH000W8 live, installed canary still f1f77d36 with no new build. Signed in with UI ready, legacy off and inactive, no coordinator, outbox blocked; semantic pull unavailable. Stable canary capture at device-evidence/profile-outbox-review-20260925/data.mdb (135749632 bytes, manifest stable, hashes match); preserved, never for CI upload. No queue clear, replay, restart, Alpha changes, or new build. Fresh live read-only measurement: outbox 9 rows (8 confirmed plus 1 state5 unknownOutcome version2 revision9 in messageManateeZone, one account fingerprint, Apple IDs and protected lease and payload refs retained, updated 2026-09-15T23:12:40.594Z); store holds 702 chats, 11917 messages, 2416 attachments. VM URI recovered via read-only FlutterJNI static field, PID unchanged 26974, no restart, owned forwards cleaned; user allowed restart but none was needed. Recovery terminology corrected: the lease and reconciliation path changes local queue receipt, lease and authority state after exact proof, so it is not globally read-only; the requirement is remote-read-only with no new sends, saves, replays or deletes, no cursor change, and only bounded proof-backed local transitions. Backfill verdict (corrected, prior no-uploader claim withdrawn): legacy backfill EXISTS in rustpush_service around 4826-4960 behind legacyMutationsEnabled, uploading unsynced non-deleted non-SMS chats plus itemType-0 unsynced messages newer than cutoff in batches of 3000 with quota headroom and a no-progress stop; failures reset record IDs for retry and null-record deletes stay gated. Edit and unsend re-upload behavior is unverified. Installed Alpha reports 1.15.0/20002227; version equality is not lineage proof. Staged build blocks legacy mutations as restore-only, so no backfill runs there; no activation performed. Outbox state5 case is payloadVersion2, the standard outbound lane (update lane is version3), so create-session reconciliation stays possible pending exact eligibility (same snapshot, lease, identity, binding, account fingerprint); parent source now implements exact single previous Message CREATE receipt-only recovery on the real ObjectBox store with a service tracked operation and an explicit Profile check button, unexecuted with no CI, build, or device mutation and Alpha preserved unmerged. Missing seams for any future archival: an additive importer, export chat-list completeness and large-file gaps.
+### Last live device observation (September 25)
+
+- Pixel `57170DLCH000W8`, Canary APK `f1f77d36`: signed in, UI ready,
+  legacy off/inactive, no active coordinator. Semantic pull was blocked by nine
+  outbox rows: eight confirmed audit rows and one `unknownOutcome` Message CREATE
+  in `messageManateeZone`, payload version 2, revision 9, one account, Apple IDs
+  and protected payload/lease retained. Last row update:
+  `2026-09-15T23:12:40.594Z`. This is not a version-3 edit operation.
+- Store counts: 702 chats, 11917 messages, 2416 attachments. Stable private
+  snapshot: `device-evidence/profile-outbox-review-20260925/data.mdb`,
+  135749632 bytes, manifest and hashes matched. Never upload it to CI.
+  Read-only FlutterJNI inspection left PID 26974 unchanged; owned forwards
+  were removed. No restart, replay, queue clear or Alpha change occurred.
+- Recovery is **remote-read-only**, not globally read-only: exact Apple proof
+  may update the local receipt, lease and authority state, but cannot create a
+  new send/save/delete or advance a cursor. Source qualification is recorded
+  above; current-device recovery remains unverified.
+- Alpha reports 1.15.0/20002227; matching versions do not prove matching source.
+  Legacy backfill exists in `rustpush_service.dart` behind
+  `legacyMutationsEnabled`: unsynced non-deleted non-SMS chats and itemType-0
+  messages newer than cutoff, batches of 3000, quota/no-progress safeguards.
+  Failed uploads reset record IDs for retry; null-record deletes remain gated.
+  Edit/unsend re-upload is unverified. Current restore-only build disables
+  legacy mutations; no backfill or new activation was performed.
+- Alpha migration still needs an additive importer and explicit treatment of
+  incomplete chat-list exports and large attachments. Never use the destructive
+  restore path or manufacture received/send provenance to populate iCloud.
+
  Worker retry boundaries (accepted scope, not broader): the test restarts AFTER successful projection, so it is not interruption or restart while retained or mid-transaction; it does not prove automatic retry scheduling, actual process death, fresh authentication or identity restoration, or live Pixel behavior. The fixed decoder, seeded scope and fence rows, and _ExactCanonicalResolver remain test fixtures, and the arrival helper calls gateway.writeTransaction directly rather than the scheduler delivering the parent. These limits do not invalidate the accepted worker and reopen proof.
  TEST-PROVEN worker retry of retained attachments (supervisor-directed check, source 10cca2362, run 35896118856): real TransactionalCloudInboxApplier.reprojectRetainedUnprojected against the real gateway and ObjectBox store keeps a retained attachment without its parent, commits exactly once after the parent message arrives through the worker transaction, and a close plus reopen plus re-sweep finds nothing with still one attachment and one applied replay. Run: 3979 Dart pass with 5 skips, app-Rust success, exact source, cleanup with zero VMs and runners, no APK or signing.
 
