@@ -522,6 +522,9 @@ class _ProfilePanelState extends OptimizedState<ProfilePanel> with WidgetsBindin
                       onStart: pushService.startCloudSyncV2Progress,
                       unavailableMessage: () =>
                           pushService.cloudSyncV2ProgressUnavailableMessage,
+                      canCheckPreviousUpload: () => pushService.cloudSyncV2ReceiptCheckAvailable,
+                      isCheckingPreviousUpload: () => pushService.cloudSyncV2ReceiptCheckActive,
+                      onCheckPreviousUpload: pushService.checkCloudSyncV2PreviousUpload,
                     ),
                   ]),
                 if (CloudSyncProfileEntry.showV2Card(v2Visible: pushService.cloudSyncV2ProgressVisible) && pushService.state?.icloudServices?.keychain != null)

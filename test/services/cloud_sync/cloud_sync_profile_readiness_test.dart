@@ -30,6 +30,45 @@ CloudSyncProfileReadiness readiness({
 );
 
 void main() {
+  test('Profile receipt check uses the existing shutdown future and fresh admission', () {
+    final source = File('lib/services/rustpush/rustpush_service.dart').readAsStringSync();
+    final begin = source.indexOf('Future<String> checkCloudSyncV2PreviousUpload()');
+    final end = source.indexOf('Future<void> startCloudSyncV2Progress(', begin);
+    final check = source.substring(begin, end);
+    expect(check, contains('ffi.Abi.current() != ffi.Abi.androidArm64'));
+    expect(check, contains('_readCloudSyncV2ProfileReadiness(fresh: true)'));
+    expect(check, contains('CloudSyncProfileReadiness.unfinishedUploads'));
+    expect(check, contains('_cloudSyncV2OutboundInFlight = future'));
+    expect(check, contains('identical(_cloudSyncV2OutboundInFlight, future)'));
+    expect(check, contains('checkPreviousUploadReceipt()'));
+    expect(check, isNot(contains('runDoubleConfirmed(')));
+    expect(check, isNot(contains('startCloudSyncV2Progress(')));
+    expect(check, isNot(contains('ensureWriterOwned(')));
+    expect(check, isNot(contains('cloudSyncingEnabled.value =')));
+    final reset = source.substring(source.indexOf('Future reset(bool hw'));
+    expect(reset, contains('_cloudSyncV2OutboundInFlight'));
+  });
+
+  test('receipt composition has readback and local finalization but no submission engine', () {
+    final source = File('lib/services/rustpush/cloud_sync/cloud_sync_production_sampler_adapter.dart')
+        .readAsStringSync();
+    final begin = source.indexOf('Future<CloudSyncPreviousUploadResult> checkCloudSyncPreviousMessageUpload(');
+    final end = source.indexOf('typedef _CanaryOutboxRead', begin);
+    final check = source.substring(begin, end);
+    expect(check, contains('verifyConfirmedMessageCreateNoSave('));
+    expect(check, contains('commitConfirmedMessageCreateReadback('));
+    expect(check, contains('finalizeMessageCreateReadbackLeases('));
+    expect(check, contains('settledOutboxFingerprint == null'));
+    expect(check, contains('auth.sameIdentity(await readAuth())'));
+    expect(check, contains('transport.quiesceNativeOperations()'));
+    expect(check, contains('interlock.poisonUntilProcessRestart()'));
+    for (final forbidden in ['CloudSyncEngine(', '.flush', '.synchronize(',
+      '.prepareMessageCreate(', '.consumeMessageCreate(', '.saveRecords(',
+      '.deleteRecords(', '.enqueueOutbox(', '.ensureV2Owned(']) {
+      expect(check, isNot(contains(forbidden)), reason: forbidden);
+    }
+  });
+
   const clear = CloudSyncLocalPreflightState(
     objectBoxReady: true,
     coordinatorLeaseActive: false,

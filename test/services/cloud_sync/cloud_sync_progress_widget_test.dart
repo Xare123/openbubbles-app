@@ -44,6 +44,9 @@ void main() {
     bool Function()? isReading,
     bool Function()? availability,
     String? Function()? unavailableMessage,
+    bool Function()? canCheckPreviousUpload,
+    bool Function()? isCheckingPreviousUpload,
+    Future<String> Function()? onCheckPreviousUpload,
   }) => MaterialApp(
     theme: ThemeData(fontFamily: 'Inter'),
     debugShowCheckedModeBanner: false,
@@ -57,11 +60,122 @@ void main() {
             isReading: isReading,
             onStart: start,
             unavailableMessage: unavailableMessage,
+            canCheckPreviousUpload: canCheckPreviousUpload,
+            isCheckingPreviousUpload: isCheckingPreviousUpload,
+            onCheckPreviousUpload: onCheckPreviousUpload,
           ),
         ),
       ),
     ),
   );
+
+  testWidgets('receipt check is explicit, single-flight and never starts sync', (tester) async {
+    final done = Completer<String>();
+    var checks = 0;
+    var settled = false;
+    await tester.pumpWidget(host(CloudSyncProgress(),
+      (_) async => fail('receipt check must not start sync'),
+      availability: () => settled,
+      canCheckPreviousUpload: () => !settled,
+      onCheckPreviousUpload: () async {
+        checks++;
+        final result = await done.future;
+        settled = true;
+        return result;
+      }));
+    expect(checks, 0);
+    await tester.ensureVisible(find.text('Check previous upload'));
+    await tester.tap(find.text('Check previous upload'));
+    await tester.pumpAndSettle();
+    expect(checks, 0);
+    expect(find.textContaining('does not resend'), findsOneWidget);
+    await tester.tap(find.text('Check upload'));
+    await tester.pump();
+    expect(checks, 1);
+    expect(find.text('Checking the previous upload'), findsOneWidget);
+    expect(find.text('Ready to sync'), findsNothing);
+    expect(tester.widget<FilledButton>(find.byType(FilledButton)).onPressed, isNull);
+    expect(tester.widget<OutlinedButton>(find.byType(OutlinedButton)).onPressed, isNull);
+    expect(tester.widget<SwitchListTile>(find.byType(SwitchListTile)).onChanged, isNull);
+    done.complete('Previous upload confirmed. Nothing resent.');
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 1));
+    expect(find.text('Previous upload confirmed. Nothing resent.'), findsOneWidget);
+    expect(find.text('Check previous upload'), findsNothing);
+    expect(tester.widget<FilledButton>(find.byType(FilledButton)).onPressed, isNotNull);
+    expect(checks, 1);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('receipt confirmation cancellation and changed availability do no work', (tester) async {
+    var allowed = true;
+    await tester.pumpWidget(host(CloudSyncProgress(), (_) async {}, available: false,
+      canCheckPreviousUpload: () => allowed,
+      onCheckPreviousUpload: () async => throw StateError('must not run')));
+    await tester.ensureVisible(find.text('Check previous upload'));
+    await tester.tap(find.text('Check previous upload'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Cancel'));
+    await tester.pumpAndSettle();
+    expect(find.byType(LinearProgressIndicator), findsNothing);
+    await tester.tap(find.text('Check previous upload'));
+    await tester.pumpAndSettle();
+    allowed = false;
+    await tester.tap(find.text('Check upload'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('could not be confirmed'), findsNothing);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('receipt check survives navigation and remounted card stays busy', (tester) async {
+    final done = Completer<String>();
+    var checking = false;
+    Future<String> check() async {
+      checking = true;
+      try { return await done.future; } finally { checking = false; }
+    }
+    Widget page() => host(CloudSyncProgress(), (_) async => fail('no sync'),
+      available: false, canCheckPreviousUpload: () => !checking,
+      isCheckingPreviousUpload: () => checking, onCheckPreviousUpload: check);
+    await tester.pumpWidget(page());
+    await tester.ensureVisible(find.text('Check previous upload'));
+    await tester.tap(find.text('Check previous upload'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Check upload'));
+    await tester.pump();
+    await tester.pumpWidget(const SizedBox.shrink());
+    expect(checking, isTrue);
+    await tester.pumpWidget(page());
+    expect(find.text('Checking the previous upload'), findsOneWidget);
+    expect(tester.widget<FilledButton>(find.byType(FilledButton)).onPressed, isNull);
+    done.complete('Still waiting for confirmation.');
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 1));
+    expect(checking, isFalse);
+    expect(find.text('Checking the previous upload'), findsNothing);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('receipt errors stay private and narrow large text does not overflow', (tester) async {
+    tester.view.physicalSize = const Size(320, 1000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    await tester.pumpWidget(host(CloudSyncProgress(), (_) async {}, available: false,
+      scale: 1.6, canCheckPreviousUpload: () => true,
+      onCheckPreviousUpload: () async => throw StateError('private-account-detail')));
+    await tester.ensureVisible(find.text('Check previous upload'));
+    await tester.tap(find.text('Check previous upload'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Check upload'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('private-account-detail'), findsNothing);
+    expect(find.textContaining('could not be confirmed'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
 
   testWidgets(
     'external sync state refreshes without a user tap and cannot start a second run',
@@ -271,8 +385,8 @@ void main() {
       await tester.ensureVisible(find.text('Start / resume'));
       await tester.tap(find.text('Start / resume'));
       expect(tester.takeException(), isNull);
-      expect(find.textContaining('authorized test build'), findsOneWidget);
-      expect(find.textContaining('After an app restart'), findsOneWidget);
+      expect(find.text('Sync is not available right now'), findsOneWidget);
+      expect(find.textContaining('Check back shortly'), findsOneWidget);
     },
   );
 

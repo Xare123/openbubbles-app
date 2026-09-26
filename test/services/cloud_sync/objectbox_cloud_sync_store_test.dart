@@ -8,6 +8,7 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_models.dart'
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_send_source_binding.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_received_archive_source_binding.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_received_record_observation.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_production_sampler_adapter.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_protector.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_store.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_persistent_keys.dart';
@@ -5131,6 +5132,132 @@ void main() {
     },
   );
 
+  test(
+    'unknown recovery session survives a reopened submission lease with its old expiry intact',
+    () async {
+      final scope = messagesCloudScope('messageManateeZone');
+      await seedCompleteMessagesCloudAccount();
+      const seedLeaseId = 'objectbox-unknown-lease-expiry-seed';
+      final sourceLease = testProtectedLeaseReference('e');
+      final serverHash = 'S' * 43;
+      final operationId = CloudOperationIdentity.forInitialCreate(scope: scope, logicalEntityKeyHash: 'U' * 43, payloadVersion: cloudSyncOutboundPayloadVersion);
+      await store.enqueueOutbox(CloudOutboxOperation(scope: scope, operationId: operationId, logicalEntityKeyHash: 'U' * 43, action: CloudOutboxAction.save, payloadVersion: cloudSyncOutboundPayloadVersion, mutationRevision: 1, checkpointGeneration: 1, encryptedPayloadReference: testProtectedReference('P'), payloadSha256: 'c' * 64, protectedLeaseReference: sourceLease, dependencyOperationIds: const <String>{}, createdAt: testEpoch));
+      await store.leaseEligibleOutbox(scope, now: testEpoch, limit: 1, leaseId: seedLeaseId, leaseDuration: const Duration(minutes: 1), allowedActions: const <CloudOutboxAction>{CloudOutboxAction.save});
+      await store.attachOutboxRecordMapping(scope, leaseId: seedLeaseId, operationId: operationId, serverRecordIdHash: serverHash, now: testEpoch);
+      await store.markOutboxSubmissionStarted(scope, leaseId: seedLeaseId, submissionIdentity: testSubmissionIdentity(<String>[operationId]), now: testEpoch);
+      await store.upsertRecordMap(CloudRecordMapEntry(scope: scope, logicalEntityKeyHash: 'U' * 43, serverRecordIdHash: serverHash, encryptedServerRecordId: testProtectedReference('S'), updatedAt: testEpoch), generation: 1);
+      currentTime = testEpoch.add(const Duration(minutes: 2));
+      await reopen();
+      final reread = (await store.readOutboxEntries(scope)).single;
+      expect(reread.status, CloudOutboxStatus.unknownOutcome);
+      expect(reread.leaseExpiresAt?.millisecondsSinceEpoch, testEpoch.add(const Duration(minutes: 1)).millisecondsSinceEpoch);
+      final receipt = CloudOutboxCreateReceipt(operationId: operationId, logicalEntityKeyHash: 'U' * 43, serverRecordIdHash: serverHash, etagHash: 'E' * 43);
+      var reconcileCalls = 0;
+      final session = CloudSyncProductionOutboundCanaryAdapter.createUnknownOutcomeSessionForTest(scope: scope, expectedOperation: reread, readOutbox: () => store.readOutboxEntries(scope), leaseUnknown: ({required DateTime now, required String leaseId, required Duration leaseDuration}) => store.leaseUnknownOutcomes(scope, now: now, limit: 1, leaseId: leaseId, leaseDuration: leaseDuration), applyTransition: ({required String leaseId, required CloudOutboxTransition transition, required DateTime now}) => store.applyOutboxTransitions(scope, leaseId: leaseId, transitions: <CloudOutboxTransition>[transition], now: now), commitCreateReceipt: ({required String leaseId, required CloudOutboxCreateReceipt receipt, required DateTime now}) => store.commitOutboxCreateReceipt(scope, leaseId: leaseId, receipt: receipt, retainProtectedLeaseReference: true, now: now), reconcile: (CloudOutboxOperation operation) async {
+        reconcileCalls++;
+        expect(operation.leaseId, isNotNull);
+        return CloudUnknownOutcomeResolution.committed(createReceipt: receipt);
+      }, quiesce: () async {});
+      final result = await session.reconcileUnknownOutcome(operation: reread);
+      expect(reconcileCalls, 1);
+      expect(result.counters.confirmed, 1);
+      final confirmed = (await store.readOutboxEntries(scope)).single;
+      expect(confirmed.status, CloudOutboxStatus.confirmed);
+      expect(confirmed.serverRecordIdHash, serverHash);
+      expect(confirmed.appleRequestUuid, reread.appleRequestUuid);
+      expect(confirmed.appleOperationUuid, reread.appleOperationUuid);
+      expect(confirmed.protectedLeaseReference, sourceLease);
+      expect(confirmed.leaseId, isNull);
+      expect(await store.readLiveProtectedOutboundLeaseReferences(maximumCount: 4096), <Object?>{sourceLease});
+    },
+  );
+  test(
+    'unknown recovery session never reconciles under an active lease',
+    () async {
+      final scope = messagesCloudScope('messageManateeZone');
+      await seedCompleteMessagesCloudAccount();
+      const seedLeaseId = 'objectbox-unknown-active-lease-seed';
+      final operationId = CloudOperationIdentity.forInitialCreate(scope: scope, logicalEntityKeyHash: 'W' * 43, payloadVersion: cloudSyncOutboundPayloadVersion);
+      await store.enqueueOutbox(CloudOutboxOperation(scope: scope, operationId: operationId, logicalEntityKeyHash: 'W' * 43, action: CloudOutboxAction.save, payloadVersion: cloudSyncOutboundPayloadVersion, mutationRevision: 1, checkpointGeneration: 1, encryptedPayloadReference: testProtectedReference('W'), payloadSha256: 'c' * 64, protectedLeaseReference: testProtectedLeaseReference('e'), dependencyOperationIds: const <String>{}, createdAt: testEpoch));
+      await store.leaseEligibleOutbox(scope, now: testEpoch, limit: 1, leaseId: seedLeaseId, leaseDuration: const Duration(minutes: 1), allowedActions: const <CloudOutboxAction>{CloudOutboxAction.save});
+      await store.markOutboxSubmissionStarted(scope, leaseId: seedLeaseId, submissionIdentity: testSubmissionIdentity(<String>[operationId]), now: testEpoch);
+      final leased = await store.leaseUnknownOutcomes(scope, now: DateTime.now().toUtc(), limit: 1, leaseId: 'objectbox-unknown-active-lease', leaseDuration: const Duration(hours: 1));
+      expect(leased, hasLength(1));
+      final expected = leased.single;
+      var reconcileCalls = 0;
+      final session = CloudSyncProductionOutboundCanaryAdapter.createUnknownOutcomeSessionForTest(scope: scope, expectedOperation: expected, readOutbox: () => store.readOutboxEntries(scope), leaseUnknown: ({required DateTime now, required String leaseId, required Duration leaseDuration}) => store.leaseUnknownOutcomes(scope, now: now, limit: 1, leaseId: leaseId, leaseDuration: leaseDuration), applyTransition: ({required String leaseId, required CloudOutboxTransition transition, required DateTime now}) => store.applyOutboxTransitions(scope, leaseId: leaseId, transitions: <CloudOutboxTransition>[transition], now: now), commitCreateReceipt: ({required String leaseId, required CloudOutboxCreateReceipt receipt, required DateTime now}) => store.commitOutboxCreateReceipt(scope, leaseId: leaseId, receipt: receipt, retainProtectedLeaseReference: true, now: now), reconcile: (CloudOutboxOperation operation) async {
+        reconcileCalls++;
+        throw StateError('must not reconcile under an active lease');
+      }, quiesce: () async {});
+      final result = await session.reconcileUnknownOutcome(operation: expected);
+      expect(reconcileCalls, 0);
+      expect(result.counters.confirmed, 0);
+      expect(result.counters.retried, 0);
+      final preserved = (await store.readOutboxEntries(scope)).single;
+      expect(preserved.status, CloudOutboxStatus.unknownOutcome);
+      expect(preserved.appleRequestUuid, expected.appleRequestUuid);
+      expect(preserved.appleOperationUuid, expected.appleOperationUuid);
+      expect(preserved.attemptCount, expected.attemptCount);
+    },
+  );
+  test(
+    'unknown recovery session rejects the same revision with a changed durable field',
+    () async {
+      final scope = messagesCloudScope('messageManateeZone');
+      await seedCompleteMessagesCloudAccount();
+      const seedLeaseId = 'objectbox-unknown-changed-field-seed';
+      final operationId = CloudOperationIdentity.forInitialCreate(scope: scope, logicalEntityKeyHash: 'X' * 43, payloadVersion: cloudSyncOutboundPayloadVersion);
+      await store.enqueueOutbox(CloudOutboxOperation(scope: scope, operationId: operationId, logicalEntityKeyHash: 'X' * 43, action: CloudOutboxAction.save, payloadVersion: cloudSyncOutboundPayloadVersion, mutationRevision: 1, checkpointGeneration: 1, encryptedPayloadReference: testProtectedReference('X'), payloadSha256: 'c' * 64, protectedLeaseReference: testProtectedLeaseReference('e'), dependencyOperationIds: const <String>{}, createdAt: testEpoch));
+      await store.leaseEligibleOutbox(scope, now: testEpoch, limit: 1, leaseId: seedLeaseId, leaseDuration: const Duration(minutes: 1), allowedActions: const <CloudOutboxAction>{CloudOutboxAction.save});
+      await store.markOutboxSubmissionStarted(scope, leaseId: seedLeaseId, submissionIdentity: testSubmissionIdentity(<String>[operationId]), now: testEpoch);
+      currentTime = testEpoch.add(const Duration(minutes: 2));
+      await reopen();
+      final reread = (await store.readOutboxEntries(scope)).single;
+      expect(reread.status, CloudOutboxStatus.unknownOutcome);
+      var reconcileCalls = 0;
+      final session = CloudSyncProductionOutboundCanaryAdapter.createUnknownOutcomeSessionForTest(scope: scope, expectedOperation: reread, readOutbox: () => store.readOutboxEntries(scope), leaseUnknown: ({required DateTime now, required String leaseId, required Duration leaseDuration}) => store.leaseUnknownOutcomes(scope, now: now, limit: 1, leaseId: leaseId, leaseDuration: leaseDuration), applyTransition: ({required String leaseId, required CloudOutboxTransition transition, required DateTime now}) => store.applyOutboxTransitions(scope, leaseId: leaseId, transitions: <CloudOutboxTransition>[transition], now: now), commitCreateReceipt: ({required String leaseId, required CloudOutboxCreateReceipt receipt, required DateTime now}) => store.commitOutboxCreateReceipt(scope, leaseId: leaseId, receipt: receipt, retainProtectedLeaseReference: true, now: now), reconcile: (CloudOutboxOperation operation) async {
+        reconcileCalls++;
+        throw StateError('must not reconcile a changed durable snapshot');
+      }, quiesce: () async {});
+      final mutated = reread.copyWith(payloadSha256: 'd' * 64);
+      expect(mutated.mutationRevision, reread.mutationRevision);
+      await expectLater(session.reconcileUnknownOutcome(operation: mutated), throwsA(isA<StateError>().having((StateError error) => error.message, 'message', 'cloud_sync_unknown_recovery_operation_changed')));
+      expect(reconcileCalls, 0);
+      final unchanged = (await store.readOutboxEntries(scope)).single;
+      expect(unchanged.sameDurableSnapshotAs(reread), isTrue);
+    },
+  );
+  test(
+    'unknown recovery commit leaves an unrelated pending row untouched',
+    () async {
+      final scope = messagesCloudScope('messageManateeZone');
+      await seedCompleteMessagesCloudAccount();
+      const seedLeaseId = 'objectbox-unknown-untouched-rows-seed';
+      final targetId = CloudOperationIdentity.forInitialCreate(scope: scope, logicalEntityKeyHash: 'Y' * 43, payloadVersion: cloudSyncOutboundPayloadVersion);
+      final serverHash = 'S' * 43;
+      await store.enqueueOutbox(CloudOutboxOperation(scope: scope, operationId: targetId, logicalEntityKeyHash: 'Y' * 43, action: CloudOutboxAction.save, payloadVersion: cloudSyncOutboundPayloadVersion, mutationRevision: 1, checkpointGeneration: 1, encryptedPayloadReference: testProtectedReference('Y'), payloadSha256: 'c' * 64, protectedLeaseReference: testProtectedLeaseReference('e'), dependencyOperationIds: const <String>{}, createdAt: testEpoch));
+      await store.leaseEligibleOutbox(scope, now: testEpoch, limit: 1, leaseId: seedLeaseId, leaseDuration: const Duration(minutes: 1), allowedActions: const <CloudOutboxAction>{CloudOutboxAction.save});
+      await store.attachOutboxRecordMapping(scope, leaseId: seedLeaseId, operationId: targetId, serverRecordIdHash: serverHash, now: testEpoch);
+      await store.markOutboxSubmissionStarted(scope, leaseId: seedLeaseId, submissionIdentity: testSubmissionIdentity(<String>[targetId]), now: testEpoch);
+      await store.upsertRecordMap(CloudRecordMapEntry(scope: scope, logicalEntityKeyHash: 'Y' * 43, serverRecordIdHash: serverHash, encryptedServerRecordId: testProtectedReference('S'), updatedAt: testEpoch), generation: 1);
+      final otherId = CloudOperationIdentity.forInitialCreate(scope: scope, logicalEntityKeyHash: 'V' * 43, payloadVersion: cloudSyncOutboundPayloadVersion);
+      await store.enqueueOutbox(CloudOutboxOperation(scope: scope, operationId: otherId, logicalEntityKeyHash: 'V' * 43, action: CloudOutboxAction.save, payloadVersion: cloudSyncOutboundPayloadVersion, mutationRevision: 2, checkpointGeneration: 1, encryptedPayloadReference: testProtectedReference('V'), payloadSha256: 'd' * 64, protectedLeaseReference: testProtectedLeaseReference('b'), dependencyOperationIds: const <String>{}, createdAt: testEpoch));
+      currentTime = testEpoch.add(const Duration(minutes: 2));
+      await reopen();
+      final target = (await store.readOutboxEntries(scope)).singleWhere((CloudOutboxOperation operation) => operation.operationId == targetId);
+      expect(target.status, CloudOutboxStatus.unknownOutcome);
+      final otherBefore = (await store.readOutboxEntries(scope)).singleWhere((CloudOutboxOperation operation) => operation.operationId == otherId);
+      expect(otherBefore.status, CloudOutboxStatus.pending);
+      final receipt = CloudOutboxCreateReceipt(operationId: targetId, logicalEntityKeyHash: 'Y' * 43, serverRecordIdHash: serverHash, etagHash: 'E' * 43);
+      final session = CloudSyncProductionOutboundCanaryAdapter.createUnknownOutcomeSessionForTest(scope: scope, expectedOperation: target, readOutbox: () => store.readOutboxEntries(scope), leaseUnknown: ({required DateTime now, required String leaseId, required Duration leaseDuration}) => store.leaseUnknownOutcomes(scope, now: now, limit: 1, leaseId: leaseId, leaseDuration: leaseDuration), applyTransition: ({required String leaseId, required CloudOutboxTransition transition, required DateTime now}) => store.applyOutboxTransitions(scope, leaseId: leaseId, transitions: <CloudOutboxTransition>[transition], now: now), commitCreateReceipt: ({required String leaseId, required CloudOutboxCreateReceipt receipt, required DateTime now}) => store.commitOutboxCreateReceipt(scope, leaseId: leaseId, receipt: receipt, retainProtectedLeaseReference: true, now: now), reconcile: (CloudOutboxOperation operation) async => CloudUnknownOutcomeResolution.committed(createReceipt: receipt), quiesce: () async {});
+      final result = await session.reconcileUnknownOutcome(operation: target);
+      expect(result.counters.confirmed, 1);
+      final rows = await store.readOutboxEntries(scope);
+      expect(rows.singleWhere((CloudOutboxOperation operation) => operation.operationId == targetId).status, CloudOutboxStatus.confirmed);
+      final otherAfter = rows.singleWhere((CloudOutboxOperation operation) => operation.operationId == otherId);
+      expect(otherAfter.sameDurableSnapshotAs(otherBefore), isTrue);
+    },
+  );
   test(
     'ordinary confirmation clears its protected receipt reference',
     () async {

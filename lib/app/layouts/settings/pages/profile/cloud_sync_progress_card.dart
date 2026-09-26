@@ -20,6 +20,9 @@ class CloudSyncProgressCard extends StatefulWidget {
     this.showTitle = true,
     this.isReading,
     this.unavailableMessage,
+    this.canCheckPreviousUpload,
+    this.isCheckingPreviousUpload,
+    this.onCheckPreviousUpload,
   });
   final CloudSyncProgress progress;
   final bool Function() isAvailable;
@@ -30,6 +33,9 @@ class CloudSyncProgressCard extends StatefulWidget {
   /// Optional exact readiness reason wired by the parent service seam.
   /// Falls back to a generic checklist when null or empty.
   final String? Function()? unavailableMessage;
+  final bool Function()? canCheckPreviousUpload;
+  final bool Function()? isCheckingPreviousUpload;
+  final Future<String> Function()? onCheckPreviousUpload;
 
   @override
   State<CloudSyncProgressCard> createState() => _CloudSyncProgressCardState();
@@ -41,8 +47,14 @@ class _CloudSyncProgressCardState extends State<CloudSyncProgressCard> {
   bool _lastAvailable = false;
   bool _lastReading = false;
   String _lastBlockerKey = '';
+  bool _requestingReceiptCheck = false;
+  bool _receiptDialogOpen = false;
+  String? _receiptResult;
+  bool get checkingReceipt => _requestingReceiptCheck ||
+      (widget.isCheckingPreviousUpload?.call() ?? false);
   String _blockerKey() =>
-      '${widget.isAvailable()}|${widget.unavailableMessage?.call() ?? ''}';
+      '${widget.isAvailable()}|${widget.unavailableMessage?.call() ?? ''}|'
+      '${widget.canCheckPreviousUpload?.call()}|$checkingReceipt';
 
   bool get readingElsewhere =>
       !widget.progress.active && (widget.isReading?.call() ?? false);
@@ -58,8 +70,7 @@ class _CloudSyncProgressCardState extends State<CloudSyncProgressCard> {
     _refreshTimer = Timer.periodic(const Duration(seconds: 1), (_) {
       final available = widget.isAvailable();
       final reading = readingElsewhere;
-      final reason = widget.unavailableMessage?.call() ?? '';
-      final blockerKey = '$available|$reason';
+      final blockerKey = _blockerKey();
       if (widget.progress.active ||
           reading != _lastReading ||
           available != _lastAvailable ||
@@ -113,8 +124,42 @@ class _CloudSyncProgressCardState extends State<CloudSyncProgressCard> {
     if (mounted &&
         accepted == true &&
         !widget.progress.active &&
-        !readingElsewhere) {
+        !readingElsewhere && !checkingReceipt) {
       setState(() => speed = CloudSyncSpeed.turbo);
+    }
+  }
+
+  Future<void> checkPreviousUpload() async {
+    if (checkingReceipt || _receiptDialogOpen || widget.progress.active || readingElsewhere ||
+        !(widget.canCheckPreviousUpload?.call() ?? false)) return;
+    final check = widget.onCheckPreviousUpload;
+    if (check == null) return;
+    setState(() { _receiptDialogOpen = true; _receiptResult = null; });
+    try {
+      final accepted = await showDialog<bool>(context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Check the previous upload?'),
+          content: const Text('Check whether iCloud saved the previous upload and '
+              'finish its local confirmation if possible. This does not resend '
+              'messages, enable uploads, or erase history.'),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
+            TextButton(onPressed: () => Navigator.pop(context, true), child: const Text('Check upload')),
+          ]));
+      if (!mounted || accepted != true) return;
+      // Read availability again after the dialog; it is not an authorization.
+      if (!(widget.canCheckPreviousUpload?.call() ?? false)) return;
+      setState(() { _requestingReceiptCheck = true; _receiptDialogOpen = false; });
+      final result = await check();
+      if (mounted) setState(() => _receiptResult = result);
+    } catch (_) {
+      if (mounted) setState(() => _receiptResult =
+          'The upload could not be confirmed. Your saved history is kept. Do not resend it.');
+    } finally {
+      if (mounted) setState(() {
+        _requestingReceiptCheck = false;
+        _receiptDialogOpen = false;
+      });
     }
   }
 
@@ -125,7 +170,8 @@ class _CloudSyncProgressCardState extends State<CloudSyncProgressCard> {
       final p = widget.progress;
       final available = widget.isAvailable();
       final elsewhere = readingElsewhere;
-      final busy = p.active || elsewhere;
+      final checking = checkingReceipt;
+      final busy = p.active || elsewhere || checking;
       final notice = p.userNotice(readingElsewhere: elsewhere);
       final blocked = !available && !busy;
       final readyWhileBlocked =
@@ -135,12 +181,15 @@ class _CloudSyncProgressCardState extends State<CloudSyncProgressCard> {
       final blockerText = (unavailableReason?.isNotEmpty ?? false)
           ? unavailableReason!
           : blockedFallback;
-      final displayHeadline = readyWhileBlocked
+      final displayHeadline = checking ? 'Checking the previous upload'
+          : readyWhileBlocked
           ? 'Sync is not available right now'
           : notice.headline;
-      final displayBody = readyWhileBlocked ? blockerText : notice.body;
+      final displayBody = checking
+          ? 'Checking iCloud confirmation without sending the message again.'
+          : readyWhileBlocked ? blockerText : notice.body;
       final displayAction =
-          (blocked && notice.canStart) ? null : notice.action;
+          checking || (blocked && notice.canStart) ? null : notice.action;
       final showBlockerText = blocked && !readyWhileBlocked;
       return Padding(
         padding: const EdgeInsets.all(16),
@@ -164,16 +213,16 @@ class _CloudSyncProgressCardState extends State<CloudSyncProgressCard> {
             if (busy) ...[
               const SizedBox(height: 8),
               LinearProgressIndicator(
-                value: p.fraction,
-                semanticsLabel: 'Syncing, total size unknown',
+                value: checking ? null : p.fraction,
+                semanticsLabel: checking ? 'Checking upload confirmation' : 'Syncing, total size unknown',
               ),
             ],
             const SizedBox(height: 8),
-            if (!elsewhere)
+            if (!elsewhere && !checking)
               Text(
                 '${p.fetched} downloaded, ${p.reprojected} restored to your chats',
               ),
-            if (p.hasStarted && !elsewhere)
+            if (p.hasStarted && !elsewhere && !checking)
               Text('Elapsed ${elapsedLabel(p.elapsed)}'),
             const SizedBox(height: 8),
             Text(
@@ -187,6 +236,8 @@ class _CloudSyncProgressCardState extends State<CloudSyncProgressCard> {
               ),
             const SizedBox(height: 8),
             if (showBlockerText) Text(blockerText),
+            if (_receiptResult != null)
+              Semantics(liveRegion: true, child: Text(_receiptResult!)),
             SwitchListTile.adaptive(
               contentPadding: EdgeInsets.zero,
               title: const Text('Turbo'),
@@ -217,6 +268,13 @@ class _CloudSyncProgressCardState extends State<CloudSyncProgressCard> {
                     label: Text(
                       p.pauseRequested ? 'Pausing...' : 'Pause catch-up',
                     ),
+                  ),
+                if (widget.onCheckPreviousUpload != null &&
+                    (checking || (widget.canCheckPreviousUpload?.call() ?? false)))
+                  OutlinedButton.icon(
+                    onPressed: busy ? null : checkPreviousUpload,
+                    icon: const Icon(Icons.fact_check_outlined),
+                    label: const Text('Check previous upload'),
                   ),
               ],
             ),

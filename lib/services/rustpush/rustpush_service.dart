@@ -8114,6 +8114,7 @@ class RustPushService extends GetxService {
   Future<CloudKitV2WriterProvisioningResult>?
       _cloudSyncV2OutboundProvisioningInFlight;
   Future<Object?>? _cloudSyncV2OutboundInFlight;
+  bool _cloudSyncV2ReceiptCheckActive = false;
   Future<void>? _cloudSyncV2MessageUpdateInFlight;
   Timer? _cloudSyncV2MessageUpdateRetryTimer;
   DateTime? _cloudSyncV2MessageUpdateRetryDueUtc;
@@ -10265,7 +10266,8 @@ class RustPushService extends GetxService {
       platformSupported: abi == ffi.Abi.androidArm64 ||
           abi == ffi.Abi.windowsArm64 || abi == ffi.Abi.windowsX64,
       restartNeeded: cloudSyncV2Progress.restartRequired ||
-          _cloudSyncV2PcsPreparationQuiescing,
+          _cloudSyncV2PcsPreparationQuiescing ||
+          CloudKitOperationInterlock.hasPoisonedEngineWork,
       accountReady: ss.settings.finishedSetup.value &&
           !loggingOut && !_serviceClosing && statePath.isNotEmpty &&
           state?.icloudServices?.keychain != null &&
@@ -10292,6 +10294,88 @@ class RustPushService extends GetxService {
 
   bool get cloudSyncV2HistoryReadActive =>
       _cloudSyncV2SemanticPullInFlight != null || _cloudSyncV2SemanticPullQuiescing;
+
+  bool get cloudSyncV2ReceiptCheckActive => _cloudSyncV2ReceiptCheckActive;
+
+  bool get cloudSyncV2ReceiptCheckAvailable =>
+      // The outbound preflight used by this recovery entry is Android-only.
+      // Do not offer a desktop action that its real preflight will reject.
+      ffi.Abi.current() == ffi.Abi.androidArm64 &&
+      !_cloudSyncV2ReceiptCheckActive &&
+      _cloudSyncV2ProfileReadiness == CloudSyncProfileReadiness.unfinishedUploads;
+
+  /// One explicit, remote-read-only receipt check. This shares outbound's
+  /// lifecycle future so reset/sign-out must drain it before disposing Rust.
+  Future<String> checkCloudSyncV2PreviousUpload() async {
+    if (ffi.Abi.current() != ffi.Abi.androidArm64 ||
+        _readCloudSyncV2ProfileReadiness(fresh: true) !=
+        CloudSyncProfileReadiness.unfinishedUploads) {
+      return 'The upload check is not available right now. No messages were resent.';
+    }
+    _cloudSyncV2ReceiptCheckActive = true;
+    Future<CloudSyncPreviousUploadResult>? future;
+    try {
+      future = _cloudSyncV2Outbound().checkPreviousUploadReceipt();
+      _cloudSyncV2OutboundInFlight = future;
+      final result = await future;
+      Logger.info('CloudKit previous upload check: ${result.name}');
+      return switch (result) {
+        CloudSyncPreviousUploadResult.settled =>
+          'The previous upload is confirmed. You can start or resume history sync. '
+          'No message was resent and upload settings are unchanged.',
+        CloudSyncPreviousUploadResult.notApplied =>
+          'The previous upload was not saved to iCloud. It remains queued; '
+          'this check did not retry it. History sync is still blocked.',
+        CloudSyncPreviousUploadResult.unresolved =>
+          'iCloud has not confirmed the previous upload yet. Your saved history '
+          'and upload evidence are kept. Wait before checking again; do not resend it.',
+      };
+    } catch (error) {
+      // Native failures can contain account details. Do not surface raw errors.
+      const safeReceiptCodes = <String>{
+        'cloud_sync_receipt_check_unavailable',
+        'cloud_sync_receipt_check_preflight_blocked',
+        'native_auth_unavailable',
+        'cloud_sync_receipt_check_candidate_required',
+        'cloud_sync_receipt_check_lease_active',
+        'cloud_sync_receipt_check_submission_missing',
+        'cloud_sync_receipt_check_inventory_changed',
+        'cloud_sync_receipt_check_other_uploads_active',
+        'cloud_sync_receipt_check_checkpoint_changed',
+        'cloud_sync_receipt_check_direction_changed',
+        'cloud_sync_receipt_check_binding_changed',
+        'cloud_sync_receipt_check_snapshot_changed',
+        'cloud_sync_receipt_check_receipt_changed',
+        'cloud_sync_receipt_check_owner_required',
+        'cloud_sync_receipt_check_not_settled',
+      };
+      final code = error is StateError && safeReceiptCodes.contains(error.message)
+          ? error.message as String : 'cloud_sync_receipt_check_failed';
+      Logger.warn('CloudKit previous upload check: $code');
+      if (CloudKitOperationInterlock.hasPoisonedEngineWork) {
+        return 'The check could not finish safely. Close and reopen OpenBubbles '
+            'before trying again. Your saved history and upload evidence are kept.';
+      }
+      if (code == 'cloud_sync_receipt_check_candidate_required' ||
+          code == 'cloud_sync_receipt_check_other_uploads_active') {
+        return 'Other outgoing updates need recovery first. This check only handles '
+            'one previous message upload. Nothing was resent or removed.';
+      }
+      if (code == 'cloud_sync_receipt_check_lease_active') {
+        return 'An upload is still being handled. Wait before checking again. '
+            'Nothing was resent.';
+      }
+      return 'The upload could not be confirmed safely. Your saved history and '
+          'upload evidence are kept, and history sync remains blocked. '
+          'Do not resend the message.';
+    } finally {
+      if (future != null && identical(_cloudSyncV2OutboundInFlight, future)) {
+        _cloudSyncV2OutboundInFlight = null;
+      }
+      _cloudSyncV2ReceiptCheckActive = false;
+      _readCloudSyncV2ProfileReadiness(fresh: true);
+    }
+  }
 
   Future<void> startCloudSyncV2Progress(CloudSyncSpeed speed) {
     final expectedClient = state?.icloudServices?.cloudMessagesClient;
@@ -11113,11 +11197,19 @@ class RustPushService extends GetxService {
   }
 
   CloudSyncProductionOutboundCanaryAdapter _cloudSyncV2Outbound() {
+    final expectedStorage = statePath;
     return _cloudSyncV2OutboundAdapter ??=
         CloudSyncProductionOutboundCanaryAdapter(
       readActiveClient: () => state?.icloudServices?.cloudMessagesClient,
       readPreflight: _buildCloudSyncV2OutboundPreflight().read,
       privateStorageDirectory: statePath,
+      receiptRecoveryAllowed: () => statePath == expectedStorage && cloudSyncV2ProgressVisible &&
+          ss.settings.finishedSetup.value && !loggingOut && !_serviceClosing &&
+          !_cloudSyncV2OutboundQuiescing && !_cloudSyncV2PcsPreparationQuiescing &&
+          !cloudSyncV2Progress.restartRequired && !cloudSyncV2HistoryReadActive &&
+          _cloudSyncV2PcsPreparationInFlight == null &&
+          _cloudSyncV2OutboundProvisioningInFlight == null &&
+          ls.isUiThread && ls.currentState == AppLifecycleState.resumed,
       quarantineLegacyDeletionQueues: () async {
         await LegacyCloudKitDeletionIntentStore(store: Database.store)
             .quarantineLegacySharedPreferenceQueues(
