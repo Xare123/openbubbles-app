@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_progress.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_user_copy.dart';
 
 /// iCloud sync status card. Uses the account settings' inherited colors and
 /// typography, so the existing iOS-style settings theme is preserved. No app
@@ -39,6 +40,9 @@ class _CloudSyncProgressCardState extends State<CloudSyncProgressCard> {
   Timer? _refreshTimer;
   bool _lastAvailable = false;
   bool _lastReading = false;
+  String _lastBlockerKey = '';
+  String _blockerKey() =>
+      '${widget.isAvailable()}|${widget.unavailableMessage?.call() ?? ''}';
 
   bool get readingElsewhere =>
       !widget.progress.active && (widget.isReading?.call() ?? false);
@@ -48,18 +52,22 @@ class _CloudSyncProgressCardState extends State<CloudSyncProgressCard> {
     super.initState();
     _lastAvailable = widget.isAvailable();
     _lastReading = readingElsewhere;
+    _lastBlockerKey = _blockerKey();
     // Only the mounted status card ticks. Service counters and sync ownership
     // survive page navigation; this timer never starts or cancels any work.
     _refreshTimer = Timer.periodic(const Duration(seconds: 1), (_) {
       final available = widget.isAvailable();
       final reading = readingElsewhere;
+      final blockerKey = _blockerKey();
       if (widget.progress.active ||
           reading != _lastReading ||
-          available != _lastAvailable) {
+          available != _lastAvailable ||
+          blockerKey != _lastBlockerKey) {
         setState(() {});
       }
       _lastAvailable = available;
       _lastReading = reading;
+      _lastBlockerKey = blockerKey;
     });
   }
 
@@ -118,6 +126,13 @@ class _CloudSyncProgressCardState extends State<CloudSyncProgressCard> {
       final elsewhere = readingElsewhere;
       final busy = p.active || elsewhere;
       final notice = p.userNotice(readingElsewhere: elsewhere);
+      final blocked = !available && !busy;
+      final readyWhileBlocked =
+          blocked && notice.state == CloudSyncUserState.ready;
+      final displayHeadline = readyWhileBlocked
+          ? 'Sync is not available right now'
+          : notice.headline;
+      final displayAction = blocked ? null : notice.action;
       final unavailableReason = widget.unavailableMessage?.call();
       return Padding(
         padding: const EdgeInsets.all(16),
@@ -131,12 +146,12 @@ class _CloudSyncProgressCardState extends State<CloudSyncProgressCard> {
               ),
               const SizedBox(height: 8),
             ],
-            Semantics(liveRegion: true, child: Text(notice.headline)),
+            Semantics(liveRegion: true, child: Text(displayHeadline)),
             const SizedBox(height: 4),
             Text(notice.body),
-            if (notice.action != null) ...[
+            if (displayAction != null) ...[
               const SizedBox(height: 4),
-              Text(notice.action!),
+              Text(displayAction),
             ],
             if (busy) ...[
               const SizedBox(height: 8),

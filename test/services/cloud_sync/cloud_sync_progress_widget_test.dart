@@ -527,4 +527,88 @@ void main() {
       findsOneWidget,
     );
   });
+  testWidgets('blocked idle shows blocked headline without a start invitation', (
+    tester,
+  ) async {
+    final p = CloudSyncProgress();
+    await tester.pumpWidget(
+      host(
+        p,
+        (_) async => fail('must not start while blocked'),
+        availability: () => false,
+        unavailableMessage: () => 'Legacy sync is still finishing.',
+      ),
+    );
+    expect(find.text('Sync is not available right now'), findsOneWidget);
+    expect(find.text('Ready to sync'), findsNothing);
+    expect(find.text('Legacy sync is still finishing.'), findsOneWidget);
+    expect(
+      tester.widget<FilledButton>(find.byType(FilledButton)).onPressed,
+      isNull,
+    );
+    expect(tester.takeException(), isNull);
+  });
+  testWidgets('paused notice action is suppressed while blocked', (
+    tester,
+  ) async {
+    final p = CloudSyncProgress();
+    p.safeFailure = 'cloud_sync_semantic_drain_cancelled';
+    await tester.pumpWidget(
+      host(p, (_) async => fail('must not start while blocked'), availability: () => false),
+    );
+    expect(find.text('Tap Start / resume to continue.'), findsNothing);
+    expect(
+      tester.widget<FilledButton>(find.byType(FilledButton)).onPressed,
+      isNull,
+    );
+    expect(tester.takeException(), isNull);
+  });
+  testWidgets('changed blocker text refreshes while still disabled', (
+    tester,
+  ) async {
+    final p = CloudSyncProgress();
+    var reason = 'First blocker.';
+    await tester.pumpWidget(
+      host(
+        p,
+        (_) async => fail('must not start while blocked'),
+        availability: () => false,
+        unavailableMessage: () => reason,
+      ),
+    );
+    expect(find.text('First blocker.'), findsOneWidget);
+    reason = 'Second blocker.';
+    await tester.pump(const Duration(seconds: 2));
+    await tester.pump();
+    expect(find.text('Second blocker.'), findsOneWidget);
+    expect(find.text('First blocker.'), findsNothing);
+    expect(
+      tester.widget<FilledButton>(find.byType(FilledButton)).onPressed,
+      isNull,
+    );
+    expect(tester.takeException(), isNull);
+  });
+  testWidgets('recovered availability restores ready headline without starting', (
+    tester,
+  ) async {
+    final p = CloudSyncProgress();
+    var available = false;
+    await tester.pumpWidget(
+      host(
+        p,
+        (_) async => fail('must not start without a tap'),
+        availability: () => available,
+      ),
+    );
+    expect(find.text('Sync is not available right now'), findsOneWidget);
+    available = true;
+    await tester.pump(const Duration(seconds: 2));
+    await tester.pump();
+    expect(find.text('Ready to sync'), findsOneWidget);
+    expect(
+      tester.widget<FilledButton>(find.byType(FilledButton)).onPressed,
+      isNotNull,
+    );
+    expect(tester.takeException(), isNull);
+  });
 }
