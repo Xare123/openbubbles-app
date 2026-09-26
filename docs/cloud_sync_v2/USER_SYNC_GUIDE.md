@@ -87,8 +87,11 @@ iCloud depends on an existing cloud copy or another client uploading them.
   it ships only in the `canaryDebug` source set (verified under its java
   language root), has no intent filter,
   requires `android.permission.DUMP`, checks the Canary package and
-  debuggable flag, allows only a fixed action list, and never launches an
-  activity. It must be absent from main, debug, profile, and all
+  debuggable flag and allows only a fixed action list. Only open-dev and
+  open-sync launch an activity (MainActivity, with the same normal startup
+  side effects as opening Canary yourself); every other action never does,
+  and those two must not be used as read-only status substitutes. It must
+  be absent from main, debug, profile, and all
   flavor-inherited or release source sets. Do not disable its current
   Canary controls; this guide only documents the boundary.
 - V2 rollout read/write gates (shadow sampler, semantic pull, outbound

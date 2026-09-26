@@ -693,6 +693,16 @@ CloudKit readback or independent Apple-device display.
 | Native create/readback receipt | [`api.rs`](../rust/src/api/api.rs), [`cloud_messages.rs`](../rustpush/src/imessage/cloud_messages.rs), [`chat_create.rs`](../rustpush/src/imessage/cloud_messages/chat_create.rs) | Direct Windows proof; exact-source suite and group live proof pending. |
 | Android durable read wake | [`CloudSyncV2Worker.kt`](../android/app/src/main/kotlin/com/bluebubbles/messaging/services/rustpush/CloudSyncV2Worker.kt), [`DartWorker.kt`](../android/app/src/main/kotlin/com/bluebubbles/messaging/services/backend_ui_interop/DartWorker.kt), [`cloud_sync_semantic_drain_controller.dart`](../lib/services/rustpush/cloud_sync/cloud_sync_semantic_drain_controller.dart) | Current ready/lease/budget repair has focused behavioral proof. Prior `fc132e5f8` compilation did not detect the startup deadlock; Pixel lifecycle proof remains. |
 
+## Normal-user journey acceptance (September 26, source 94dd841c7 green)
+| Journey | Entry | Test-proven (36176609798) | Live-proven | Remaining check |
+|---|---|---|---|---|
+| New-user activation to first readable chat via Profile, no dev settings | setup_view, appleid_login, V2 card gate | login-completion seam tests pass | No | Pixel sign-in plus first sync session |
+| Returning-user resume with code/password distinction, no silent new attempts | keychain card, profile entry | 14 widget tests pass | No | On-device readability plus no-reset proof |
+| Ordinary messaging during catch-up with honest progress and retries | progress card, drain controller | progress widget tests pass | Partial (Windows live) | Pixel catch-up plus media readability |
+| Pause, background, restart without duplication or stranded locks | worker, lifecycle | worker reopen passes, lifecycle partial | No | Pixel lifecycle session |
+| Legacy install, upgrade and recovery with no auto reset | entry policy, legacy lifecycle tests | legacy tests pass | No | Pixel upgrade plus recovery session |
+| Packaging boundary independent of dev settings | canary ADB docs, flavor gates | adb control tests pass | No | Staged-canary install plus boundary checklist |
+Must-fix in source: none open (3 CI failures fixed and green). Needs live evidence: every live column above. Deferred: SMS/MMS/RCS, FaceTime/Find My, incoming-archive lane, production sends. Product limits stand: foreground history only, background and upload separately gated, incoming/mirrored archival excluded from the supported upload path; writer=false/uploads=false builds cannot prove production sends or independent Apple-client display.
 ## Release gates
 
 - [x] Prior APK source 6f778c99 passed full GCE 34741584069 and signing verification (not installed).
