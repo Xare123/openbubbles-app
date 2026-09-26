@@ -1,8 +1,9 @@
 # Direct source-only GCE runs
 
-The primary Muse task owns this workflow end to end under the user's standing
-authorization. The supervisor reviews meaningful integration/release checkpoints;
-it is not the routine Git, dispatch, monitoring, or cleanup operator.
+The current primary owner in AGENTS.md owns this workflow end to end under the
+user's standing authorization. On September 26 the user transferred that role
+from Muse to task `01a098ec-c448-73a1-a73f-696d142de228`. Delegated helpers do not
+independently dispatch, publish or use live profiles without an assigned scope.
 
 ## Established configuration
 
@@ -30,6 +31,21 @@ For a Dart-only correction batch, dispatch the same command with
 validation_mode=dart-only: it installs the same pinned ObjectBox, runs the Dart suite,
 and skips the Rust, bridge, and Android steps. This changes no workflow file.
 
+For an isolated rustpush change, the same reviewed workflow supports
+`validation_mode=rustpush-only`. It runs
+`cargo test --manifest-path rustpush/Cargo.toml --lib --features remote-anisette-v3 -- --test-threads=1`
+with the existing fake legacy FairPlay certificate setup. It skips Dart, app Rust,
+protector, FRB regeneration, APK packaging and signing. No Apple credentials or
+live-account operations are needed. Keep all other dispatch inputs unchanged.
+Run `36277083245` exercised this lane against parent `3e3ecf3b5bce24ce39e191f6a982ce2de5e3b270`
+and rustpush `eff282ba31ccb7a3071a386b8294e13f7ca98e5e`; compilation failed before
+tests at mmcs.rs:868. Cleanup and zero-VM/runner inventories were verified.
+Corrected native qualification `36277733822` passed362 tests against parent
+`48af49310530e50fb1c20469e3c5c4d9e7ae03ff` / rustpush
+`fa5b0e8bf05c6bb8c3c78a7e6a328ba886bdadcb`. Its cleanup and zero-instance/runner
+inventories are verified. The integrated application candidate must still pass
+its appropriate full qualification; native-only success is not an APK result.
+
 ## Tools and permissions
 
 Use the existing authenticated GitHub CLI. Its verified Windows executable is
@@ -51,6 +67,12 @@ authorized Git/network operations. In a full-access session omit
 1. Select an immutable, reviewed 40-character source commit. Preserve unrelated
    edits and staged work. Commit only the intended reviewed files when needed.
    Uncommitted integration work is not part of a frozen-source qualification.
+   For changed submodules, publish the reviewed nested commits first (deepest
+   changed dependency first), then publish the parent gitlink commit. Verify
+   each changed gitlink SHA is reachable from its configured remote before
+   dispatch; a local submodule commit is not enough. Prefer remote-ref and
+   ancestry checks over creating a second checkout. Run `36265100159` failed
+   before all tests because rustpush `8bd6411` was initially local-only.
 2. Resolve the workflow ref and trusted source branch with `git ls-remote fork`.
    Stop if the workflow differs from the reviewed commit until its change has
    been examined. If publication is required, prove the remote source head is
@@ -93,6 +115,10 @@ Capture the returned run URL/ID. If the response is uncertain, inspect recent ru
 and their source input before another dispatch. A lost CLI connection does not
 mean GitHub failed to create the run. No automatic retry, alternate lane, machine
 upgrade, or provisioning fallback is authorized by this guide.
+If a checkout-only failure is fixed by publishing the already-reviewed missing
+submodule commit, verify terminal cleanup and request one explicit retry of the
+identical frozen source. Do not change source or silently turn that approval
+into broader retries.
 
 ## Monitor, report, and close out
 

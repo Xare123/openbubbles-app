@@ -5,7 +5,34 @@
 These rules apply to task `01a098ec-c448-73a1-a73f-696d142de228` and its
 delegated agents. They supplement, not replace, inherited project instructions.
 
-## Primary implementation and checkpoint review (September 18)
+## Current ownership (September 26)
+
+- User explicitly transferred the remaining CloudKit implementation and
+  integration to task `01a098ec-c448-73a1-a73f-696d142de228`. It now owns this
+  checkout, source changes, test/build decisions and exclusive live/relay
+  scheduling. This supersedes the September 18 division of implementation and
+  supervisor duties below, not the preservation or authorization constraints.
+- Muse task `01a0abe1-9bbe-71b2-a9ce-4d4578022b0e` acknowledged handoff and stopped
+  with no active process, device reservation or CI run. Preserve its uncommitted
+  changes. It may work only on newly assigned bounded, disjoint tasks and must
+  not independently resume this checkout or a live profile.
+- Avicenna `01a0df0d-3b39-7350-9d44-d200c67441e0` delivered the two-file native
+  repair now frozen as rustpush `eff282ba31ccb7a3071a386b8294e13f7ca98e5e`.
+  Main-owner source review accepted it for qualification. After GCE run
+  `36277083245` failed compilation at mmcs.rs:868, its one-line follow-up was
+  reviewed and frozen as rustpush `fa5b0e8bf05c6bb8c3c78a7e6a328ba886bdadcb`.
+  Main owner dispatched native-only run `36277733822`. Avicenna was closed
+  through the supported control after integration; subsequent wait returned
+  not_found. Its session, transcript, work and evidence were not deleted.
+- The retained pending message is outside the authorized test peers. Do not
+  submit it, retarget it, delete it or enable automatic uploads as a test without
+  explicit user authorization. On September 26 the user explicitly authorized
+  archiving that one already-sent retained message to their own iCloud history.
+  Revalidate the exact retained operation before the Pixel test. This does not
+  authorize a new IDS message, another queued recipient, retargeting, deletion,
+  or enabling automatic uploads. Source-only synthetic recovery may proceed.
+
+## Historical implementation and checkpoint review (September 18)
 
 - User assigned primary remaining OpenBubbles implementation to existing task
   `01a0abe1-9bbe-71b2-a9ce-4d4578022b0e` (facetime & find my), using the
@@ -80,6 +107,12 @@ effort does not justify extra parallel agents without useful independent work.
   every directly declared tool namespace. Check the current direct declarations
   before concluding that a clock or collaboration tool is unavailable. Call a
   direct tool through its declared namespace, never by inventing a `tools.*` alias.
+- Short in-exec pacing is supported by the declared `setTimeout`/`clearTimeout`
+  globals. Read `C:/Codex/OpenCodex/docs/MUSE_EXEC_SLEEP.md` for the bounded
+  helper: at most 10 seconds per sleep and 50 seconds total requested sleep per
+  cell. Await it; do not invent `tools.clock__sleep`, spin, or build long in-exec
+  polling loops. For CI monitoring keep the existing run handle and prefer its
+  supported wait/watch control. Keep blocking waits at most 60 seconds.
 - Before requesting blocked status, check live handles and permitted independent
   work. Apply the existing three-consecutive-goal-turn audit only to a real
   external blocker. A resumed goal starts a fresh audit; do not inherit its

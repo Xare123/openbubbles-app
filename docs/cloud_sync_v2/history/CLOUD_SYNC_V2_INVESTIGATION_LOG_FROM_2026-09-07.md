@@ -7219,3 +7219,496 @@ Historical tests do not establish current-device behavior.
 - On top of 158f2c1cf, uncommitted, no CI dispatched and no live/Pixel/relay action. Rust reconcile inner now logs closed-vocab stage auth-snapshot, writer-preparation with existing cloud_sync_writer_preparation_failure_code, and auth-after-preparation while keeping NativeAuthUnavailable envelope. Dart unknown-recovery session preserves unknownOutcome transition with IDs, payload, retry and fences, then rethrows CloudSyncFailure authorization/localStorage and CloudKitWriterAuthorityFailure instead of returning unresolved; other failures still return unresolved. Service surfaces native setup as check-could-not-be-performed, distinct from Apple unresolved, neither ready. General get_container plus writer-zone lookup remains separate from semantic read-auth container cache; no container reuse.
 - Checks: cloud_sync_previous_upload_check_test.dart 11/11 pass with ObjectBox lib on PATH, including new native-setup-preserves-and-surfaces regression plus existing genuine unresolved, notApplied, settled, restart, auth-replacement and lease guards; cloudkit_writer_mutation_guard_test.dart pass; flutter analyze shows only pre-existing infos plus one fixed unnecessary assertion; git diff check clean; cargo check blocked by missing clang/MSVC ring build, not a code verdict. Rejected InMemory draft and user-owned AGENTS.md untouched and excluded.
 - Remaining: approved qualification/build, then Pixel Profile check with warn-log stage/cause capture to identify auth-snapshot versus writer PCS subcause. No functional init/recovery repair designed or implemented; high-risk auth/PCS/native change awaits supervisor review of the failing boundary.
+
+## September 26: diagnostic candidate qualified, supervisor artifact review complete
+
+- This supersedes the preceding draft/unqualified checkpoint descriptions, which
+  are preserved as investigation history. The reviewed revision covers all four
+  native stages and rethrows every caught reconciliation error after preserving
+  the existing unknown-outcome transition. No auth/PCS behavior was repaired.
+- Muse froze and published only the seven reviewed code/test/doc files as
+  `8d6dae1b0dcfb26e479c67791c393891b1fcd2db`, then ran one full Canary batch:
+  `36255689923`, workflow `1ff3a0cb837c52beaeef0a71059ca7e4888051e9`,
+  primary `n2d-standard-16` Spot in `us-west1-b`, writer/uploads false.
+  Run interval: 16:30:21 to 17:03:56 UTC. All four jobs succeeded.
+- Supervisor independently inspected the source gate, validation-outcomes.json,
+  selected-suite logs, JVM XML results and actual job steps. Dart: 4045 passed,
+  5 skipped. Rust: app 785, rustpush 351, protector 40 passed. JVM: 121 tests in
+  18 suites, zero failures/errors/skips. All selected suite exits were successful.
+  Bridge regeneration/normalization, drift checks, generated Rust check, native
+  library validation, APK build and signing ran. Automatic-upload qualification
+  was skipped. Passing tests are not authenticated live or production proof.
+- Corrected the primary report's archive-versus-APK attribution. Producer
+  artifact archive 10910539676 is 441436581 bytes with digest
+  `f0fbb00a7f33a7d4eb0fdd37b25d6c1ee2353dad295eed170c7365dafa456079`.
+  Signed artifact archive 10910633027 is 441593822 bytes with digest
+  `63b9d06767086254e626856d1fc25e7d03f8f72a0f38ebf34b0d2658eea0ed6e`.
+  These are GitHub ZIP metadata, not the inner APK identities. No producer APK
+  hash is claimed from those values.
+- Downloaded only the signed candidate and compact suite evidence to the existing
+  artifacts area. Extracted `artifacts/canary-36255689923/app-canary-debug.apk`
+  is 454191651 bytes, SHA256
+  `716b41737f69a16e7862ce07dd4cc8176530bf7a38a04efd5b0ca17a3c11405d`.
+  Local apksigner verifies v2 and v3 with the expected certificate
+  `0ea17c1b67581ca79660d33db45af0a36b71ea36a4cbafec5293d3ae80570d79`;
+  aapt verifies Canary package, version 1.15.0 / 20002227. ARM64 Rust library
+  SHA256 is `72034a5b7daf38627af8b4c151ccabad92a3a842a2e9c54c93e69bee727e5a60`.
+  Committed Dart/Rust FRB versions match at 2.3.0 with content hash -42314324;
+  the exact-source hosted drift check passed.
+- Cleanup job deleted `gce-36255689923-1`. Independent read-only GCE inventory
+  returned zero project instances; GitHub returned zero registered runners.
+  No duplicate run, local build, install, live test, relay use, write enablement
+  or upstream action occurred in this closeout. Existing Alpha, snapshots and
+  rollback APKs remain preserved. User-owned AGENTS.md and rejected test draft
+  remain uncommitted and excluded.
+- Next is one coordinated Pixel Profile receipt check with the diagnostic build,
+  after fresh availability/state checks and installation permission. Capture the
+  safe native stage/cause without resending, resetting cursors, clearing the
+  queue, changing identity or replacing the writer container with semantic auth.
+  The true native failure cause, receipt settlement and enabled ordinary sync
+  remain unresolved. Primary retains implementation ownership; supervisor
+  coordinates the next live checkpoint. No speculative auth fix or rebuild.
+- Storage at supervisor closeout: C: has 24206667776 bytes (22.54 GiB) free.
+  No files were deleted; signed candidate, compact suite evidence and protected
+  rollback material are retained. No local command session remains active.
+
+## September 26: diagnostic installed; receipt warm-auth gap and separate image surplus
+
+- User reconnected Pixel for the requested in-place diagnostic update/check.
+  Primary Muse acknowledged exclusive supervisor Pixel/shared-relay use and no
+  competing Windows/client/helper. Fresh status showed auth/UI ready, legacy off,
+  no active semantic pull, logout or coordinator, with the known retained unknown
+  upload still blocking history sync. Metadata showed no active outbox lease.
+- Captured fresh stable private database at
+  `device-evidence/receipt-diagnostic-20260926-preinstall/data.mdb`, 135749632
+  bytes, SHA256 `d59f3fc3c940c86709cbc87477505d65272e82b9ea389c8bb0f1ffabb3ec2bcd`.
+  Before/after logs are bounded under that directory. In-place adb install -r
+  succeeded; installed base.apk matches candidate SHA256 `716b41737f69a16e7862ce07dd4cc8176530bf7a38a04efd5b0ca17a3c11405d`.
+  No uninstall, data clear, registration change, Alpha action or write enablement.
+- While the supervisor navigated Profile, the user exercised the receipt button.
+  Two native logs at 18:33:04.284 and 18:33:38.203 UTC prove
+  `Cloud Sync reconcile failed stage=writer-preparation cause=warm-auth-required`.
+  New UI correctly reports that the app could not check confirmation because
+  setup is unavailable, not that Apple returned an unresolved receipt. No extra
+  supervisor confirmation click was performed after seeing these results.
+- Pre/post counts match: 703 chats, 11925 messages, 2420 attachments, nine outbox
+  rows across one account. Eight audit rows remain confirmed; one Message CREATE
+  remains unknown (revision 9, checkpoint generation 1, payload version 2).
+  Its attempt count advanced 4 to 6, local lease is released, and payload/protected
+  lease references plus Apple-ID presence are retained. No resend or queue clear.
+- Corrected Muse's initial interpretation: successful auth capture validates
+  cached GSA/native account identity, not warm restored-read containers. The
+  Keychain Ready presentation is likewise insufficient proof. A general-only
+  warmup was rejected because writer preparation already calls general
+  get_container, while keychain lookup-only selects restored_read_authentication
+  caches. Source chain is writer PCS lookup (cloudkit.rs 3789/3904) to
+  sync_keychain_lookup_only to Cuttlefish/Securityd lookup-only accessors
+  (keychain.rs 1857/2021). Existing permit-bound read-auth bootstrap prepares the
+  needed cache family; the receipt composition currently never invokes it.
+- Muse is authorized for bounded source-only implementation plus focused
+  regressions, not CI or live integration yet. Reproduce the cold dependency,
+  use existing bootstrap APIs where possible, and keep exact client/account,
+  protected store, checkpoint, selected-operation and other-row invariants.
+  No nested interlock, weakened pause/PCS guard, cache relabeling, new sign-in,
+  remote save/send, zone creation or trust mutation. Validate and quiesce across
+  bootstrap success/failure/cancellation before handing back for review.
+- Additional user report: incoming group-chat images fail. Before-update app
+  logs at 18:28:24.911/25.896/27.508 UTC show MMCS size mismatch via
+  RustPushBackend._downloadAttachmentBody's IDS downloadAttachment lane, not the
+  semantic V2 downloader. A private bounded VM inspection read the last 16
+  attachment descriptors and linked the last three HEIC rows to the reported
+  group through existing message/chat relationships and computed title. All
+  three advertise exactly 1048576 bytes in both row totalBytes and MMCS size.
+  A different-chat incoming PNG advertises 511355. No image bodies, descriptor
+  keys, URLs, raw GUIDs or message text were exposed in this metadata report.
+  Actual served length is still unknown. This is not proof of an expired file,
+  a placeholder-size convention, or single-sender scope. Muse's separate
+  source-only MMCS investigation must preserve content-integrity/bounded-size
+  checks and distinguish descriptor mismatch from duplicate chunk emission.
+- At closeout auth/UI remain ready, legacy off, no sync/coordinator/logout,
+  unknown outbox retained, no ADB forwards or observer active. USB stay-awake
+  was already set to 2 and remained unchanged. Told user no more receipt-button
+  clicks are needed and it is safe to unplug. C: free 24036634624 bytes, about
+  22.39 GiB. No cleanup or extra build. Re-reserve device/relay before next live use.
+
+### September 26: receipt-bootstrap review and Sol HEIC handoff
+
+- Supervisor reviewed Muse's first receipt-bootstrap patch and reproduced 15/15
+  passing real-ObjectBox composition tests. Review found a concrete safety gap:
+  uncertain pause acquisition or failed resume was not tracked by transport
+  quiescence and could release the outer exclusion without confirmed native
+  cleanup. Returned the patch for bounded correction, no native/FRB changes.
+- Muse added the existing pause-may-remain-active/poison pattern. Supervisor
+  reviewed the revised diff and independently reran 19/19 passing tests,
+  including ambiguous acquisition, failed resume, combined warm/resume failure,
+  and safe retry after successful resume. Accepted source for a two-file scoped
+  commit, not deployment. Native warming is mocked; actual cold-cache repair
+  and remote receipt settlement remain unproved. No new CI/live use authorized.
+- User requested Sol for the three 1-MiB HEIC descriptors. Helper
+  `01a0df0d-3b39-7350-9d44-d200c67441e0` returned source findings with no edits:
+  inbound `FILE.file-size` supplies the descriptor and the exact writer rejects
+  surplus bytes. Supervisor accepted that trace but narrowed the translated
+  model claim: bounded synthetic enumeration cannot exclude every native bug,
+  and repeated target references are not by themselves malformed content.
+- Same helper now owns minimal content-free size/chunk-count diagnostics in
+  rustpush/src/imessage/messages.rs and rustpush/src/icloud/mmcs.rs, preserving
+  length, integrity, and cleanup behavior. No keys, URLs, IDs, hashes, filenames,
+  bodies or private data in logs/fixtures. Review then batch with the primary
+  candidate; do not start another APK cycle or live retry independently.
+- Muse committed the accepted receipt repair as
+  `b1bdadc5c804651be832854f9672c942cb6bb13a`. Supervisor verified exactly the
+  adapter and receipt-check test, 227 insertions / 2 deletions. Parent docs,
+  AGENTS.md, rejected draft and rustpush content were excluded. This is a
+  source checkpoint only, with the previously verified diagnostic APK still
+  the installed reference. C: free space was 24014548992 bytes at verification.
+- Sol finished exactly two reserved Rust files (+140 lines including tests).
+  Supervisor reviewed the full diff, type/import context, every exact-writer
+  initializer, diagnostic-only checked arithmetic and debug-only target logging;
+  independently ran scoped diff-check successfully. Accepted source, not native
+  execution proof: local Cargo remains unrun. Muse is approved to integrate the
+  two-file submodule commit with b1bdadc5c and run one established full Canary
+  batch after immutable-source/workflow/active-run preflight. Same n2d16 Spot
+  primary lane, writer/uploads false, existing lifetime/cleanup/signing path;
+  no infrastructure changes or independent retry. Dispatch handle pending.
+  Sol will not edit further during integration and remains available for a
+  targeted follow-up. Device installation and one affected-attachment retry
+  still require supervisor-reserved live access.
+- Combined full Canary batch dispatched as run `36265100159`, created
+  2026-09-26T19:10:10Z. Frozen parent source
+  `dfaba00b7739a3a7a57a7ee6850690cb084b31b3` adds only the rustpush pointer atop
+  reviewed b1bdadc5c; nested `8bd6411d4d25946a3b9ae972170783ec625b54e7` contains
+  exactly Sol's two reviewed files (+140). Supervisor independently confirmed
+  those scopes, workflow ID 345678579 and workflow SHA
+  `1ff3a0cb837c52beaeef0a71059ca7e4888051e9`. Run is in progress at runner creation
+  (job 108468168631), not test or packaging proof. Muse reports trusted-source
+  fast-forward/equality and no active duplicate; owns monitoring and cleanup.
+  No rerun, local build, new installation or live device action by supervisor.
+- Run `36265100159` subsequently failed at source checkout (job108468474438):
+  remote `not our ref 8bd6411d4d25946a3b9ae972170783ec625b54e7`. No tests ran;
+  signing skipped. Primary owner identified omitted nested-commit publication
+  and fast-forward pushed the reviewed rustpush commit, without changing source.
+  Supervisor independently checked failure logs, cleanup success (job108468571730),
+  empty project-instance/runner inventories, and exact parent/nested/workflow
+  remote refs. Approved one identical full Canary re-dispatch after another
+  active-run check; new handle pending. This was a publication/preflight failure,
+  not test evidence or infrastructure incompatibility. Updated the runbook to
+  publish changed nested commits before parent gitlinks and verify remote reachability.
+- Approved identical-source retry is `36265573790`. Supervisor verified it is
+  in progress on workflow1ff3a0cb837c52beaeef0a71059ca7e4888051e9, currently runner
+  creation job108469475292. Primary reports parentdfaba00b7/nested8bd6411 gitlink
+  and remote reachability checked and no active run before dispatch. No tests,
+  compile or signed APK result yet; Muse retains monitoring and cleanup ownership.
+
+### September 26: combined qualification and protected in-place installation
+
+- Run36265573790 completed successfully on the same frozen app/nested/workflow
+  revisions. Supervisor independently read suite artifacts: Dart4052 passed,
+  5 skipped; appRust785, rustpush353, protector40 passed; 18 Android JVM suites
+  contained121 tests with zero errors/failures/skips. Both new HEIC diagnostic
+  cases explicitly passed. Automatic-upload qualification skipped. Source,
+  bridge, build, native verification and signing steps succeeded. Cleanup job
+  succeeded and read-only inventories returned zero project VMs and runners.
+- Signed artifact10914497576 was downloaded once. Inner APK (not ZIP) is
+  `artifacts/canary-36265573790/app-canary-debug.apk`,454220323bytes, SHA256
+  `3e7aad40593c9e35ebfb80db6bd993c61dc6c7bad7928ad49696819c87c76cc1`.
+  Canary package/version20002227/1.15.0, existing cert0ea17c1b67581ca79660d33db45af0a36b71ea36a4cbafec5293d3ae80570d79
+  and v2/v3 signatures verified locally. ARM64 native library SHA256
+  `116d6fbc9128280b67cb7b0e4e333d881e614ebe7ea86819429f55f36a1fbb3c`.
+- User connected USB. Primary acknowledged exclusive supervisor Pixel/shared
+  relay window with no competing app/profile/helper/forward. Stable private
+  snapshot captured20:25:55UTC to `device-evidence/receipt-bootstrap-20260926-preinstall/`:
+  135749632bytes, remote-before/local/remote-after SHA256 all
+  `c07b39667a90bcd9bad237efdeac595a58e7649f324d7a5091e1f38c7f6b82bc`.
+  Before logs also retained privately. Existing installed APK verified716b4173
+  before replacement; `adb install -r` succeeded and remote installed base.apk
+  independently matched new3e7aad40 SHA256. Device update timestamp20:26:38UTC.
+- Reopened Canary, then read existing compiled getters: same703chats,
+  11925messages,2420attachments,nineoutboxrows; eight confirmed and one unknown
+  MessageCREATE,revision9,attempt6,checkpoint1. Observed protected references,
+  receipt state/times and no-active-local-lease unchanged. No uninstall/data
+  clear, Alpha change, fresh sign-in, upload or receipt retry by supervisor.
+  No owned forwards remain; existing USB stay-awake2 unchanged.
+- User asked to perform one normal Profile receipt check and one affected HEIC
+  retry, not full sync or resend. Those live results remain pending. Sol's work
+  is reviewed/integrated and both new tests passed, but it is diagnostics only,
+  not a HEIC repair. Sol retained for imminent evidence follow-up, no further
+  edits authorized. Reservation remains with supervisor for bounded capture.
+
+### September 26: authenticated receipt absence and first HEIC byte measurements
+
+- User reported sync unavailable and failed media in the same reported group,
+  later clarifying they were unsure whether photos or videos. Supervisor pulled
+  bounded fresh logs to private `device-evidence/receipt-bootstrap-20260926-retry1/`.
+  App log20:49:07.640171UTC explicitly reports `CloudKit previous upload check: notApplied`.
+  Native log13:49:07.140292Pacific reports RecordRetrieveType failure class Permanent.
+  Reviewed exact classifier in rustpush/src/imessage/cloud_messages.rs1420/3184:
+  only server Code::NotFound produces the absence outcome; generic transport or
+  Permanent classifications alone do not. This check passed the former cold
+  writer-preparation failure without fresh login or supervisor receipt retry.
+- Read-only getters show eight unchanged confirmed audit rows plus revision9
+  now pending0,attempt7,checkpoint1,categoryserver. Request/operation UUIDs were
+  cleared by provenNotApplied; protected lease, encrypted payload reference,
+  payload SHA and server-record hash remain. No active local lease. Counts remain
+  703/11925/2420/9. Status auth/UI ready, legacy off, no active pull/coordinator/logout,
+  but outbox blocked. Writer=false prevents retry in this diagnostic build, so
+  ordinary history sync remains unavailable. No queue/data reset was performed.
+- Source review of the existing manual pendingRecovery path established a
+  CloudKit private-history save, not an IDS recipient resend. Primary initially
+  described it as real-message delivery; supervisor rejected that inference and
+  primary verified/withdrew it. NotApplied proves current bound-record absence,
+  not that it was never saved. Still-unproved gates: exact local source binding,
+  one-pending-plus-eight-audit preflight, writer-enabled save and readback.
+  Primary now owns bounded offline inspection/tests against the qualified copy;
+  no production edits, build, writer enablement or live write authorized yet.
+- New MMCS warnings13:49:24-26Pacific show advertised1048576, prior_written0,
+  rejected_write1748288/2098088/1454701, with repeated clicks on two sizes.
+  Current bounded attachment metadata identifies three incoming image/heic rows
+  in the reported chat, all with matching row/descriptor1MiB. No video-specific
+  failure established. Rejected-write sizes are not final file-length proof.
+  Sol resumed source-only analysis; no weakened guards or further download.
+- The target-shape DEBUG log cannot appear under Android's current WARN-only
+  native logger (rust/src/lib.rs). Do not tell user to toggle app verbosity for
+  it, and do not globally enable verbose native logging just to obtain it.
+  Profile render warnings were ListTile/DecoratedBox ink/background visibility
+  diagnostics, not a proved crash; no unrelated UI rewrite.
+- Stable post-check capture20:53:40UTC:135749632bytes, three-way SHA256
+  `da5d3842d8ef6d14a5cbe0a502c47af5d75247e5c855b4a88163b3c60f819a27`.
+  No owned forwards/debug observers or active sync remain. Live window released,
+  user told safe to unplug; future shared-relay use must be re-coordinated.
+  No Alpha action, resend, reset, installation or external publication this turn.
+  C:22444630016bytes free at closeout check; private evidence never sent to CI.
+
+### September 26: offline recovery preflight and retained-audit incompatibility
+
+- Primary reported qualified-copy inspection of snapshot da5d3842: nine outbox
+  rows, eight confirmed plus one pending revision9/attempt7, one linked adopted
+  intent with an envelope binding, a resolvable source message/chat, and no
+  protected-source binding. The original hash was unchanged after inspection;
+  disposable copy and inspector were removed. Endpoint approval and current
+  source equivalence were not established. Existing receipt tests passed 19/19.
+- Supervisor independently confirmed hard total-row assertions at manual
+  outbound preflight and production session creation. Retaining confirmed audit
+  rows makes the existing manual recovery route reject before native submission.
+  Rejected archival/deletion as a workaround. Authorized Muse to implement a
+  bounded source-only correction for one pinned eligible recovery operation with
+  unchanged valid settled surrounding audits, reusing the existing fingerprint
+  helper and receipt-check inventory pattern. Fresh admission and ambiguous
+  confirmed replay must remain fail-closed. Tests must exercise the actual
+  one-pending/eight-confirmed topology through readback and read-ready state,
+  source/identity/audit changes, extra unfinished rows and uncertain outcomes.
+  No permission to fabricate a source binding, enable the writer, build, or write
+  live data. Primary also owns the remaining private source/test-peer inspection.
+- Sol's read-only HEIC trace is accepted with limits: matching database and MMCS
+  sizes share the same inbound FILE origin, so they are not independent evidence.
+  A rejected first block is not final file-length proof. Android WARN filtering
+  explains missing target-shape DEBUG records. Repeated references alone can be
+  legitimate. Supervisor verified commit a78ccfd introduced the advertised-size
+  exact writer, while also fixing short-write handling. This proves provenance,
+  not which metadata is correct. Sol is now evaluating a minimal bounded,
+  uniquely selected non-Ford manifest/full-signature repair design before any
+  code change; otherwise only a minimal content-free discriminator is warranted.
+- No new device/relay use or CI started. Latest C: free22210101248bytes. Both
+  assignments are active and necessary; no agent session/history deleted.
+
+- User reported a stopped agent. Live status showed Muse recovery still active;
+  Sol had completed its requested design and was awaiting review, not failed.
+  Supervisor accepted the bounded design and resumed Sol for an implementation
+  draft in the two reserved nested Rust files with production-helper synthetic
+  tests. Recovery caps must not regress matching-size large files, Ford or other
+  MMCS callers. Whole-file original signature and exact verified extent remain
+  required; preserve inbound descriptors and outbound-source checks. No bridge,
+  API, Dart, live, CI or deployment action authorized in this subtask. Primary
+  notified of the disjoint ownership and deferred display-size integration.
+
+### September 26: supervisor review of HEIC draft and Muse recovery composition
+
+- Reviewed Avicenna's two-file HEIC implementation draft. Accepted the diagnosis
+  and bounded full-signature recovery direction, but withheld integration:
+  repeated physical source IDs can finalize a completed target twice; Standard
+  transfer still admits unrelated source chunks outside the selected-target
+  bounds; and unconditional legacy verification changes matching-size downloads.
+  Requested actual matcher/composition regressions and mismatch-only routing.
+  Nested diff check passed; added native tests were not executed. Primary told
+  not to integrate this draft or claim the affected photos repaired.
+- At the user's request, read Muse's active turn and current source. Muse reports
+  55 focused controller/preflight tests passing after correcting an audit-test
+  expectation. A changed but valid settled audit must change its fingerprint,
+  not necessarily become invalid. These tests do not prove the recovery pipeline.
+- Sent concrete help: pending recovery still constructs a generic store without
+  the account-bound local-send journal, although this real operation has an
+  adopted intent. The store explicitly requires that journal before dispatch.
+  Global inventory is inspected only in the multi-row scoped branch, its full
+  fingerprint is discarded, and model equality omits entity ID/update time.
+  Require pinned global inventory and exact-operation selection across boundaries
+  for both one-row and multi-row recovery. Follow save through protected readback,
+  lease release and final read-ready; do not remove settled audits or invent the
+  absent source proof. Requested a composed production-adapter ObjectBox/native-
+  fake regression with the observed topology, mutation and uncertain-outcome cases.
+- No competing implementation, device/relay use, CI, APK build or write enablement
+  by the supervisor. Muse retains primary ownership; Avicenna owns only the two
+  reserved native files. Preserve all user data and existing private evidence.
+- Muse's returned checkpoint reports peerHandlesFound=true, approvedPeer=false
+  for the retained operation. Supervisor explicitly withheld live submission and
+  automatic uploads under the test-number authorization; no retargeting or queue
+  deletion. Continue synthetic/offline composition now, then obtain explicit
+  user authorization for archival of this existing message if still necessary.
+  Missing protected-source binding alone can be legitimate legacy-text state,
+  but does not replace the separate adopted-create journal validation.
+
+### September 26: primary takeover and production recovery test composition
+
+- User explicitly requested handoff and primary ownership by this task. Muse
+  acknowledged its stop, preserved dirty work and reported no active handles.
+  AGENTS and the treemap now reflect the new ownership, not the prior supervisor
+  split. No remote, account, relay or device action occurred.
+- Added synthetic-store/build-authority injection to the production outbound
+  adapter and writer wrapper. Normal defaults remain unchanged; the mutation
+  guard now receives the already-injected native authentication binding. These
+  seams enable the real journal/store/transport recovery composition instead of
+  a controller-only fake. No new seam tests or analyzer run yet.
+- Avicenna's corrected native draft is frozen. It reports matcher coverage for
+  repeated physical sources, shared recovery byte limits and unchanged routing
+  for matching-size inputs. Those are source claims pending review and native
+  tests; local Cargo remains unavailable. No CI run requested.
+- Safe resume: seed a journal-adopted synthetic text create plus eight settled
+  audit rows, drive the production adapter against scripted native bindings,
+  then close the observed composition gaps without changing the real snapshot.
+  Live submission stays unauthorized for its non-test recipient. Last checked
+  C: free space was 21972140032 bytes; no active builds or owned live reservations.
+
+### September 26: composed pending recovery now passes; two boundary defects fixed
+
+- Built nine production-adapter regressions in the existing real-ObjectBox receipt
+  test library, with scripted native transport only. Genuine journal submission,
+  IDS confirmation, restored-chat proof, protected admission and seven real
+  not-applied store transitions seed revision9/attempt7 plus eight settled audits.
+  The fixture does not inject a fabricated protected-source binding or change
+  the retained private snapshot. Source changes to a local display row alone are
+  not adoption-proof changes: recovery intentionally archives the original
+  protected sent envelope. The rejection case changes the actual adoption proof.
+- Reproduced two real gaps: a settled entity's update time could change after
+  native preparation yet consumption still ran, and the same client with a new
+  native auth session could consume under a freshly captured guard identity.
+  Fixed global entity-inventory pins (including target primary key and all-zone
+  audit fingerprints), synchronous validation within lease/submission transactions,
+  final native admission validation, and comparison against the originally
+  confirmed auth snapshot. Normal store callers have no new validator by default.
+- Verified successful save through separate existing receipt lookup, raw-record
+  adoption, protected lease finalization and non-null real settled preflight.
+  Nine outbox records remain; one native consume, zero native staging/resends.
+  Tests also reject changed audit, adoption proof, generation, extra unfinished
+  row, auth session and target binding, including a sole same-scope candidate
+  with unfinished work elsewhere. Prepared owners are released on rejection.
+- Unknown native result revokes writer authority, retains exact Apple identities
+  and protected receipt, and leaves the local lease until expiry. The outer
+  postflight currently raises a generic failure. Tests prove immediate recovery
+  remains blocked, then simulate lease expiry and reach settlement using exact
+  receipt lookup with no second consume. No writer gate was weakened to hide
+  this behavior; improve that error/user flow separately before go-live.
+- Executed the six-file affected batch:146 passed,0 failed (previous-upload
+  integration, manual outbound controller, ObjectBox preflight, create receipts,
+  retained-queue exact selection and durable writer authority). Refined the
+  fixture afterward to revision9/attempt7; its nine cases passed again. Dart
+  analysis of four changed production files reported no issues. Test-file
+  analysis previously reported only pre-existing style infos after one new
+  syntax error was corrected. git diff --check passed. No local Cargo, native
+  qualification, CI, install, live read/write or external publication occurred.
+- No active command handles remain. Last C: free21293727744bytes. Muse remains
+  stopped and Avicenna's corrected two-file HEIC draft remains frozen/unqualified.
+  Next: review the inherited manual unknown/replay continuation and Profile
+  action composition, then review native draft and batch exact-source qualification.
+  Live archival of the retained non-test-recipient message still needs explicit
+  permission; never silently submit or delete it to clear the sync gate.
+
+### September 26: Profile retry, replay ordering, and native qualification checkpoint
+
+- Added explicit Profile retry with one-use confirmation, disarming on cancel or
+  navigation, and exact post-write receipt lookup. It archives only the pinned
+  existing pending envelope and does not enable automatic uploads or send IDS
+  messages. Runtime, account, checkpoint, target and audit pins are revalidated.
+- Extracted the existing exclusive writer-pause/read-auth bootstrap for shared
+  receipt and manual recovery paths. Confirmed replay previously finalized a
+  saved readback before the controller's final snapshot check. It now discovers
+  that work read-only, then finalizes only after postflight. A real-ObjectBox
+  restart regression settles all nine retained rows without a second consume.
+- Recovered exact terminal evidence after compaction: the ten-file affected batch
+  in command session38046 completed exit0 with 237 passed in26 seconds. The
+  earlier74-test UI/receipt batch and three later focused tests overlap and are
+  not additive coverage. Session26130 is terminal; its analyzer output is reviewed
+  separately. No local test process remains. C: free19659292672bytes; no cleanup.
+- Independently reviewed Avicenna's two-file native repair: matching-size route
+  remains first, mismatch recovery is bounded and non-Ford, unique target signature
+  selection and full encrypted-stream salted SHA1 validation precede success;
+  repeated source replay and completion receipts retain existing semantics.
+  Published reviewed rustpush eff282ba31ccb7a3071a386b8294e13f7ca98e5e and parent
+  gitlink-only3e3ecf3b5bce24ce39e191f6a982ce2de5e3b270 to the existing trusted fork
+  branches using normal fast-forwards. Uncommitted Dart changes were not included.
+- Native-only GCE run36277083245 used workflow1ff3a0cb837c52beaeef0a71059ca7e4888051e9,
+  n2d-standard-16 Spot/us-west1-b/primary, beta, writer=false, automatic=false.
+  The Rust compile failed with E0658 at mmcs.rs:868 on requested_signature.as_slice().
+  No tests executed; no APK, signing, credentials or live account access occurred.
+  Create108501822421 and delete108502362777 succeeded; build108502071047 failed,
+  signing108502363533 skipped. Fresh GCE and GitHub inventories are both empty.
+- Avicenna is retained only for the bounded compile-fix follow-up. Main owner
+  reviews and qualifies the correction while reviewing the Dart candidate.
+  Installed Pixel remains36265573790. No new Pixel action or real pending-message
+  submission occurred. That retained upload is outside authorized test peers and
+  remains approval-gated. Alpha, credentials, evidence and all dirty work remain.
+
+### September 26: corrected native candidate and completed recovery review
+
+- Avicenna removed the redundant slice.as_slice call, exactly one changed line;
+  main owner reviewed and published rustpushfa5b0e8bf05c6bb8c3c78a7e6a328ba886bdadcb
+  and parent48af49310530e50fb1c20469e3c5c4d9e7ae03ff. Fresh ref and active-run
+  checks passed. Dispatched native-only run36277733822 with the same established
+  inputs. It is not a retry of unchanged source; the preceding failure is fixed.
+  Create108503603253 succeeded; native job108503822181 is running. Watch43631.
+- Two narrow controller tests failed on current source before repair: ordinary
+  recovery omitted allowConfirmed when several rows existed, and replay failed
+  to pin settled audit snapshots through postflight. Corrected both without
+  relaxing single-candidate selection, lifecycle or binding validation. The
+  affected manual/real-store/Profile UI batch passed114; readiness/wiring passed9.
+  These overlap earlier237 and are not additive unique coverage.
+- Profile preparation now refreshes readiness before arming, so an existing
+  service future/confirmation blocks a second entry even when displayed readiness
+  was cached. Source-contract test verifies ordering and shared shutdown tracking;
+  this is not live Android concurrency proof. New UI lint findings were fixed
+  without whole-file formatting. Older unrelated profile/service warnings remain.
+- Avicenna's work was reviewed/integrated before supported close; subsequent
+  wait returned not_found. No helper files, sessions, transcripts or worktrees
+  were deleted. Muse remains stopped. An async user question requests permission
+  to archive the one retained non-test-recipient message; no reply means no action.
+- The next integrated Canary must select outbound_writer=true and keep
+  automatic_uploads=false to exercise the explicit Profile retry. Existing
+  writer-disabled install cannot display it. No automatic-upload rollout or
+  real submission has been enabled; approval is still required for that row.
+
+- Subsequent user reply explicitly approves archiving the one retained already-sent
+  message to their own iCloud history. This supersedes the pending permission
+  question, not the no-IDS-resend/no-auto-upload boundary. Verify the identical
+  durable operation before live use. New sends remain limited to the two approved
+  test peers; no other queued recipient is authorized by this approval.
+
+### September 26: native repair qualified; application candidate frozen
+
+- Native-only run36277733822 completed successfully. Exact source checkout was
+  48af49310530e50fb1c20469e3c5c4d9e7ae03ff with rustpushfa5b0e8bf05c6bb8c3c78a7e6a328ba886bdadcb.
+  Rustpush362 passed,0 failed,0 ignored. Reviewed actual named mismatch, repeated
+  source/finalization, corruption/truncation/order, byte-cap, short-write, normal
+  matching-size and stale-recovered-descriptor tests. No other suites or APK ran.
+  Native job108503822181 succeeded in2m17s including setup, test execution6.43s;
+  cleanup108504147999 succeeded. Exact instancegce-36277733822-1 is gone; fresh
+  project inventory[] and GitHubtotal_count0. Watch43631 exited0.
+- Committed sixteen reviewed application/test files as
+  73cab21f4370235092a97c7c4d9014690b52e102. Includes Profile explicit retry,
+  receipt/auth bootstrap and exact selection/audit safeguards, replay ordering,
+  actual ObjectBox composition seams and regressions. New native repair is the
+  inherited qualified gitlink, not regenerated bindings. Generated registrant
+  changes and rejected untracked draft remain outside the commit, preserved.
+- Seven changed core/card files analyze with no issues; the full nine-file
+  analysis had no compile errors but inherited service/profile warnings and
+  two card style infos subsequently repaired. git diff--check passes. No full
+  unchanged suite rerun was made merely to repeat earlier green results.
+- ADBdevices returned no devices. Build preparation may proceed without Pixel;
+  live verification waits for connection. No install, reset, sign-in, queue change,
+  account access or real upload occurred. LatestC: free24782426112bytes.
