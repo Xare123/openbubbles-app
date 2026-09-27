@@ -20,7 +20,7 @@
 param(
     [Parameter(Mandatory = $true)][ValidateSet('prepare', 'run', 'verify')][string] $Mode,
     [Parameter(Mandatory = $true)][ValidatePattern('^[0-9a-f]{64}$')][string] $ExpectedRecipientSha256,
-    [ValidatePattern('^$|^[0-9a-f]{16}$')][string] $ExpectedGuidHash = '',
+    [ValidatePattern('^$|^[0-9a-f]{64}$')][string] $ExpectedGuidHash = '',
     [Parameter(Mandatory = $true)][ValidatePattern('^[0-9a-f]{40}$')][string] $ExpectedSourceCommit,
     [Parameter(Mandatory = $true)][ValidateNotNullOrEmpty()][string] $AdbSerial,
     [ValidateNotNullOrEmpty()][string] $AdbExecutable = 'adb.exe',
@@ -242,7 +242,7 @@ try {
             Fail-Gate 'write_evidence_invalid'
         }
         if ($Mode -eq 'prepare') {
-            if ($writeDoc.candidateFound -ne $true -or $writeDoc.guidHash -cnotmatch '^[0-9a-f]{16}$') {
+            if ($writeDoc.candidateFound -ne $true -or $writeDoc.guidHash -cnotmatch '^[0-9a-f]{64}$') {
                 Fail-Gate 'candidate_unavailable'
             }
         } else {

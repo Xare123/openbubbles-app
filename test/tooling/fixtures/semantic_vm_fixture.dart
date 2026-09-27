@@ -34,7 +34,11 @@ class FixtureService {
       throw StateError('cloud_sync_fixture_recipient_mismatch');
     }
     return FixtureSelection(
-      mode == 'write-changed' ? 'ffffffffffffffff' : '0123456789abcdef',
+      mode == 'write-short-hash'
+          ? '0123456789abcdef'
+          : mode == 'write-changed'
+          ? 'f' * 64
+          : '0123456789abcdef' * 4,
       DateTime.utc(2026, 9, 10, 1, 2, 3),
       slowFields: mode == 'write-slow-fields',
     );

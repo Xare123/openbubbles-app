@@ -245,7 +245,7 @@ void main() {
         recipient: '+15555550123',
       );
       expect(result.candidateFound, isTrue);
-      expect(result.guidHash, '0123456789abcdef');
+      expect(result.guidHash, '0123456789abcdef' * 4);
       expect(result.createdAtUtc, '2026-09-10T01:02:03.000Z');
       expect(result.toJson().toString(), isNot(contains('+15555550123')));
     },
@@ -263,7 +263,7 @@ void main() {
         recipient: '+15555550123',
       );
       expect(result.candidateFound, isTrue);
-      expect(result.guidHash, '0123456789abcdef');
+      expect(result.guidHash, '0123456789abcdef' * 4);
       expect(result.createdAtUtc, '2026-09-10T01:02:03.000Z');
     },
   );
@@ -309,7 +309,7 @@ void main() {
       libraryId: libraryId,
       targetId: target.id!,
       recipient: '+15555550123',
-      expectedGuidHash: '0123456789abcdef',
+      expectedGuidHash: '0123456789abcdef' * 4,
     );
     expect(result.admitted, 1);
     expect(result.deferred, 0);
@@ -328,7 +328,7 @@ void main() {
           libraryId: libraryId,
           targetId: target.id!,
           recipient: '+15555550123',
-          expectedGuidHash: '0123456789abcdef',
+          expectedGuidHash: '0123456789abcdef' * 4,
         ),
         throwsA(
           isA<StateError>().having(
@@ -337,6 +337,43 @@ void main() {
             'cloud_sync_outbound_candidate_changed',
           ),
         ),
+      );
+    },
+  );
+
+  test('preparation rejects an obsolete truncated journal hash', () async {
+    final target = await writeTarget('write-short-hash');
+    await expectLater(
+      write_trigger.invokePrepareAndSelect(
+        service: service,
+        isolateId: isolateId,
+        libraryId: libraryId,
+        targetId: target.id!,
+        recipient: '+15555550123',
+      ),
+      throwsA(
+        isA<StateError>().having(
+          (e) => e.message,
+          'code',
+          'cloud_sync_write_observer_invalid',
+        ),
+      ),
+    );
+  });
+
+  test(
+    'run rejects a truncated expected hash before evaluating a target',
+    () async {
+      await expectLater(
+        write_trigger.invokeExactIntentAndWait(
+          service: service,
+          isolateId: isolateId,
+          libraryId: libraryId,
+          targetId: 'not-a-target',
+          recipient: '+15555550123',
+          expectedGuidHash: '0123456789abcdef',
+        ),
+        throwsArgumentError,
       );
     },
   );

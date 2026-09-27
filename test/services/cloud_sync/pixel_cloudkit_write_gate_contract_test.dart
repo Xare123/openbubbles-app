@@ -22,6 +22,14 @@ void main() {
     expect(gate, contains('source_commit_mismatch'));
   });
 
+  test('host and VM require complete journal identity hashes', () {
+    expect(gate, contains("ValidatePattern('^\$|^[0-9a-f]{64}\$')"));
+    expect(gate, contains("guidHash -cnotmatch '^[0-9a-f]{64}\$'"));
+    expect(trigger, contains("_guidHashPattern = RegExp(r'^[0-9a-f]{64}\$')"));
+    expect(gate, isNot(contains('[0-9a-f]{16}')));
+    expect(trigger, isNot(contains('[0-9a-f]{16}')));
+  });
+
   test('write gate requires manual writer and automatic worker off', () {
     expect(gate, contains('--expect-manual-writer'));
     expect(gate, contains('automaticUploads = \$false'));

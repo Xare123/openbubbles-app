@@ -7,7 +7,8 @@ import 'package:vm_service/vm_service.dart';
 import 'package:vm_service/vm_service_io.dart';
 
 const _recipientEnvironment = 'OPENBUBBLES_CANARY_RECIPIENT';
-final _guidHashPattern = RegExp(r'^[0-9a-f]{16}$');
+// The journal returns the full source identity digest, not a display prefix.
+final _guidHashPattern = RegExp(r'^[0-9a-f]{64}$');
 final _sha256Pattern = RegExp(r'^[0-9a-f]{64}$');
 
 final class CloudKitWritePreparation {
