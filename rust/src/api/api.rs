@@ -13836,9 +13836,18 @@ pub async fn send(
     }
     let source = cloud_sync_send_source(native_receipt_context.as_ref(), &msg)?;
     let send_started_ms = systemtime_to_millis(SystemTime::now());
-    let result = state
-        .send(&mut msg)
-        .await
+    // Tracked edits/unsends need the same positive-acknowledgment transport
+    // already qualified by the Windows mutation path. The legacy transport
+    // sets no_response for command 118, so its completed job can never produce
+    // a strict receipt. Opt in only after opening/validating the protected
+    // mutation source; untracked and attachment sends keep their old behavior.
+    // The acknowledgment path never retries an ambiguous mutation send.
+    let result = match source.as_ref() {
+        Some(CloudSyncBoundSendSource::Mutation(_)) => {
+            state.send_mutation_requesting_acknowledgment(&mut msg).await
+        }
+        _ => state.send(&mut msg).await,
+    }
         .map_err(|error| cloud_sync_send_start_error(error, native_receipt_context.is_some()))?;
     let send_finished_ms = systemtime_to_millis(SystemTime::now());
     let source_validation =

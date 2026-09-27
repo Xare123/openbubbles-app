@@ -6239,11 +6239,13 @@ class RustPushService extends GetxService {
       }
       var message = Message.findOne(guid: push.uuid);
       if (message == null) {
-        if (push.nativeReceipt?.sourceBinding?.kind ==
-                api.CloudSyncNativeSendSourceKind.mutation &&
-            (push.error != null || push.nativeReceiptError != null)) {
+        // A failed confirmation has no receipt, so inspecting that receipt's
+        // source kind would hide precisely the edit/unsend failures we need
+        // to diagnose. This reports no body, route or operation identifier.
+        if (push.error != null || push.nativeReceiptError != null) {
           Logger.warn(
-            'Cloud Sync V2 mutation confirmation unresolved; retained for replay',
+            'Send confirmation unresolved for an operation without a message row; '
+            'sendError=${push.error != null} receiptError=${push.nativeReceiptError != null}',
           );
         }
         return;

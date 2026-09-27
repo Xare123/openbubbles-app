@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_send_journal.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_safe_failure.dart';
 import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -13,6 +14,15 @@ void main() {
     final source = Platform.environment['OPENBUBBLES_OBJECTBOX_INSPECT_DIR'];
     final excluded = Platform.environment['OPENBUBBLES_EXCLUDED_MESSAGE_GUID'];
     final testText = Platform.environment['OPENBUBBLES_TEST_MESSAGE_TEXT'];
+    final expectedRecipient =
+        Platform.environment['OPENBUBBLES_TEST_MESSAGE_RECIPIENT'];
+    final expectedGuidHash =
+        Platform.environment['OPENBUBBLES_TEST_MESSAGE_GUID_HASH'];
+    if (expectedRecipient != null || expectedGuidHash != null) {
+      expect(testText, isNotNull);
+      expect(expectedRecipient, isNotEmpty);
+      expect(expectedGuidHash, matches(RegExp(r'^[0-9a-f]{64}$')));
+    }
     expect(source, isNotNull);
     if (excluded != null) {
       expect(excluded, matches(RegExp(r'^[0-9a-fA-F-]{36}$')));
@@ -141,6 +151,65 @@ void main() {
         final knownOperations = intents
             .map((i) => i.admittedOperationId)
             .toSet();
+        Map<String, Object?>? exactTestReadback;
+        if (expectedRecipient != null && expectedGuidHash != null) {
+          // This diagnostic is pinned to the hash displayed by the actual
+          // confirmation UI, not merely to whichever message is newest.
+          expect(testMessages, hasLength(1));
+          final message = testMessages.single;
+          final matchingIntents = intents.where((i) =>
+              i.localMessageId == message.id &&
+              i.messageGuidHash == expectedGuidHash).toList();
+          expect(matchingIntents, hasLength(1));
+          final intent = matchingIntents.single;
+          expect(
+            sha256.convert(utf8.encode(jsonEncode([
+              'cloud-sync-local-send-guid-v1', message.guid,
+            ]))).toString(),
+            expectedGuidHash,
+          );
+          String? validationFailure;
+          var exactSource = false;
+          try {
+            final journal = CloudSyncLocalSendJournal.forRetainedQueueInspection(
+              store, intent.accountFingerprint,
+            );
+            if (journal == null) {
+              throw StateError('cloud_sync_local_send_authority_changed');
+            }
+            journal.readExactIntent(
+              intentId: intent.id,
+              expectedRecipient: expectedRecipient,
+              expectedSourceSha256: intent.sourceSha256,
+            );
+            exactSource = true;
+          } catch (error) {
+            validationFailure = cloudSyncV2SafeFailureCode(error);
+          }
+          final operations = outbox.where((o) =>
+              o.operationId == intent.admittedOperationId).toList();
+          expect(operations, hasLength(1));
+          final operation = operations.single;
+          final markerMatches = intent.state == 2 &&
+              intent.confirmedReadbackBindingSha256 != null &&
+              intent.confirmedReadbackBindingSha256 == intent.admittedBindingSha256;
+          final settled = operation.state == 2 && operation.confirmedAtMs > 0 &&
+              operation.serverRecordIdHash != null &&
+              operation.protectedLeaseReference == null &&
+              operation.leaseIdHash == null && operation.leaseExpiresAtMs == 0;
+          exactTestReadback = {
+            'scope': 'persisted_exact_readback_not_fresh_remote_observation',
+            'singleTestMessageAndIntent': true,
+            'matchesConfirmationGuidHash': true,
+            'exactSourceAndRecipientValidated': exactSource,
+            'validationFailure': validationFailure,
+            'positiveIdsConfirmation':
+                intent.idsConfirmationVersion == cloudSyncIdsConfirmationVersion,
+            'readbackMarkerMatchesAdmission': markerMatches,
+            'confirmedReceiptReleased': settled,
+            'attemptCount': operation.attemptCount,
+          };
+        }
         final states = <String, int>{};
         final mutations = store
             .box<CloudSyncLocalMutationIntentEntity>()
@@ -229,6 +298,7 @@ void main() {
               .length,
           'missingOrDeletedJournalSources': missingOrDeletedSources,
           if (testText != null) 'testMessageCount': testMessages.length,
+          if (exactTestReadback != null) 'exactTestReadback': exactTestReadback,
           if (testText != null)
             'testMessageStates': [
               for (final message in testMessages)

@@ -9,6 +9,31 @@ void main() {
     'lib/services/rustpush/rustpush_service.dart',
   ).readAsStringSync();
 
+  test('ordinary app routes validated mutations through acknowledgment transport', () {
+    final native = File('rust/src/api/api.rs')
+        .readAsStringSync()
+        .replaceAll('\r\n', '\n');
+    final start = native.indexOf('pub async fn send(\n');
+    expect(start, greaterThanOrEqualTo(0));
+    final send = native.substring(
+      start,
+      native.indexOf('\n#[frb(ignore)]', start),
+    );
+    final validated = send.indexOf('cloud_sync_send_source(');
+    final dispatch = send.indexOf('match source.as_ref()');
+    expect(validated, greaterThanOrEqualTo(0));
+    expect(dispatch, greaterThan(validated));
+    final compact = send.replaceAll(RegExp(r'\s+'), ' ');
+    expect(compact, contains(
+      'Some(CloudSyncBoundSendSource::Mutation(_)) => { '
+      'state.send_mutation_requesting_acknowledgment(&mut msg).await',
+    ));
+    expect(compact, contains('_ => state.send(&mut msg).await,'));
+    expect(send, contains('cloud_sync_send_start_error('));
+    expect(send, contains('confirmation.require_confirmed()'));
+    expect(send, contains('cloud_sync_validate_prepared_send_source('));
+  });
+
   test('mutations release native receipt only after exact update readback', () {
     final start = source.indexOf(
       'if (source?.kind == api.CloudSyncNativeSendSourceKind.mutation)',
@@ -99,6 +124,13 @@ void main() {
       lessThan(handler.indexOf('Message.findOne(guid: push.uuid)')),
     );
     expect(handler, contains('background send failed; intent retained'));
+    final noMessage = handler.substring(
+      handler.indexOf('if (message == null)'),
+      handler.indexOf('message.sendingServiceId = null;'),
+    );
+    expect(noMessage, contains('if (push.error != null || push.nativeReceiptError != null)'));
+    expect(noMessage, isNot(contains('push.nativeReceipt?.sourceBinding')));
+    expect(noMessage, contains('Send confirmation unresolved for an operation'));
   });
 
   test('durable IDS proof precedes fresh authorization and worker wakeup', () {
