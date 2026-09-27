@@ -126,13 +126,14 @@ Future<CloudKitWritePreparation> invokePrepareAndSelect({
   Duration timeout = const Duration(seconds: 120),
 }) async {
   final recipientLiteral = jsonEncode(recipient);
+  // Publish one immutable snapshot to avoid partially observed fields. Keep the
+  // fixed expression comment-free and on one line for Flutter's resident
+  // compile-expression protocol. jsonEncode escapes newlines in literal data.
   final observer = await service.evaluate(
     isolateId,
     libraryId,
     '''
     (() {
-      // Publish a complete immutable snapshot with one reference assignment.
-      // A VM-service read can otherwise observe a partially updated list.
       final observation = <List<String>>[<String>['pending', '', '', '']];
       Future<void> run() async {
         try {
@@ -158,7 +159,7 @@ Future<CloudKitWritePreparation> invokePrepareAndSelect({
       Future<void>(run);
       return observation;
     })()
-  ''',
+  '''.replaceAll(RegExp(r'[\r\n]'), ' '),
     scope: {'writeTarget': targetId},
     disableBreakpoints: true,
   );
@@ -202,6 +203,7 @@ Future<CloudKitWriteResult> invokeExactIntentAndWait({
   }
   final recipientLiteral = jsonEncode(recipient);
   final hashLiteral = jsonEncode(expectedGuidHash);
+  // Same line-oriented attached compiler boundary as the prepare expression.
   final observer = await service.evaluate(
     isolateId,
     libraryId,
@@ -237,7 +239,7 @@ Future<CloudKitWriteResult> invokeExactIntentAndWait({
       Future<void>(run);
       return observation;
     })()
-  ''',
+  '''.replaceAll(RegExp(r'[\r\n]'), ' '),
     scope: {'writeTarget': targetId},
     disableBreakpoints: true,
   );

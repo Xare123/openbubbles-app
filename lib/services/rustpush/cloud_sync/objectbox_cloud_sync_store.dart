@@ -6,6 +6,7 @@ import 'package:crypto/crypto.dart';
 
 import 'cloud_operation_identity.dart';
 import 'cloud_shadow_journal_budget.dart';
+import 'cloud_sync_historical_archive_journal.dart';
 import 'cloud_sync_local_send_journal.dart';
 import 'cloud_sync_local_send_source_binding.dart';
 import 'cloud_sync_received_archive_source_binding.dart';
@@ -736,6 +737,24 @@ class ObjectBoxCloudSyncStore
       } finally {
         receivedSources.close();
       }
+      final historicalSources = _store
+          .box<CloudSyncHistoricalArchiveIntentEntity>().query().build();
+      try {
+        if (historicalSources.count() > maximumCount) {
+          throw _storageFailure('protected_outbound_lease_recovery_bound_exceeded');
+        }
+        // Both locally adopted and committed sources retain their handoff
+        // leases. No reviewed historical-source retirement exists yet.
+        // Include old accounts/stores/snapshots; reject, never omit corrupt rows.
+        for (final intent in historicalSources.find()) {
+          references.add(validateCloudSyncHistoricalArchiveRow(intent).leaseReference);
+          if (references.length > maximumCount) {
+            throw _storageFailure('protected_outbound_lease_recovery_bound_exceeded');
+          }
+        }
+      } finally {
+        historicalSources.close();
+      }
       final mutations = _store
           .box<CloudSyncLocalMutationIntentEntity>()
           .query(CloudSyncLocalMutationIntentEntity_.state.notEquals(5))
@@ -1168,6 +1187,7 @@ class ObjectBoxCloudSyncStore
           _writerAuthorities.count() +
           _store.box<CloudSyncLocalSendIntentEntity>().count() +
           (_store.box<CloudSyncReceivedArchiveIntentEntity>().count() * 2) +
+          _store.box<CloudSyncHistoricalArchiveIntentEntity>().count() +
           activeMutationCount +
           (_store.box<CloudAttachmentUploadEntity>().count() * 2) +
           (_attachmentMaterializations.count() * 4);
@@ -1260,6 +1280,11 @@ class ObjectBoxCloudSyncStore
           capture(source.isSeed ? null : source.protectedReference);
           capture(observation?.rawReference);
         },
+      );
+      scanPaged(
+        (_store.box<CloudSyncHistoricalArchiveIntentEntity>().query()
+          ..order(CloudSyncHistoricalArchiveIntentEntity_.id)).build(),
+        (intent) => capture(validateCloudSyncHistoricalArchiveRow(intent).protectedReference),
       );
       scanPaged(
         (_store.box<CloudSyncLocalMutationIntentEntity>().query(

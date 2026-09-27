@@ -1328,3 +1328,38 @@ class CloudAttachmentUploadEntity {
     required this.updatedAtMs,
   });
 }
+
+/// Durable ownership of a protected historical source, not a send receipt or
+/// remote upload result. Contains metadata only; message contents stay in the
+/// native protected store. Keep separate from live-send/receive provenance.
+@Entity()
+class CloudSyncHistoricalArchiveIntentEntity {
+  int id;
+
+  @Index(type: IndexType.hash64)
+  @Unique()
+  String intentKey;
+
+  @Index(type: IndexType.hash64)
+  String scopeKey;
+
+  String protectedSourceBinding;
+
+  /// Stable codes: 0 source adopted, 1 exact source lease committed.
+  /// Neither state establishes remote absence, upload authority or completion.
+  @Index()
+  int state;
+
+  int createdAtMs;
+  int updatedAtMs;
+
+  CloudSyncHistoricalArchiveIntentEntity({
+    this.id = 0,
+    required this.intentKey,
+    required this.scopeKey,
+    required this.protectedSourceBinding,
+    this.state = 0,
+    required this.createdAtMs,
+    required this.updatedAtMs,
+  });
+}

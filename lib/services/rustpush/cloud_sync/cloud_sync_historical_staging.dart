@@ -6,34 +6,30 @@ import 'package:crypto/crypto.dart';
 
 import 'cloud_sync_historical_archive_request.dart';
 
-/// Explicit immutable staging for one assessed historical row.
+/// Canonical encoding plus dry-run staging for one assessed historical row.
 ///
-/// Staging binds the request plus the row text observed at stage time into
-/// canonical bytes and stores them under the source digest key. Hashing is
-/// integrity checking, not encryption; production requires a native protected
-/// byte-store adapter before any real source is retained through this API.
-/// Opening revalidates the hash, so a changed or tampered payload cannot
-/// pass as the staged source. The byte store is injected: production
-/// wiring binds the existing protected storage, tests use memory or temp
-/// files. No network, no uploads, no record saves happen here.
+/// Encoding binds the request plus the row text observed at stage time into
+/// canonical bytes. Hashing is integrity checking, not encryption. The
+/// injected HistoricalByteStore below is a test double only: production
+/// protects sources through the native store behind a single stage-and-adopt
+/// callback owned by the parent, never through this Dart byte store.
+/// No network, no uploads, no record saves happen here.
 
 /// Result of one atomic put-if-absent attempt.
 enum HistoricalPutOutcome { stored, identicalExists, conflictingExists }
 
-/// Atomic byte store contract for staged historical sources. The store
+/// Atomic byte store contract for dry-run staging tests only. The store
 /// must guarantee that only one writer wins a key: [putIfAbsent] returns
 /// [HistoricalPutOutcome.conflictingExists] without overwriting when the
 /// key already holds different bytes, and [HistoricalPutOutcome.identicalExists] when the bytes
-/// match. The native production adapter remains parent-owned and must
-/// provide the same guarantee.
+/// match. This is not the production path: production protects sources
+/// natively behind the parent-owned stage-and-adopt boundary.
 abstract class HistoricalByteStore {
   Future<HistoricalPutOutcome> putIfAbsent(String key, List<int> bytes);
   Future<List<int>?> get(String key);
 }
 
-/// In-memory store for tests and dry runs. Dart single-threaded event
-/// execution makes each synchronous map mutation atomic; production must
-/// bind a real atomic page or file primitive.
+/// In-memory store for dry-run tests only.
 class MemoryHistoricalByteStore implements HistoricalByteStore {
   final Map<String, List<int>> _bytes = {};
 
@@ -64,6 +60,11 @@ bool _sameBytes(List<int> a, List<int> b) {
   return true;
 }
 
+/// Lowercase hex SHA-256 over exact bytes. Shared by dry-run staging and
+/// producer validation of stage-and-adopt results.
+String historicalBytesSha256(List<int> bytes) =>
+    sha256.convert(bytes).toString();
+
 /// Sealed staged source: key plus integrity metadata, never content.
 class StagedHistoricalSource {
   const StagedHistoricalSource({
@@ -78,6 +79,20 @@ class StagedHistoricalSource {
   final String sha256;
   final int byteLength;
   final String guid;
+}
+
+/// Exact canonical bytes plus the request they bind. Produced by pure
+/// reassessment only; storing or adopting them is the caller's decision.
+/// Bytes are defensively copied and unmodifiable, so an injected callback
+/// receiving them cannot mutate the producer's copy after the fact.
+class EncodedHistoricalSource {
+  EncodedHistoricalSource({
+    required this.request,
+    required List<int> canonicalBytes,
+  }) : canonicalBytes = List<int>.unmodifiable(canonicalBytes);
+
+  final CloudSyncHistoricalArchiveRequest request;
+  final List<int> canonicalBytes;
 }
 
 /// Canonical staged payload, fixed field order for stable hashes. Sender
@@ -101,20 +116,19 @@ Map<String, Object?> stagedHistoricalPayload({
   'protectedStoreIdentity': request.protectedStoreIdentity,
 };
 
-/// Seals one assessed request plus a completely re-read row view. The full
-/// row is re-assessed and one canonical source binding is recomputed; any
-/// drift in route, time, origin, sender, direction, chat, or text from the
-/// original request throws instead of staging. Identical concurrent winners
-/// return the existing staged source; conflicting bytes are preserved and
-/// throw without overwriting.
-Future<StagedHistoricalSource> stageHistoricalSource({
-  required HistoricalByteStore store,
+/// Pure reassessment plus canonical encoding for one assessed request and
+/// a completely re-read row view. The full row is re-assessed and one
+/// canonical source binding is recomputed; any drift in route, time,
+/// origin, sender, direction, chat, or text from the original request
+/// throws instead of encoding. No bytes are stored here: the caller
+/// passes the result to its own stage-and-adopt boundary.
+EncodedHistoricalSource encodeHistoricalSource({
   required CloudSyncHistoricalArchiveRequest request,
   required CloudSyncHistoricalRowView currentRow,
   required CloudSyncHistoricalSourceManifest manifest,
   required CloudSyncHistoricalAccountBinding account,
   int? nowMs,
-}) async {
+}) {
   final reassessed = assessHistoricalArchiveRow(
     currentRow,
     manifest,
@@ -152,6 +166,29 @@ Future<StagedHistoricalSource> stageHistoricalSource({
   if (bytes.length > cloudSyncHistoricalMaxSourceBytes) {
     throw StateError('cloud_sync_historical_archive_source_too_large');
   }
+  return EncodedHistoricalSource(request: request, canonicalBytes: bytes);
+}
+
+/// Dry-run staging into an injected byte store. Shared with the producer's
+/// canonical encoding above, then put/get through the test store. This is
+/// for existing memory/file staging tests only; production binds the native
+/// protected store through a single stage-and-adopt callback, never this.
+Future<StagedHistoricalSource> stageHistoricalSource({
+  required HistoricalByteStore store,
+  required CloudSyncHistoricalArchiveRequest request,
+  required CloudSyncHistoricalRowView currentRow,
+  required CloudSyncHistoricalSourceManifest manifest,
+  required CloudSyncHistoricalAccountBinding account,
+  int? nowMs,
+}) async {
+  final encoded = encodeHistoricalSource(
+    request: request,
+    currentRow: currentRow,
+    manifest: manifest,
+    account: account,
+    nowMs: nowMs,
+  );
+  final bytes = encoded.canonicalBytes;
   final sha = sha256.convert(bytes).toString();
   final outcome = await store.putIfAbsent(request.sourceSha256, bytes);
   if (outcome == HistoricalPutOutcome.conflictingExists) {

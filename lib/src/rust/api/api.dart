@@ -148,6 +148,29 @@ Future<CloudSyncNativeAuthMetadata> cloudSyncCaptureReceivedIdentity({
   state: state,
 );
 
+/// Protect one independently qualified historical source in this configured
+/// account's actual local store. Uses cached composition identity, never GSA
+/// refresh, dependency warming, registration, IDS or a CloudKit request.
+///
+/// The caller must hold local-store lifecycle exclusion through native staging,
+/// durable journal adoption and exact lease commit. It also owns qualification
+/// of the immutable snapshot/account; canonical bytes and hashes alone are not
+/// ownership proof. Reopening for remote work still needs independent live auth.
+Future<CloudSyncNativeHistoricalArchiveSourceBinding>
+cloudSyncStageHistoricalArchiveSource({
+  required SharedPushState state,
+  required CloudSyncNativeAuthMetadata expectedAuth,
+  required String snapshotSha256,
+  required String expectedSourceSha256,
+  required List<int> sourceBytes,
+}) => RustLib.instance.api.crateApiApiCloudSyncStageHistoricalArchiveSource(
+  state: state,
+  expectedAuth: expectedAuth,
+  snapshotSha256: snapshotSha256,
+  expectedSourceSha256: expectedSourceSha256,
+  sourceBytes: sourceBytes,
+);
+
 /// Protects an observed receive using one configured SharedPushState. Uses
 /// cached account validation and registered handles only: no dependency warm,
 /// keychain sync, IDS directory query, re-registration, send or CloudKit save.
@@ -4031,6 +4054,60 @@ class CloudSyncNativeAuthMetadata {
           nativeSessionId == other.nativeSessionId &&
           accountFingerprint == other.accountFingerprint &&
           protectedStoreIdentity == other.protectedStoreIdentity;
+}
+
+/// Metadata ownership for a qualified historical source. Unlike live-send and
+/// received-source bindings, this carries snapshot identity and no IDS evidence.
+/// It is local staging only, not remote absence, upload permission or completion.
+class CloudSyncNativeHistoricalArchiveSourceBinding {
+  final String accountFingerprint;
+  final String protectedStoreIdentity;
+  final String snapshotSha256;
+  final String messageGuidHash;
+  final String sourceSha256;
+  final String protectedReference;
+  final String leaseReference;
+  final String payloadSha256;
+  final int payloadLength;
+
+  const CloudSyncNativeHistoricalArchiveSourceBinding({
+    required this.accountFingerprint,
+    required this.protectedStoreIdentity,
+    required this.snapshotSha256,
+    required this.messageGuidHash,
+    required this.sourceSha256,
+    required this.protectedReference,
+    required this.leaseReference,
+    required this.payloadSha256,
+    required this.payloadLength,
+  });
+
+  @override
+  int get hashCode =>
+      accountFingerprint.hashCode ^
+      protectedStoreIdentity.hashCode ^
+      snapshotSha256.hashCode ^
+      messageGuidHash.hashCode ^
+      sourceSha256.hashCode ^
+      protectedReference.hashCode ^
+      leaseReference.hashCode ^
+      payloadSha256.hashCode ^
+      payloadLength.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is CloudSyncNativeHistoricalArchiveSourceBinding &&
+          runtimeType == other.runtimeType &&
+          accountFingerprint == other.accountFingerprint &&
+          protectedStoreIdentity == other.protectedStoreIdentity &&
+          snapshotSha256 == other.snapshotSha256 &&
+          messageGuidHash == other.messageGuidHash &&
+          sourceSha256 == other.sourceSha256 &&
+          protectedReference == other.protectedReference &&
+          leaseReference == other.leaseReference &&
+          payloadSha256 == other.payloadSha256 &&
+          payloadLength == other.payloadLength;
 }
 
 /// Platform-encrypted receive retry job. Ciphertext, not message text, crosses

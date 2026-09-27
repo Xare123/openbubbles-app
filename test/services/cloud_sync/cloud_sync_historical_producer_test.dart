@@ -240,22 +240,35 @@ class _FileAdoptions {
   final Directory directory;
   int newWrites = 0;
 
-  Future<void> adopt(StagedHistoricalSource source) async {
-    final file = File('${directory.path}/adopted-${source.key}.json');
+  /// Combined stage-and-adopt double: verifies canonical bytes against
+  /// the request digest, then durably records the sealed result.
+  /// Idempotent for identical bytes, conflicting otherwise.
+  Future<StagedHistoricalSource> stageAndAdopt(
+    CloudSyncHistoricalArchiveRequest request,
+    List<int> canonicalBytes,
+  ) async {
+    final file = File('${directory.path}/adopted-${request.sourceSha256}.json');
+    final sealed = StagedHistoricalSource(
+      key: request.sourceSha256,
+      sha256: historicalBytesSha256(canonicalBytes),
+      byteLength: canonicalBytes.length,
+      guid: request.guid,
+    );
     final value = jsonEncode({
-      'key': source.key,
-      'sha': source.sha256,
-      'length': source.byteLength,
-      'guid': source.guid,
+      'key': sealed.key,
+      'sha': sealed.sha256,
+      'length': sealed.byteLength,
+      'guid': sealed.guid,
     });
     if (file.existsSync()) {
       if (file.readAsStringSync() != value) {
         throw StateError('adoption_conflict');
       }
-      return;
+      return sealed;
     }
     file.writeAsStringSync(value, flush: true);
     newWrites++;
+    return sealed;
   }
 
   List<StagedHistoricalSource> pending() => directory
@@ -284,12 +297,27 @@ void main() {
   late Handle me;
   late Map<String, StagedHistoricalSource> adoptions;
 
-  Future<void> adopt(StagedHistoricalSource source) async {
-    final prior = adoptions[source.key];
-    if (prior != null && prior.sha256 != source.sha256) {
-      throw StateError('adoption_conflict');
+  Future<StagedHistoricalSource> adopt(
+    CloudSyncHistoricalArchiveRequest request,
+    List<int> canonicalBytes,
+  ) async {
+    final sealed = StagedHistoricalSource(
+      key: request.sourceSha256,
+      sha256: historicalBytesSha256(canonicalBytes),
+      byteLength: canonicalBytes.length,
+      guid: request.guid,
+    );
+    final prior = adoptions[sealed.key];
+    if (prior != null) {
+      if (prior.sha256 != sealed.sha256 ||
+          prior.byteLength != sealed.byteLength ||
+          prior.guid != sealed.guid) {
+        throw StateError('adoption_conflict');
+      }
+      return prior;
     }
-    adoptions.putIfAbsent(source.key, () => source);
+    adoptions[sealed.key] = sealed;
+    return sealed;
   }
 
   CloudSyncHistoricalSourceManifest manifest() =>
@@ -428,17 +456,19 @@ void main() {
   test(
     'producer stages eligible rows and retains the rest with reasons',
     () async {
-      final bytes = MemoryHistoricalByteStore();
       final cursors = MemoryHistoricalCursorStore();
+      final seen = <String, List<int>>{};
       final producer = CloudSyncHistoricalProducer(
         reader: _StoreReader(store, _snapshot),
         registry: _Registry(),
         cursors: cursors,
-        bytes: bytes,
         manifest: manifest(),
         account: _accountBinding(),
         readCurrentRow: (guid) => _rowOf(store, guid),
-        adoptStaged: adopt,
+        stageAndAdopt: (request, canonicalBytes) {
+          seen[request.guid] = List<int>.of(canonicalBytes);
+          return adopt(request, canonicalBytes);
+        },
         nowMs: _nowMs,
       );
       final result = await producer.run();
@@ -470,11 +500,11 @@ void main() {
         'guid-sent-1',
       });
       for (final staged in result.output.staged) {
-        final payload = await openHistoricalSource(
-          store: bytes,
-          staged: staged,
-        );
+        final payload =
+            jsonDecode(utf8.decode(seen[staged.guid]!)) as Map<String, dynamic>;
         expect(payload['guid'], staged.guid);
+        expect(staged.key.length, 64);
+        expect(staged.byteLength, seen[staged.guid]!.length);
       }
     },
   );
@@ -486,27 +516,27 @@ void main() {
     try {
       final admission = _FakeHistoricalAdmission();
       Future<Set<String>> pass() async {
-        final bytes = _FileByteStore(serviceDir);
         final cursors = _FileCursorStore(serviceDir);
         final producer = CloudSyncHistoricalProducer(
           reader: _StoreReader(store, _snapshot),
           registry: _Registry(owned: admission.remote.keys.toSet()),
           cursors: cursors,
-          bytes: bytes,
           manifest: manifest(),
           account: _accountBinding(),
           readCurrentRow: (guid) => _rowOf(store, guid),
-          adoptStaged: _FileAdoptions(serviceDir).adopt,
+          stageAndAdopt: (request, canonicalBytes) async {
+            final staged = await _FileAdoptions(
+              serviceDir,
+            ).stageAndAdopt(request, canonicalBytes);
+            final payload =
+                jsonDecode(utf8.decode(canonicalBytes))
+                    as Map<String, Object?>;
+            admission.admit(staged, payload);
+            return staged;
+          },
           nowMs: _nowMs,
         );
         final result = await producer.run();
-        for (final staged in result.output.staged) {
-          final payload = await openHistoricalSource(
-            store: bytes,
-            staged: staged,
-          );
-          admission.admit(staged, payload);
-        }
         return result.output.staged.map((s) => s.guid).toSet();
       }
 
@@ -518,19 +548,14 @@ void main() {
       expect(second, isEmpty);
       expect(admission.creates, 2);
       expect((await _FileCursorStore(serviceDir).load())?.done, isTrue);
-      // Scan completion does not consume the durable pending journal. Recreate
-      // the journal and byte adapter independently after all producer objects.
+      // Scan completion does not consume the durable pending journal.
+      // Recreate the journal independently after all producer objects.
       final pending = _FileAdoptions(serviceDir).pending();
       expect(pending, hasLength(2));
-      for (final source in pending) {
-        expect(
-          await openHistoricalSource(
-            store: _FileByteStore(serviceDir),
-            staged: source,
-          ),
-          containsPair('guid', source.guid),
-        );
-      }
+      expect(pending.map((s) => s.guid).toSet(), {
+        'guid-incoming-1',
+        'guid-sent-1',
+      });
     } finally {
       if (serviceDir.existsSync()) await serviceDir.delete(recursive: true);
     }
@@ -539,27 +564,28 @@ void main() {
   test(
     'contract model: found newer remote is retained without overwrite',
     () async {
-      final bytes = MemoryHistoricalByteStore();
       final admission = _FakeHistoricalAdmission();
       admission.remote['guid-incoming-1'] = 'newer-remote-content-hash';
+      final seen = <String, List<int>>{};
       final producer = CloudSyncHistoricalProducer(
         reader: _StoreReader(store, _snapshot),
         registry: _Registry(),
         cursors: MemoryHistoricalCursorStore(),
-        bytes: bytes,
         manifest: manifest(),
         account: _accountBinding(),
         readCurrentRow: (guid) => _rowOf(store, guid),
-        adoptStaged: adopt,
+        stageAndAdopt: (request, canonicalBytes) {
+          seen[request.guid] = List<int>.of(canonicalBytes);
+          return adopt(request, canonicalBytes);
+        },
         nowMs: _nowMs,
       );
       final result = await producer.run();
       var retained = 0;
       for (final staged in result.output.staged) {
-        final payload = await openHistoricalSource(
-          store: bytes,
-          staged: staged,
-        );
+        final payload =
+            jsonDecode(utf8.decode(seen[staged.guid]!))
+                as Map<String, Object?>;
         if (staged.guid == 'guid-incoming-1') {
           expect(admission.admit(staged, payload), _AdmissionDecision.retained);
           retained++;
@@ -572,23 +598,26 @@ void main() {
   );
 
   test('contract model: unknown outcome records no fresh create', () async {
-    final bytes = MemoryHistoricalByteStore();
     final admission = _FakeHistoricalAdmission();
     admission.unknownGuids.add('guid-sent-1');
+    final seen = <String, List<int>>{};
     final producer = CloudSyncHistoricalProducer(
       reader: _StoreReader(store, _snapshot),
       registry: _Registry(),
       cursors: MemoryHistoricalCursorStore(),
-      bytes: bytes,
       manifest: manifest(),
       account: _accountBinding(),
       readCurrentRow: (guid) => _rowOf(store, guid),
-      adoptStaged: adopt,
+      stageAndAdopt: (request, canonicalBytes) {
+        seen[request.guid] = List<int>.of(canonicalBytes);
+        return adopt(request, canonicalBytes);
+      },
       nowMs: _nowMs,
     );
     final result = await producer.run();
     for (final staged in result.output.staged) {
-      final payload = await openHistoricalSource(store: bytes, staged: staged);
+      final payload =
+          jsonDecode(utf8.decode(seen[staged.guid]!)) as Map<String, Object?>;
       admission.admit(staged, payload);
     }
     expect(admission.decisions['guid-sent-1'], _AdmissionDecision.retained);
@@ -597,7 +626,6 @@ void main() {
   });
 
   test('wrong-account manifest stages nothing', () async {
-    final bytes = MemoryHistoricalByteStore();
     const wrong = CloudSyncHistoricalSourceManifest(
       snapshotSha256: _otherSnapshot,
       accountFingerprint: 'other-account',
@@ -609,11 +637,10 @@ void main() {
       reader: _StoreReader(store, _snapshot),
       registry: _Registry(),
       cursors: MemoryHistoricalCursorStore(),
-      bytes: bytes,
       manifest: wrong,
       account: _accountBinding(),
       readCurrentRow: (guid) => _rowOf(store, guid),
-      adoptStaged: adopt,
+      stageAndAdopt: adopt,
       nowMs: _nowMs,
     );
     await expectLater(producer.run(), throwsStateError);
@@ -633,11 +660,10 @@ void main() {
       reader: _StoreReader(store, _snapshot),
       registry: _Registry(),
       cursors: cursors,
-      bytes: MemoryHistoricalByteStore(),
       manifest: manifest(),
       account: _accountBinding(),
       readCurrentRow: (guid) => _rowOf(store, guid),
-      adoptStaged: adopt,
+      stageAndAdopt: adopt,
       nowMs: _nowMs,
     );
     await expectLater(producer.run(), throwsStateError);
@@ -670,11 +696,10 @@ void main() {
       reader: reader,
       registry: _Registry(),
       cursors: MemoryHistoricalCursorStore(),
-      bytes: MemoryHistoricalByteStore(),
       manifest: manifest(),
       account: _accountBinding(),
       readCurrentRow: (_) async => view,
-      adoptStaged: adopt,
+      stageAndAdopt: adopt,
       nowMs: _nowMs,
     );
     final result = await producer.run();
@@ -781,14 +806,15 @@ void main() {
           reader: _StoreReader(store, _snapshot),
           registry: _Registry(),
           cursors: _FileCursorStore(serviceDir),
-          bytes: _FileByteStore(serviceDir),
           manifest: manifest(),
           account: _accountBinding(),
           nowMs: _nowMs,
           pageLimit: 1,
           readCurrentRow: (guid) => _rowOf(store, guid),
-          adoptStaged: (source) async {
-            if (afterAdoption) await journal.adopt(source);
+          stageAndAdopt: (request, canonicalBytes) async {
+            if (afterAdoption) {
+              await journal.stageAndAdopt(request, canonicalBytes);
+            }
             throw StateError('simulated_interruption');
           },
         );
@@ -804,13 +830,12 @@ void main() {
           reader: _StoreReader(store, _snapshot),
           registry: _Registry(),
           cursors: _FileCursorStore(serviceDir),
-          bytes: _FileByteStore(serviceDir),
           manifest: manifest(),
           account: _accountBinding(),
           nowMs: _nowMs,
           pageLimit: 1,
           readCurrentRow: (guid) => _rowOf(store, guid),
-          adoptStaged: reopenedJournal.adopt,
+          stageAndAdopt: reopenedJournal.stageAndAdopt,
         );
         expect((await resumed.run()).summary.completed, isTrue);
         expect(reopenedJournal.newWrites, afterAdoption ? 1 : 2);
@@ -834,14 +859,13 @@ void main() {
       reader: _StoreReader(store, _snapshot),
       registry: _Registry(),
       cursors: cursors,
-      bytes: MemoryHistoricalByteStore(),
       manifest: manifest(),
       account: const CloudSyncHistoricalAccountBinding(
         accountFingerprint: _account,
         protectedStoreIdentity: 'store-2',
       ),
       readCurrentRow: (guid) => _rowOf(store, guid),
-      adoptStaged: adopt,
+      stageAndAdopt: adopt,
       nowMs: _nowMs,
     );
     await expectLater(producer.run(), throwsStateError);
@@ -869,11 +893,10 @@ void main() {
       reader: _StoreReader(store, _snapshot),
       registry: _Registry(),
       cursors: cursors,
-      bytes: MemoryHistoricalByteStore(),
       manifest: wrong,
       account: _accountBinding(),
       readCurrentRow: (guid) => _rowOf(store, guid),
-      adoptStaged: adopt,
+      stageAndAdopt: adopt,
       nowMs: _nowMs,
     );
     await expectLater(producer.run(), throwsStateError);
@@ -886,11 +909,10 @@ void main() {
       reader: _StoreReader(store, _snapshot),
       registry: _Registry(),
       cursors: cursors,
-      bytes: MemoryHistoricalByteStore(),
       manifest: manifest(),
       account: _accountBinding(),
       readCurrentRow: (_) async => _rowView(text: 'changed after assessment'),
-      adoptStaged: adopt,
+      stageAndAdopt: adopt,
       nowMs: _nowMs,
     );
     await expectLater(producer.run(), throwsStateError);
@@ -990,6 +1012,111 @@ void main() {
       expect(await bytes.get(assessed.request.sourceSha256), isNull);
     },
   );
+
+  test('stage-and-adopt failure blocks cursor advancement', () async {
+    final cursors = MemoryHistoricalCursorStore();
+    final producer = CloudSyncHistoricalProducer(
+      reader: _StoreReader(store, _snapshot),
+      registry: _Registry(),
+      cursors: cursors,
+      manifest: manifest(),
+      account: _accountBinding(),
+      readCurrentRow: (guid) => _rowOf(store, guid),
+      stageAndAdopt: (_, __) async {
+        throw StateError('synthetic_native_stage_failure');
+      },
+      nowMs: _nowMs,
+    );
+    await expectLater(producer.run(), throwsStateError);
+    expect(await cursors.load(), isNull);
+    expect(adoptions, isEmpty);
+  });
+
+  test('mismatched sealed metadata blocks cursor advancement', () async {
+    for (var field = 0; field < 4; field++) {
+      final cursors = MemoryHistoricalCursorStore();
+      final seen = <String>[];
+      final producer = CloudSyncHistoricalProducer(
+        reader: _StoreReader(store, _snapshot),
+        registry: _Registry(),
+        cursors: cursors,
+        manifest: manifest(),
+        account: _accountBinding(),
+        readCurrentRow: (guid) => _rowOf(store, guid),
+        stageAndAdopt: (request, canonicalBytes) async {
+          seen.add(request.guid);
+          final sha = historicalBytesSha256(canonicalBytes);
+          switch (field) {
+            case 0:
+              return StagedHistoricalSource(
+                key: 'wrong-key',
+                sha256: sha,
+                byteLength: canonicalBytes.length,
+                guid: request.guid,
+              );
+            case 1:
+              return StagedHistoricalSource(
+                key: request.sourceSha256,
+                sha256: sha,
+                byteLength: canonicalBytes.length,
+                guid: 'wrong-guid',
+              );
+            case 2:
+              return StagedHistoricalSource(
+                key: request.sourceSha256,
+                sha256: '0' * 64,
+                byteLength: canonicalBytes.length,
+                guid: request.guid,
+              );
+            default:
+              return StagedHistoricalSource(
+                key: request.sourceSha256,
+                sha256: sha,
+                byteLength: canonicalBytes.length + 1,
+                guid: request.guid,
+              );
+          }
+        },
+        nowMs: _nowMs,
+      );
+      await expectLater(producer.run(), throwsStateError);
+      expect(seen, isNotEmpty);
+      expect(await cursors.load(), isNull);
+      expect(adoptions, isEmpty);
+    }
+  });
+
+  test('callback mutating canonical bytes cannot advance the cursor', () async {
+    final cursors = MemoryHistoricalCursorStore();
+    final producer = CloudSyncHistoricalProducer(
+      reader: _StoreReader(store, _snapshot),
+      registry: _Registry(),
+      cursors: cursors,
+      manifest: manifest(),
+      account: _accountBinding(),
+      readCurrentRow: (guid) => _rowOf(store, guid),
+      stageAndAdopt: (request, canonicalBytes) async {
+        // The producer hands over unmodifiable bytes and validates the
+        // result against pre-await expectations, so any attempt to alter
+        // content or return matching metadata for altered bytes fails.
+        try {
+          canonicalBytes[0] = 0xFF;
+        } catch (_) {
+          throw StateError('synthetic_callback_mutation_rejected');
+        }
+        return StagedHistoricalSource(
+          key: request.sourceSha256,
+          sha256: historicalBytesSha256(canonicalBytes),
+          byteLength: canonicalBytes.length,
+          guid: request.guid,
+        );
+      },
+      nowMs: _nowMs,
+    );
+    await expectLater(producer.run(), throwsStateError);
+    expect(await cursors.load(), isNull);
+    expect(adoptions, isEmpty);
+  });
 
   test('tampered staged bytes fail on open', () async {
     final bytes = _FileByteStore(directory);

@@ -9,6 +9,42 @@ import 'package:vm_service/vm_service_io.dart';
 
 import '../../tooling/vm_trigger_semantic.dart' as trigger;
 import '../../tooling/vm_trigger_cloudkit_write.dart' as write_trigger;
+import '../../tooling/vm_read_canary_mutation.dart' as mutation_read;
+
+// Flutter's resident compiler sends expressions over a line-oriented protocol.
+// Keep the real VM evaluation, but enforce the attached compiler's boundary.
+class _SingleLineCompilerService extends Fake implements VmService {
+  _SingleLineCompilerService(this.delegate);
+  final VmService delegate;
+
+  @override
+  Future<Response> evaluate(
+    String isolateId,
+    String targetId,
+    String expression, {
+    Map<String, String>? scope,
+    bool? disableBreakpoints,
+  }) {
+    if (expression.contains('\n') || expression.contains('\r')) {
+      throw StateError('fixture_multiline_expression');
+    }
+    return delegate.evaluate(
+      isolateId,
+      targetId,
+      expression,
+      scope: scope,
+      disableBreakpoints: disableBreakpoints,
+    );
+  }
+
+  @override
+  Future<Obj> getObject(
+    String isolateId,
+    String objectId, {
+    int? offset,
+    int? count,
+  }) => delegate.getObject(isolateId, objectId, offset: offset, count: count);
+}
 
 Future<String> _waitForServiceUri(File info) async {
   final watch = Stopwatch()..start();
@@ -317,6 +353,33 @@ void main() {
     expect(result.chatReadbackPending, isFalse);
   });
 
+  test('attached compiler accepts exact preparation expression', () async {
+    final target = await writeTarget('write-success');
+    final result = await write_trigger.invokePrepareAndSelect(
+      service: _SingleLineCompilerService(service),
+      isolateId: isolateId,
+      libraryId: libraryId,
+      targetId: target.id!,
+      recipient: '+15555550123',
+    );
+    expect(result.candidateFound, isTrue);
+    expect(result.guidHash, '0123456789abcdef' * 4);
+  });
+
+  test('attached compiler accepts exact write expression', () async {
+    final target = await writeTarget('write-success');
+    final result = await write_trigger.invokeExactIntentAndWait(
+      service: _SingleLineCompilerService(service),
+      isolateId: isolateId,
+      libraryId: libraryId,
+      targetId: target.id!,
+      recipient: '+15555550123',
+      expectedGuidHash: '0123456789abcdef' * 4,
+    );
+    expect(result.admitted, 1);
+    expect(result.deferred, 0);
+  });
+
   test(
     'exact write rejects candidate drift before invoking the pass',
     () async {
@@ -386,6 +449,35 @@ void main() {
     expect(
       write_trigger.normalizedRecipientSha256('MAILTO:Test@Example.COM'),
       write_trigger.normalizedRecipientSha256('test@example.com'),
+    );
+  });
+
+  test(
+    'read-only diagnostic expands a truncated VM String reference',
+    () async {
+      final expected = jsonEncode({'synthetic': 'abc' * 180});
+      final result = await service.evaluate(
+        isolateId,
+        libraryId,
+        jsonEncode(expected),
+      );
+      expect((result as InstanceRef).valueAsStringIsTruncated, isTrue);
+      expect(
+        await mutation_read.readBoundedVmString(service, isolateId, result),
+        expected,
+      );
+    },
+  );
+
+  test('read-only diagnostic rejects oversized VM Strings', () async {
+    final result = await service.evaluate(
+      isolateId,
+      libraryId,
+      jsonEncode('x' * 9000),
+    );
+    await expectLater(
+      mutation_read.readBoundedVmString(service, isolateId, result),
+      throwsStateError,
     );
   });
 }

@@ -159,7 +159,8 @@ void main() {
       final previousMap = current.model.toMap();
       (previousMap['entities'] as List).removeWhere(
         (entity) => entity['name'] == 'CloudSyncLocalMutationIntentEntity' ||
-            entity['name'] == 'CloudSyncReceivedArchiveIntentEntity',
+            entity['name'] == 'CloudSyncReceivedArchiveIntentEntity' ||
+            entity['name'] == 'CloudSyncHistoricalArchiveIntentEntity',
       );
       previousMap['lastEntityId'] = '34:2734237264100580081';
       previousMap['lastIndexId'] = '97:2075310387007054598';
@@ -167,7 +168,8 @@ void main() {
         obx.ModelInfo.fromMap(previousMap),
         Map.of(current.bindings)
           ..remove(CloudSyncLocalMutationIntentEntity)
-          ..remove(CloudSyncReceivedArchiveIntentEntity),
+          ..remove(CloudSyncReceivedArchiveIntentEntity)
+          ..remove(CloudSyncHistoricalArchiveIntentEntity),
       );
       final oldStore = Store(previous, directory: directory.path);
       late int chatId;
@@ -364,7 +366,8 @@ void main() {
             entity['name'] == 'CloudSyncLocalSendIntentEntity' ||
             entity['name'] == 'CloudAttachmentUploadEntity' ||
             entity['name'] == 'CloudSyncLocalMutationIntentEntity' ||
-            entity['name'] == 'CloudSyncReceivedArchiveIntentEntity',
+            entity['name'] == 'CloudSyncReceivedArchiveIntentEntity' ||
+            entity['name'] == 'CloudSyncHistoricalArchiveIntentEntity',
       );
       // Exact counters from the qualified pre-journal model, not a fresh store
       // with the new model. All predecessor entity definitions stay unchanged.
@@ -376,7 +379,8 @@ void main() {
           ..remove(CloudSyncLocalSendIntentEntity)
           ..remove(CloudAttachmentUploadEntity)
           ..remove(CloudSyncLocalMutationIntentEntity)
-          ..remove(CloudSyncReceivedArchiveIntentEntity),
+          ..remove(CloudSyncReceivedArchiveIntentEntity)
+          ..remove(CloudSyncHistoricalArchiveIntentEntity),
       );
       final oldStore = Store(previous, directory: directory.path);
       late final int messageId;
@@ -885,7 +889,8 @@ void main() {
         ),
       );
       expect(entities, containsPair('CloudSyncReceivedArchiveIntentEntity', '36:4861163290100543941'));
-      expect(model['lastEntityId'], '36:4861163290100543941');
+      expect(entities, containsPair('CloudSyncHistoricalArchiveIntentEntity', '37:1644657105908350051'));
+      expect(model['lastEntityId'], '37:1644657105908350051');
       expect(model['modelVersion'], 5);
       expect(model['modelVersionParserMinimum'], 5);
 
@@ -1035,7 +1040,8 @@ void main() {
         (entity) =>
             entity['name'] == 'CloudAttachmentUploadEntity' ||
             entity['name'] == 'CloudSyncLocalMutationIntentEntity' ||
-            entity['name'] == 'CloudSyncReceivedArchiveIntentEntity',
+            entity['name'] == 'CloudSyncReceivedArchiveIntentEntity' ||
+            entity['name'] == 'CloudSyncHistoricalArchiveIntentEntity',
       );
       // Exact counters from the qualified pre-upload model, not a fresh store
       // with the new model. All predecessor entity definitions stay unchanged.
@@ -1046,7 +1052,8 @@ void main() {
         Map.of(current.bindings)
           ..remove(CloudAttachmentUploadEntity)
           ..remove(CloudSyncLocalMutationIntentEntity)
-          ..remove(CloudSyncReceivedArchiveIntentEntity),
+          ..remove(CloudSyncReceivedArchiveIntentEntity)
+          ..remove(CloudSyncHistoricalArchiveIntentEntity),
       );
       final oldStore = Store(previous, directory: directory.path);
       late final int messageId;

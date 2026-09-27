@@ -2268,6 +2268,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  CloudSyncNativeHistoricalArchiveSourceBinding
+  dco_decode_cloud_sync_native_historical_archive_source_binding(dynamic raw);
+
+  @protected
   CloudSyncNativeReceivedArchiveSeed
   dco_decode_cloud_sync_native_received_archive_seed(dynamic raw);
 
@@ -6344,6 +6348,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   CloudSyncNativeAuthMetadata sse_decode_cloud_sync_native_auth_metadata(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  CloudSyncNativeHistoricalArchiveSourceBinding
+  sse_decode_cloud_sync_native_historical_archive_source_binding(
     SseDeserializer deserializer,
   );
 
@@ -11155,6 +11165,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_cloud_sync_native_auth_metadata(
     CloudSyncNativeAuthMetadata self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_cloud_sync_native_historical_archive_source_binding(
+    CloudSyncNativeHistoricalArchiveSourceBinding self,
     SseSerializer serializer,
   );
 

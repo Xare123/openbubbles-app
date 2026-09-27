@@ -2979,10 +2979,60 @@
         }
       ],
       "relations": []
+    },
+    {
+      "id": "37:1644657105908350051",
+      "lastPropertyId": "7:2021597163113578838",
+      "name": "CloudSyncHistoricalArchiveIntentEntity",
+      "properties": [
+        {
+          "id": "1:7178909100807139841",
+          "name": "id",
+          "type": 6,
+          "flags": 1
+        },
+        {
+          "id": "2:9134781442031736439",
+          "name": "intentKey",
+          "indexId": "105:1486185005716256175",
+          "type": 9,
+          "flags": 4128
+        },
+        {
+          "id": "3:7243415141816260038",
+          "name": "scopeKey",
+          "indexId": "106:9020335986147750983",
+          "type": 9,
+          "flags": 4096
+        },
+        {
+          "id": "4:1733024685924133387",
+          "name": "protectedSourceBinding",
+          "type": 9
+        },
+        {
+          "id": "5:646358468448816502",
+          "name": "state",
+          "indexId": "107:8086057055477981296",
+          "type": 6,
+          "flags": 8
+        },
+        {
+          "id": "6:887645288273900855",
+          "name": "createdAtMs",
+          "type": 6
+        },
+        {
+          "id": "7:2021597163113578838",
+          "name": "updatedAtMs",
+          "type": 6
+        }
+      ],
+      "relations": []
     }
   ],
-  "lastEntityId": "36:4861163290100543941",
-  "lastIndexId": "104:3906661285702552393",
+  "lastEntityId": "37:1644657105908350051",
+  "lastIndexId": "107:8086057055477981296",
   "lastRelationId": "1:7492985733214117623",
   "lastSequenceId": "0:0",
   "modelVersion": 5,

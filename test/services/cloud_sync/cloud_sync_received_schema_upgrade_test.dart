@@ -14,6 +14,10 @@ void main() {
     () async {
       final current = generated.getObjectBoxModel();
       final previousMap = current.model.toMap();
+      (previousMap['entities'] as List).removeWhere(
+        (e) => e['name'] == 'CloudSyncHistoricalArchiveIntentEntity',
+      );
+      previousMap['lastEntityId'] = '36:4861163290100543941';
       final entity = (previousMap['entities'] as List).cast<Map>().singleWhere(
         (e) => e['name'] == 'CloudSyncReceivedArchiveIntentEntity',
       );
@@ -24,7 +28,7 @@ void main() {
       previousMap['lastIndexId'] = '103:3376337646296598667';
       final previous = obx_internal.ModelDefinition(
         obx_internal.ModelInfo.fromMap(previousMap),
-        current.bindings,
+        Map.of(current.bindings)..remove(CloudSyncHistoricalArchiveIntentEntity),
       );
       final root = await Directory(
         '${Directory.current.path}/build/test-temp',
@@ -82,7 +86,8 @@ void main() {
       );
       previousMap['entities'] = entities
           .where(
-            (dynamic e) => e['name'] != 'CloudSyncReceivedArchiveIntentEntity',
+            (dynamic e) => e['name'] != 'CloudSyncReceivedArchiveIntentEntity' &&
+                e['name'] != 'CloudSyncHistoricalArchiveIntentEntity',
           )
           .toList();
       expect(previousMap['entities'], hasLength(27));
@@ -92,7 +97,8 @@ void main() {
         ..generatorVersion = current.model.generatorVersion;
       final previousBindings = Map<Type, obx_internal.EntityDefinition>.from(
         current.bindings,
-      )..remove(CloudSyncReceivedArchiveIntentEntity);
+      )..remove(CloudSyncReceivedArchiveIntentEntity)
+       ..remove(CloudSyncHistoricalArchiveIntentEntity);
       final previous = obx_internal.ModelDefinition(
         previousInfo,
         previousBindings,

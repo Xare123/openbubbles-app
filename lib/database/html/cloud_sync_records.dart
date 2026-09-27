@@ -50,3 +50,5 @@ class CloudKitDeletionQuarantineEntity {}
 class CloudAttachmentUploadEntity {}
 
 class CloudSyncReceivedArchiveIntentEntity {}
+
+class CloudSyncHistoricalArchiveIntentEntity {}

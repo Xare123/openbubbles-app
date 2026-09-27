@@ -9624,6 +9624,18 @@ class RustPushService extends GetxService {
             await ah.handleUpdatedMessage(reflectedChat, reflected, null);
           }
           Logger.info('Cloud Sync V2 mutation update pass completed $result');
+        } on StateError catch (error) {
+          if (error.message != 'cloud_sync_local_mutation_predecessor_not_ready') {
+            rethrow;
+          }
+          // The original create or an earlier edit may still be awaiting exact
+          // readback. Preserve this positive IDS receipt and let the bounded
+          // replay resume it after that dependency settles, without another IDS
+          // send. Returning also lets later receipts in this page make progress.
+          Logger.info('Cloud Sync V2 mutation stage=predecessor_wait '
+              'correlation=$mutationReceiptCorrelation '
+              'process=$mutationProcessGeneration attempt=0');
+          _scheduleCloudSyncV2MessageUpdateRetry(const Duration(seconds: 5));
         } finally {
           try {
             await transport.quiesceNativeOperations();

@@ -98,17 +98,32 @@ class HistoricalProducerOutput {
   final List<StagedHistoricalSource> staged;
 }
 
-/// Runs one bounded pass over historical rows.
+/// Callback that durably stages and adopts one canonical source in the
+/// native protected store before the producer cursor may advance past it.
+/// A successful return means durably journaled with its native lease
+/// committed, not remotely uploaded. Must be idempotent: re-presenting
+/// identical canonical bytes is a no-op success, because a resumed scan
+/// re-encodes and re-presents rows the journal already holds. Conflicting
+/// bytes for an adopted key must throw. Production binds the native
+/// stage-and-adopt path; tests bind a durable file-backed double.
+typedef HistoricalStageAndAdopt =
+    Future<StagedHistoricalSource> Function(
+      CloudSyncHistoricalArchiveRequest request,
+      List<int> canonicalBytes,
+    );
+
+/// Runs one bounded pass over historical rows. Durable staging happens
+/// only behind the injected stage-and-adopt callback, which the parent
+/// wires to native protected storage; this file never stores bytes itself.
 class CloudSyncHistoricalProducer {
   const CloudSyncHistoricalProducer({
     required this.reader,
     required this.registry,
     required this.cursors,
-    required this.bytes,
     required this.manifest,
     required this.account,
     required this.readCurrentRow,
-    required this.adoptStaged,
+    required this.stageAndAdopt,
     this.pageLimit = 50,
     this.maxPages = 20,
     this.nowMs,
@@ -117,24 +132,21 @@ class CloudSyncHistoricalProducer {
   final HistoricalRowReader reader;
   final HistoricalOwnershipRegistry registry;
   final HistoricalCursorStore cursors;
-  final HistoricalByteStore bytes;
   final CloudSyncHistoricalSourceManifest manifest;
   final CloudSyncHistoricalAccountBinding account;
 
-  /// Re-reads the complete current row by GUID at stage time. Staging
-  /// re-runs eligibility over this view and recomputes the canonical
-  /// source binding, so any drift in route, time, origin, sender,
-  /// direction, chat, or text throws instead of staging.
+  /// Re-reads the complete current row by GUID at stage time. The
+  /// producer re-runs eligibility over this view and recomputes the
+  /// canonical source binding, so any drift in route, time, origin,
+  /// sender, direction, chat, or text throws instead of staging.
   final Future<CloudSyncHistoricalRowView?> Function(String guid)
   readCurrentRow;
 
-  /// Durably adopts one staged source before the cursor advances past it.
-  /// A successful return means durably journaled, not remotely uploaded.
-  /// Must be idempotent: re-adopting an identical key is a no-op success,
-  /// because a resumed scan restages and re-presents rows the journal
-  /// already holds. Conflicting bytes for an adopted key must throw.
-  /// Production binds the journal intent writer; tests bind a durable map.
-  final Future<void> Function(StagedHistoricalSource staged) adoptStaged;
+  /// Single stage-and-adopt boundary. The byte-store/adoptStaged split is
+  /// gone: native protected sources cannot reopen before their exact
+  /// lease commits, so staging and durable adoption must happen together
+  /// behind one callback whose result the producer validates.
+  final HistoricalStageAndAdopt stageAndAdopt;
 
   final int pageLimit;
   final int maxPages;
@@ -233,15 +245,31 @@ class CloudSyncHistoricalProducer {
                 'cloud_sync_historical_archive_source_unavailable',
               );
             }
-            final sealed = await stageHistoricalSource(
-              store: bytes,
+            final encoded = encodeHistoricalSource(
               request: request,
               currentRow: current,
               manifest: manifest,
               account: account,
               nowMs: nowMs,
             );
-            await adoptStaged(sealed);
+            // Snapshot expectations before the injected callback runs. The
+            // callback receives the same unmodifiable bytes but must never
+            // be trusted to preserve them; validation below uses only these
+            // pre-await values.
+            final expectedSha256 = historicalBytesSha256(
+              encoded.canonicalBytes,
+            );
+            final expectedLength = encoded.canonicalBytes.length;
+            final sealed = await stageAndAdopt(
+              request,
+              encoded.canonicalBytes,
+            );
+            _requireSealedMatches(
+              request,
+              expectedSha256,
+              expectedLength,
+              sealed,
+            );
             staged.add(sealed);
             stagedGuids[request.guid] = request.sourceSha256;
             stagedCount++;
@@ -272,5 +300,19 @@ class CloudSyncHistoricalProducer {
       ),
       output: HistoricalProducerOutput(staged: staged),
     );
+  }
+}
+
+void _requireSealedMatches(
+  CloudSyncHistoricalArchiveRequest request,
+  String expectedSha256,
+  int expectedLength,
+  StagedHistoricalSource sealed,
+) {
+  if (sealed.key != request.sourceSha256 ||
+      sealed.guid != request.guid ||
+      sealed.byteLength != expectedLength ||
+      sealed.sha256 != expectedSha256) {
+    throw StateError('cloud_sync_historical_archive_source_conflict');
   }
 }
