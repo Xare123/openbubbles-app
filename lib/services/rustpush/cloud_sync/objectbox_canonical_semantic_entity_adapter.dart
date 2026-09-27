@@ -3739,6 +3739,17 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
   ) {
     if (message.messageSummaryInfo.isEmpty) return true;
     final current = message.messageSummaryInfo.first;
+    // A fully retracted body has no later content update to display. Preserve
+    // its hidden source too: older create/edit echoes must not invalidate a
+    // pending local mutation's exact snapshot behind the unsent notice. Do not
+    // freeze a multipart message that still has a live part.
+    if (current.retractedParts.isNotEmpty &&
+        message.attributedBody.isNotEmpty &&
+        message.attributedBody.every((body) => body.runs.isNotEmpty &&
+            body.runs.every((run) => run.attributes?.messagePart != null &&
+                current.retractedParts.contains(run.attributes!.messagePart)))) {
+      return false;
+    }
     final retracted = {...current.retractedParts, ...payload.retractedParts};
     final existing = <String>{};
     final incoming = <String>{};

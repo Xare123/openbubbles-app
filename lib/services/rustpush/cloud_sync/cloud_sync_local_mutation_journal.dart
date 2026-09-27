@@ -689,10 +689,11 @@ final class CloudSyncLocalMutationJournal {
       row.targetGuidHash,
       row.localChatId,
     );
-    if (_snapshot(target) != row.reflectedSnapshotSha256) {
-      _fail('reflection_changed');
-    }
-    return CloudSyncLocalMutationAdmissionSource._(row);
+    final tip = _requireReflectedTarget(row, target);
+    return CloudSyncLocalMutationAdmissionSource._(
+      row,
+      validatedTipSnapshotSha256: tip,
+    );
   });
 
   /// Recovers the immutable journal source for one already-adopted update.
@@ -738,10 +739,11 @@ final class CloudSyncLocalMutationJournal {
       row.targetGuidHash,
       row.localChatId,
     );
-    if (_snapshot(target) != row.reflectedSnapshotSha256) {
-      _fail('reflection_changed');
-    }
-    return CloudSyncLocalMutationAdmissionSource._(row);
+    final tip = _requireReflectedTarget(row, target);
+    return CloudSyncLocalMutationAdmissionSource._(
+      row,
+      validatedTipSnapshotSha256: tip,
+    );
   });
 
   /// Returns the already-adopted operation while executing in the caller's
@@ -844,9 +846,7 @@ final class CloudSyncLocalMutationJournal {
       row.targetGuidHash,
       row.localChatId,
     );
-    if (_snapshot(target) != row.reflectedSnapshotSha256) {
-      _fail('reflection_changed');
-    }
+    _requireReflectedTarget(row, target);
     _requireUpdateOperation(row, operation, predecessor);
     if (row.admittedBindingSha256 !=
         _updateAdoptionBinding(row, operation, predecessor)) {
@@ -936,10 +936,34 @@ final class CloudSyncLocalMutationJournal {
       row.targetGuidHash,
       row.localChatId,
     );
-    if (_snapshot(target) != row.reflectedSnapshotSha256) {
+    if (_requireReflectedTarget(row, target) !=
+        expected._validatedTipSnapshotSha256) {
       _fail('reflection_changed');
     }
     return row;
+  }
+
+  /// An earlier accepted edit remains valid after a later accepted mutation.
+  /// Prove the entire local lineage, but release cloud updates one at a time.
+  /// No later row may skip a predecessor whose exact readback is still pending.
+  String _requireReflectedTarget(
+    CloudSyncLocalMutationIntentEntity row,
+    Message target,
+  ) {
+    final chain = _readReflectedMutationChain(
+      store: _store,
+      target: target,
+      accountFingerprint: row.accountFingerprint,
+      maximumWriterEpoch: _authority.read(_owner.scope)!.epoch,
+      allowDetachedConfirmedHistory: true,
+      reject: () => _fail('reflection_changed'),
+    );
+    final index = chain.indexWhere((candidate) => candidate.id == row.id);
+    if (index < 0) _fail('reflection_changed');
+    if (chain.take(index).any((previous) => previous.state != 5)) {
+      _fail('predecessor_not_ready');
+    }
+    return chain.last.reflectedSnapshotSha256!;
   }
 
   void _requireUpdateOperation(
@@ -1220,25 +1244,28 @@ final class CloudSyncLocalMutationJournal {
 /// It contains only local identifiers, one-way digests and protected refs.
 final class CloudSyncLocalMutationAdmissionSource {
   CloudSyncLocalMutationAdmissionSource._(
-    CloudSyncLocalMutationIntentEntity row,
-  ) : intentId = row.id,
-      intentKey = row.intentKey,
-      accountFingerprint = row.accountFingerprint,
-      writerEpoch = row.writerEpoch,
-      localMessageId = row.localMessageId,
-      localChatId = row.localChatId,
-      mutationGuidHash = row.mutationGuidHash,
-      targetGuidHash = row.targetGuidHash,
-      targetPart = row.targetPart,
-      kind = row.kind,
-      sourceSha256 = row.sourceSha256,
-      targetSnapshotSha256 = row.targetSnapshotSha256,
-      protectedSourceBinding = row.protectedSourceBinding,
-      submissionAuthBindingSha256 = row.submissionAuthBindingSha256!,
-      idsReceiptBindingSha256 = row.idsReceiptBindingSha256!,
-      reflectedSnapshotSha256 = row.reflectedSnapshotSha256!,
-      adoptedOperationId = row.admittedOperationId,
-      createdAtMs = row.createdAtMs;
+    CloudSyncLocalMutationIntentEntity row, {
+    String? validatedTipSnapshotSha256,
+  }) : intentId = row.id,
+       intentKey = row.intentKey,
+       accountFingerprint = row.accountFingerprint,
+       writerEpoch = row.writerEpoch,
+       localMessageId = row.localMessageId,
+       localChatId = row.localChatId,
+       mutationGuidHash = row.mutationGuidHash,
+       targetGuidHash = row.targetGuidHash,
+       targetPart = row.targetPart,
+       kind = row.kind,
+       sourceSha256 = row.sourceSha256,
+       targetSnapshotSha256 = row.targetSnapshotSha256,
+       protectedSourceBinding = row.protectedSourceBinding,
+       submissionAuthBindingSha256 = row.submissionAuthBindingSha256!,
+       idsReceiptBindingSha256 = row.idsReceiptBindingSha256!,
+       reflectedSnapshotSha256 = row.reflectedSnapshotSha256!,
+       adoptedOperationId = row.admittedOperationId,
+       createdAtMs = row.createdAtMs,
+       _validatedTipSnapshotSha256 =
+           validatedTipSnapshotSha256 ?? row.reflectedSnapshotSha256!;
 
   final int intentId;
   final String intentKey;
@@ -1258,6 +1285,9 @@ final class CloudSyncLocalMutationAdmissionSource {
   final String reflectedSnapshotSha256;
   final String? adoptedOperationId;
   final int createdAtMs;
+  // Transient local proof, never encoded as the mutation's own source/hash.
+  // A newer descendant during staging invalidates this capture at adoption.
+  final String _validatedTipSnapshotSha256;
 
   CloudSyncLocalMutationSourceBinding decodeProtectedSourceBinding() =>
       CloudSyncLocalMutationSourceBinding.decode(protectedSourceBinding);
@@ -1274,7 +1304,7 @@ final class CloudSyncLocalMutationAdmissionSource {
         parent.isFromMe == true &&
         !parent.verificationFailed &&
         parent.dateDeleted == null &&
-        _snapshot(parent) == reflectedSnapshotSha256;
+        _snapshot(parent) == _validatedTipSnapshotSha256;
   }
 
   /// Compares the immutable reflected mutation evidence while deliberately
@@ -1298,6 +1328,7 @@ final class CloudSyncLocalMutationAdmissionSource {
       submissionAuthBindingSha256 == other.submissionAuthBindingSha256 &&
       idsReceiptBindingSha256 == other.idsReceiptBindingSha256 &&
       reflectedSnapshotSha256 == other.reflectedSnapshotSha256 &&
+      _validatedTipSnapshotSha256 == other._validatedTipSnapshotSha256 &&
       createdAtMs == other.createdAtMs;
 
   /// Resolve this reflected source to its exact restored CloudKit predecessor.
@@ -1391,6 +1422,156 @@ CloudSyncLocalMutationSourceBinding validateCloudSyncMutationRow(
     sourceSha256: row.sourceSha256,
   );
   return source;
+}
+
+/// Recover a detached pre-mutation view, never a new send origin or receipt.
+/// The caller must independently prove the original send's positive IDS result
+/// and source digest. Every changed display field must trace through one exact
+/// chain of previously captured before/after hashes. No writes or native calls.
+Message cloudSyncReadOriginalPlaintextBeforeMutations({
+  required Store store,
+  required int localMessageId,
+  required String accountFingerprint,
+  required int maximumWriterEpoch,
+  required String targetGuidHash,
+}) => store.runInTransaction(TxMode.read, () {
+  Never reject() => _fail('original_source_unavailable');
+  final target = store.box<Message>().get(localMessageId);
+  if (target == null ||
+      target.guid == null ||
+      target.chat.target == null ||
+      target.dateEdited == null ||
+      target.messageSummaryInfo.length != 1 ||
+      target.isFromMe != true ||
+      target.dateDeleted != null ||
+      target.error != 0 ||
+      target.stagingGuid != null ||
+      target.temp ||
+      target.verificationFailed ||
+      _guidHash(target.guid!) != targetGuidHash ||
+      maximumWriterEpoch <= 0) {
+    reject();
+  }
+  final chain = _readReflectedMutationChain(
+    store: store,
+    target: target,
+    accountFingerprint: accountFingerprint,
+    maximumWriterEpoch: maximumWriterEpoch,
+    reject: reject,
+  );
+  final edits = chain
+      .where((row) => row.kind == CloudSyncLocalMutationKind.edit.index)
+      .length;
+
+  // A local edit retains its exact original attributed body as history entry
+  // zero. Unsend alone retains that body unchanged. Do not manufacture text or
+  // formatting from a preview, strip unsupported fields, or use a later entry.
+  final summary = target.messageSummaryInfo.single;
+  if (edits > 0) {
+    final history = summary.editedContent['0'];
+    if (summary.editedContent.length != 1 ||
+        history == null ||
+        history.length != edits + 1 ||
+        history.first.text?.values.length != 1 ||
+        history.first.date !=
+            target.dateCreated?.millisecondsSinceEpoch.toDouble()) {
+      reject();
+    }
+    final original = AttributedBody.fromMap(
+      jsonDecode(jsonEncode(history.first.text!.values.single.toMap()))
+          as Map<String, dynamic>,
+    );
+    target.text = original.string;
+    target.attributedBody = [original];
+  } else if (summary.editedContent.isNotEmpty) {
+    reject();
+  }
+  target.dateEdited = null;
+  target.messageSummaryInfo = [];
+  if (_snapshot(target) != chain.first.targetSnapshotSha256) reject();
+  return target;
+});
+
+/// Positive local reflection evidence only. Unreflected (including uncertain)
+/// rows do not change the saved body and are never promoted or acknowledged.
+/// Caller holds a Store transaction and still validates its own source/owner.
+List<CloudSyncLocalMutationIntentEntity> _readReflectedMutationChain({
+  required Store store,
+  required Message target,
+  required String accountFingerprint,
+  required int maximumWriterEpoch,
+  required Never Function() reject,
+  bool allowDetachedConfirmedHistory = false,
+}) {
+  final localMessageId = target.id;
+  final guid = target.guid;
+  if (localMessageId == null || guid == null || maximumWriterEpoch <= 0) {
+    reject();
+  }
+  final query =
+      store
+          .box<CloudSyncLocalMutationIntentEntity>()
+          .query(
+            CloudSyncLocalMutationIntentEntity_.accountFingerprint
+                .equals(accountFingerprint)
+                .and(
+                  CloudSyncLocalMutationIntentEntity_.targetGuidHash.equals(
+                    _guidHash(guid),
+                  ),
+                )
+                .and(CloudSyncLocalMutationIntentEntity_.state.greaterThan(2)),
+          )
+          .build()
+        ..limit = 65;
+  late final List<CloudSyncLocalMutationIntentEntity> rows;
+  try {
+    rows = query.find();
+  } finally {
+    query.close();
+  }
+  if (rows.isEmpty || rows.length > 64) reject();
+  final byBefore = <String, CloudSyncLocalMutationIntentEntity>{};
+  final byAfter = <String, CloudSyncLocalMutationIntentEntity>{};
+  for (final row in rows) {
+    validateCloudSyncMutationRow(row);
+    if (row.localMessageId != localMessageId ||
+        row.localChatId != target.chat.targetId ||
+        row.targetPart != 0 ||
+        row.writerEpoch > maximumWriterEpoch ||
+        row.state < 3 ||
+        row.targetSnapshotSha256 == row.reflectedSnapshotSha256 ||
+        byBefore.containsKey(row.targetSnapshotSha256) ||
+        byAfter.containsKey(row.reflectedSnapshotSha256!)) {
+      reject();
+    }
+    byBefore[row.targetSnapshotSha256] = row;
+    byAfter[row.reflectedSnapshotSha256!] = row;
+  }
+  var cursor = _snapshot(target);
+  final visited = <int>{};
+  final reverseChain = <CloudSyncLocalMutationIntentEntity>[];
+  while (byAfter.containsKey(cursor)) {
+    final row = byAfter[cursor]!;
+    if (!visited.add(row.id)) reject();
+    if (row.kind == CloudSyncLocalMutationKind.unsend.index &&
+        reverseChain.isNotEmpty) {
+      reject();
+    }
+    reverseChain.add(row);
+    cursor = row.targetSnapshotSha256;
+  }
+  // A separately applied remote edit can begin a new local chain after old
+  // writes are terminal. Never discard an unfinished local predecessor, or
+  // use this exception when reconstructing the original send's exact source.
+  if (reverseChain.isEmpty ||
+      rows.any(
+        (row) =>
+            !visited.contains(row.id) &&
+            (!allowDetachedConfirmedHistory || row.state != 5),
+      )) {
+    reject();
+  }
+  return reverseChain.reversed.toList(growable: false);
 }
 
 String _snapshot(Message target) {

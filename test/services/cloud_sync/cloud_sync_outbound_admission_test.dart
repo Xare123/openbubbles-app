@@ -7,6 +7,9 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_send_journal.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_send_source_binding.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_send_consumer.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_mutation_identity.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_mutation_journal.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_mutation_source_binding.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_create_queue_drain.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_operation_interlock.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_persistent_keys.dart';
@@ -351,9 +354,11 @@ void main() {
           },
     );
 
-    Future<CloudOutboxOperation> confirmCloudSave() async {
+    Future<CloudOutboxOperation> confirmCloudSave({
+      frb_api.CloudMessage Function(Message)? encoder,
+    }) async {
       transport.stages.add(_stage('a', 'P', 'L', 'S'));
-      final operation = await admit();
+      final operation = await admit(encoder: encoder);
       store = ObjectBoxCloudSyncStore(
         store: objectBox,
         protector: _Protector(),
@@ -585,6 +590,374 @@ void main() {
         expect(intent().confirmedReadbackBindingSha256, isNull);
       },
     );
+
+    for (final kinds in [
+      [false],
+      [true],
+      [false, false, true],
+    ]) {
+      test(
+        'pre-archive ${kinds.map((unsend) => unsend ? 'unsend' : 'edit').join('/')} crosses original create and exact readbacks without reverting display',
+        () async {
+          final mutations = CloudSyncLocalMutationJournal(
+            store: objectBox,
+            authority: authority,
+            authoritySnapshot: authority.read(writerScope)!,
+          );
+          final mutationIds = <int>[];
+          CloudSyncLocalMutationAdmissionSource? firstSnapshot;
+          for (var index = 0; index < kinds.length; index++) {
+            final unsend = kinds[index];
+            final wire = frb_api.MessageInst(
+              id: '11111111-2222-4333-8444-${(index + 1).toString().padLeft(12, '0')}',
+              sender: 'mailto:sender@example.com',
+              conversation: frb_api.ConversationData(
+                participants: [
+                  'mailto:sender@example.com',
+                  'mailto:recipient@example.com',
+                ],
+                senderGuid: local.chat.target!.guid,
+              ),
+              message: unsend
+                  ? const frb_api.Message.unsend(
+                      frb_api.UnsendMessage(tuuid: _localGuid, editPart: 0),
+                    )
+                  : const frb_api.Message.edit(
+                      frb_api.EditMessage(
+                        tuuid: _localGuid,
+                        editPart: 0,
+                        newParts: frb_api.MessageParts(
+                          field0: [
+                            frb_api.IndexedMessagePart(
+                              part_: frb_api.MessagePart.text(
+                                'replacement',
+                                frb_api.TextFormat.flags(
+                                  frb_api.TextFlags(
+                                    bold: false,
+                                    italic: false,
+                                    underline: false,
+                                    strikethrough: false,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+              sentTimestamp: 0,
+              sendDelivered: true,
+              verificationFailed: false,
+            );
+            final identity = CloudSyncLocalMutationIdentity.captureWire(wire)!;
+            final source = CloudSyncLocalMutationSourceBinding(
+              accountFingerprint: scope.accountFingerprint,
+              protectedStoreIdentity: currentAuth.protectedStoreIdentity,
+              mutationGuidHash: identity.guidHash,
+              targetGuidHash: identity.targetGuidHash,
+              targetPart: 0,
+              sourceSha256: identity.sourceSha256,
+              protectedReference: testProtectedReference(
+                String.fromCharCode(77 + index),
+              ),
+              leaseReference: testProtectedLeaseReference('$index'),
+              payloadSha256: '$index' * 64,
+              payloadLength: 512,
+            );
+            final changedAt = testEpoch.add(Duration(seconds: 4 + index));
+            final mutationId = mutations.adoptSource(
+              localMessageId: local.id!,
+              identity: identity,
+              targetSnapshotSha256: mutations.captureTargetSnapshot(
+                localMessageId: local.id!,
+                identity: identity,
+              ),
+              source: source,
+              capturedAuth: currentAuth,
+              stillCurrent: () => true,
+              now: changedAt,
+            );
+            mutations.beginSubmission(
+              intentId: mutationId,
+              committedSource: source,
+              capturedAuth: currentAuth,
+              stillCurrent: () => true,
+              now: changedAt,
+            );
+            final receipt = frb_api.CloudSyncNativeSendReceipt(
+              receiptId: 'obcs2.ids.${String.fromCharCode(77 + index) * 43}',
+              guidHash: identity.guidHash,
+              nativeSessionId: currentAuth.nativeSessionId,
+              preparedSentTimestampMs: BigInt.from(
+                changedAt.millisecondsSinceEpoch,
+              ),
+              sourceBinding: frb_api.CloudSyncNativeSendSourceBinding(
+                kind: frb_api.CloudSyncNativeSendSourceKind.mutation,
+                sourceSha256: source.sourceSha256,
+                protectedReference: source.protectedReference,
+                leaseReference: source.leaseReference,
+                payloadSha256: source.payloadSha256,
+                payloadLength: BigInt.from(source.payloadLength),
+              ),
+            );
+            mutations.recordNativeReceipt(
+              intentId: mutationId,
+              receipt: receipt,
+              capturedAuth: currentAuth,
+              stillCurrent: () => true,
+              now: changedAt,
+            );
+            mutations.reflectSourceConfirmed(
+              intentId: mutationId,
+              committedSource: source,
+              original: wire,
+              receipt: receipt,
+              currentAuth: currentAuth,
+              stillCurrent: () => true,
+              now: changedAt,
+            );
+            mutationIds.add(mutationId);
+            if (index == 0) {
+              firstSnapshot = mutations.readReflectedForUpdate(
+                intentId: mutationId,
+                currentAuth: currentAuth,
+                stillCurrent: () => true,
+              );
+            }
+          }
+          final changedAt = testEpoch.add(Duration(seconds: 3 + kinds.length));
+          final visible = objectBox.box<Message>().get(local.id!)!;
+          final summary = jsonEncode(
+            visible.messageSummaryInfo.map((entry) => entry.toJson()).toList(),
+          );
+          final operation = await confirmCloudSave(
+            encoder: (message) {
+              encodes++;
+              expect(message.text, 'synthetic local message');
+              expect(
+                message.attributedBody.single.string,
+                'synthetic local message',
+              );
+              expect(message.messageSummaryInfo, isEmpty);
+              expect(message.dateEdited, isNull);
+              return _LocalCloudMessage(message);
+            },
+          );
+          expect(encodes, 1);
+          expect(intent().state, 2);
+          expect(intent().confirmedReadbackBindingSha256, isNull);
+          final pending = await store.commitConfirmedMessageCreateReadback(
+            expectedOperation: operation,
+            receipt: CloudOutboxCreateReceipt(
+              operationId: operation.operationId,
+              logicalEntityKeyHash: operation.logicalEntityKeyHash,
+              serverRecordIdHash: operation.serverRecordIdHash!,
+              etagHash: 'E' * 43,
+              protectedCurrentRawRecordReference: testProtectedReference('W'),
+              protectedCurrentRawRecordLeaseReference:
+                  testProtectedLeaseReference('e'),
+              rawGeneration: operation.checkpointGeneration,
+            ),
+            now: changedAt.add(const Duration(seconds: 1)),
+          );
+          await store.finalizeMessageCreateReadbackLeases(
+            expectedSnapshot: pending,
+            createSourceLeaseCommitted: true,
+            readbackLeaseCommitted: true,
+          );
+          expect(intent().confirmedReadbackBindingSha256, isNotNull);
+          store = ObjectBoxCloudSyncStore(
+            store: objectBox,
+            protector: _Protector(),
+            localSendJournal: journal,
+            localMutationJournal: mutations,
+            clock: () => testEpoch.add(const Duration(seconds: 10)),
+          );
+          for (var index = 0; index < mutationIds.length; index++) {
+            final mutationId = mutationIds[index];
+            final updateSource = mutations.readReflectedForUpdate(
+              intentId: mutationId,
+              currentAuth: currentAuth,
+              stillCurrent: () => true,
+            );
+            final predecessor = updateSource.requirePredecessor(
+              store: objectBox,
+              messageScope: scope,
+              readConfirmedLocalParent: (message) =>
+                  journal.readConfirmedParentDependency(
+                    objectBox,
+                    scope,
+                    message,
+                    reflectedMutationValidated: updateSource
+                        .matchesReflectedParent(message),
+                  ),
+            );
+            final updateTime = changedAt.add(Duration(seconds: 2 + index));
+            final draft = CloudOutboxDraft(
+              scope: scope,
+              logicalEntityKeyHash: operation.logicalEntityKeyHash,
+              action: CloudOutboxAction.save,
+              payloadVersion: cloudSyncMessageUpdatePayloadVersion,
+              dependencyOperationIds: const {},
+              createdAt: updateTime,
+              encryptedPayloadReference: testProtectedReference(
+                String.fromCharCode(80 + index),
+              ),
+              payloadSha256: '${index + 4}' * 64,
+              serverRecordIdHash: operation.serverRecordIdHash,
+              protectedLeaseReference: testProtectedLeaseReference(
+                '${index + 4}',
+              ),
+            );
+            if (index == 0 && kinds.length > 1) {
+              // A caller that captured before asynchronous staging cannot adopt
+              // using a stale canonical tip, even though the first receipt is valid.
+              expect(
+                () => store.admitProtectedLocalMutationUpdate(
+                  draft: draft,
+                  expectedPredecessor: predecessor.recordMapping,
+                  journal: mutations,
+                  source: firstSnapshot!,
+                  currentAuth: currentAuth,
+                  stillCurrent: () => true,
+                ),
+                throwsA(
+                  isA<StateError>().having(
+                    (e) => e.message,
+                    'message',
+                    'cloud_sync_local_mutation_reflection_changed',
+                  ),
+                ),
+              );
+              expect(objectBox.box<CloudOutboxOperationEntity>().count(), 1);
+            }
+            void expectNextBlocked() {
+              if (index + 1 == mutationIds.length) return;
+              expect(
+                () => mutations.readReflectedForUpdate(
+                  intentId: mutationIds[index + 1],
+                  currentAuth: currentAuth,
+                  stillCurrent: () => true,
+                ),
+                throwsA(
+                  isA<StateError>().having(
+                    (e) => e.message,
+                    'message',
+                    'cloud_sync_local_mutation_predecessor_not_ready',
+                  ),
+                ),
+              );
+            }
+
+            expectNextBlocked();
+            final update = store.admitProtectedLocalMutationUpdate(
+              draft: draft,
+              expectedPredecessor: predecessor.recordMapping,
+              journal: mutations,
+              source: updateSource,
+              currentAuth: currentAuth,
+              stillCurrent: () => true,
+            );
+            expect(update.serverRecordIdHash, operation.serverRecordIdHash);
+            expect(update.payloadVersion, cloudSyncMessageUpdatePayloadVersion);
+            expect(
+              objectBox
+                  .box<CloudSyncLocalMutationIntentEntity>()
+                  .get(mutationId)!
+                  .state,
+              4,
+            );
+            final leaseId = 'sequence-update-$index';
+            final leased = await store.leaseEligibleOutbox(
+              scope,
+              now: updateTime,
+              limit: 1,
+              leaseId: leaseId,
+              leaseDuration: const Duration(minutes: 1),
+              allowedActions: const {CloudOutboxAction.save},
+              allowedPayloadVersions: const {
+                cloudSyncMessageUpdatePayloadVersion,
+              },
+            );
+            expect(leased.single.operationId, update.operationId);
+            final submission = CloudOutboxSubmissionIdentity(
+              requestUuid:
+                  'AAAAAAAA-BBBB-4CCC-8DDD-${(index + 10).toString().padLeft(12, '0')}',
+              operationUuids: {
+                update.operationId:
+                    'AAAAAAAA-BBBB-4CCC-8DDD-${(index + 20).toString().padLeft(12, '0')}',
+              },
+            );
+            await store.markOutboxSubmissionStarted(
+              scope,
+              leaseId: leaseId,
+              submissionIdentity: submission,
+              now: updateTime,
+            );
+            final readback = await store.commitMessageUpdateReadbackReceipt(
+              scope,
+              leaseId: leaseId,
+              receipt: CloudMessageUpdateReadbackReceipt(
+                operationId: update.operationId,
+                logicalEntityKeyHash: update.logicalEntityKeyHash,
+                serverRecordIdHash: update.serverRecordIdHash!,
+                predecessorEtagHash: predecessor.recordMapping.etagHash!,
+                resultingEtagHash: String.fromCharCode(70 + index) * 43,
+                protectedCurrentRawRecordReference: testProtectedReference(
+                  String.fromCharCode(85 + index),
+                ),
+                protectedCurrentRawRecordLeaseReference:
+                    testProtectedLeaseReference('${index + 7}'),
+                rawGeneration: predecessor.generation,
+                appleRequestUuid: submission.requestUuid,
+                appleOperationUuid:
+                    submission.operationUuids[update.operationId]!,
+              ),
+              now: updateTime,
+            );
+            expectNextBlocked();
+            await store.finalizeMessageUpdateReadbackLeases(
+              expectedSnapshot: readback,
+              updateStageLeaseCommitted: true,
+              readbackLeaseCommitted: true,
+            );
+            final confirmed = (await store.readOutboxEntries(
+              scope,
+            )).singleWhere((entry) => entry.operationId == update.operationId);
+            mutations.markExactReadbackConfirmed(
+              intentId: mutationId,
+              operation: confirmed,
+              currentAuth: currentAuth,
+              stillCurrent: () => true,
+              now: updateTime,
+            );
+            expect(
+              objectBox
+                  .box<CloudSyncLocalMutationIntentEntity>()
+                  .get(mutationId)!
+                  .state,
+              5,
+            );
+            final saved = objectBox.box<Message>().get(local.id!)!;
+            expect(saved.text, visible.text);
+            expect(saved.dateEdited?.toUtc(), changedAt);
+            expect(
+              jsonEncode(
+                saved.messageSummaryInfo
+                    .map((entry) => entry.toJson())
+                    .toList(),
+              ),
+              summary,
+            );
+            expect(
+              objectBox.box<CloudOutboxOperationEntity>().count(),
+              index + 2,
+            );
+          }
+          expect(transport.committed, hasLength(1));
+        },
+      );
+    }
 
     test('restored group crosses journal, staging, and adoption', () async {
       await prepareGroup();

@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_mutation_identity.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_mutation_journal.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_mutation_projection.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_mutation_source_binding.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_mutation_source_staging.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_send_journal.dart';
@@ -129,6 +130,44 @@ void main() {
       );
   CloudSyncLocalMutationIntentEntity row(int id) =>
       store.box<CloudSyncLocalMutationIntentEntity>().get(id)!;
+
+  CloudSyncLocalSendJournal sendJournal() => CloudSyncLocalSendJournal(
+    store: store,
+    authority: authority,
+    authoritySnapshot: authority.read(_scope)!,
+  );
+
+  int readyLocalSend() {
+    target.stagingGuid = _target;
+    final origin = CloudSyncLocalSendIdentity.capture(
+      target,
+      target.chat.target!,
+      _target,
+    )!;
+    final sends = sendJournal();
+    sends.saveSubmission(
+      identity: origin,
+      newlyGeneratedGuid: true,
+      persistMessage: () => store.box<Message>().put(target),
+      now: _time(1),
+    );
+    target.stagingGuid = null;
+    store.box<Message>().put(target);
+    final id = sends.recordNativeSendConfirmation(
+      stableGuid: _target,
+      succeeded: true,
+      capturedAuth: _auth(),
+      stillCurrent: () => true,
+      now: _time(1),
+    )!;
+    sends.promoteIdsConfirmedDeferred(
+      intentId: id,
+      currentAuth: _auth(),
+      now: _time(1),
+    );
+    return id;
+  }
+
   ObjectBoxCloudSyncStore gc() =>
       ObjectBoxCloudSyncStore(store: store, protector: _NoProtector());
 
@@ -1063,6 +1102,226 @@ void main() {
     },
   );
 
+  for (final priorTerminal in [true, false]) {
+    test(
+      'new reflected edit after a changed baseline requires older writes settled ($priorTerminal)',
+      () async {
+        final previous = await seedConfirmedPredecessor();
+        if (!priorTerminal) {
+          store.box<CloudSyncLocalMutationIntentEntity>().put(
+            row(previous)..state = 4,
+          );
+        }
+        // Model a different-device edit already applied by the canonical reader.
+        // It is not a continuation of the earlier local before/after hash chain.
+        final remoteWire = _wire()..id = '41111111-1111-4111-8111-111111111111';
+        final remoteIdentity = CloudSyncLocalMutationIdentity.captureWire(
+          remoteWire,
+        )!;
+        final restored = store.box<Message>().get(target.id!)!;
+        final remoteProjection = CloudSyncLocalMutationProjection.projectFirst(
+          target: restored,
+          wire: remoteWire,
+          source: _source(remoteIdentity),
+          preparedSentTimestampMs: _time(6).millisecondsSinceEpoch,
+        );
+        restored
+          ..text = remoteProjection.text
+          ..attributedBody = remoteProjection.attributedBody
+          ..messageSummaryInfo = remoteProjection.messageSummaryInfo
+          ..dateEdited = remoteProjection.dateEdited;
+        store.box<Message>().put(restored);
+        final wire = _wire()..id = '31111111-1111-4111-8111-111111111111';
+        identity = CloudSyncLocalMutationIdentity.captureWire(wire)!;
+        source = _source(identity);
+        snapshot = journal.captureTargetSnapshot(
+          localMessageId: target.id!,
+          identity: identity,
+        );
+        final id = adopt();
+        claim(id);
+        final receipt = _receipt(
+          identity,
+          source,
+          preparedTime: _time(7).millisecondsSinceEpoch,
+          receiptMarker: 'Q',
+        );
+        journal.recordNativeReceipt(
+          intentId: id,
+          receipt: receipt,
+          capturedAuth: _auth(),
+          stillCurrent: () => true,
+          now: _time(7),
+        );
+        journal.reflectSourceConfirmed(
+          intentId: id,
+          committedSource: source,
+          original: wire,
+          receipt: receipt,
+          currentAuth: _auth(),
+          stillCurrent: () => true,
+          now: _time(7),
+        );
+        await reopen();
+        if (priorTerminal) {
+          final admitted = journal.readReflectedForUpdate(
+            intentId: id,
+            currentAuth: _auth(),
+            stillCurrent: () => true,
+          );
+          expect(
+            admitted.matchesReflectedParent(
+              store.box<Message>().get(target.id!)!,
+            ),
+            isTrue,
+          );
+        } else {
+          expect(
+            () => journal.readReflectedForUpdate(
+              intentId: id,
+              currentAuth: _auth(),
+              stillCurrent: () => true,
+            ),
+            throwsA(_failure('reflection_changed')),
+          );
+        }
+        expect(row(previous).state, priorTerminal ? 5 : 4);
+        expect(row(id).state, 3);
+      },
+    );
+  }
+
+  for (final fault in [
+    null,
+    'missing-link',
+    'fork',
+    'cycle',
+    'repeated-after',
+    'early-unsend',
+  ]) {
+    test(
+      'pre-archive original traverses only a complete edit-edit-unsend chain ($fault)',
+      () async {
+        final sendId = readyLocalSend();
+        final ids = <int>[];
+        for (var index = 0; index < 3; index++) {
+          final wire = _wire()
+            ..id = '${index + 3}1111111-1111-4111-8111-111111111111';
+          if (index == 2) {
+            wire.message = const api.Message.unsend(
+              api.UnsendMessage(tuuid: _target, editPart: 0),
+            );
+          }
+          identity = CloudSyncLocalMutationIdentity.captureWire(wire)!;
+          source = _source(identity);
+          snapshot = journal.captureTargetSnapshot(
+            localMessageId: target.id!,
+            identity: identity,
+          );
+          final id = adopt();
+          ids.add(id);
+          claim(id);
+          final time = _time(4 + index);
+          final receipt = _receipt(
+            identity,
+            source,
+            preparedTime: time.millisecondsSinceEpoch,
+            receiptMarker: String.fromCharCode(65 + index),
+          );
+          journal.recordNativeReceipt(
+            intentId: id,
+            receipt: receipt,
+            capturedAuth: _auth(),
+            stillCurrent: () => true,
+            now: time,
+          );
+          journal.reflectSourceConfirmed(
+            intentId: id,
+            committedSource: source,
+            original: wire,
+            receipt: receipt,
+            currentAuth: _auth(),
+            stillCurrent: () => true,
+            now: time,
+          );
+        }
+        final middle = row(ids[1]);
+        switch (fault) {
+          case 'missing-link':
+            store.box<CloudSyncLocalMutationIntentEntity>().remove(middle.id);
+          case 'fork':
+            store.box<CloudSyncLocalMutationIntentEntity>().put(
+              middle
+                ..targetSnapshotSha256 = row(ids.first).targetSnapshotSha256,
+            );
+          case 'cycle':
+            store.box<CloudSyncLocalMutationIntentEntity>().put(
+              row(ids.first)
+                ..targetSnapshotSha256 = row(ids.last).reflectedSnapshotSha256!,
+            );
+          case 'repeated-after':
+            store.box<CloudSyncLocalMutationIntentEntity>().put(
+              middle
+                ..reflectedSnapshotSha256 = row(
+                  ids.first,
+                ).reflectedSnapshotSha256,
+            );
+          case 'early-unsend':
+            store.box<CloudSyncLocalMutationIntentEntity>().put(
+              middle..kind = CloudSyncLocalMutationKind.unsend.index,
+            );
+        }
+        await reopen();
+        if (fault == null) {
+          final original = sendJournal().readForAdmission(sendId).message!;
+          expect(original.text, 'original');
+          expect(original.messageSummaryInfo, isEmpty);
+          expect(original.dateEdited, isNull);
+          final firstPending = journal.readReflectedForUpdate(
+            intentId: ids.first,
+            currentAuth: _auth(),
+            stillCurrent: () => true,
+          );
+          expect(
+            firstPending.reflectedSnapshotSha256,
+            row(ids.first).reflectedSnapshotSha256,
+          );
+          expect(
+            firstPending.matchesReflectedParent(
+              store.box<Message>().get(target.id!)!,
+            ),
+            isTrue,
+          );
+          expect(
+            () => journal.readReflectedForUpdate(
+              intentId: ids.last,
+              currentAuth: _auth(),
+              stillCurrent: () => true,
+            ),
+            throwsA(_failure('predecessor_not_ready')),
+          );
+        } else {
+          expect(
+            () => sendJournal().readForAdmission(sendId),
+            throwsStateError,
+          );
+        }
+        final visible = store.box<Message>().get(target.id!)!;
+        expect(visible.text, 'replacement');
+        expect(visible.messageSummaryInfo.single.retractedParts, [0]);
+        expect(
+          visible.messageSummaryInfo.single.editedContent['0'],
+          hasLength(3),
+        );
+        expect(
+          store.box<CloudSyncLocalSendIntentEntity>().get(sendId)!.state,
+          1,
+        );
+        expect(store.box<CloudOutboxOperationEntity>().count(), 0);
+      },
+    );
+  }
+
   for (final fault in [
     'unconfirmed',
     'unsend',
@@ -1280,6 +1539,144 @@ void main() {
       );
     },
   );
+
+  for (final unsend in [false, true]) {
+    test(
+      'pre-archive ${unsend ? 'unsend' : 'edit'} retains exact original admission after restart',
+      () async {
+        final sendId = readyLocalSend();
+        final wire = _wire();
+        if (unsend) {
+          wire.message = const api.Message.unsend(
+            api.UnsendMessage(tuuid: _target, editPart: 0),
+          );
+        }
+        identity = CloudSyncLocalMutationIdentity.captureWire(wire)!;
+        source = _source(identity);
+        final mutationId = adopt();
+        claim(mutationId);
+        confirm(mutationId);
+        await reflectSource(mutationId, restore: () async => wire);
+        final reflected = store.box<Message>().get(target.id!)!;
+        final retainedSummary = jsonEncode(
+          reflected.messageSummaryInfo
+              .map((summary) => summary.toJson())
+              .toList(),
+        );
+        await reopen();
+        final original = sendJournal().readForAdmission(sendId).message!;
+        expect(original.text, 'original');
+        expect(original.attributedBody.single.string, 'original');
+        expect(original.dateEdited, isNull);
+        expect(original.messageSummaryInfo, isEmpty);
+        final visible = store.box<Message>().get(target.id!)!;
+        expect(visible.text, unsend ? 'original' : 'replacement');
+        expect(visible.dateEdited, isNotNull);
+        expect(
+          jsonEncode(
+            visible.messageSummaryInfo
+                .map((summary) => summary.toJson())
+                .toList(),
+          ),
+          retainedSummary,
+        );
+        expect(row(mutationId).state, 3);
+        expect(store.box<CloudOutboxOperationEntity>().count(), 0);
+        expect(
+          store.box<CloudSyncLocalSendIntentEntity>().get(sendId)!.state,
+          1,
+        );
+        expect(transport.acknowledgements, 0);
+      },
+    );
+  }
+
+  for (final fault in [
+    'missing-mutation',
+    'missing-mutation-receipt',
+    'wrong-account',
+    'future-epoch',
+    'wrong-local-id',
+    'wrong-chat-id',
+    'wrong-part',
+    'before-hash',
+    'after-hash',
+    'cycle',
+    'source-hash',
+    'send-unconfirmed',
+    'visible-text',
+    'history',
+    'created-time',
+    'route',
+    'error',
+    'metadata',
+  ]) {
+    test(
+      'pre-archive origin refuses $fault without changing journals',
+      () async {
+        final sendId = readyLocalSend();
+        final mutationId = adopt();
+        claim(mutationId);
+        confirm(mutationId);
+        await reflectSource(mutationId);
+        final mutation = row(mutationId);
+        final send = store.box<CloudSyncLocalSendIntentEntity>().get(sendId)!;
+        final visible = store.box<Message>().get(target.id!)!;
+        switch (fault) {
+          case 'missing-mutation':
+            store.box<CloudSyncLocalMutationIntentEntity>().remove(mutationId);
+          case 'missing-mutation-receipt':
+            mutation.idsReceiptBindingSha256 = null;
+          case 'wrong-account':
+            mutation.accountFingerprint = 'B' * 43;
+          case 'future-epoch':
+            mutation.writerEpoch = 999;
+          case 'wrong-local-id':
+            mutation.localMessageId++;
+          case 'wrong-chat-id':
+            mutation.localChatId++;
+          case 'wrong-part':
+            mutation.targetPart = 1;
+          case 'before-hash':
+            mutation.targetSnapshotSha256 = 'a' * 64;
+          case 'after-hash':
+            mutation.reflectedSnapshotSha256 = 'b' * 64;
+          case 'cycle':
+            mutation.targetSnapshotSha256 = mutation.reflectedSnapshotSha256!;
+          case 'source-hash':
+            send.sourceSha256 = 'c' * 64;
+          case 'send-unconfirmed':
+            send.idsConfirmationVersion = 0;
+          case 'visible-text':
+            visible.text = 'unproven replacement';
+          case 'history':
+            visible.messageSummaryInfo = [];
+          case 'created-time':
+            visible.dateCreated = _time(0);
+          case 'route':
+            final changed = visible.chat.target!
+              ..usingHandle = 'mailto:other@example.invalid';
+            store.box<Chat>().put(changed);
+          case 'error':
+            visible.error = 22;
+          case 'metadata':
+            visible.metadata = {'unproven': true};
+        }
+        if (fault != 'missing-mutation') {
+          store.box<CloudSyncLocalMutationIntentEntity>().put(mutation);
+        }
+        store.box<CloudSyncLocalSendIntentEntity>().put(send);
+        store.box<Message>().put(visible);
+        expect(() => sendJournal().readForAdmission(sendId), throwsStateError);
+        expect(
+          store.box<CloudSyncLocalSendIntentEntity>().get(sendId)!.state,
+          1,
+        );
+        expect(store.box<CloudOutboxOperationEntity>().count(), 0);
+        expect(store.box<Message>().get(target.id!)!.text, visible.text);
+      },
+    );
+  }
 
   test('failed reflection rolls back row and message together', () {
     final id = adopt();

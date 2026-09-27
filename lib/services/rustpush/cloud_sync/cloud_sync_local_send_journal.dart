@@ -10,6 +10,8 @@ import 'cloud_operation_identity.dart';
 import 'cloud_sync_attachment_upload_journal.dart'
     show validateCloudAttachmentUploadRow;
 import 'cloud_sync_manual_shadow_sampler.dart';
+import 'cloud_sync_local_mutation_journal.dart'
+    show cloudSyncReadOriginalPlaintextBeforeMutations;
 import 'cloud_sync_models.dart';
 import 'cloud_sync_outbound_message_dependency.dart';
 import 'cloud_sync_outbound_chat_origin.dart';
@@ -3218,7 +3220,7 @@ final class CloudSyncLocalSendJournal {
   ) {
     final chat = message?.chat.target;
     final guid = message?.guid;
-    final identity =
+    var identity =
         message == null ||
             chat == null ||
             guid == null ||
@@ -3230,6 +3232,42 @@ final class CloudSyncLocalSendJournal {
             guid,
             expectedSourceSha256: intent.sourceSha256,
           );
+    if (identity == null &&
+        message != null &&
+        chat != null &&
+        guid != null &&
+        message.stagingGuid == null &&
+        message.dateEdited != null &&
+        intent.protectedSourceBinding == null &&
+        (intent.state == 1 || intent.state == 2) &&
+        intent.idsConfirmationVersion == cloudSyncIdsConfirmationVersion) {
+      // The original send is already journaled and confirmed. A later proven
+      // local mutation must not strand it before first envelope adoption.
+      // Recover only a detached view whose complete before/after chain matches
+      // the mutation journal, then independently recheck the original source.
+      // The visible row, receipt, journal and mutation state are never changed.
+      final original = cloudSyncReadOriginalPlaintextBeforeMutations(
+        store: _store,
+        localMessageId: intent.localMessageId,
+        accountFingerprint: intent.accountFingerprint,
+        maximumWriterEpoch: _binding.epoch,
+        targetGuidHash: intent.messageGuidHash,
+      );
+      // Adopted-envelope validation may already have normalized these two
+      // bookkeeping fields on its detached view after proving the exact map.
+      original.ckRecordId = message.ckRecordId;
+      original.ckSyncState = message.ckSyncState;
+      identity = CloudSyncLocalSendIdentity._captureJournaled(
+        original,
+        chat,
+        guid,
+        expectedSourceSha256: intent.sourceSha256,
+      );
+      if (identity?.guidHash == intent.messageGuidHash &&
+          identity?.sourceSha256 == intent.sourceSha256) {
+        return original;
+      }
+    }
     if (identity == null ||
         identity.guidHash != intent.messageGuidHash ||
         identity.sourceSha256 != intent.sourceSha256) {

@@ -19,8 +19,10 @@ void main() {
         Platform.environment['OPENBUBBLES_TEST_MESSAGE_RECIPIENT'];
     final expectedGuidHash =
         Platform.environment['OPENBUBBLES_TEST_MESSAGE_GUID_HASH'];
-    final mutationTargetHash =
+    var mutationTargetHash =
         Platform.environment['OPENBUBBLES_MUTATION_TARGET_GUID_HASH'];
+    final mutationCreatedAt =
+        Platform.environment['OPENBUBBLES_MUTATION_CREATED_AT_UTC'];
     final mutationRecipient =
         Platform.environment['OPENBUBBLES_MUTATION_RECIPIENT'];
     final mutationText = Platform.environment['OPENBUBBLES_MUTATION_TEXT'];
@@ -35,8 +37,18 @@ void main() {
       expect(inspectIntentRecipient, isNotEmpty);
       expect(testText, isNotEmpty);
     }
-    if (mutationTargetHash != null || mutationRecipient != null) {
-      expect(mutationTargetHash, matches(RegExp(r'^[0-9a-f]{64}$')));
+    if (mutationTargetHash != null || mutationCreatedAt != null ||
+        mutationRecipient != null) {
+      expect((mutationTargetHash != null) != (mutationCreatedAt != null), isTrue,
+          reason: 'Select exactly one explicit hash or exact observed timestamp');
+      if (mutationTargetHash != null) {
+        expect(mutationTargetHash, matches(RegExp(r'^[0-9a-f]{64}$')));
+      } else {
+        final time = DateTime.tryParse(mutationCreatedAt!);
+        expect(time, isNotNull);
+        expect(time!.isUtc, isTrue);
+        expect(time.toIso8601String(), mutationCreatedAt);
+      }
       expect(mutationRecipient, isNotEmpty);
       if (mutationExpectedState != null) {
         expect(mutationExpectedState, matches(RegExp(r'^[0-5]$')));
@@ -269,6 +281,14 @@ void main() {
         final mutations = store
             .box<CloudSyncLocalMutationIntentEntity>()
             .getAll();
+        if (mutationCreatedAt != null) {
+          final createdMs = DateTime.parse(mutationCreatedAt).millisecondsSinceEpoch;
+          final exactTimeRows = mutations.where((row) =>
+              row.createdAtMs == createdMs).toList();
+          expect(exactTimeRows, hasLength(1),
+              reason: 'An observed timestamp must resolve uniquely, never newest');
+          mutationTargetHash = exactTimeRows.single.targetGuidHash;
+        }
         Map<String, Object?>? exactMutation;
         if (mutationTargetHash != null && mutationRecipient != null) {
           // Pin a deliberately selected test target, never the newest mutation
@@ -316,8 +336,36 @@ void main() {
               operation.accountFingerprint == row.accountFingerprint).toList();
           expect(operations.length, lessThanOrEqualTo(1));
           final operation = operations.isEmpty ? null : operations.single;
+          final originalSends = intents.where((intent) =>
+              intent.accountFingerprint == row.accountFingerprint &&
+              intent.localMessageId == row.localMessageId &&
+              intent.messageGuidHash == row.targetGuidHash).toList();
+          expect(originalSends.length, lessThanOrEqualTo(1));
+          final original = originalSends.isEmpty ? null : originalSends.single;
+          final originalOperations = outbox.where((entry) =>
+              original?.admittedOperationId != null &&
+              entry.operationId == original!.admittedOperationId &&
+              entry.accountFingerprint == row.accountFingerprint).toList();
+          expect(originalOperations.length, lessThanOrEqualTo(1));
+          String? originalAdmissionFailure;
+          var originalAdmissionSourceReadable = false;
+          if (original != null) {
+            try {
+              final originalJournal =
+                  CloudSyncLocalSendJournal.forRetainedQueueInspection(
+                      store, row.accountFingerprint);
+              if (originalJournal == null) {
+                throw StateError('cloud_sync_local_send_authority_changed');
+              }
+              originalJournal.readForAdmission(original.id);
+              originalAdmissionSourceReadable = true;
+            } catch (error) {
+              originalAdmissionFailure = cloudSyncV2SafeFailureCode(error);
+            }
+          }
           exactMutation = {
             'scope': 'copied_database_mutation_diagnostics_only',
+            'targetGuidHash': mutationTargetHash,
             'singlePinnedTargetAndMutation': true,
             'sourceBindingStructurallyValid': true,
             'kind': row.kind,
@@ -325,6 +373,19 @@ void main() {
             'positiveIdsReceiptMarkerPresent': row.idsReceiptBindingSha256 != null,
             'reflectionMarkerPresent': row.reflectedSnapshotSha256 != null,
             'storedDisplayMatchesRequestedMutation': reflected,
+            'originalSend': {
+              'journalCount': originalSends.length,
+              'state': original?.state,
+              'positiveIdsMarkerPresent': original?.idsConfirmationVersion ==
+                  cloudSyncIdsConfirmationVersion,
+              'protectedSourcePresent': original?.protectedSourceBinding != null,
+              'cloudOperationCount': originalOperations.length,
+              'cloudOperationState': originalOperations.isEmpty
+                  ? null : originalOperations.single.state,
+              'admissionSourceReadable': originalAdmissionSourceReadable,
+              'admissionFailure': originalAdmissionFailure,
+              'targetCloudMapped': target.ckRecordId != null,
+            },
             'initialCreateIntentsForMutation': intents.where((intent) =>
                 intent.accountFingerprint == row.accountFingerprint &&
                 intent.messageGuidHash == row.mutationGuidHash).length,

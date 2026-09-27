@@ -46,9 +46,13 @@ class _DeliveredIndicatorState extends CustomState<DeliveredIndicator, void, Mes
   }
 
   bool get shouldShow {
-    if (controller.audioWasKept.value != null) return true;
+    final hasKeptAudio = controller.audioWasKept.value != null;
+    // Expanding timestamps must not revive the original delivery/kept label
+    // underneath the unsent notice. Keep the receipt itself unchanged.
+    if (controller.parts.lastOrNull?.isUnsent ?? false) return false;
+    if (hasKeptAudio) return true;
     if (widget.forceShow || message.guid!.contains("temp")) return true;
-    if ((!message.isFromMe! && iOS) || (controller.parts.lastOrNull?.isUnsent ?? false)) return false;
+    if (!message.isFromMe! && iOS) return false;
     final messages = ms(controller.cvController?.chat.guid ?? cm.activeChat!.chat.guid).struct.messages
         .where((e) => (!iOS ? !e.isFromMe! : false) || (e.isFromMe! && (e.dateDelivered != null || e.dateRead != null)))
         .toList()..sort(Message.sort);
@@ -95,6 +99,11 @@ class _DeliveredIndicatorState extends CustomState<DeliveredIndicator, void, Mes
     } else if (widget.forceShow) {
       if (message.dateScheduled != null) {
         return buildTwoPiece("Scheduled", buildDate(message.dateScheduled));
+      }
+      if (message.error > 0 || message.guid!.startsWith("error-")) {
+        // A local creation timestamp is not confirmation of a failed or
+        // uncertain send. Positive read/delivery evidence above still wins.
+        return buildTwoPiece("Send not confirmed", null);
       }
       return buildTwoPiece("Sent", buildDate(message.dateCreated));
     }

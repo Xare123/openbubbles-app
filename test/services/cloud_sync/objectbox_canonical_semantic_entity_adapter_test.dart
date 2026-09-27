@@ -8915,6 +8915,22 @@ void main() {
       expect(onlyHistory(message).last.text!.values.single.string, currentText);
     });
 
+    test('partial retraction still permits another live part to update', () {
+      seedTransition(gatePage(body: 'hiddenlive', bodies: [
+        gateBody('hidden'), gateBody('live', part: 1),
+      ], retractedPartsState: CloudSemanticFieldState.value,
+        retractedParts: [0]));
+      gateAdapter().applyEntity(scope: scope, generation: generation,
+        payload: gatePage(body: 'hiddenupdated', bodies: [
+          gateBody('hidden'), gateBody('updated', part: 1),
+        ], retractedPartsState: CloudSemanticFieldState.value,
+          retractedParts: [0]),
+        snapshot: _snapshot(CloudEntityKind.message, messageHash));
+      final message = onlyMessage();
+      expect(message.attributedBody.last.string, 'updated');
+      expect(message.messageSummaryInfo.single.retractedParts, [0]);
+    });
+
     test('retraction with retained edit history stays unsent after reopen and replay', () async {
       var adapter = gateAdapter();
       seedGateChat();
@@ -8959,6 +8975,10 @@ void main() {
       expect(onlyHistory(message), hasLength(2));
       expect(onlyHistory(message).last.text!.values.single.string, currentText);
       expect(message.buildMessageParts().single.isUnsent, isTrue);
+      // The hidden body is also part of a pending local mutation's snapshot.
+      // A stale create echo must not silently change it behind the unsent UI.
+      expect(message.text, currentText);
+      expect(message.attributedBody.single.string, currentText);
     });
 
     for (final includesOtherPart in [false, true]) {
