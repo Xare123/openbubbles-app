@@ -2,7 +2,6 @@ import 'package:bluebubbles/src/rust/api/api.dart' as api;
 
 import 'cloud_protected_page_lease_lifecycle.dart';
 import 'cloud_sync_models.dart';
-import 'cloud_sync_transport.dart';
 
 /// Common lease lifecycle for exact discovery. The caller supplies its
 /// provenance-specific atomic journal transaction, never an unprotected source.
@@ -17,9 +16,15 @@ Future<bool> adoptCloudSyncExactDiscoveryStage({
   required Future<void> Function() validate,
   required bool Function(CloudFetchedChange change) journalChange,
   required CloudProtectedPageLeaseLifecycle lifecycle,
-  required CloudProtectedPageLeaseTransport transport,
 }) async {
   var adopted = false;
+  Future<void> rollback() => lifecycle.rollbackUnjournaledPage(
+    CloudFetchBatch(
+      scope: scope, changes: const [], batchId: result.batchId,
+      generation: checkpointGeneration, nextToken: null, hasMore: false,
+      protectedPageLeaseReference: result.leaseReference,
+    ),
+  );
   try {
     final raw = result.change;
     if (result.messageGuidHash != messageGuidHash ||
@@ -51,7 +56,7 @@ Future<bool> adoptCloudSyncExactDiscoveryStage({
     if (!owned) {
       // Existing ownership keeps its original references. Only this unused
       // fresh lease is disposable; an adopted lease is never rolled back.
-      await transport.rollbackProtectedPageLease(result.leaseReference);
+      await rollback();
       return true;
     }
     await lifecycle.commitJournaledPage(
@@ -70,7 +75,7 @@ Future<bool> adoptCloudSyncExactDiscoveryStage({
   } catch (_) {
     if (!adopted) {
       try {
-        await transport.rollbackProtectedPageLease(result.leaseReference);
+        await rollback();
       } catch (_) {}
     }
     rethrow;

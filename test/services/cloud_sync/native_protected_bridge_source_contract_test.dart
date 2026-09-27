@@ -87,7 +87,7 @@ void main() {
     final adoption = File('lib/services/rustpush/cloud_sync/cloud_sync_discovery_reader_adoption.dart').readAsStringSync();
     for (final lifecycle in [
       'await validate()', 'journalChange(change)', 'adopted = true',
-      'if (!adopted)', 'rollbackProtectedPageLease', 'commitJournaledPage',
+      'if (!adopted)', 'rollbackUnjournaledPage', 'commitJournaledPage',
     ]) {
       expect(adoption, contains(lifecycle));
     }

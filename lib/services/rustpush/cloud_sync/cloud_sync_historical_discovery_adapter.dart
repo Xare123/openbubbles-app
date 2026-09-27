@@ -102,7 +102,6 @@ Future<bool> adoptCloudSyncHistoricalDiscoveryStage({
     stillCurrent: stillCurrent,
   ),
   lifecycle: lifecycle,
-  transport: transport,
 );
 
 /// Exact historical-source lookup followed by ordinary durable reader ingress.

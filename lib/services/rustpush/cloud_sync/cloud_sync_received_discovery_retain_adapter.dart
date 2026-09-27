@@ -63,7 +63,6 @@ Future<bool> adoptCloudSyncDiscoveredStage({
       stillCurrent: stillCurrent,
   ),
   lifecycle: lifecycle,
-  transport: transport,
 );
 
 /// Parentless discovery find becomes owned reader work WITHOUT parent proof.

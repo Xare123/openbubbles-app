@@ -1,4 +1,6 @@
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_discovery_reader_adoption.dart';
+import 'package:bluebubbles/src/rust/api/api.dart' as api;
 import 'package:flutter_test/flutter_test.dart';
 
 const _leaseA = 'obcs2.lease.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
@@ -331,6 +333,42 @@ void main() {
       expect(store.adopted, {_leaseA, _leaseB});
     },
   );
+
+  for (final failure in ['mismatch', 'admission', 'duplicate']) {
+    test('discovery $failure rollback failure invalidates cached recovery', () async {
+      await lifecycle.ensureRecoveredBeforeFetch();
+      transport.unadoptedManifestsRemaining = 1;
+      transport.rollbackFailure = StateError('synthetic rollback failure');
+      final result = api.CloudSyncReceivedFoundProjection(
+        messageGuidHash: failure == 'mismatch' ? 'c' * 64 : 'a' * 64,
+        sourceSha256: 'b' * 64, generation: BigInt.one,
+        batchId: 'B' * 43, leaseReference: _leaseA,
+        change: api.CloudSyncProtectedChange(
+          changeId: 'D' * 43, recordIdHash: 'R' * 43, etagHash: 'E' * 43,
+          kind: api.CloudSyncProtectedChangeKind.save,
+          payloadSha256: 'd' * 64, payloadLength: BigInt.from(128),
+          protectedRecordIdentityReference: _reference('I'),
+          protectedRawEnvelopeReference: _reference('Y'),
+          serverModifiedAtMillis: null, preflightCode: null, isTombstone: false,
+        ),
+      );
+      await expectLater(adoptCloudSyncExactDiscoveryStage(
+        result: result, messageGuidHash: 'a' * 64, sourceSha256: 'b' * 64,
+        checkpointGeneration: 1, scope: _batch(_leaseA).scope,
+        mismatchCode: 'synthetic_mismatch', validate: () async {},
+        journalChange: (_) {
+          if (failure == 'duplicate') return false;
+          throw StateError('synthetic admission failure');
+        },
+        lifecycle: lifecycle,
+      ), throwsStateError);
+      transport.rollbackFailure = null;
+      await lifecycle.ensureRecoveredBeforeFetch();
+      expect(transport.recoverySets, hasLength(2));
+      expect(transport.unadoptedManifestsRemaining, 0);
+      expect(store.adopted, isEmpty);
+    });
+  }
 
   test(
     'all-duplicate page retains only the newly committed checkpoint',
