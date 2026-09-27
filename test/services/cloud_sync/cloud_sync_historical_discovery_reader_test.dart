@@ -367,22 +367,30 @@ void main() {
       await expectLater(runStage(transport), throwsStateError);
       expect(row().state, 2);
       expect(transport.rolledBack, isEmpty);
-      final before = snapshot();
+      final before = jsonDecode(snapshot()) as Map<String, dynamic>;
+      expect(before['leases'], 1);
       store.close();
       store = await openStore(directory: directory.path);
       journal = bindJournal();
       durable = bindStore();
       transport.failCommit = false;
-      await CloudProtectedPageLeaseLifecycle(
+      final lifecycle = CloudProtectedPageLeaseLifecycle(
         store: durable,
         transport: transport,
-      ).ensureRecoveredBeforeFetch();
+      );
+      await lifecycle.ensureRecoveredBeforeFetch();
       expect(transport.recovered.single, contains('obcs2.lease.${'1' * 32}'));
       expect(
         await durable.readAdoptedProtectedPageLeaseReferences(maximumCount: 50),
         isEmpty,
       );
-      expect(snapshot(), before);
+      // Successful recovery retires only the temporary page-adoption marker.
+      // Keep every history/inbox/cursor value exact across reopen and recovery.
+      final recovered = {...before, 'leases': 0};
+      expect(jsonDecode(snapshot()), recovered);
+      await lifecycle.ensureRecoveredBeforeFetch();
+      expect(jsonDecode(snapshot()), recovered);
+      expect(transport.recovered, hasLength(1));
       final retained = selected();
       validateCloudSyncHistoricalDiscoverySelection(
         journal: journal,
