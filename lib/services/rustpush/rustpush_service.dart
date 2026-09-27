@@ -73,6 +73,8 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_models.dart'
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_message_update_executor.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_observability.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_progress.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_background_progress.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_background_status.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_profile_readiness.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_upload_retry_action.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_read_budget.dart';
@@ -10337,6 +10339,16 @@ class RustPushService extends GetxService {
   bool get cloudSyncV2HistoryReadActive =>
       _cloudSyncV2SemanticPullInFlight != null || _cloudSyncV2SemanticPullQuiescing;
 
+  CloudSyncBackgroundProgress? _cloudSyncV2BackgroundProgress;
+
+  CloudSyncBackgroundStatus? get cloudSyncV2BackgroundStatus {
+    if (!cloudSyncV2HistoryReadActive || cloudSyncV2Progress.active) return null;
+    // No disk reads or account calls from a rendering getter. Another isolate
+    // or a quiescing reader may own work without publishing local detail.
+    return _cloudSyncV2BackgroundProgress?.snapshot ??
+        const CloudSyncBackgroundStatus(active: true);
+  }
+
   bool get cloudSyncV2ReceiptCheckActive => _cloudSyncV2ReceiptCheckActive;
 
   bool get cloudSyncV2ReceiptCheckAvailable =>
@@ -10408,7 +10420,7 @@ class RustPushService extends GetxService {
           final result = await retry;
           return switch (result) {
             CloudSyncPreviousUploadResult.settled =>
-              'The queued upload is confirmed in iCloud. You can start or resume history sync. '
+              'The queued upload is confirmed in iCloud. '
               'No new iMessage was sent and automatic uploads are unchanged.',
             CloudSyncPreviousUploadResult.notApplied =>
               'The upload is still queued and is not confirmed in iCloud. '
@@ -10461,7 +10473,7 @@ class RustPushService extends GetxService {
       Logger.info('CloudKit previous upload check: ${result.name}');
       return switch (result) {
         CloudSyncPreviousUploadResult.settled =>
-          'The previous upload is confirmed. You can start or resume history sync. '
+          'The previous upload is confirmed. '
           'No message was resent and upload settings are unchanged.',
         CloudSyncPreviousUploadResult.notApplied =>
           'The previous upload was not saved to iCloud. It remains queued; '
@@ -10902,6 +10914,8 @@ class RustPushService extends GetxService {
     }
 
     final restoringBeforeSemanticPull = chats.restoring;
+    final backgroundProgress = progress == null ? CloudSyncBackgroundProgress() : null;
+    if (backgroundProgress != null) _cloudSyncV2BackgroundProgress = backgroundProgress;
     chats.restoring = true;
     try {
       final protector = RustCloudSyncProtector(storageDirectory: statePath);
@@ -10931,7 +10945,7 @@ class RustPushService extends GetxService {
       );
       final evidenceFactory = _cloudSyncV2EvidenceObserverFactory();
       final adapter = CloudSyncProductionSemanticPullAdapter(
-        progress: progress,
+        progress: progress ?? backgroundProgress,
         readBudget: progress?.speed.readBudget ?? CloudSyncReadBudget.standard,
         scheduleSession: <T>(Future<T> Function() action) =>
             _cloudSyncV2AttachmentGate.run<T>(
@@ -10948,9 +10962,12 @@ class RustPushService extends GetxService {
         platform: Platform.operatingSystem,
         architecture: ffi.Abi.current().toString(),
         buildCommit: _cloudSyncV2BuildIdentifier(),
-        observerFactory: progress == null ? evidenceFactory : (scope) async =>
-            CloudSyncProgressObserver(progress, scope.zone,
-              await evidenceFactory(scope)),
+        observerFactory: (scope) async {
+          final evidence = await evidenceFactory(scope);
+          return progress != null
+              ? CloudSyncProgressObserver(progress, scope.zone, evidence)
+              : CloudSyncBackgroundProgressObserver(backgroundProgress!, evidence);
+        },
         verboseDiagnosticsEnabled: () =>
             ss.settings.developerEnabled.value &&
             ss.settings.cloudSyncV2VerboseDiagnosticsEnabled.value,
@@ -11024,6 +11041,10 @@ class RustPushService extends GetxService {
         if (progress != null) progress.cancelWindow = null;
       }
     } finally {
+      backgroundProgress?.finish();
+      if (identical(_cloudSyncV2BackgroundProgress, backgroundProgress)) {
+        _cloudSyncV2BackgroundProgress = null;
+      }
       chats.restoring = restoringBeforeSemanticPull;
     }
   }

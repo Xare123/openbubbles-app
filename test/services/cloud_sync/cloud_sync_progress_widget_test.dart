@@ -3,6 +3,7 @@ import 'dart:io';
 import 'dart:ui' as ui;
 
 import 'package:bluebubbles/app/layouts/settings/pages/profile/cloud_sync_progress_card.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_background_status.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_progress.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_semantic_drain_controller.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_profile_readiness.dart';
@@ -50,6 +51,7 @@ void main() {
     Future<String> Function()? onCheckPreviousUpload,
     bool Function()? canRetryPendingUpload,
     Future<CloudSyncUploadRetryAction> Function()? onPrepareUploadRetry,
+    CloudSyncBackgroundStatus? Function()? backgroundStatus,
   }) => MaterialApp(
     theme: ThemeData(fontFamily: 'Inter'),
     debugShowCheckedModeBanner: false,
@@ -61,6 +63,7 @@ void main() {
             progress: progress,
             isAvailable: availability ?? () => available,
             isReading: isReading,
+            backgroundStatus: backgroundStatus,
             onStart: start,
             unavailableMessage: unavailableMessage,
             canCheckPreviousUpload: canCheckPreviousUpload,
@@ -912,5 +915,114 @@ void main() {
       isNotNull,
     );
     expect(tester.takeException(), isNull);
+  });
+  testWidgets('background read shows detail and control reasons', (tester) async {
+    await tester.pumpWidget(host(
+      CloudSyncProgress(),
+      (_) async {},
+      isReading: () => true,
+      backgroundStatus: () => CloudSyncBackgroundStatus(
+        active: true,
+        owner: CloudSyncBackgroundOwner.historyCatchUp,
+        stage: CloudSyncBackgroundStage.downloading,
+        recordsProcessed: 7,
+        lastProgressAt: DateTime.now().subtract(const Duration(minutes: 5)),
+      ),
+    ));
+    await tester.pump();
+    expect(find.text('Background history sync is downloading'), findsOneWidget);
+    expect(find.text('7 records processed'), findsOneWidget);
+    expect(find.text('Last activity 5 min ago'), findsOneWidget);
+    expect(find.text('Waiting for background sync to finish. Readiness is checked again afterward.'), findsOneWidget);
+    expect(find.text('Turbo applies to the next foreground batch.'), findsOneWidget);
+    expect(tester.widget<FilledButton>(find.byType(FilledButton)).onPressed, isNull);
+    expect(tester.widget<SwitchListTile>(find.byType(SwitchListTile)).onChanged, isNull);
+    expect(tester.takeException(), isNull);
+  });
+  testWidgets('background read without detail falls back to generic notice', (tester) async {
+    await tester.pumpWidget(host(
+      CloudSyncProgress(),
+      (_) async {},
+      isReading: () => true,
+    ));
+    await tester.pump();
+    expect(find.text('Sync is already running'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+  testWidgets('receipt result gains a follow-up matching live state', (tester) async {
+    final done = Completer<String>();
+    var backgroundBusy = false;
+    await tester.pumpWidget(host(
+      CloudSyncProgress(),
+      (_) async {},
+      canCheckPreviousUpload: () => true,
+      onCheckPreviousUpload: () => done.future,
+      isReading: () => backgroundBusy,
+      backgroundStatus: () => const CloudSyncBackgroundStatus(active: true),
+    ));
+    await tester.ensureVisible(find.text('Check previous upload'));
+    await tester.tap(find.text('Check previous upload'));
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.tap(find.text('Check upload'));
+    await tester.pump();
+    done.complete('Previous upload confirmed. Nothing resent.');
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 1));
+    expect(find.text('Previous upload confirmed. Nothing resent.'), findsOneWidget);
+    expect(find.text('Sync is idle. You can start or resume.'), findsOneWidget);
+    backgroundBusy = true;
+    await tester.pump(const Duration(seconds: 1));
+    await tester.pump();
+    expect(find.text('Previous upload confirmed. Nothing resent.'), findsOneWidget);
+    expect(find.text('Background sync is active.'), findsOneWidget);
+    expect(find.text('Sync is idle. You can start or resume.'), findsNothing);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+  testWidgets('background card renders at large text without overflow', (tester) async {
+    await tester.pumpWidget(host(
+      CloudSyncProgress(),
+      (_) async {},
+      scale: 2.0,
+      isReading: () => true,
+      backgroundStatus: () => CloudSyncBackgroundStatus(
+        active: true,
+        owner: CloudSyncBackgroundOwner.historyCatchUp,
+        stage: CloudSyncBackgroundStage.organizing,
+        recordsProcessed: 1234,
+        lastProgressAt: DateTime.now().subtract(const Duration(minutes: 5)),
+      ),
+    ));
+    await tester.pump();
+    expect(find.text('Background history sync is organizing'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+  testWidgets('mounted card refreshes background detail on tick without starting work', (tester) async {
+    var starts = 0;
+    var records = 7;
+    await tester.pumpWidget(host(
+      CloudSyncProgress(),
+      (_) async {
+        starts++;
+      },
+      isReading: () => true,
+      backgroundStatus: () => CloudSyncBackgroundStatus(
+        active: true,
+        owner: CloudSyncBackgroundOwner.historyCatchUp,
+        stage: CloudSyncBackgroundStage.downloading,
+        recordsProcessed: records,
+      ),
+    ));
+    await tester.pump();
+    expect(find.text('7 records processed'), findsOneWidget);
+    records = 42;
+    await tester.pump(const Duration(seconds: 1));
+    await tester.pump();
+    expect(find.text('42 records processed'), findsOneWidget);
+    expect(find.text('7 records processed'), findsNothing);
+    expect(starts, 0);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox.shrink());
   });
 }

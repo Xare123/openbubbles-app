@@ -263,4 +263,13 @@ void main() {
       }
     }
   });
+  test('background read explains itself and the foreground pause boundary', () {
+    final notice = noticeFor(readingElsewhere: true);
+    expect(notice.state, CloudSyncUserState.runningElsewhere);
+    expect(notice.headline, 'Sync is already running');
+    expect(notice.body, contains('background read'));
+    expect(notice.body, contains('Pausing here'));
+    expect(notice.action, 'Start / resume is checked again when this read finishes.');
+    expect(notice.canStart, isFalse);
+  });
 }

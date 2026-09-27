@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_background_status.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_progress.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_user_copy.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_upload_retry_action.dart';
@@ -20,6 +21,7 @@ class CloudSyncProgressCard extends StatefulWidget {
     required this.onStart,
     this.showTitle = true,
     this.isReading,
+    this.backgroundStatus,
     this.unavailableMessage,
     this.canCheckPreviousUpload,
     this.isCheckingPreviousUpload,
@@ -32,6 +34,7 @@ class CloudSyncProgressCard extends StatefulWidget {
   final Future<void> Function(CloudSyncSpeed) onStart;
   final bool showTitle;
   final bool Function()? isReading;
+  final CloudSyncBackgroundStatus? Function()? backgroundStatus;
 
   /// Optional exact readiness reason wired by the parent service seam.
   /// Falls back to a generic checklist when null or empty.
@@ -52,6 +55,14 @@ class _CloudSyncProgressCardState extends State<CloudSyncProgressCard> {
   bool _lastAvailable = false;
   bool _lastReading = false;
   String _lastBlockerKey = '';
+  String _lastBackgroundKey = '';
+  String _backgroundKey() {
+    final snapshot = widget.backgroundStatus?.call();
+    if (snapshot == null || !snapshot.active) return '';
+    return '${backgroundStatusHeadline(snapshot)}|'
+        '${backgroundStatusDetail(snapshot) ?? ''}|'
+        '${backgroundStatusRecency(snapshot, DateTime.now()) ?? ''}';
+  }
   bool _requestingReceiptCheck = false;
   bool _receiptDialogOpen = false;
   String? _receiptResult;
@@ -75,21 +86,25 @@ class _CloudSyncProgressCardState extends State<CloudSyncProgressCard> {
     _lastAvailable = widget.isAvailable();
     _lastReading = readingElsewhere;
     _lastBlockerKey = _blockerKey();
+    _lastBackgroundKey = _backgroundKey();
     // Only the mounted status card ticks. Service counters and sync ownership
     // survive page navigation; this timer never starts or cancels any work.
     _refreshTimer = Timer.periodic(const Duration(seconds: 1), (_) {
       final available = widget.isAvailable();
       final reading = readingElsewhere;
       final blockerKey = _blockerKey();
+      final backgroundKey = _backgroundKey();
       if (widget.progress.active ||
           reading != _lastReading ||
           available != _lastAvailable ||
-          blockerKey != _lastBlockerKey) {
+          blockerKey != _lastBlockerKey ||
+          backgroundKey != _lastBackgroundKey) {
         setState(() {});
       }
       _lastAvailable = available;
       _lastReading = reading;
       _lastBlockerKey = blockerKey;
+      _lastBackgroundKey = backgroundKey;
     });
   }
 
@@ -270,6 +285,11 @@ class _CloudSyncProgressCardState extends State<CloudSyncProgressCard> {
           : readyWhileBlocked ? blockerText : notice.body;
       final displayAction =
           checking || retryBusy || (blocked && notice.canStart) ? null : notice.action;
+      final background = widget.backgroundStatus?.call();
+      final showBackgroundDetail = elsewhere && (background?.active ?? false);
+      final receiptFollowUp = _receiptResult != null
+          ? receiptFollowUpCopy(backgroundBusy: elsewhere, canStartNow: available && !busy)
+          : null;
       final showBlockerText = blocked && !readyWhileBlocked;
       return Padding(
         padding: const EdgeInsets.all(16),
@@ -289,6 +309,14 @@ class _CloudSyncProgressCardState extends State<CloudSyncProgressCard> {
             if (displayAction != null) ...[
               const SizedBox(height: 4),
               Text(displayAction),
+            ],
+            if (showBackgroundDetail) ...[
+              const SizedBox(height: 4),
+              Text(backgroundStatusHeadline(background!)),
+              if (backgroundStatusDetail(background) case final detail?)
+                Text(detail),
+              if (backgroundStatusRecency(background, DateTime.now()) case final recency?)
+                Text(recency),
             ],
             if (busy) ...[
               const SizedBox(height: 8),
@@ -318,6 +346,7 @@ class _CloudSyncProgressCardState extends State<CloudSyncProgressCard> {
             if (showBlockerText) Text(blockerText),
             if (_receiptResult != null)
               Semantics(liveRegion: true, child: Text(_receiptResult!)),
+            if (receiptFollowUp != null) Text(receiptFollowUp),
             SwitchListTile.adaptive(
               contentPadding: EdgeInsets.zero,
               title: const Text('Turbo'),
@@ -329,6 +358,8 @@ class _CloudSyncProgressCardState extends State<CloudSyncProgressCard> {
                   : speed == CloudSyncSpeed.turbo,
               onChanged: busy ? null : selectTurbo,
             ),
+            if (busy && !p.active)
+              const Text('Turbo applies to the next foreground batch.'),
             Wrap(
               spacing: 8,
               runSpacing: 8,
@@ -341,6 +372,8 @@ class _CloudSyncProgressCardState extends State<CloudSyncProgressCard> {
                     icon: const Icon(Icons.sync),
                     label: const Text('Start / resume'),
                   ),
+                if (!p.active && elsewhere)
+                  const Text('Waiting for background sync to finish. Readiness is checked again afterward.'),
                 if (p.active)
                   OutlinedButton.icon(
                     onPressed: p.pauseRequested ? null : p.pause,

@@ -185,8 +185,10 @@ CloudSyncUserNotice describeCloudSyncUserNotice({
     return const CloudSyncUserNotice(
       state: CloudSyncUserState.runningElsewhere,
       headline: 'Sync is already running',
-      body: 'Another sync is finishing. Your progress is safe.',
-      action: 'Start / resume unlocks when it is done.',
+      body:
+          'Another sync is finishing. Your progress is safe. Pausing here '
+          'affects only a foreground catch-up run, not this background read.',
+      action: 'Start / resume is checked again when this read finishes.',
       canStart: false,
     );
   }

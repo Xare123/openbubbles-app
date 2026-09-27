@@ -519,6 +519,7 @@ class _ProfilePanelState extends OptimizedState<ProfilePanel> with WidgetsBindin
                       progress: pushService.cloudSyncV2Progress,
                       isAvailable: () => pushService.cloudSyncV2ProgressAvailable,
                       isReading: () => pushService.cloudSyncV2HistoryReadActive,
+                      backgroundStatus: () => pushService.cloudSyncV2BackgroundStatus,
                       onStart: pushService.startCloudSyncV2Progress,
                       unavailableMessage: () =>
                           pushService.cloudSyncV2ProgressUnavailableMessage,
