@@ -930,32 +930,87 @@ pub async fn cloud_sync_discover_received_record_exact(
     received_source: CloudSyncNativeReceivedArchiveSourceBinding,
     message_generation: u64,
 ) -> anyhow::Result<CloudSyncPreparedReceivedDiscovery> {
+    if received_source.account_fingerprint != expected_auth.account_fingerprint
+        || received_source.protected_store_identity != expected_auth.protected_store_identity
+    {
+        return Err(anyhow!("cloud_sync_received_archive_identity_changed"));
+    }
+    let stage = crate::cloud_sync_received_source_stage::NativeReceivedArchiveStage {
+        message_guid_hash: received_source.message_guid_hash,
+        source_sha256: received_source.source_sha256,
+        protected_reference: received_source.protected_reference,
+        lease_reference: received_source.lease_reference,
+        payload_sha256: received_source.payload_sha256,
+        payload_length: received_source.payload_length,
+    };
+    cloud_sync_discover_archive_record_exact(
+        cloud_messages_client, native_writer_pause_token, storage_directory,
+        expected_auth,
+        crate::cloud_sync_archive_discovery_source::ArchiveDiscoverySource::Received(stage),
+        message_generation,
+    ).await
+}
+
+/// Exact read-only discovery for a durably adopted historical source. Source
+/// reopening retains its historical protection purpose and snapshot binding.
+/// No IDS provenance, live-receive journal row, parent binding or create grant
+/// is manufactured. Found records enter the ordinary protected reader path.
+pub async fn cloud_sync_discover_historical_record_exact(
+    cloud_messages_client: &Arc<CloudMessagesClient<DefaultAnisetteProvider>>,
+    native_writer_pause_token: u64,
+    storage_directory: String,
+    expected_auth: CloudSyncNativeAuthMetadata,
+    historical_source: CloudSyncNativeHistoricalArchiveSourceBinding,
+    message_generation: u64,
+) -> anyhow::Result<CloudSyncPreparedHistoricalDiscovery> {
+    if historical_source.account_fingerprint != expected_auth.account_fingerprint
+        || historical_source.protected_store_identity != expected_auth.protected_store_identity
+    {
+        return Err(anyhow!("cloud_sync_historical_archive_identity_changed"));
+    }
+    let source = crate::cloud_sync_archive_discovery_source::ArchiveDiscoverySource::Historical {
+        snapshot_sha256: historical_source.snapshot_sha256,
+        stage: crate::cloud_sync_historical_source_stage::NativeHistoricalArchiveStage {
+            message_guid_hash: historical_source.message_guid_hash,
+            source_sha256: historical_source.source_sha256,
+            protected_reference: historical_source.protected_reference,
+            lease_reference: historical_source.lease_reference,
+            payload_sha256: historical_source.payload_sha256,
+            payload_length: historical_source.payload_length,
+        },
+    };
+    Ok(CloudSyncPreparedHistoricalDiscovery {
+        inner: cloud_sync_discover_archive_record_exact(
+            cloud_messages_client, native_writer_pause_token, storage_directory,
+            expected_auth, source, message_generation,
+        ).await?,
+    })
+}
+
+#[frb(ignore)]
+async fn cloud_sync_discover_archive_record_exact(
+    cloud_messages_client: &Arc<CloudMessagesClient<DefaultAnisetteProvider>>,
+    native_writer_pause_token: u64,
+    storage_directory: String,
+    expected_auth: CloudSyncNativeAuthMetadata,
+    source_stage: crate::cloud_sync_archive_discovery_source::ArchiveDiscoverySource,
+    message_generation: u64,
+) -> anyhow::Result<CloudSyncPreparedReceivedDiscovery> {
     use crate::cloud_sync_received_record_discovery::{
         settle_discovery, DiscoveryDisposition, DiscoveryLookupOutcome, DiscoverySnapshot,
     };
     use rustpush::cloud_messages::CloudMessageRecordVersionLookup;
-    if message_generation == 0
-        || received_source.account_fingerprint != expected_auth.account_fingerprint
-        || received_source.protected_store_identity != expected_auth.protected_store_identity
-    {
+    if message_generation == 0 {
         return Err(anyhow!("cloud_sync_received_archive_identity_changed"));
     }
     let permit = acquire_cloudkit_read_authentication(native_writer_pause_token)
         .map_err(|_| anyhow!("cloud_sync_received_archive_read_permit"))?;
     let before = cloud_sync_capture_auth_snapshot(cloud_messages_client, storage_directory.clone()).await?;
     cloud_sync_require_received_auth(&expected_auth, &before)?;
-    let source_stage = crate::cloud_sync_received_source_stage::NativeReceivedArchiveStage {
-        message_guid_hash: received_source.message_guid_hash.clone(),
-        source_sha256: received_source.source_sha256.clone(),
-        protected_reference: received_source.protected_reference,
-        lease_reference: received_source.lease_reference,
-        payload_sha256: received_source.payload_sha256,
-        payload_length: received_source.payload_length,
-    };
-    let received = crate::cloud_sync_received_source_stage::open_received_archive_source(
+    let source_guid = source_stage.open_guid(
         PathBuf::from(&storage_directory),
-        before.account_fingerprint.clone(),
-        &source_stage,
+        &before.account_fingerprint,
+        &before.protected_store_identity,
     )
     .map_err(|_| anyhow!("cloud_sync_received_archive_protected_source_changed"))?;
     let container = cloud_messages_client
@@ -971,7 +1026,7 @@ pub async fn cloud_sync_discover_received_record_exact(
         message_generation,
     };
     let request = crate::cloud_sync_received_record_discovery::prepare_discovery(
-        received.guid(),
+        &source_guid,
         &snapshot,
         &hasher,
     )
@@ -1016,10 +1071,10 @@ pub async fn cloud_sync_discover_received_record_exact(
     if !Arc::ptr_eq(&container, &after_container) {
         return Err(anyhow!("cloud_sync_received_archive_identity_changed"));
     }
-    crate::cloud_sync_received_source_stage::open_received_archive_source(
+    source_stage.open_guid(
         PathBuf::from(&storage_directory),
-        after.account_fingerprint.clone(),
-        &source_stage,
+        &after.account_fingerprint,
+        &after.protected_store_identity,
     )
     .map_err(|_| anyhow!("cloud_sync_received_archive_protected_source_changed"))?;
     let after_snapshot = DiscoverySnapshot {
@@ -1037,8 +1092,8 @@ pub async fn cloud_sync_discover_received_record_exact(
         })?;
     let mut observation = CloudSyncReceivedRecordObservation {
         disposition: CloudSyncReceivedRecordDisposition::Unresolved,
-        message_guid_hash: source_stage.message_guid_hash.clone(),
-        source_sha256: source_stage.source_sha256.clone(),
+        message_guid_hash: source_stage.message_guid_hash().to_owned(),
+        source_sha256: source_stage.source_sha256().to_owned(),
         logical_entity_key_hash: request.logical_entity_key_hash.clone(),
         server_record_id_hash: request.server_record_id_hash.clone(),
         etag_hash: settled.etag_hash.clone(),
@@ -1087,7 +1142,7 @@ struct DiscoveryPending {
     container: Arc<rustpush::cloudkit::CloudKitOpenContainer<'static, DefaultAnisetteProvider>>,
     storage_directory: String,
     auth: CloudSyncNativeAuthMetadata,
-    source: crate::cloud_sync_received_source_stage::NativeReceivedArchiveStage,
+    source: crate::cloud_sync_archive_discovery_source::ArchiveDiscoverySource,
     observation: CloudSyncReceivedRecordObservation,
     raw_found: Option<(rustpush::cloudkit_proto::Record, Vec<u8>)>,
     prepared_at: std::time::Instant,
@@ -1124,8 +1179,8 @@ pub async fn cloud_sync_stage_discovered_received_record(
     if !Arc::ptr_eq(&pending.container, &current_container) {
         return Err(anyhow!("cloud_sync_received_archive_identity_changed"));
     }
-    crate::cloud_sync_received_source_stage::open_received_archive_source(
-        PathBuf::from(&pending.storage_directory), auth.account_fingerprint.clone(), &pending.source)
+    pending.source.open_guid(
+        PathBuf::from(&pending.storage_directory), &auth.account_fingerprint, &auth.protected_store_identity)
         .map_err(|_| anyhow!("cloud_sync_received_archive_protected_source_changed"))?;
     if pending.observation.disposition == CloudSyncReceivedRecordDisposition::Absent {
         return Ok(None);
@@ -1147,8 +1202,8 @@ pub async fn cloud_sync_stage_discovered_received_record(
         return Err(anyhow!("cloud_sync_received_archive_record_mismatch"));
     }
     Ok(Some(CloudSyncReceivedFoundProjection {
-        message_guid_hash: pending.source.message_guid_hash,
-        source_sha256: pending.source.source_sha256,
+        message_guid_hash: pending.source.message_guid_hash().to_owned(),
+        source_sha256: pending.source.source_sha256().to_owned(),
         generation: page.generation(), batch_id: page.batch_id().to_owned(),
         lease_reference: page.page_lease_reference().to_owned(),
         change: map_cloud_sync_protected_change(&page.changes()[0]),
@@ -1163,6 +1218,35 @@ pub async fn cloud_sync_discard_received_discovery(
     prepared: &CloudSyncPreparedReceivedDiscovery,
 ) {
     prepared.pending.lock().await.take();
+}
+
+/// Separate historical handle around the shared read-only result lifecycle.
+/// The inner holder's legacy name conveys no live-receive provenance; its
+/// purpose-tagged source is preserved through staging and revalidation.
+#[frb(opaque)]
+pub struct CloudSyncPreparedHistoricalDiscovery {
+    inner: CloudSyncPreparedReceivedDiscovery,
+}
+
+impl std::fmt::Debug for CloudSyncPreparedHistoricalDiscovery {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("CloudSyncPreparedHistoricalDiscovery(redacted)")
+    }
+}
+
+/// Shares the reader-ingress DTO only, not received-journal admission. None
+/// means a revalidated NotFound, not permission to create a historical record.
+pub async fn cloud_sync_stage_discovered_historical_record(
+    prepared: &CloudSyncPreparedHistoricalDiscovery,
+    native_writer_pause_token: u64,
+) -> anyhow::Result<Option<CloudSyncReceivedFoundProjection>> {
+    cloud_sync_stage_discovered_received_record(&prepared.inner, native_writer_pause_token).await
+}
+
+pub async fn cloud_sync_discard_historical_discovery(
+    prepared: &CloudSyncPreparedHistoricalDiscovery,
+) {
+    cloud_sync_discard_received_discovery(&prepared.inner).await;
 }
 /// Local-only stage. The caller must hold its cross-engine local-store lease
 /// from this call through durable adoption and commit/rollback. Keep the exact
