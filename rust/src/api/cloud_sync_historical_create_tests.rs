@@ -12,6 +12,7 @@ use crate::cloud_sync_native_fetch::{
     cloud_sync_stage_test_chat_parent,
 };
 use prost::Message as _;
+use rustpush::cloudkit_proto::CloudKitRecord as _;
 
 const CONTAINER: &str = "synthetic-container-user";
 
@@ -85,7 +86,7 @@ fn proof_fixture(
             }),
         }),
         r#type: Some(record::Type {
-            name: Some("ChatEncryptedV3".into()),
+            name: Some(rustpush::cloud_messages::CloudChat::record_type().into()),
         }),
         etag: Some("exact-parent-etag".into()),
         permission: Some(1),

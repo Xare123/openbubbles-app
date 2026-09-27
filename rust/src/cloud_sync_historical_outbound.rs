@@ -1,7 +1,7 @@
 //! Historical create-envelope codec, separate from live-send/receive proof.
-//! No upload entry point: native absence/parent/auth proof and atomic journal
-//! admission must be integrated before the existing single-use writer can use
-//! this envelope. HistoricalSent is not a positive IDS completion receipt.
+//! Native create/readback APIs bind this envelope to absence, parent and auth
+//! proof. Durable historical journal admission must still be integrated before
+//! the app can use the single-use writer. HistoricalSent is not an IDS receipt.
 
 use super::{CloudSyncOutboundFailure as Failure, NativeProtectedOutboundStage};
 use crate::cloud_sync_canonical_dto::{CloudCanonicalChatPayload, CloudCanonicalEntityKind};
