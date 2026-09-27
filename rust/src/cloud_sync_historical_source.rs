@@ -204,6 +204,24 @@ impl HistoricalArchiveSource {
     pub(crate) fn sent_timestamp(&self) -> u64 {
         self.0.sent_timestamp
     }
+    pub(crate) fn text(&self) -> &str {
+        &self.0.text
+    }
+    pub(crate) fn sender(&self) -> &str {
+        &self.0.sender
+    }
+    pub(crate) fn peer(&self) -> &str {
+        &self.0.peer
+    }
+    pub(crate) fn chat_guid(&self) -> &str {
+        &self.0.chat_guid
+    }
+    pub(crate) fn require_account_store(&self, account: &str, store: &str) -> Result<(), Failure> {
+        if self.0.account_fingerprint != account || self.0.protected_store_identity != store {
+            return Err(Failure::BindingMismatch);
+        }
+        Ok(())
+    }
     /// Lane-local ID digest in a namespace disjoint from live capture.
     pub(crate) fn guid_hash(&self) -> Result<String, Failure> {
         digest(&serde_json::json!([

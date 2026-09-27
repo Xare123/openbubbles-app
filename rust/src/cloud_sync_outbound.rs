@@ -38,6 +38,8 @@ use wire::CloudSyncOutboundMessageV1;
 
 #[path = "cloud_sync_received_outbound.rs"]
 pub(crate) mod received;
+#[path = "cloud_sync_historical_outbound.rs"]
+pub(crate) mod historical;
 
 // Version 1 staged random UUID record names and is permanently ineligible for
 // replay. Version 2 binds the protected envelope to Apple's deterministic
