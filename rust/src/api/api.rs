@@ -465,6 +465,132 @@ pub async fn cloud_sync_capture_received_identity(
     cloud_sync_metadata_for_account(client, state.conf_dir.clone(), &account)
 }
 
+/// Metadata ownership for a qualified historical source. Unlike live-send and
+/// received-source bindings, this carries snapshot identity and no IDS evidence.
+/// It is local staging only, not remote absence, upload permission or completion.
+#[frb(type_64bit_int)]
+pub struct CloudSyncNativeHistoricalArchiveSourceBinding {
+    pub account_fingerprint: String,
+    pub protected_store_identity: String,
+    pub snapshot_sha256: String,
+    pub message_guid_hash: String,
+    pub source_sha256: String,
+    pub protected_reference: String,
+    pub lease_reference: String,
+    pub payload_sha256: String,
+    pub payload_length: u64,
+}
+
+impl std::fmt::Debug for CloudSyncNativeHistoricalArchiveSourceBinding {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("CloudSyncNativeHistoricalArchiveSourceBinding(redacted)")
+    }
+}
+
+#[frb(ignore)]
+fn cloud_sync_require_historical_auth(
+    expected: &CloudSyncNativeAuthMetadata,
+    actual: &CloudSyncNativeAuthMetadata,
+) -> anyhow::Result<()> {
+    cloud_sync_require_received_auth(expected, actual)
+        .map_err(|_| anyhow!("cloud_sync_historical_archive_identity_changed"))
+}
+
+/// Protect one independently qualified historical source in this configured
+/// account's actual local store. Uses cached composition identity, never GSA
+/// refresh, dependency warming, registration, IDS or a CloudKit request.
+///
+/// The caller must hold local-store lifecycle exclusion through native staging,
+/// durable journal adoption and exact lease commit. It also owns qualification
+/// of the immutable snapshot/account; canonical bytes and hashes alone are not
+/// ownership proof. Reopening for remote work still needs independent live auth.
+pub async fn cloud_sync_stage_historical_archive_source(
+    state: &SharedPushState,
+    expected_auth: CloudSyncNativeAuthMetadata,
+    snapshot_sha256: String,
+    expected_source_sha256: String,
+    source_bytes: Vec<u8>,
+) -> anyhow::Result<CloudSyncNativeHistoricalArchiveSourceBinding> {
+    let before = cloud_sync_capture_received_identity(state)
+        .await
+        .map_err(|_| anyhow!("cloud_sync_historical_archive_identity_unavailable"))?;
+    cloud_sync_require_historical_auth(&expected_auth, &before)?;
+    let binding = crate::cloud_sync_historical_source::HistoricalBinding {
+        snapshot_sha256: &snapshot_sha256,
+        account_fingerprint: &before.account_fingerprint,
+        protected_store_identity: &before.protected_store_identity,
+    };
+    let staged = crate::cloud_sync_historical_source_stage::stage_historical_archive_source(
+        PathBuf::from(&state.conf_dir), &binding, &expected_source_sha256, &source_bytes,
+    ).map_err(|_| anyhow!("cloud_sync_historical_archive_source_stage_failed"))?;
+    let after = cloud_sync_capture_received_identity(state)
+        .await
+        .map_err(|_| anyhow!("cloud_sync_historical_archive_identity_unavailable"));
+    let validation = after.and_then(|actual|
+        cloud_sync_require_historical_auth(&expected_auth, &actual));
+    if let Err(error) = validation {
+        // This fresh descriptor has not crossed the bridge or been adopted.
+        // Never apply this rollback path to a journal-owned source on restart.
+        let _ = crate::cloud_sync_native_fetch::cloud_sync_rollback_protected_page_lease(
+            PathBuf::from(&state.conf_dir), &staged.lease_reference);
+        return Err(error);
+    }
+    Ok(CloudSyncNativeHistoricalArchiveSourceBinding {
+        account_fingerprint: before.account_fingerprint,
+        protected_store_identity: before.protected_store_identity,
+        snapshot_sha256,
+        message_guid_hash: staged.message_guid_hash,
+        source_sha256: staged.source_sha256,
+        protected_reference: staged.protected_reference,
+        lease_reference: staged.lease_reference,
+        payload_sha256: staged.payload_sha256,
+        payload_length: staged.payload_length,
+    })
+}
+
+#[cfg(test)]
+mod cloud_sync_historical_capture_tests {
+    use super::*;
+
+    fn metadata() -> CloudSyncNativeAuthMetadata {
+        CloudSyncNativeAuthMetadata {
+            account_fingerprint: "A".repeat(43),
+            protected_store_identity: format!("obcs2.store.{}", "S".repeat(43)),
+            native_session_id: "N".repeat(43),
+        }
+    }
+
+    #[test]
+    fn historical_capture_rejects_each_changed_native_identity_member() {
+        let expected = metadata();
+        assert!(cloud_sync_require_historical_auth(&expected, &metadata()).is_ok());
+        for field in 0..3 {
+            let mut actual = metadata();
+            match field {
+                0 => actual.account_fingerprint = "B".repeat(43),
+                1 => actual.protected_store_identity = format!("obcs2.store.{}", "T".repeat(43)),
+                _ => actual.native_session_id = "M".repeat(43),
+            }
+            assert_eq!(cloud_sync_require_historical_auth(&expected, &actual).unwrap_err().to_string(),
+                "cloud_sync_historical_archive_identity_changed");
+        }
+    }
+
+    #[test]
+    fn historical_stage_diagnostics_never_include_source_metadata() {
+        let source = CloudSyncNativeHistoricalArchiveSourceBinding {
+            account_fingerprint: "A".repeat(43),
+            protected_store_identity: format!("obcs2.store.{}", "S".repeat(43)),
+            snapshot_sha256: "a".repeat(64),
+            message_guid_hash: "b".repeat(64), source_sha256: "c".repeat(64),
+            protected_reference: format!("obcs2.ref.{}", "R".repeat(43)),
+            lease_reference: format!("obcs2.lease.{}", "d".repeat(32)),
+            payload_sha256: "e".repeat(64), payload_length: 128,
+        };
+        assert_eq!(format!("{source:?}"), "CloudSyncNativeHistoricalArchiveSourceBinding(redacted)");
+    }
+}
+
 /// Protects an observed receive using one configured SharedPushState. Uses
 /// cached account validation and registered handles only: no dependency warm,
 /// keychain sync, IDS directory query, re-registration, send or CloudKit save.
