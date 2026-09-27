@@ -4809,6 +4809,29 @@ pub(crate) fn cloud_sync_stage_received_found_projection(
     }
 }
 
+#[cfg(test)]
+pub(crate) fn cloud_sync_stage_test_chat_parent(
+    directory: PathBuf,
+    account: String,
+    generation: u64,
+    record: &rustpush::cloudkit_proto::Record,
+) -> CloudNativeProtectedPage {
+    // Exercise real encrypted storage and envelope identity binding without
+    // pretending that a synthetic record was fetched or PCS-decrypted by Apple.
+    let wire = record.encode_to_vec();
+    let change = message_record_readback_change(record, &wire).unwrap();
+    let scope = CloudNativeProtectionScope::new(account, CloudNativeStream::Chats).unwrap();
+    let request = CloudNativeFetchRequest::new(CloudNativeStream::Chats, &scope, generation, None, 1, false);
+    let hasher = crate::cloud_sync_protector::semantic_identifier_hasher(
+        directory.to_string_lossy().into_owned()).unwrap();
+    let store = PlatformCloudNativeProtectedStore::new(directory);
+    match protect_native_page(&store, &hasher, &request,
+        CloudMessageRecordPage { changes: vec![change], next_token: None, status: 3 }) {
+        CloudNativeProtectedFetchOutcome::Page(page) => page,
+        _ => panic!("synthetic Chat parent must protect"),
+    }
+}
+
 /// Called only after the local ObjectBox journal transaction has adopted every
 /// reference in the page.
 pub(crate) fn cloud_sync_commit_protected_page(
