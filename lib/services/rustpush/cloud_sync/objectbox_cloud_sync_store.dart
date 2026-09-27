@@ -7,6 +7,7 @@ import 'package:crypto/crypto.dart';
 import 'cloud_operation_identity.dart';
 import 'cloud_shadow_journal_budget.dart';
 import 'cloud_sync_historical_archive_journal.dart';
+import 'cloud_sync_historical_protected_source_binding.dart';
 import 'cloud_sync_local_send_journal.dart';
 import 'cloud_sync_local_send_source_binding.dart';
 import 'cloud_sync_received_archive_source_binding.dart';
@@ -945,10 +946,56 @@ class ObjectBoxCloudSyncStore
     required int intentId,
     required CloudSyncReceivedArchiveSourceBinding source,
     required CloudSyncNativeAuthSnapshot currentAuth, required bool Function() stillCurrent,
+  }) => _journalExactDiscoveryFound(
+    scope: scope, change: change, generation: generation,
+    batchId: batchId, leaseReference: leaseReference, leaseFence: leaseFence,
+    journalBoundToStore: journal.isBoundToStore(_store), stillCurrent: stillCurrent,
+    linkSource: (duplicate, nowMs) {
+      if (duplicate) {
+        journal.linkDiscoveryDuplicate(transactionStore: _store, scope: scope,
+          intentId: intentId, source: source, currentAuth: currentAuth,
+          stillCurrent: stillCurrent, change: change, generation: generation,
+          observedAtMs: nowMs);
+      } else {
+        journal.markDiscoveryAdopted(transactionStore: _store, scope: scope,
+          intentId: intentId, source: source, currentAuth: currentAuth,
+          stillCurrent: stillCurrent, change: change, generation: generation,
+          observedAtMs: nowMs);
+      }
+    },
+  );
+
+  /// Reuses ordinary reader ingress without converting historical provenance
+  /// into a live-received intent. A found record is retained reader work, not
+  /// proof that its projection completed or that an absent record can be created.
+  bool journalHistoricalDiscoveredFound({
+    required CloudSyncScope scope, required CloudFetchedChange change,
+    required int generation, required String batchId, required String leaseReference,
+    required CloudCoordinatorLeaseFence leaseFence,
+    required CloudSyncHistoricalArchiveJournal journal,
+    required int intentId,
+    required CloudSyncHistoricalProtectedSourceBinding source,
+    required CloudSyncNativeAuthSnapshot currentAuth, required bool Function() stillCurrent,
+  }) => _journalExactDiscoveryFound(
+    scope: scope, change: change, generation: generation,
+    batchId: batchId, leaseReference: leaseReference, leaseFence: leaseFence,
+    journalBoundToStore: journal.isBoundToStore(_store), stillCurrent: stillCurrent,
+    linkSource: (_, nowMs) => journal.markDiscoveryAdopted(
+      transactionStore: _store, scope: scope, intentId: intentId, source: source,
+      currentAuth: currentAuth, stillCurrent: stillCurrent, change: change,
+      generation: generation, observedAtMs: nowMs),
+  );
+
+  bool _journalExactDiscoveryFound({
+    required CloudSyncScope scope, required CloudFetchedChange change,
+    required int generation, required String batchId, required String leaseReference,
+    required CloudCoordinatorLeaseFence leaseFence,
+    required bool journalBoundToStore, required bool Function() stillCurrent,
+    required void Function(bool duplicate, int observedAtMs) linkSource,
   }) => _store.runInTransaction(TxMode.write, () {
     final nowMs = _nowMs();
     if (!_isMessagesCloudSemanticScope(scope) || scope.zone != 'messageManateeZone' ||
-        !journal.isBoundToStore(_store) || !stillCurrent() ||
+        !journalBoundToStore || !stillCurrent() ||
         generation == 0 ||
         !_isNativeDigest(change.changeId) || !_isNativeDigest(change.recordIdHash) ||
         change.etagHash == null || !_isNativeDigest(change.etagHash!) ||
@@ -987,14 +1034,10 @@ class ObjectBoxCloudSyncStore
         throw _storageFailure('received_found_reader_newer_evidence');
       }
       // Existing reader owns its original references; roll back new lease.
-      // A valid fresh discovery source is atomically linked to the owned
-      // change with discovery ownership, without replacing the inbox row or
-      // adopting the new lease. An already-owned state-4 intent only
-      // revalidates. Anything unlinked throws instead of reporting duplicate.
-      journal.linkDiscoveryDuplicate(transactionStore: _store, scope: scope,
-        intentId: intentId, source: source, currentAuth: currentAuth,
-        stillCurrent: stillCurrent, change: change, generation: generation,
-        observedAtMs: nowMs);
+      // Atomically link the exact source without replacing the inbox row or
+      // adopting the new lease. Each provenance-specific journal validates its
+      // own marker; no historical source becomes a live-received intent.
+      linkSource(true, nowMs);
       return false;
     }
     final mapQuery = _recordMaps.query(CloudRecordMapEntity_.scopeKey.equals(_scopeKey(scope))
@@ -1024,9 +1067,7 @@ class ObjectBoxCloudSyncStore
     _adoptProtectedPageLeaseLocked(CloudFetchBatch(scope: scope, changes: [change], batchId: batchId,
       generation: generation, nextToken: null, hasMore: false,
       protectedPageLeaseReference: leaseReference), nowMs: nowMs);
-    journal.markDiscoveryAdopted(transactionStore: _store, scope: scope, intentId: intentId,
-      source: source, currentAuth: currentAuth, stillCurrent: stillCurrent,
-      change: change, generation: generation, observedAtMs: nowMs);
+    linkSource(false, nowMs);
     return true;
   });
 

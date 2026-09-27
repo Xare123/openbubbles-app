@@ -4,6 +4,8 @@ import 'package:bluebubbles/database/models.dart';
 import 'package:crypto/crypto.dart';
 
 import 'cloud_sync_historical_protected_source_binding.dart';
+import 'cloud_sync_manual_shadow_sampler.dart';
+import 'cloud_sync_models.dart';
 
 /// Validate a retained row using its own scope, not the current signed-in user.
 /// GC and interrupted lease recovery must retain old accounts and snapshots.
@@ -28,12 +30,50 @@ CloudSyncHistoricalProtectedSourceBinding validateCloudSyncHistoricalArchiveRow(
   if (row.id < 1 ||
       row.scopeKey != scopeKey ||
       row.intentKey != intentKey ||
-      (row.state != 0 && row.state != 1) ||
+      (row.state != 0 && row.state != 1 && row.state != 2) ||
       row.createdAtMs < 1 ||
       row.updatedAtMs < row.createdAtMs) {
     throw StateError('cloud_sync_historical_journal_record_invalid');
   }
+  _historicalReaderChangeId(row, source);
   return source;
+}
+
+// A reader handoff is bound to the complete historical source, not just its
+// GUID. It records no write permission, parent proof or live-receive receipt.
+String? _historicalReaderChangeId(
+  CloudSyncHistoricalArchiveIntentEntity row,
+  CloudSyncHistoricalProtectedSourceBinding source,
+) {
+  final encoded = row.readerObservationBinding;
+  if (row.state != 2) {
+    if (encoded != null) {
+      throw StateError('cloud_sync_historical_reader_binding_invalid');
+    }
+    return null;
+  }
+  final dynamic value;
+  try {
+    if (encoded == null || encoded.length > 1024) throw const FormatException();
+    value = jsonDecode(encoded);
+  } on FormatException {
+    throw StateError('cloud_sync_historical_reader_binding_invalid');
+  }
+  final token = RegExp(r'^[A-Za-z0-9_-]{43}$');
+  final digest = RegExp(r'^[a-f0-9]{64}$');
+  if (value is! List ||
+      value.length != 7 ||
+      value[0] != 1 ||
+      value[1] != sha256.convert(utf8.encode(source.encode())).toString() ||
+      value.sublist(2, 5).any((v) => v is! String || !token.hasMatch(v)) ||
+      value[5] is! String ||
+      !digest.hasMatch(value[5] as String) ||
+      value[6] is! int ||
+      (value[6] as int) < 1 ||
+      jsonEncode(value) != encoded) {
+    throw StateError('cloud_sync_historical_reader_binding_invalid');
+  }
+  return value[2] as String;
 }
 
 /// A local staging record. Even [sourceLeaseCommitted] does not mean uploaded.
@@ -42,11 +82,13 @@ final class CloudSyncHistoricalArchiveIntent {
     required this.id,
     required this.source,
     required this.sourceLeaseCommitted,
+    required this.readerChangeId,
   });
 
   final int id;
   final CloudSyncHistoricalProtectedSourceBinding source;
   final bool sourceLeaseCommitted;
+  final String? readerChangeId;
 
   @override
   String toString() => 'CloudSyncHistoricalArchiveIntent(redacted)';
@@ -84,6 +126,8 @@ final class CloudSyncHistoricalArchiveJournal {
   final String accountFingerprint;
   final String protectedStoreIdentity;
   final String snapshotSha256;
+
+  bool isBoundToStore(Store store) => identical(store, _store);
 
   static final _token = RegExp(r'^[A-Za-z0-9_-]{43}$');
   static final _storeIdentity = RegExp(r'^obcs2\.store\.[A-Za-z0-9_-]{43}$');
@@ -127,7 +171,8 @@ final class CloudSyncHistoricalArchiveJournal {
     return CloudSyncHistoricalArchiveIntent._(
       id: row.id,
       source: source,
-      sourceLeaseCommitted: row.state == 1,
+      sourceLeaseCommitted: row.state >= 1,
+      readerChangeId: _historicalReaderChangeId(row, source),
     );
   }
 
@@ -220,6 +265,74 @@ final class CloudSyncHistoricalArchiveJournal {
       box.put(row);
       return _decode(row);
     });
+  }
+
+  /// Joins the caller's inbox write transaction. Both the source and the reader
+  /// lease must be adopted atomically; this method never advances a server token
+  /// or changes a Message. An already-owned exact observation is idempotent.
+  void markDiscoveryAdopted({
+    required Store transactionStore,
+    required CloudSyncScope scope,
+    required int intentId,
+    required CloudSyncHistoricalProtectedSourceBinding source,
+    required CloudSyncNativeAuthSnapshot currentAuth,
+    required bool Function() stillCurrent,
+    required CloudFetchedChange change,
+    required int generation,
+    required int observedAtMs,
+  }) {
+    if (!isBoundToStore(transactionStore) ||
+        !stillCurrent() ||
+        intentId < 1 ||
+        scope.accountFingerprint != accountFingerprint ||
+        scope.container != 'com.apple.messages.cloud' ||
+        scope.database != 'private' ||
+        scope.zone != 'messageManateeZone' ||
+        scope.persistenceLane != CloudSyncPersistenceLane.semantic ||
+        currentAuth.accountFingerprint != accountFingerprint ||
+        currentAuth.protectedStoreIdentity != protectedStoreIdentity ||
+        generation < 1 ||
+        observedAtMs < 1 ||
+        change.type != CloudChangeType.save ||
+        change.isTombstone ||
+        change.preflightFailure != null) {
+      throw StateError('cloud_sync_historical_reader_admission_changed');
+    }
+    _requireScope(source);
+    final box = _store.box<CloudSyncHistoricalArchiveIntentEntity>();
+    final row = box.get(intentId);
+    if (row == null) {
+      throw StateError('cloud_sync_historical_journal_record_missing');
+    }
+    final retained = _decode(row);
+    if (!retained.sourceLeaseCommitted ||
+        retained.source.encode() != source.encode()) {
+      throw StateError('cloud_sync_historical_reader_source_changed');
+    }
+    final encoded = jsonEncode(<Object?>[
+      1,
+      sha256.convert(utf8.encode(source.encode())).toString(),
+      change.changeId,
+      change.recordIdHash,
+      change.etagHash,
+      change.payloadSha256,
+      generation,
+    ]);
+    if (row.readerObservationBinding != null) {
+      if (row.readerObservationBinding != encoded) {
+        throw StateError('cloud_sync_historical_reader_admission_changed');
+      }
+      return;
+    }
+    row
+      ..state = 2
+      ..readerObservationBinding = encoded;
+    _historicalReaderChangeId(row, source);
+    if (!stillCurrent()) {
+      throw StateError('cloud_sync_historical_reader_admission_changed');
+    }
+    if (observedAtMs > row.updatedAtMs) row.updatedAtMs = observedAtMs;
+    box.put(row);
   }
 
   /// Bounded recovery of adopted sources whose native commit may have been

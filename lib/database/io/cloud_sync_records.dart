@@ -1345,10 +1345,14 @@ class CloudSyncHistoricalArchiveIntentEntity {
 
   String protectedSourceBinding;
 
-  /// Stable codes: 0 source adopted, 1 exact source lease committed.
-  /// Neither state establishes remote absence, upload authority or completion.
+  /// Stable codes: 0 source adopted, 1 exact source lease committed,
+  /// 2 an exact found record belongs to the ordinary reader inbox.
+  /// None establishes remote absence, upload authority or completed projection.
   @Index()
   int state;
+
+  /// Source-bound reader linkage, with hashes only. Absent before state 2.
+  String? readerObservationBinding;
 
   int createdAtMs;
   int updatedAtMs;
@@ -1359,6 +1363,7 @@ class CloudSyncHistoricalArchiveIntentEntity {
     required this.scopeKey,
     required this.protectedSourceBinding,
     this.state = 0,
+    this.readerObservationBinding,
     required this.createdAtMs,
     required this.updatedAtMs,
   });

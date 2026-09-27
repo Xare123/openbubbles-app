@@ -2982,7 +2982,7 @@
     },
     {
       "id": "37:1644657105908350051",
-      "lastPropertyId": "7:2021597163113578838",
+      "lastPropertyId": "8:7844681394164518328",
       "name": "CloudSyncHistoricalArchiveIntentEntity",
       "properties": [
         {
@@ -3026,6 +3026,11 @@
           "id": "7:2021597163113578838",
           "name": "updatedAtMs",
           "type": 6
+        },
+        {
+          "id": "8:7844681394164518328",
+          "name": "readerObservationBinding",
+          "type": 9
         }
       ],
       "relations": []
