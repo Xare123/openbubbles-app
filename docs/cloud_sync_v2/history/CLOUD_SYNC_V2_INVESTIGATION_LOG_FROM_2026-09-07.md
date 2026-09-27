@@ -7712,3 +7712,55 @@ Historical tests do not establish current-device behavior.
 - ADBdevices returned no devices. Build preparation may proceed without Pixel;
   live verification waits for connection. No install, reset, sign-in, queue change,
   account access or real upload occurred. LatestC: free24782426112bytes.
+
+### September 26: combined recovery and attachment Canary qualification
+
+- Published frozen source9011c96aab1603a367f85dda3a8240a648722da5, which adds the
+  checkpoint documentation to code73cab21f4370235092a97c7c4d9014690b52e102 and
+  qualified rustpushfa5b0e8bf05c6bb8c3c78a7e6a328ba886bdadcb. Source and workflow
+  refs, no active/queued prior run, and empty VM/runner inventories were checked.
+- Dispatched one full Canary run36278087715 on reviewed workflow
+  1ff3a0cb837c52beaeef0a71059ca7e4888051e9, n2d-standard-16 Spot/us-west1-b/primary,
+  outbound_writer=true, automatic_uploads=false. This integrates the native fix
+  and explicit Profile recovery into one candidate. No credentials are sent to
+  the runner; existing GitHub-hosted signing remains unchanged.
+- Create108504589403 passed. Build108504856517 is running; gh watch session37691
+  remains active. Resume that exact handle/run after compaction. Full-suite,
+  bridge, APK, signing and cleanup results are pending, not implied by native CI.
+- No active child agent or live-device reservation. ADB remains disconnected.
+  The user's narrow retained-upload approval is recorded above; revalidate the
+  exact operation against preserved private evidence before using it. No new
+  iMessage or automatic-upload enablement is authorized by that approval.
+
+### September 26: Pixel operation revalidated; stale composition assertion fixed
+
+- User reconnected USB. A transient USB disappearance interrupted the first
+  capture before any database bytes were copied; its49-byte unqualified marker
+  is retained at profile-retry-36278087715-preinstall. The next qualified capture
+  is profile-retry-36278087715-preinstall2/data.mdb,135749632bytes,
+  SHA2561bb3bed7632def0724741aedecc3d919a5795d17819dcfb16760ed1468a6cc4e.
+  Pre-device, post-device and local hashes match. Canary reports signed-in/ready,
+  legacy off, no active sync/coordinator/logout, pending outbox blocks sync.
+- Added explicit offline comparison tooling and ran it against the preserved
+  approved capture and fresh capture. All outbox fields, selected operation,
+  adopted journal and checkpoint identity/generation match exactly; revision9,
+  attempt7, one pending row and eight settled audits. Counts remain703 chats and
+  2420 attachments; messages11925 to11928. This does not authorize or submit any
+  new message. Both evidence files are hash-verified after reading disposable
+  copies. No Windows authenticated app was running; no relay use was started.
+- Combined run36278087715 failed the Dart source-structure test "confirmed replay
+  is an exact no-save protected readback" at line968. It searched for the old
+  early _recoverPending call and passed index-1 into String.indexOf. The actual
+  behavioral recovery tests passed. Corrected the contract to require _hasPending
+  discovery without finalization, then exact snapshot validation before deferred
+  _recoverPending in finalizeConfirmedReplayProof. All29 composition tests pass
+  locally. No production code was changed to satisfy this assertion.
+- Downloaded only small suite/outcome artifacts to artifacts/canary-36278087715-evidence.
+  Exact results: Dart4086 passed/1 failed/5 skipped; app Rust785, rustpush362,
+  protector40 passed. Selected-suite gate blocked APK/JVM/signing. Delete job
+  108507144414 succeeded; fresh GCE inventory[] and GitHubtotal_count0. No APK exists.
+  Old watch37691 ended on TLS polling timeout; replacement77573 also terminated.
+  Neither observation error meant CI was restarted; direct run state was followed.
+- No child agent or live write remains active. Next: publish the test-corrected
+  candidate, repeat the required full integration/build on that new source once,
+  then verify/install and exercise the explicitly authorized retained upload.

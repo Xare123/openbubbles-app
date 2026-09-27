@@ -46,6 +46,19 @@ Corrected native qualification `36277733822` passed362 tests against parent
 inventories are verified. The integrated application candidate must still pass
 its appropriate full qualification; native-only success is not an APK result.
 
+The reviewed integration candidate uses `validation_mode=full`, `flavor=canary`,
+`outbound_writer=true`, and `automatic_uploads=false` for its explicit one-operation
+Profile recovery test. All other established runner inputs are unchanged. Run
+`36278087715` for frozen source `9011c96aab1603a367f85dda3a8240a648722da5` failed
+one stale source-structure assertion after the other4086 Dart and native suites
+passed. No APK was built. Cleanup and empty VM/runner inventories were verified.
+The corrected composition contract passes all29 tests locally; a new immutable
+test-corrected source requires its one full build, not a retry of unchanged source.
+Full mode includes APK packaging and the existing GitHub-hosted signing job.
+Manual-writer compilation is not permission for arbitrary live uploads, and
+automatic uploads must remain off. Verify actual steps and runtime flags before
+using the installed candidate; source-only results do not prove live behavior.
+
 ## Tools and permissions
 
 Use the existing authenticated GitHub CLI. Its verified Windows executable is

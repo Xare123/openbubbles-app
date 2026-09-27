@@ -59,9 +59,11 @@ User transferred implementation and integration to this task
 with no active process, CI or live-profile reservation. Preserve its dirty work;
 it may resume only a newly assigned bounded task. See AGENTS.md for the contract.
 
-**Current code candidate:** `73cab21f4370235092a97c7c4d9014690b52e102`, with
-rustpush `fa5b0e8bf05c6bb8c3c78a7e6a328ba886bdadcb`. Source review and targeted
-tests pass; combined qualification, APK and current Pixel proof remain.
+**Last tested build source:** `9011c96aab1603a367f85dda3a8240a648722da5`, containing
+code candidate `73cab21f4370235092a97c7c4d9014690b52e102` and rustpush
+`fa5b0e8bf05c6bb8c3c78a7e6a328ba886bdadcb`. Source review and targeted tests pass;
+combined qualification stopped at one stale composition-test assertion. That
+test is corrected and locally green; a corrected full build and Pixel proof remain.
 
 - **Recovery TEST-PROVEN:** the actual production adapter recovers a genuinely
   journal-adopted pending text at revision9/attempt7 beside eight settled audits,
@@ -82,22 +84,43 @@ tests pass; combined qualification, APK and current Pixel proof remain.
   exact-length and whole-stream signatures, corruption/truncation/order, repeated
   chunks, resource caps and stale descriptor rejection. No APK or live photos
   were exercised. The preceding E0658 compile failure is fixed, not bypassed.
-  Cleanup succeeded; fresh GCE/GitHub inventories contain no VM or runner.
+  Cleanup succeeded; GCE/GitHub inventories contained no VM or runner at that
+  native-only run's closeout, before the combined run below was dispatched.
 - **Ownership/preservation:** Muse is stopped. Avicenna's work was reviewed and
   integrated before supported close; no session/worktree deletion. Generated
   registrant churn and the rejected untracked test draft remain untouched and
   excluded from the candidate. Last C: free24782426112bytes. No live reservation.
-- **Next:** publish/freeze one combined candidate and run existing full Canary
-  qualification with outbound_writer=true, automatic_uploads=false. The installed
-  writer-disabled APK is still `36265573790`; it cannot exercise the retry button.
-  ADB currently lists no connected Pixel. No need to re-run the finished native
-  lane independently of the mandatory combined qualification.
+- **Completed combined run:** `36278087715`, workflow
+  `1ff3a0cb837c52beaeef0a71059ca7e4888051e9`, exact source above, full Canary,
+  n2d-standard-16 Spot/us-west1-b/primary, outbound_writer=true and
+  automatic_uploads=false. Dart4086 passed/1 failed/5 skipped; app Rust785,
+  rustpush362, protector40 passed. The source-structure test still expected early
+  recovery during proof discovery, which the reviewed fix intentionally removed.
+  Updated it to require read-only discovery and exact proof checking before late
+  finalization; all29 composition tests now pass locally. No production change
+  was needed for this CI failure. No APK/JVM/signing ran. Delete108507144414 passed,
+  and fresh GCE/GitHub inventories are empty. Watches37691/77573 are terminal.
+- **Pixel baseline ready:** USB reconnected. Canary is signed in, legacy off,
+  no active read/coordinator/logout; USB stay-awake remains2. A stable private
+  capture under `device-evidence/profile-retry-36278087715-preinstall2/` has
+  703 chats/11928 messages/2420 attachments. Offline comparison against the approved
+  baseline proves the exact revision9/attempt7 pending operation, adopted intent,
+  checkpoint binding and all eight audit rows unchanged. No network calls or real
+  submission occurred. New comparison tooling preserves both evidence captures.
+- **Next:** publish the test-only correction and run one corrected full Canary
+  build with the same manual-writer/automatic-off flags. Installed build remains
+  `36265573790`. Do not install anything from the failed run or repeat the finished
+  standalone native lane.
 - **Narrow live authorization:** the user approved archiving the one retained
   already-sent message to their own iCloud history. Revalidate the exact durable
   operation before retry. No new IDS delivery, another queued recipient,
   retargeting, deletion or automatic uploads are covered by this approval.
 
-### Current checkpoint: previous-upload recovery (September 26)
+### Installed-build evidence and earlier investigation (September 26)
+
+The chronology below describes the installed older build and the investigation
+that produced the current candidate above. Earlier agent assignments, pending
+approvals and source/build status here are historical, not active instructions.
 
 - **LIVE-PROVEN receipt lookup bootstrap; installed pending recovery still blocked:**
   source `dfaba00b7739a3a7a57a7ee6850690cb084b31b3` passed full Canary run

@@ -961,17 +961,36 @@ void main() {
     final replaySessionStart = adapter.indexOf(
       'final class _ProductionConfirmedReplayCanarySession',
     );
-    final localRecoveryStart = adapter.indexOf(
-      'if (await _recoverPending(operation))',
+    expect(replaySessionStart, greaterThanOrEqualTo(0));
+    // Discovery must not finalize leases before the controller's postflight.
+    // Actual restart recovery runs only while finalizing the pinned proof.
+    final localDiscoveryStart = adapter.indexOf(
+      'if (await _hasPending(operation))',
       replaySessionStart,
     );
+    expect(localDiscoveryStart, greaterThan(replaySessionStart));
     final remoteVerificationStart = adapter.indexOf(
       'return _verify(operation);',
-      localRecoveryStart,
+      localDiscoveryStart,
     );
-    expect(replaySessionStart, greaterThanOrEqualTo(0));
-    expect(localRecoveryStart, greaterThan(replaySessionStart));
-    expect(remoteVerificationStart, greaterThan(localRecoveryStart));
+    expect(remoteVerificationStart, greaterThan(localDiscoveryStart));
+    final replayFinalizeStart = adapter.indexOf(
+      'Future<void> finalizeConfirmedReplayProof(',
+      remoteVerificationStart,
+    );
+    expect(replayFinalizeStart, greaterThan(remoteVerificationStart));
+    expect(adapter.substring(replaySessionStart, replayFinalizeStart),
+        isNot(contains('_recoverPending(operation)')));
+    final recoverySnapshotCheck = adapter.indexOf(
+      'proof.operation.sameDurableSnapshotAs(operation)',
+      replayFinalizeStart,
+    );
+    expect(recoverySnapshotCheck, greaterThan(replayFinalizeStart));
+    final localRecoveryStart = adapter.indexOf(
+      'if (!await _recoverPending(operation))',
+      recoverySnapshotCheck,
+    );
+    expect(localRecoveryStart, greaterThan(recoverySnapshotCheck));
     final manualAdapterStart = adapter.indexOf(
       'final class CloudSyncProductionOutboundCanaryAdapter',
     );
