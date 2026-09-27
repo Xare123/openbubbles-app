@@ -350,6 +350,44 @@ final class CloudSyncReceivedArchiveJournal {
       change: change, generation: generation, observedAtMs: observedAtMs);
   }
 
+  /// Revalidates this attempt's exact reader ownership after adoption. The
+  /// pre-admission state1/2 reader cannot be used after a successful state4
+  /// transition. This read grants no new admission or write authority.
+  void validateDiscoveryRetained({
+    required int intentId,
+    required CloudSyncReceivedArchiveSourceBinding source,
+    required CloudSyncNativeAuthSnapshot currentAuth,
+    required String changeId,
+    required String recordIdHash,
+    required int generation,
+  }) => _store.runInTransaction(TxMode.read, () {
+    _verifyOwnership();
+    final intent = _readBoundIntent(intentId);
+    final retainedSource = CloudSyncReceivedArchiveSourceBinding.decode(
+      intent.protectedSourceBinding,
+    );
+    retainedSource.requireOrigin(
+      accountFingerprint: currentAuth.accountFingerprint,
+      protectedStoreIdentity: currentAuth.protectedStoreIdentity,
+      messageGuidHash: source.messageGuidHash,
+      sourceSha256: source.sourceSha256,
+    );
+    if (intent.state != 4 ||
+        intent.admittedOperationId != null ||
+        intent.readerChangeId != changeId ||
+        retainedSource.encode() != source.encode() ||
+        !_isDiscoveryRetained(intent, source)) {
+      throw StateError('cloud_sync_received_archive_admission_changed');
+    }
+    final observation = CloudSyncReceivedDiscoveryObservation.decode(
+      intent.recordObservationBinding!,
+    );
+    if (observation.serverRecordIdHash != recordIdHash ||
+        observation.generation != generation) {
+      throw StateError('cloud_sync_received_archive_admission_changed');
+    }
+  });
+
   List<CloudSyncReceivedArchiveAdmissionSource> readCreateCandidates({
     required CloudSyncNativeAuthSnapshot currentAuth, int limit = 5,
   }) => _store.runInTransaction(TxMode.read, () {

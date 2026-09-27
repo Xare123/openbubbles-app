@@ -2,13 +2,20 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:bluebubbles/database/models.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_protected_page_lease_lifecycle.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_historical_archive_journal.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_historical_discovery_adapter.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_historical_protected_source_binding.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_manual_shadow_sampler.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_manual_semantic_pull_sampler.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_models.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_protector.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_store.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_transport.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_write_chat_identity_session.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_operation_interlock.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/objectbox_cloud_sync_store.dart';
+import 'package:bluebubbles/src/rust/api/api.dart' as api;
 import 'package:flutter_test/flutter_test.dart';
 
 final _now = DateTime.utc(2026, 9, 27, 20);
@@ -52,6 +59,32 @@ CloudFetchedChange _change({String raw = 'Y', String identity = 'I'}) =>
       payloadSha256: 'd' * 64,
       serverModifiedAt: _now,
     );
+
+api.CloudSyncReceivedFoundProjection _stage(
+  int generation, {
+  String? guidHash,
+  String lease = '1',
+  String etag = 'E',
+}) => api.CloudSyncReceivedFoundProjection(
+  messageGuidHash: guidHash ?? _source().messageGuidHash,
+  sourceSha256: _source().sourceSha256,
+  generation: BigInt.from(generation),
+  batchId: 'B' * 43,
+  leaseReference: 'obcs2.lease.${lease * 32}',
+  change: api.CloudSyncProtectedChange(
+    changeId: 'D' * 43,
+    recordIdHash: 'R' * 43,
+    etagHash: etag * 43,
+    kind: api.CloudSyncProtectedChangeKind.save,
+    payloadSha256: 'd' * 64,
+    payloadLength: BigInt.from(128),
+    protectedRecordIdentityReference: 'obcs2.ref.${'I' * 43}',
+    protectedRawEnvelopeReference: 'obcs2.ref.${'Y' * 43}',
+    serverModifiedAtMillis: null,
+    preflightCode: null,
+    isTombstone: false,
+  ),
+);
 
 void main() {
   late Directory directory;
@@ -187,6 +220,222 @@ void main() {
     if (!store.isClosed()) store.close();
     if (directory.existsSync()) await directory.delete(recursive: true);
   });
+
+  CloudSyncHistoricalArchiveIntent selected() => journal.read(
+    messageGuidHash: _source().messageGuidHash,
+    sourceSha256: _source().sourceSha256,
+  )!;
+  Future<bool> runStage(
+    _HistoricalLeaseTransport transport, {
+    api.CloudSyncReceivedFoundProjection? result,
+    Future<void> Function()? validate,
+  }) => adoptCloudSyncHistoricalDiscoveryStage(
+    result: result ?? _stage(generation),
+    intent: selected(),
+    journal: journal,
+    auth: _auth(),
+    generation: generation,
+    scope: _scope,
+    coordinator: fence,
+    durable: durable,
+    validate: validate ?? () async {},
+    stillCurrent: () => true,
+    lifecycle: CloudProtectedPageLeaseLifecycle(
+      store: durable,
+      transport: transport,
+    ),
+    transport: transport,
+  );
+
+  test(
+    'historical discovery session validates its own one-way adoption',
+    () async {
+      final intent = selected();
+      final result = _stage(generation);
+      api.CloudSyncReceivedFoundProjection? adopted;
+      var validationsAfterAdoption = 0;
+      Future<void> validate() async {
+        validateCloudSyncHistoricalDiscoverySelection(
+          journal: journal,
+          intent: intent,
+          auth: _auth(),
+          generation: generation,
+          adopted: adopted,
+        );
+        if (adopted != null) validationsAfterAdoption++;
+      }
+
+      final transport = _HistoricalLeaseTransport();
+      final pause = _HistoricalPause();
+      final exclusion = CloudKitOperationInterlock(
+        privateStorageDirectory: directory.path,
+        fenceStore: durable,
+      );
+      final session = CloudSyncWriteChatIdentitySession(
+        exclusion: exclusion,
+        nativePause: pause,
+        validate: validate,
+        ensureReadAuthentication: () async {},
+        warmReadAuthentication: (_) async {},
+      );
+      expect(
+        await exclusion.runExclusive(
+          kind: CloudKitOperationKind.v2ReadWrite,
+          action: () => session.run((_) async {
+            final retained = await runStage(
+              transport,
+              result: result,
+              validate: validate,
+            );
+            adopted = result;
+            return retained;
+          }),
+        ),
+        isTrue,
+      );
+      expect(validationsAfterAdoption, 2);
+      expect(pause.active, isFalse);
+      expect(transport.committed, [result.leaseReference]);
+      expect(transport.rolledBack, isEmpty);
+      expect(row().state, 2);
+      expect(store.box<CloudSyncReceivedArchiveIntentEntity>().count(), 0);
+      expect(store.box<CloudSyncLocalSendIntentEntity>().count(), 0);
+      expect(store.box<CloudOutboxOperationEntity>().count(), 0);
+    },
+  );
+  test('disabled historical lookup never reads a client or starts native work', () async {
+    var clientsRead = 0;
+    await expectLater(retainCloudSyncDiscoveredHistoricalFound(
+      intent: selected(), privateStorageDirectory: directory.path,
+      readActiveClient: () { clientsRead++; return null; },
+      stillCurrent: () => true,
+    ), throwsA(isA<StateError>().having((e) => e.message, 'code',
+      'cloud_sync_historical_discovery_disabled')));
+    expect(clientsRead, 0);
+    expect(row().state, 1);
+    expect(store.box<CloudInboxChangeEntity>().count(), 0);
+  });
+  test(
+    'historical pipeline rejects foreign result and rolls back only its lease',
+    () async {
+      final transport = _HistoricalLeaseTransport();
+      final before = snapshot();
+      await expectLater(
+        runStage(transport, result: _stage(generation, guidHash: 'f' * 64)),
+        throwsStateError,
+      );
+      expect(snapshot(), before);
+      expect(transport.rolledBack, ['obcs2.lease.${'1' * 32}']);
+      expect(transport.committed, isEmpty);
+    },
+  );
+  test(
+    'historical pipeline revalidates before adoption and rolls back on drift',
+    () async {
+      final transport = _HistoricalLeaseTransport();
+      final before = snapshot();
+      await expectLater(
+        runStage(
+          transport,
+          validate: () async => throw StateError('synthetic identity changed'),
+        ),
+        throwsStateError,
+      );
+      expect(snapshot(), before);
+      expect(transport.rolledBack, ['obcs2.lease.${'1' * 32}']);
+    },
+  );
+  test(
+    'historical pipeline duplicate does not commit or replace reader references',
+    () async {
+      final transport = _HistoricalLeaseTransport();
+      expect(await runStage(transport), isTrue);
+      final before = snapshot();
+      expect(
+        await runStage(transport, result: _stage(generation, lease: '2')),
+        isTrue,
+      );
+      expect(snapshot(), before);
+      expect(transport.committed, ['obcs2.lease.${'1' * 32}']);
+      expect(transport.rolledBack, ['obcs2.lease.${'2' * 32}']);
+    },
+  );
+  test(
+    'lost historical reader commit recovers after reopen without duplicate adoption',
+    () async {
+      final transport = _HistoricalLeaseTransport()..failCommit = true;
+      await expectLater(runStage(transport), throwsStateError);
+      expect(row().state, 2);
+      expect(transport.rolledBack, isEmpty);
+      final before = snapshot();
+      store.close();
+      store = await openStore(directory: directory.path);
+      journal = bindJournal();
+      durable = bindStore();
+      transport.failCommit = false;
+      await CloudProtectedPageLeaseLifecycle(
+        store: durable,
+        transport: transport,
+      ).ensureRecoveredBeforeFetch();
+      expect(transport.recovered.single, contains('obcs2.lease.${'1' * 32}'));
+      expect(
+        await durable.readAdoptedProtectedPageLeaseReferences(maximumCount: 50),
+        isEmpty,
+      );
+      expect(snapshot(), before);
+      final retained = selected();
+      validateCloudSyncHistoricalDiscoverySelection(
+        journal: journal,
+        intent: retained,
+        auth: _auth(),
+        generation: generation,
+      );
+      expect(retained.readerChangeId, 'D' * 43);
+      expect(transport.committed, ['obcs2.lease.${'1' * 32}']);
+      expect(transport.rolledBack, isEmpty);
+    },
+  );
+  test(
+    'historical post-adoption validation rejects different version or generation',
+    () async {
+      final intent = selected();
+      expect(await runStage(_HistoricalLeaseTransport()), isTrue);
+      for (final evidence in [
+        (_stage(generation, etag: 'Q'), generation),
+        (_stage(generation), generation + 1),
+      ]) {
+        expect(
+          () => validateCloudSyncHistoricalDiscoverySelection(
+            journal: journal,
+            intent: intent,
+            auth: _auth(),
+            generation: evidence.$2,
+            adopted: evidence.$1,
+          ),
+          throwsStateError,
+        );
+      }
+      expect(row().state, 2);
+    },
+  );
+  test(
+    'historical post-adoption validation rejects changed store identity',
+    () async {
+      final intent = selected();
+      expect(await runStage(_HistoricalLeaseTransport()), isTrue);
+      expect(
+        () => validateCloudSyncHistoricalDiscoverySelection(
+          journal: journal,
+          intent: intent,
+          auth: _auth(storeIdentity: 'obcs2.store.${'Q' * 43}'),
+          generation: generation,
+          adopted: _stage(generation),
+        ),
+        throwsStateError,
+      );
+      expect(row().state, 2);
+    },
+  );
 
   test(
     'historical Found enters ordinary reader and survives reopen without moving cursor',
@@ -450,6 +699,69 @@ void main() {
       );
     },
   );
+}
+
+class _HistoricalPause implements CloudSyncNativeWriterPause {
+  bool active = false;
+  @override
+  Future<Object> pause() async {
+    active = true;
+    return BigInt.one;
+  }
+
+  @override
+  Future<void> resume(Object token) async {
+    active = false;
+  }
+}
+
+class _HistoricalLeaseTransport
+    implements
+        CloudProtectedPageLeaseTransport,
+        CloudProtectedLocalLifecycleTransport {
+  bool failCommit = false;
+  final committed = <String>[];
+  final rolledBack = <String>[];
+  final recovered = <Set<String>>[];
+  @override
+  String get protectedPageLeaseRecoveryIdentity => _storeIdentity;
+  @override
+  Future<T> runProtectedStoreExclusive<T>(Future<T> Function() action) =>
+      action();
+  @override
+  Future<T> runLocalProtectedStoreExclusive<T>(Future<T> Function() action) =>
+      action();
+  @override
+  Future<void> commitProtectedPageLease(
+    String reference,
+    Set<String> live,
+  ) async {
+    committed.add(reference);
+    if (failCommit) throw StateError('synthetic lost commit response');
+  }
+
+  @override
+  Future<void> acknowledgeCommittedPageLease(String reference) async {}
+  @override
+  Future<void> rollbackProtectedPageLease(String reference) async {
+    rolledBack.add(reference);
+  }
+
+  @override
+  Future<CloudProtectedPageLeaseRecoveryResult> recoverProtectedPageLeases(
+    Set<String> adopted,
+    CloudProtectedReferenceSnapshot live,
+  ) async {
+    recovered.add(adopted);
+    return CloudProtectedPageLeaseRecoveryResult(
+      finalizedAdoptedLeaseReferences: adopted,
+      hasMore: false,
+    );
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) =>
+      throw StateError('unexpected native call');
 }
 
 class _TestProtector implements CloudSyncProtector {

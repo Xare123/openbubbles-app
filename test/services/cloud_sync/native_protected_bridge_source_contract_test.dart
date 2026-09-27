@@ -41,6 +41,7 @@ void main() {
     const receivedSource = 'lib/services/rustpush/cloud_sync/cloud_sync_received_inspection_adapter.dart';
     const receivedReader = 'lib/services/rustpush/cloud_sync/cloud_sync_received_reader_adapter.dart';
     const receivedDiscovery = 'lib/services/rustpush/cloud_sync/cloud_sync_received_discovery_retain_adapter.dart';
+    const historicalDiscovery = 'lib/services/rustpush/cloud_sync/cloud_sync_historical_discovery_adapter.dart';
 
     for (final entity in Directory('lib').listSync(recursive: true)) {
       if (entity is! File || !entity.path.endsWith('.dart')) continue;
@@ -62,9 +63,9 @@ void main() {
         .toList(growable: false);
     expect(
       normalized,
-      unorderedEquals([allowed, localSource, windowsSource, receivedSource, receivedReader, receivedDiscovery]),
+      unorderedEquals([allowed, localSource, windowsSource, receivedSource, receivedReader, receivedDiscovery, historicalDiscovery]),
       reason:
-          'only reviewed canary adapters, source staging, received inspection/reader handoff and source-bound discovery construct this transport',
+          'only reviewed gated compositions and purpose-bound discovery construct this transport',
     );
     final discovery = File(receivedDiscovery).readAsStringSync();
     for (final gate in [
@@ -74,13 +75,45 @@ void main() {
       'CloudKitWriterOwnership.v2MutationsEnabled',
       'runProtectedStoreExclusive',
       'runLocalProtectedStoreExclusive',
-      'rollbackProtectedPageLease',
+      'adoptCloudSyncExactDiscoveryStage',
+      'ensureRecoveredBeforeFetch',
+      'validateDiscoveryRetained',
       'quiesceNativeOperations',
       'cloudSyncDiscardReceivedDiscovery',
     ]) {
       expect(discovery, contains(gate), reason: 'source-bound discovery must keep $gate');
     }
-    expect(RegExp('NativeProtectedCloudSyncTransport\\\(').allMatches(discovery).length, 1);
+    expect(RegExp(r'NativeProtectedCloudSyncTransport\(').allMatches(discovery).length, 1);
+    final adoption = File('lib/services/rustpush/cloud_sync/cloud_sync_discovery_reader_adoption.dart').readAsStringSync();
+    for (final lifecycle in [
+      'await validate()', 'journalChange(change)', 'adopted = true',
+      'if (!adopted)', 'rollbackProtectedPageLease', 'commitJournaledPage',
+    ]) {
+      expect(adoption, contains(lifecycle));
+    }
+    final historical = File(historicalDiscovery).readAsStringSync();
+    for (final gate in [
+      'CloudSyncDevGate.manualSemanticPullEnabled',
+      'CloudSyncDevGate.manualOutboundCanaryEnabled',
+      'CloudKitWriterOwnership.v2MutationsEnabled',
+      'runProtectedStoreExclusive', 'runLocalProtectedStoreExclusive',
+      'ensureRecoveredBeforeFetch', 'adoptCloudSyncExactDiscoveryStage',
+      'journalHistoricalDiscoveredFound', 'validateDiscoveryRetained',
+      'cloudSyncDiscoverHistoricalRecordExact',
+      'cloudSyncStageDiscoveredHistoricalRecord',
+      'cloudSyncDiscardHistoricalDiscovery', 'quiesceNativeOperations',
+      'CloudSyncNativeHistoricalArchiveSourceBinding',
+      'source.snapshotSha256', 'CloudSyncWriteChatIdentitySession',
+    ]) {
+      expect(historical, contains(gate), reason: 'historical discovery must keep $gate');
+    }
+    for (final forbidden in [
+      'CloudSyncNativeReceivedArchiveSourceBinding', 'saveReceivedCapture',
+      'journalReceivedFound(', 'journalDiscoveredFound(',
+      'cloudSyncCreate', 'sendMessage(', 'admitCreate(',
+    ]) {
+      expect(historical, isNot(contains(forbidden)));
+    }
     for (final forbidden in [
       'requireCloudSyncRestoredDirectChat',
       'validateReaderAdmission',

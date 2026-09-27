@@ -5,14 +5,13 @@ import 'package:bluebubbles/src/rust/lib.dart' as native;
 import 'cloud_protected_page_lease_lifecycle.dart';
 import 'cloud_sync_dev_gate.dart';
 import 'cloud_sync_discovery_reader_adoption.dart';
+import 'cloud_sync_historical_archive_journal.dart';
 import 'cloud_sync_manual_shadow_sampler.dart';
-import 'cloud_sync_received_archive_source_binding.dart';
-import 'cloud_sync_transport.dart';
 import 'cloud_sync_models.dart';
 import 'cloud_sync_production_sampler_adapter.dart';
 import 'cloud_sync_protector.dart';
-import 'cloud_sync_received_archive_journal.dart';
 import 'cloud_sync_store.dart';
+import 'cloud_sync_transport.dart';
 import 'cloud_sync_write_chat_identity_session.dart';
 import 'cloudkit_operation_interlock.dart';
 import 'cloudkit_writer_authority.dart';
@@ -20,80 +19,113 @@ import 'cloudkit_writer_ownership.dart';
 import 'native_protected_cloud_sync_transport.dart';
 import 'objectbox_cloud_sync_store.dart';
 
-/// Production post-stage discovery pipeline over injected collaborators: no
-/// native calls here except lease rollback/commit through the passed
-/// lifecycle and transport. Verifies the staged result, builds the change,
-/// revalidates, adopts through the durable journal, and commits. The staged
-/// lease rolls back exactly when nothing was adopted; adopted work is never
-/// rolled back on a lost commit response. Returns true when this attempt
-/// adopted the lease or the change was already owned (duplicate).
-Future<bool> adoptCloudSyncDiscoveredStage({
-  required api.CloudSyncReceivedFoundProjection result,
-  required CloudSyncReceivedArchiveSourceBinding source,
-  required int checkpointGeneration,
-  required Future<void> Function() validate,
-  required ObjectBoxCloudSyncStore durable,
-  required CloudSyncReceivedArchiveJournal journal,
-  required CloudSyncScope scope,
-  required int intentId,
+/// The stable selection remains the same across its one-way reader adoption.
+/// Validate the exact adopted version afterwards, not the old unadopted state.
+void validateCloudSyncHistoricalDiscoverySelection({
+  required CloudSyncHistoricalArchiveJournal journal,
+  required CloudSyncHistoricalArchiveIntent intent,
   required CloudSyncNativeAuthSnapshot auth,
+  required int generation,
+  api.CloudSyncReceivedFoundProjection? adopted,
+}) {
+  final source = intent.source;
+  source.requireOrigin(
+    accountFingerprint: auth.accountFingerprint,
+    protectedStoreIdentity: auth.protectedStoreIdentity,
+    snapshotSha256: journal.snapshotSha256,
+    messageGuidHash: source.messageGuidHash,
+    sourceSha256: source.sourceSha256,
+  );
+  final current = journal.read(
+    messageGuidHash: source.messageGuidHash,
+    sourceSha256: source.sourceSha256,
+  );
+  if (current == null ||
+      current.id != intent.id ||
+      !current.sourceLeaseCommitted ||
+      current.source.encode() != source.encode() ||
+      current.readerChangeId !=
+          (adopted?.change.changeId ?? intent.readerChangeId)) {
+    throw StateError('cloud_sync_historical_reader_source_changed');
+  }
+  if (adopted != null) {
+    if (adopted.messageGuidHash != source.messageGuidHash ||
+        adopted.sourceSha256 != source.sourceSha256 ||
+        adopted.generation.toInt() != generation) {
+      throw StateError('cloud_sync_historical_reader_record_mismatch');
+    }
+    journal.validateDiscoveryRetained(
+      intentId: intent.id,
+      source: source,
+      currentAuth: auth,
+      changeId: adopted.change.changeId,
+      recordIdHash: adopted.change.recordIdHash,
+      etagHash: adopted.change.etagHash,
+      payloadSha256: adopted.change.payloadSha256,
+      generation: generation,
+    );
+  }
+}
+
+Future<bool> adoptCloudSyncHistoricalDiscoveryStage({
+  required api.CloudSyncReceivedFoundProjection result,
+  required CloudSyncHistoricalArchiveIntent intent,
+  required CloudSyncHistoricalArchiveJournal journal,
+  required CloudSyncNativeAuthSnapshot auth,
+  required int generation,
+  required CloudSyncScope scope,
   required CloudCoordinatorLeaseFence coordinator,
+  required ObjectBoxCloudSyncStore durable,
+  required Future<void> Function() validate,
   required bool Function() stillCurrent,
   required CloudProtectedPageLeaseLifecycle lifecycle,
   required CloudProtectedPageLeaseTransport transport,
 }) => adoptCloudSyncExactDiscoveryStage(
   result: result,
-  messageGuidHash: source.messageGuidHash,
-  sourceSha256: source.sourceSha256,
-  checkpointGeneration: checkpointGeneration,
+  messageGuidHash: intent.source.messageGuidHash,
+  sourceSha256: intent.source.sourceSha256,
+  checkpointGeneration: generation,
   scope: scope,
-  mismatchCode: 'cloud_sync_received_archive_record_mismatch',
+  mismatchCode: 'cloud_sync_historical_reader_record_mismatch',
   validate: validate,
-  journalChange: (change) => durable.journalDiscoveredFound(
-      scope: scope,
-      change: change,
-      generation: checkpointGeneration,
-      batchId: result.batchId,
-      leaseReference: result.leaseReference,
-      leaseFence: coordinator,
-      journal: journal,
-      intentId: intentId,
-      source: source,
-      currentAuth: auth,
-      stillCurrent: stillCurrent,
+  journalChange: (change) => durable.journalHistoricalDiscoveredFound(
+    scope: scope,
+    change: change,
+    generation: generation,
+    batchId: result.batchId,
+    leaseReference: result.leaseReference,
+    leaseFence: coordinator,
+    journal: journal,
+    intentId: intent.id,
+    source: intent.source,
+    currentAuth: auth,
+    stillCurrent: stillCurrent,
   ),
   lifecycle: lifecycle,
   transport: transport,
 );
 
-/// Parentless discovery find becomes owned reader work WITHOUT parent proof.
-/// This mirrors the parent-bound reader handoff through staging, change
-/// verification, durable inbox adoption, and lease commit, but never requires
-/// or invents a parent: the adopted pending row stays retained until the
-/// ordinary reader projects it under a proven parent. Absent records return
-/// false with nothing staged. Transport and verification failures throw for
-/// retry; unadopted leases roll back, while adopted work is never rolled back
-/// on a lost commit response. Every attempt uses a fresh lookup. Called from
-/// the gated received worker after the ordinary found pass, bounded to one
-/// candidate per pass.
-Future<bool> retainCloudSyncDiscoveredReceivedFound({
-  required int intentId,
+/// Exact historical-source lookup followed by ordinary durable reader ingress.
+/// True means the reader owns the record, not that it finished projection.
+/// False is fresh absence, never create authority or permission to overwrite.
+/// The source remains historical; no IDS receipt or receiving alias is invented.
+/// This explicit experimental entry point does not start an upload worker.
+Future<bool> retainCloudSyncDiscoveredHistoricalFound({
+  required CloudSyncHistoricalArchiveIntent intent,
   required String privateStorageDirectory,
   required Object? Function() readActiveClient,
   required bool Function() stillCurrent,
 }) async {
-  if (!CloudSyncDevGate.receivedArchiveCaptureEnabled ||
-      !CloudSyncDevGate.receivedArchiveInspectionEnabled ||
-      !CloudSyncDevGate.manualSemanticPullEnabled ||
-      !CloudSyncDevGate.receivedArchiveDiscoveryEnabled ||
+  if (!CloudSyncDevGate.manualSemanticPullEnabled ||
+      !CloudSyncDevGate.manualOutboundCanaryEnabled ||
       !CloudKitWriterOwnership.v2MutationsEnabled) {
-    throw StateError('cloud_sync_received_archive_inspection_disabled');
+    throw StateError('cloud_sync_historical_discovery_disabled');
   }
   final objectBox = Database.store;
   final client = readActiveClient();
   if (client is! native.ArcCloudMessagesClientDefaultAnisetteProvider ||
       !stillCurrent()) {
-    throw StateError('cloud_sync_received_archive_identity_unavailable');
+    throw StateError('cloud_sync_historical_identity_unavailable');
   }
   final durable = ObjectBoxCloudSyncStore(
     store: objectBox,
@@ -122,19 +154,20 @@ Future<bool> retainCloudSyncDiscoveredReceivedFound({
       if (auth == null ||
           !stillCurrent() ||
           !identical(client, readActiveClient())) {
-        throw StateError('cloud_sync_received_archive_identity_changed');
+        throw StateError('cloud_sync_historical_identity_changed');
       }
       final authority = ObjectBoxCloudKitWriterAuthority(store: objectBox);
       final owner = authority.read(
         CloudKitWriterScope(accountFingerprint: auth.accountFingerprint),
       );
       if (owner == null || owner.owner != CloudKitWriterOwner.v2) {
-        throw StateError('cloud_sync_received_archive_owner_changed');
+        throw StateError('cloud_sync_historical_owner_changed');
       }
-      final journal = CloudSyncReceivedArchiveJournal(
+      final journal = CloudSyncHistoricalArchiveJournal(
         store: objectBox,
-        authority: authority,
-        authoritySnapshot: owner,
+        accountFingerprint: auth.accountFingerprint,
+        protectedStoreIdentity: auth.protectedStoreIdentity,
+        snapshotSha256: intent.source.snapshotSha256,
       );
       final scope = CloudSyncScope(
         accountFingerprint: auth.accountFingerprint,
@@ -143,60 +176,34 @@ Future<bool> retainCloudSyncDiscoveredReceivedFound({
         zone: 'messageManateeZone',
         persistenceLane: CloudSyncPersistenceLane.semantic,
       );
-      final (intent, _, source) = journal.readMaterializedForInspection(
-        intentId: intentId,
-        currentAuth: auth,
-      );
-      // State 1 (captured, never inspected) is eligible here: discovery is the
-      // first inspection for sources with no prior parent-bound observation.
-      if ((intent.state != 1 && intent.state != 2) ||
-          intent.admittedOperationId != null ||
-          intent.readerChangeId != null) {
-        throw StateError('cloud_sync_received_archive_found_projection_not_ready');
-      }
       final checkpoint = await durable.readCheckpoint(scope);
       api.CloudSyncReceivedFoundProjection? adoptedResult;
       Future<void> validate() async {
         if (!stillCurrent() ||
             objectBox.isClosed() ||
             !identical(objectBox, Database.store)) {
-          throw StateError('cloud_sync_received_archive_identity_changed');
+          throw StateError('cloud_sync_historical_identity_changed');
         }
         final latest = await provider.capture();
         final currentCheckpoint = await durable.readCheckpoint(scope);
+        final currentOwner = authority.read(owner.scope);
         if (!stillCurrent() ||
-            !identical(client, readActiveClient()) ||
             objectBox.isClosed() ||
             !identical(objectBox, Database.store) ||
+            !identical(client, readActiveClient()) ||
             !auth.sameIdentity(latest) ||
-            authority.read(owner.scope)?.epoch != owner.epoch ||
-            authority.read(owner.scope)?.owner != CloudKitWriterOwner.v2 ||
+            currentOwner?.epoch != owner.epoch ||
+            currentOwner?.owner != CloudKitWriterOwner.v2 ||
             currentCheckpoint.generation != checkpoint.generation) {
-          throw StateError('cloud_sync_received_archive_identity_changed');
+          throw StateError('cloud_sync_historical_identity_changed');
         }
-        final adopted = adoptedResult;
-        if (adopted != null) {
-          journal.validateDiscoveryRetained(
-            intentId: intentId,
-            source: source,
-            currentAuth: latest!,
-            changeId: adopted.change.changeId,
-            recordIdHash: adopted.change.recordIdHash,
-            generation: checkpoint.generation,
-          );
-          return;
-        }
-        final (nowIntent, _, nowSource) =
-            journal.readMaterializedForInspection(
-          intentId: intentId,
-          currentAuth: latest!,
+        validateCloudSyncHistoricalDiscoverySelection(
+          journal: journal,
+          intent: intent,
+          auth: latest!,
+          generation: checkpoint.generation,
+          adopted: adoptedResult,
         );
-        if (nowIntent.state != intent.state ||
-            nowSource.encode() != source.encode() ||
-            nowIntent.admittedOperationId != null ||
-            nowIntent.readerChangeId != null) {
-          throw StateError('cloud_sync_received_archive_admission_changed');
-        }
       }
 
       await validate();
@@ -209,7 +216,6 @@ Future<bool> retainCloudSyncDiscoveredReceivedFound({
         store: durable,
         transport: transport,
       );
-      CloudCoordinatorLeaseFence? coordinator;
       final session = CloudSyncWriteChatIdentitySession(
         exclusion: interlock,
         nativePause: FrbCloudSyncNativeWriterPause(),
@@ -224,21 +230,25 @@ Future<bool> retainCloudSyncDiscoveredReceivedFound({
               pauseToken: token,
             ),
       );
+      CloudCoordinatorLeaseFence? coordinator;
       try {
         await lifecycle.ensureRecoveredBeforeFetch();
         await validate();
+        // Restart after durable adoption needs lease recovery, not a second
+        // native lookup or a duplicate reader row. The original marker remains.
+        if (intent.readerChangeId != null) return true;
         coordinator = await durable.tryAcquireCoordinatorLease(
           scope,
-          ownerId: 'received-discovery-${auth.nativeSessionId}',
+          ownerId: 'historical-discovery-${auth.nativeSessionId}',
           now: DateTime.now().toUtc(),
           leaseDuration: const Duration(minutes: 3),
         );
         if (coordinator == null) {
-          throw StateError('cloud_sync_received_archive_reader_busy');
+          throw StateError('cloud_sync_historical_reader_busy');
         }
         return await session.run((token) async {
-          final prepared =
-              await api.cloudSyncDiscoverReceivedRecordExact(
+          final source = intent.source;
+          final prepared = await api.cloudSyncDiscoverHistoricalRecordExact(
             cloudMessagesClient: client,
             nativeWriterPauseToken: token,
             storageDirectory: privateStorageDirectory,
@@ -247,9 +257,10 @@ Future<bool> retainCloudSyncDiscoveredReceivedFound({
               accountFingerprint: auth.accountFingerprint,
               protectedStoreIdentity: auth.protectedStoreIdentity,
             ),
-            receivedSource: api.CloudSyncNativeReceivedArchiveSourceBinding(
+            historicalSource: api.CloudSyncNativeHistoricalArchiveSourceBinding(
               accountFingerprint: source.accountFingerprint,
               protectedStoreIdentity: source.protectedStoreIdentity,
+              snapshotSha256: source.snapshotSha256,
               messageGuidHash: source.messageGuidHash,
               sourceSha256: source.sourceSha256,
               protectedReference: source.protectedReference,
@@ -263,39 +274,32 @@ Future<bool> retainCloudSyncDiscoveredReceivedFound({
             return await transport.runProtectedStoreExclusive(
               () => transport.runLocalProtectedStoreExclusive(() async {
                 await validate();
-                final result =
-                await api.cloudSyncStageDiscoveredReceivedRecord(
-              prepared: prepared,
-              nativeWriterPauseToken: token,
-            );
-            if (result == null) {
-              return false;
-            }
-            final retained = await adoptCloudSyncDiscoveredStage(
-              result: result,
-              source: source,
-              checkpointGeneration: checkpoint.generation,
-              validate: validate,
-              durable: durable,
-              journal: journal,
-              scope: scope,
-              intentId: intentId,
-              auth: auth,
-              coordinator: coordinator!,
-              stillCurrent: stillCurrent,
-              lifecycle: lifecycle,
-              transport: transport,
-            );
-            // Only this successful handoff may change the validation phase.
-            // Lost commit responses still throw and preserve the durable row.
-            adoptedResult = result;
-            return retained;
+                final result = await api
+                    .cloudSyncStageDiscoveredHistoricalRecord(
+                      prepared: prepared,
+                      nativeWriterPauseToken: token,
+                    );
+                if (result == null) return false;
+                final retained = await adoptCloudSyncHistoricalDiscoveryStage(
+                  result: result,
+                  intent: intent,
+                  journal: journal,
+                  auth: auth,
+                  generation: checkpoint.generation,
+                  scope: scope,
+                  coordinator: coordinator!,
+                  durable: durable,
+                  validate: validate,
+                  stillCurrent: stillCurrent,
+                  lifecycle: lifecycle,
+                  transport: transport,
+                );
+                adoptedResult = result;
+                return retained;
               }),
             );
           } finally {
-            await api.cloudSyncDiscardReceivedDiscovery(
-              prepared: prepared,
-            );
+            await api.cloudSyncDiscardHistoricalDiscovery(prepared: prepared);
           }
         });
       } finally {

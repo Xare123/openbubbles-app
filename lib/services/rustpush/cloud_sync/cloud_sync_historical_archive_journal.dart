@@ -335,6 +335,36 @@ final class CloudSyncHistoricalArchiveJournal {
     box.put(row);
   }
 
+  /// Read-only post-adoption check for the exact source and observed version.
+  /// This is not the pre-admission gate: reader-owned state2 is required here.
+  void validateDiscoveryRetained({
+    required int intentId,
+    required CloudSyncHistoricalProtectedSourceBinding source,
+    required CloudSyncNativeAuthSnapshot currentAuth,
+    required String changeId,
+    required String recordIdHash,
+    required String? etagHash,
+    required String? payloadSha256,
+    required int generation,
+  }) => _store.runInTransaction(TxMode.read, () {
+    _requireScope(source);
+    final row = _store.box<CloudSyncHistoricalArchiveIntentEntity>().get(intentId);
+    if (row == null) {
+      throw StateError('cloud_sync_historical_journal_record_missing');
+    }
+    final retained = _decode(row);
+    final expected = jsonEncode(<Object?>[
+      1, sha256.convert(utf8.encode(source.encode())).toString(),
+      changeId, recordIdHash, etagHash, payloadSha256, generation,
+    ]);
+    if (currentAuth.accountFingerprint != accountFingerprint ||
+        currentAuth.protectedStoreIdentity != protectedStoreIdentity ||
+        retained.source.encode() != source.encode() ||
+        row.state != 2 || row.readerObservationBinding != expected) {
+      throw StateError('cloud_sync_historical_reader_admission_changed');
+    }
+  });
+
   /// Bounded recovery of adopted sources whose native commit may have been
   /// interrupted. It does not infer that a prior native commit failed.
   List<CloudSyncHistoricalArchiveIntent> pendingSourceCommits({

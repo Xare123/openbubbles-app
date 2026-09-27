@@ -3,6 +3,7 @@ import 'dart:typed_data';
 import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_operation_identity.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_manual_shadow_sampler.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_manual_semantic_pull_sampler.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_models.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_outbound_chat_binding.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_persistent_keys.dart';
@@ -17,6 +18,8 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_store.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_transport.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_received_inspection.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_received_record_observation.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_write_chat_identity_session.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_operation_interlock.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_writer_authority.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_writer_ownership.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/objectbox_cloud_sync_store.dart';
@@ -3230,6 +3233,101 @@ void main() {
       expect(discoveryIntent().state, 4);
       expect(store.box<CloudInboxChangeEntity>().count(), 1);
     });
+    // Compose the actual session, database adoption and lease lifecycle. Only
+    // native pause/lease transport are synthetic; no Apple call is claimed.
+    Future<bool> runDiscoverySession({void Function()? afterResume}) async {
+      final gen = await currentGeneration();
+      final selected = discoveryIntent();
+      api.CloudSyncReceivedFoundProjection? adopted;
+      Future<void> validate() async {
+        final result = adopted;
+        if (result == null) {
+          final (intent, _, source) = journal.readMaterializedForInspection(
+            intentId: discoveryIntentId, currentAuth: auth,
+          );
+          expect(intent.state, selected.state);
+          expect(source.encode(), discoverySource.encode());
+        } else {
+          journal.validateDiscoveryRetained(
+            intentId: discoveryIntentId, source: discoverySource,
+            currentAuth: auth, changeId: result.change.changeId,
+            recordIdHash: result.change.recordIdHash, generation: gen,
+          );
+        }
+      }
+      final exclusion = CloudKitOperationInterlock(
+        privateStorageDirectory: directory.path, fenceStore: durable,
+      );
+      final pause = _DiscoveryPause(afterResume);
+      final transport = _DiscoveryStageTransport();
+      final session = CloudSyncWriteChatIdentitySession(
+        exclusion: exclusion, nativePause: pause, validate: validate,
+        ensureReadAuthentication: () async {},
+        warmReadAuthentication: (_) async {},
+      );
+      try {
+        return await exclusion.runExclusive(
+          kind: CloudKitOperationKind.v2ReadWrite,
+          action: () => session.run((_) async {
+            final result = discoveryStage(generation: gen);
+            final retained = await runPipelineStage(
+              result: result, generation: gen, validate: validate,
+              transport: transport,
+            );
+            adopted = result;
+            return retained;
+          }),
+        );
+      } finally {
+        expect(pause.active, isFalse);
+        expect(transport.committed, [_lease('1')]);
+        expect(transport.rolledBack, isEmpty);
+      }
+    }
+    test('discovery session returns success after its own reader adoption', () async {
+      await seedDiscovery('discovery-session-success');
+      expect(await runDiscoverySession(), isTrue);
+      expect(discoveryIntent().state, 4);
+      expect(store.box<CloudInboxChangeEntity>().count(), 1);
+      // This was the old post-observer validator. State4 is deliberately not
+      // eligible for a second pre-admission lookup.
+      expect(() => journal.readMaterializedForInspection(
+        intentId: discoveryIntentId, currentAuth: auth,
+      ), throwsStateError);
+    });
+    test('discovery session rejects changed reader ownership during release', () async {
+      await seedDiscovery('discovery-session-changed-reader');
+      await expectLater(runDiscoverySession(afterResume: () {
+        final row = discoveryIntent()..readerChangeId = _a43('Q');
+        store.box<CloudSyncReceivedArchiveIntentEntity>().put(row);
+      }), throwsStateError);
+      expect(store.box<CloudInboxChangeEntity>().count(), 1);
+    });
+    test('discovery session rejects changed protected store during release', () async {
+      await seedDiscovery('discovery-session-changed-store');
+      await expectLater(runDiscoverySession(afterResume: () {
+        auth = CloudSyncNativeAuthSnapshot.fromNative(
+          nativeSessionId: 'rotated', accountFingerprint: _account,
+          protectedStoreIdentity: 'obcs2.store.${_a43('Q')}',
+          cloudMessagesClient: Object(),
+        );
+      }), throwsStateError);
+      expect(discoveryIntent().state, 4);
+      expect(store.box<CloudInboxChangeEntity>().count(), 1);
+    });
+    test('retained discovery validation requires exact record and generation', () async {
+      await seedDiscovery('discovery-session-changed-version');
+      final gen = await currentGeneration();
+      expect(adoptDiscovery(generation: gen), isTrue);
+      for (final selection in [(_a43('Q'), gen), (_a43('R'), gen + 1)]) {
+        expect(() => journal.validateDiscoveryRetained(
+          intentId: discoveryIntentId, source: discoverySource,
+          currentAuth: auth, changeId: _a43('D'),
+          recordIdHash: selection.$1, generation: selection.$2,
+        ), throwsStateError);
+      }
+      expect(discoveryIntent().state, 4);
+    });
     test('pipeline duplicate rolls back only the new lease', () async {
       await seedDiscovery('discovery-guid-26');
       final gen = await currentGeneration();
@@ -3370,6 +3468,22 @@ void main() {
       );
     });
   });
+}
+
+class _DiscoveryPause implements CloudSyncNativeWriterPause {
+  _DiscoveryPause(this.afterResume);
+  final void Function()? afterResume;
+  bool active = false;
+  @override
+  Future<Object> pause() async {
+    active = true;
+    return BigInt.one;
+  }
+  @override
+  Future<void> resume(Object token) async {
+    active = false;
+    afterResume?.call();
+  }
 }
 
 /// Synthetic token protection for the restored-chat fixture. No native keys
