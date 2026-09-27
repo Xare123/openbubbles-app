@@ -275,6 +275,27 @@ cloudSyncDiscoverReceivedRecordExact({
   messageGeneration: messageGeneration,
 );
 
+/// Exact read-only discovery for a durably adopted historical source. Source
+/// reopening retains its historical protection purpose and snapshot binding.
+/// No IDS provenance, live-receive journal row, parent binding or create grant
+/// is manufactured. Found records enter the ordinary protected reader path.
+Future<CloudSyncPreparedHistoricalDiscovery>
+cloudSyncDiscoverHistoricalRecordExact({
+  required ArcCloudMessagesClientDefaultAnisetteProvider cloudMessagesClient,
+  required BigInt nativeWriterPauseToken,
+  required String storageDirectory,
+  required CloudSyncNativeAuthMetadata expectedAuth,
+  required CloudSyncNativeHistoricalArchiveSourceBinding historicalSource,
+  required BigInt messageGeneration,
+}) => RustLib.instance.api.crateApiApiCloudSyncDiscoverHistoricalRecordExact(
+  cloudMessagesClient: cloudMessagesClient,
+  nativeWriterPauseToken: nativeWriterPauseToken,
+  storageDirectory: storageDirectory,
+  expectedAuth: expectedAuth,
+  historicalSource: historicalSource,
+  messageGeneration: messageGeneration,
+);
+
 /// Validated discovery find -> the existing protected reader change shape. Only
 /// a prepared result still holding its original raw bytes can stage: Absent,
 /// transport-failure, and expired results fail without touching storage. No
@@ -298,6 +319,23 @@ cloudSyncStageDiscoveredReceivedRecord({
 Future<void> cloudSyncDiscardReceivedDiscovery({
   required CloudSyncPreparedReceivedDiscovery prepared,
 }) => RustLib.instance.api.crateApiApiCloudSyncDiscardReceivedDiscovery(
+  prepared: prepared,
+);
+
+/// Shares the reader-ingress DTO only, not received-journal admission. None
+/// means a revalidated NotFound, not permission to create a historical record.
+Future<CloudSyncReceivedFoundProjection?>
+cloudSyncStageDiscoveredHistoricalRecord({
+  required CloudSyncPreparedHistoricalDiscovery prepared,
+  required BigInt nativeWriterPauseToken,
+}) => RustLib.instance.api.crateApiApiCloudSyncStageDiscoveredHistoricalRecord(
+  prepared: prepared,
+  nativeWriterPauseToken: nativeWriterPauseToken,
+);
+
+Future<void> cloudSyncDiscardHistoricalDiscovery({
+  required CloudSyncPreparedHistoricalDiscovery prepared,
+}) => RustLib.instance.api.crateApiApiCloudSyncDiscardHistoricalDiscovery(
   prepared: prepared,
 );
 
@@ -2663,6 +2701,10 @@ abstract class CloudSyncLocalStoreLease implements RustOpaqueInterface {}
 
 // Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<CloudSyncPreparedAttachmentUploadHandle>>
 abstract class CloudSyncPreparedAttachmentUploadHandle
+    implements RustOpaqueInterface {}
+
+// Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<CloudSyncPreparedHistoricalDiscovery>>
+abstract class CloudSyncPreparedHistoricalDiscovery
     implements RustOpaqueInterface {}
 
 // Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<CloudSyncPreparedMessageCreateHandle>>
