@@ -933,8 +933,8 @@ void main() {
     expect(find.text('Background history sync is downloading'), findsOneWidget);
     expect(find.text('7 records processed'), findsOneWidget);
     expect(find.text('Last activity 5 min ago'), findsOneWidget);
-    expect(find.text('Waiting for background sync to finish. Readiness is checked again afterward.'), findsOneWidget);
-    expect(find.text('Turbo applies to the next foreground batch.'), findsOneWidget);
+    expect(find.text('Start is unavailable while background sync runs. Availability is checked again when it finishes.'), findsOneWidget);
+    expect(find.text('Turbo is unavailable while sync work runs. Availability is checked again afterward.'), findsOneWidget);
     expect(tester.widget<FilledButton>(find.byType(FilledButton)).onPressed, isNull);
     expect(tester.widget<SwitchListTile>(find.byType(SwitchListTile)).onChanged, isNull);
     expect(tester.takeException(), isNull);
@@ -1022,6 +1022,85 @@ void main() {
     expect(find.text('42 records processed'), findsOneWidget);
     expect(find.text('7 records processed'), findsNothing);
     expect(starts, 0);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+  testWidgets('foreground run explains locked Turbo and foreground-only pause', (tester) async {
+    final p = CloudSyncProgress();
+    final done = Completer<CloudSyncSemanticDrainResult>();
+    final work = p.start(CloudSyncSpeed.regular, () => done.future);
+    await tester.pumpWidget(host(p, (_) async {}));
+    await tester.pump();
+    expect(
+      find.text(
+        'Turbo is unavailable while sync work runs. Availability is checked again afterward.',
+      ),
+      findsOneWidget,
+    );
+    expect(
+      tester.widget<SwitchListTile>(find.byType(SwitchListTile)).onChanged,
+      isNull,
+    );
+    expect(
+      find.text(
+        'Pauses only the foreground catch-up after protected work finishes. It does not disable independently configured background sync or message delivery.',
+      ),
+      findsOneWidget,
+    );
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox.shrink());
+    done.complete(fixtures.result());
+    await tester.pump();
+    await work;
+  });
+  testWidgets('background busy explains Start wait without promising delivery', (tester) async {
+    await tester.pumpWidget(host(
+      CloudSyncProgress(),
+      (_) async {},
+      isReading: () => true,
+      backgroundStatus: () => CloudSyncBackgroundStatus(
+        active: true,
+        owner: CloudSyncBackgroundOwner.historyCatchUp,
+        stage: CloudSyncBackgroundStage.downloading,
+        recordsProcessed: 7,
+        lastProgressAt: DateTime.now().subtract(const Duration(minutes: 5)),
+      ),
+    ));
+    await tester.pump();
+    expect(
+      find.text(
+        'Start is unavailable while background sync runs. Availability is checked again when it finishes.',
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.text(
+        'Turbo is unavailable while sync work runs. Availability is checked again afterward.',
+      ),
+      findsOneWidget,
+    );
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+  testWidgets('disabled-control reasons fit a narrow large-text viewport', (tester) async {
+    tester.view.physicalSize = const ui.Size(320, 800);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(host(
+      CloudSyncProgress(),
+      (_) async {},
+      scale: 2.0,
+      isReading: () => true,
+      backgroundStatus: () => CloudSyncBackgroundStatus(
+        active: true,
+        owner: CloudSyncBackgroundOwner.historyCatchUp,
+        stage: CloudSyncBackgroundStage.organizing,
+        recordsProcessed: 1234,
+        lastProgressAt: DateTime.now().subtract(const Duration(minutes: 5)),
+      ),
+    ));
+    await tester.pump();
+    expect(find.textContaining('Availability is checked again'), findsWidgets);
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox.shrink());
   });

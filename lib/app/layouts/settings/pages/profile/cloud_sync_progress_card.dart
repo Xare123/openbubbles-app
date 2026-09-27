@@ -358,8 +358,10 @@ class _CloudSyncProgressCardState extends State<CloudSyncProgressCard> {
                   : speed == CloudSyncSpeed.turbo,
               onChanged: busy ? null : selectTurbo,
             ),
-            if (busy && !p.active)
-              const Text('Turbo applies to the next foreground batch.'),
+            if (busy)
+              const Text(
+                'Turbo is unavailable while sync work runs. Availability is checked again afterward.',
+              ),
             Wrap(
               spacing: 8,
               runSpacing: 8,
@@ -373,7 +375,7 @@ class _CloudSyncProgressCardState extends State<CloudSyncProgressCard> {
                     label: const Text('Start / resume'),
                   ),
                 if (!p.active && elsewhere)
-                  const Text('Waiting for background sync to finish. Readiness is checked again afterward.'),
+                  const Text('Start is unavailable while background sync runs. Availability is checked again when it finishes.'),
                 if (p.active)
                   OutlinedButton.icon(
                     onPressed: p.pauseRequested ? null : p.pause,
@@ -400,7 +402,7 @@ class _CloudSyncProgressCardState extends State<CloudSyncProgressCard> {
             ),
             if (p.active)
               const Text(
-                'Pauses catch-up safely after protected work finishes.',
+                'Pauses only the foreground catch-up after protected work finishes. It does not disable independently configured background sync or message delivery.',
               ),
             ExpansionTile(
               tilePadding: EdgeInsets.zero,
