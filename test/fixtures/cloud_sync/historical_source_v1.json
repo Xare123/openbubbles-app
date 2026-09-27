@@ -1,0 +1,20 @@
+[
+  {
+    "name": "ascii-received",
+    "canonicalPayload": "{\"format\":\"cloud-sync-historical-source-v1\",\"guid\":\"A1B2C3D4-E5F6-4A7B-8C9D-E0F1A2B3C4D5\",\"text\":\"hello from before the upgrade\",\"origin\":\"historicalReceived\",\"isFromMe\":false,\"senderAddress\":\"friend@example.com\",\"peerAddress\":\"friend@example.com\",\"chatGuid\":\"iMessage;-;friend@example.com\",\"dateCreatedMs\":1699000000000,\"snapshotSha256\":\"ab12cd34ab12cd34ab12cd34ab12cd34ab12cd34ab12cd34ab12cd34ab12cd34\",\"accountFingerprint\":\"account-fp-xyz789\",\"protectedStoreIdentity\":\"store-1\"}",
+    "guidHash": "7031df14081df0fc966a842743d83289f1671c9e2130b1481f07dc7f33f41246",
+    "sourceSha256": "fed3f0380cd2b2339e72ab0944d88f823a805f52b0d9052ab8f13e7ae212e650"
+  },
+  {
+    "name": "ascii-sent",
+    "canonicalPayload": "{\"format\":\"cloud-sync-historical-source-v1\",\"guid\":\"A1B2C3D4-E5F6-4A7B-8C9D-E0F1A2B3C4D6\",\"text\":\"hello from before the upgrade\",\"origin\":\"historicalSent\",\"isFromMe\":true,\"senderAddress\":\"me@example.com\",\"peerAddress\":\"friend@example.com\",\"chatGuid\":\"iMessage;-;friend@example.com\",\"dateCreatedMs\":1699000000000,\"snapshotSha256\":\"ab12cd34ab12cd34ab12cd34ab12cd34ab12cd34ab12cd34ab12cd34ab12cd34\",\"accountFingerprint\":\"account-fp-xyz789\",\"protectedStoreIdentity\":\"store-1\"}",
+    "guidHash": "fbe3e2c229eced7b618a99c8a891e8a1616681afe32d2dc60dbc32fa6b34dae7",
+    "sourceSha256": "76c4e06a3d7188c33a673a983a0cb132fd592eefd119f54467761c79f13d6a78"
+  },
+  {
+    "name": "unicode-received",
+    "canonicalPayload": "{\"format\":\"cloud-sync-historical-source-v1\",\"guid\":\"A1B2C3D4-E5F6-4A7B-8C9D-E0F1A2B3C4D7\",\"text\":\"Synthetic café مرحبا 🙂\\n\\\"quoted\\\" \\\\ path\\tend line\",\"origin\":\"historicalReceived\",\"isFromMe\":false,\"senderAddress\":\"friend@example.com\",\"peerAddress\":\"friend@example.com\",\"chatGuid\":\"iMessage;-;friend@example.com\",\"dateCreatedMs\":1699000000000,\"snapshotSha256\":\"ab12cd34ab12cd34ab12cd34ab12cd34ab12cd34ab12cd34ab12cd34ab12cd34\",\"accountFingerprint\":\"account-fp-xyz789\",\"protectedStoreIdentity\":\"store-1\"}",
+    "guidHash": "14aeaf0d2e1c1dea8e7e37468c7dac2ee031f7293844605b2f4a473a45e19deb",
+    "sourceSha256": "216e5b23cc0a37e6a71f84ae50c9e01c3b4ce4e3f6fd1e520aa601f2ad2aec12"
+  }
+]
