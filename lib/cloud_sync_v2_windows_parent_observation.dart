@@ -1,10 +1,73 @@
 // Diagnostic-only cached-parent correlation. No decode, fetch, projection,
 // receipt, or authority is created here. Raw identifiers never leave this call.
 import 'package:bluebubbles/database/models.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_inbox_applier.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_models.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_persistent_keys.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_safe_failure.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/objectbox_canonical_semantic_entity_adapter.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/transient_cloud_canonical_identity_registry.dart';
 import 'package:bluebubbles/src/rust/api/cloud_sync_dependency.dart' as native;
+
+/// Reuse the production ownership resolver for a decoded message or its parent.
+/// The read transaction forbids projection; only fixed diagnostic labels leave.
+String observeCloudSyncRetainedMessageOwnership({
+  required Store store,
+  required CloudDecodedMutation decoded,
+  required void Function(String) diagnosticRecorder,
+}) {
+  final payload = decoded.payload;
+  if (payload is! CloudMessageEntityPayload || decoded.snapshot == null ||
+      decoded.scope.zone != 'messageManateeZone' ||
+      decoded.scope.persistenceLane != CloudSyncPersistenceLane.semantic) {
+    throw StateError('retained_message_ownership_scope_invalid');
+  }
+  return store.runInTransaction(TxMode.read, () {
+    final scope = decoded.scope;
+    final chatScope = CloudSyncScope(
+      accountFingerprint: scope.accountFingerprint,
+      container: scope.container,
+      database: scope.database,
+      zone: 'chatManateeZone',
+      persistenceLane: CloudSyncPersistenceLane.semantic,
+    );
+    final query = store.box<CloudSyncCheckpointEntity>().query(
+      CloudSyncCheckpointEntity_.checkpointKey.equals(
+        cloudSyncPersistentScopeKey(chatScope),
+      ),
+    ).build();
+    final CloudSyncCheckpointEntity? checkpoint;
+    try { checkpoint = query.findUnique(); } finally { query.close(); }
+    if (checkpoint == null) {
+      throw StateError('cloud_sync_windows_dev_observation_checkpoint_missing');
+    }
+    final identities = TransientCloudCanonicalIdentityRegistry();
+    final lease = identities.bind(decoded);
+    try {
+      final probe = ObjectBoxCanonicalSemanticEntityAdapter(
+        store: store,
+        activeScopeProvider: () => CloudCanonicalActiveScope(
+          scope: scope, generation: decoded.generation,
+        ),
+        identityResolver: identities,
+        semanticApplyEnabled: true,
+        chatDependencyScope: CloudCanonicalActiveScope(
+          scope: chatScope, generation: checkpoint.generation,
+        ),
+        diagnosticRecorder: diagnosticRecorder,
+      );
+      probe.proveLegacyCanonicalOwnership(
+        scope: scope, generation: decoded.generation,
+        payload: payload, snapshot: decoded.snapshot!,
+      );
+      return 'proven';
+    } on CloudSyncFailure catch (failure) {
+      return cloudSyncV2SafeFailureCodeForCandidate(failure.safeCode);
+    } finally {
+      lease.release();
+    }
+  });
+}
 
 /// Reject mixed or stale native observations before they can select an inbox
 /// record. This is correlation only, never permission to project or fetch.

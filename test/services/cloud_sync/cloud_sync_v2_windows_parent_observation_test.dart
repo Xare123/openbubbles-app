@@ -3,6 +3,8 @@ import 'dart:io';
 
 import 'package:bluebubbles/cloud_sync_v2_windows_parent_observation.dart';
 import 'package:bluebubbles/database/models.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_inbox_applier.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_merge_policy.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_models.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_persistent_keys.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/objectbox_canonical_semantic_entity_adapter.dart';
@@ -142,6 +144,90 @@ void main() {
       expect(directory.parent.absolute.path, root.absolute.path);
       await directory.delete(recursive: true);
     }
+  });
+
+  CloudDecodedMutation decodedMessage(CloudSyncScope owner) =>
+      CloudDecodedMutation.upsert(
+        scope: owner,
+        generation: generation,
+        changeId: _hash('X'),
+        snapshot: CloudSemanticSnapshot(
+          kind: CloudEntityKind.message,
+          logicalEntityKeyHash: parentHash,
+          immutableContentDigest: _hash('D'),
+        ),
+        payload: CloudMessageEntityPayload(
+          logicalEntityKeyHash: parentHash,
+          canonicalGuid: parentGuid,
+          chatAliasKeyHash: _hash('H'),
+          chatIdentifier: 'private-synthetic-chat',
+          body: 'private-synthetic-body',
+          senderHandle: 'private-synthetic-sender',
+          service: CloudSemanticService.iMessage,
+          createdAt: DateTime.fromMillisecondsSinceEpoch(now, isUtc: true),
+          knownFlags: const CloudSemanticKnownMessageFlags(
+            fromMe: false,
+            delivered: true,
+            read: false,
+            hasDataDetectorResults: false,
+            deliveredQuietly: false,
+            didNotifyRecipient: false,
+          ),
+        ),
+      );
+
+  void seedChatCheckpoint() {
+    final chatScope = CloudSyncScope(
+      accountFingerprint: scope.accountFingerprint,
+      container: scope.container,
+      database: scope.database,
+      zone: 'chatManateeZone',
+      persistenceLane: CloudSyncPersistenceLane.semantic,
+    );
+    store.box<CloudSyncCheckpointEntity>().put(CloudSyncCheckpointEntity(
+      checkpointKey: cloudSyncPersistentScopeKey(chatScope),
+      accountFingerprint: chatScope.accountFingerprint,
+      container: chatScope.container,
+      database: chatScope.database,
+      zone: chatScope.zone,
+      streamKind: chatScope.streamKind.name,
+      schemaVersion: chatScope.schemaVersion,
+      persistenceLane: chatScope.persistenceLane.name,
+      generation: generation,
+      updatedAtMs: now,
+    ));
+  }
+
+  test('decoded parent ownership diagnoses missing chat without projection', () {
+    seedChatCheckpoint();
+    final labels = <String>[];
+    final result = observeCloudSyncRetainedMessageOwnership(
+      store: store, decoded: decodedMessage(scope),
+      diagnosticRecorder: labels.add,
+    );
+    expect(result, isNot('proven'));
+    expect(labels, contains('canonical_message_chat_reference_unavailable'));
+    expect('$result ${labels.join(' ')}', isNot(contains('private-synthetic')));
+    expect(store.box<Chat>().count(), 0);
+    expect(store.box<Message>().count(), 0);
+    expect(store.box<CloudSemanticSnapshotEntity>().count(), 0);
+    expect(store.box<CloudInboxChangeEntity>().count(), 0);
+    expect(store.box<CloudOutboxOperationEntity>().count(), 0);
+    expect(store.box<CloudSyncCheckpointEntity>().count(), 2);
+    expect(store.box<CloudSyncCheckpointEntity>().getAll().every(
+      (row) => row.generation == generation && row.updatedAtMs == now,
+    ), isTrue);
+  });
+
+  test('parent ownership cannot borrow another account chat checkpoint', () {
+    seedChatCheckpoint();
+    expect(() => observeCloudSyncRetainedMessageOwnership(
+      store: store, decoded: decodedMessage(scopeFor('B')),
+      diagnosticRecorder: (_) => fail('no resolver before account checkpoint'),
+    ), throwsA(isA<StateError>().having((error) => error.message, 'safe code',
+      'cloud_sync_windows_dev_observation_checkpoint_missing')));
+    expect(store.box<Chat>().count(), 0);
+    expect(store.box<Message>().count(), 0);
   });
 
   CloudSemanticSnapshotEntity seedSnapshot({

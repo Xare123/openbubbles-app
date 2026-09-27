@@ -1716,58 +1716,11 @@ class CloudSyncV2WindowsHarnessState extends State<CloudSyncV2WindowsHarness> {
                   'extension_parent_declared': payload.extensionParentLogicalKeyHash != null,
                   'association_parent_declared': payload.associationParentLogicalKeyHash != null,
                 });
-                // Reuse the production read-only ownership proof inside a
-                // read transaction. It may reject a missing canonical Message
-                // after resolving its Chat; neither outcome admits/mutates it.
-                final chatScope = CloudSyncScope(
-                  accountFingerprint: auth.accountFingerprint,
-                  container: scope.container,
-                  database: scope.database,
-                  zone: 'chatManateeZone',
-                  persistenceLane: CloudSyncPersistenceLane.semantic,
+                item['ownership_probe'] = observeCloudSyncRetainedMessageOwnership(
+                  store: Database.store,
+                  decoded: decoded,
+                  diagnosticRecorder: labels.add,
                 );
-                final chatCheckpointQuery = Database.store
-                    .box<CloudSyncCheckpointEntity>()
-                    .query(CloudSyncCheckpointEntity_.checkpointKey.equals(
-                      cloudSyncPersistentScopeKey(chatScope),
-                    )).build();
-                final CloudSyncCheckpointEntity? chatCheckpoint;
-                try {
-                  chatCheckpoint = chatCheckpointQuery.findUnique();
-                } finally {
-                  chatCheckpointQuery.close();
-                }
-                if (chatCheckpoint == null) {
-                  throw StateError('cloud_sync_windows_dev_observation_checkpoint_missing');
-                }
-                final identities = TransientCloudCanonicalIdentityRegistry();
-                final identityLease = identities.bind(decoded);
-                try {
-                  final ownerProbe = ObjectBoxCanonicalSemanticEntityAdapter(
-                    store: Database.store,
-                    activeScopeProvider: () => CloudCanonicalActiveScope(
-                      scope: scope, generation: row.generation,
-                    ),
-                    identityResolver: identities,
-                    semanticApplyEnabled: true,
-                    chatDependencyScope: CloudCanonicalActiveScope(
-                      scope: chatScope, generation: chatCheckpoint.generation,
-                    ),
-                    diagnosticRecorder: labels.add,
-                  );
-                  Database.store.runInTransaction(TxMode.read, () {
-                    ownerProbe.proveLegacyCanonicalOwnership(
-                      scope: scope, generation: row.generation,
-                      payload: payload, snapshot: decoded.snapshot!,
-                    );
-                  });
-                  item['ownership_probe'] = 'proven';
-                } on CloudSyncFailure catch (failure) {
-                  item['ownership_probe'] =
-                      cloudSyncV2SafeFailureCodeForCandidate(failure.safeCode);
-                } finally {
-                  identityLease.release();
-                }
                 item.addAll({
                   'kind': 'message',
                   'own': payload.knownFlags?.fromMe,
@@ -1963,6 +1916,11 @@ class CloudSyncV2WindowsHarnessState extends State<CloudSyncV2WindowsHarness> {
                             item['parent_body_present'] = parentPayload.body?.isNotEmpty ?? false;
                             item['parent_extension_role'] = parentPayload.extensionSession?.role.name ?? 'none';
                             item['parent_self_dependency'] = parentPayload.semanticParentLogicalKeyHash == parentHash;
+                            item['parent_ownership_probe'] = observeCloudSyncRetainedMessageOwnership(
+                              store: Database.store,
+                              decoded: parentDecoded,
+                              diagnosticRecorder: (label) => labels.add('parent_$label'),
+                            );
                           }
                         } on CloudSemanticOutOfScopeServiceDisposition catch (excluded) {
                           item['parent_decode'] = excluded.safeCode;
