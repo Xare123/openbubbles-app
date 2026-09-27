@@ -657,6 +657,34 @@ void main() {
     },
   );
 
+  test('legacy error reset preserves every retained native submission', () {
+    final message = awaitingNativeConfirmation(reflected: false);
+    final row = store.box<CloudSyncLocalSendIntentEntity>().getAll().single;
+    for (final state in [0, 1, 2, 3, 77]) {
+      row.state = state;
+      store.box<CloudSyncLocalSendIntentEntity>().put(row);
+      // The UI failure and reflection paths can change GUID presentation but
+      // neither is permission to delete the original row and create a new send.
+      message
+        ..guid = 'error-opaque-failure'
+        ..stagingGuid = null;
+      store.box<Message>().put(message);
+      expect(
+        CloudSyncLocalSendJournal.hasRetainedSubmissionForMessage(store, message),
+        isTrue,
+        reason: 'retained state $state',
+      );
+    }
+    final legacy = _message(chat: chat, guid: _guidB, stagingGuid: _guidB);
+    expect(CloudSyncLocalSendJournal.hasRetainedSubmissionForMessage(
+        store, legacy), isFalse);
+    store.box<Message>().put(legacy);
+    expect(CloudSyncLocalSendJournal.hasRetainedSubmissionForMessage(
+        store, legacy), isFalse);
+    expect(store.box<CloudSyncLocalSendIntentEntity>().count(), 1);
+    expect(store.box<Message>().get(message.id!), isNotNull);
+  });
+
   test('startup failure sweep retains only unresolved native confirmation', () {
     final message = awaitingNativeConfirmation();
     expect(

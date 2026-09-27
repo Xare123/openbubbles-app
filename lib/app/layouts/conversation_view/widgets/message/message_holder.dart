@@ -26,6 +26,7 @@ import 'package:bluebubbles/app/components/avatars/contact_avatar_widget.dart';
 import 'package:bluebubbles/app/wrappers/stateful_boilerplate.dart';
 import 'package:bluebubbles/helpers/helpers.dart';
 import 'package:bluebubbles/database/models.dart';
+import 'package:bluebubbles/database/database.dart';
 import 'package:bluebubbles/services/services.dart';
 import 'package:collection/collection.dart';
 import 'package:dotted_border/dotted_border.dart';
@@ -39,6 +40,9 @@ import 'package:universal_io/io.dart';
 import 'package:bluebubbles/services/network/backend_service.dart';
 import 'package:bluebubbles/app/layouts/conversation_view/widgets/message/mutation_feedback.dart';
 import 'package:bluebubbles/utils/logger/logger.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_send_journal.dart';
+import 'package:bluebubbles/services/rustpush/rustpush_service.dart';
+import 'send_recovery_dialog.dart';
 
 class MessageHolder extends CustomStateful<MessageWidgetController> {
   MessageHolder({
@@ -76,6 +80,27 @@ class _MessageHolderState
           : service.struct.getThreadOriginator(message.threadOriginatorGuid!);
   Chat get chat => widget.cvController.chat;
   MessagesService get service => ms(widget.cvController.chat.guid);
+
+  bool _showSendRecoveryIfNeeded({BuildContext? dismissDialog}) {
+    if (kIsWeb || backend is! RustPushBackend) return false;
+    var unavailable = false;
+    try {
+      if (!CloudSyncLocalSendJournal.hasRetainedSubmissionForMessage(
+          Database.store, message)) {
+        return false;
+      }
+    } catch (_) {
+      // Unknown local evidence cannot authorize deleting or resending a row.
+      unavailable = true;
+    }
+    if (dismissDialog != null) Navigator.of(dismissDialog).pop();
+    showDialog<void>(
+      context: context,
+      builder: (_) => SendRecoveryDialog(statusUnavailable: unavailable),
+    );
+    return true;
+  }
+
   bool get canSwipeToReply =>
       ss.settings.enablePrivateAPI.value &&
       ss.isMinBigSurSync &&
@@ -1178,6 +1203,7 @@ class _MessageHolderState
                       color: context.theme.colorScheme.error,
                     ),
                     onPressed: () {
+                      if (_showSendRecoveryIfNeeded()) return;
                       showDialog(
                         context: context,
                         builder: (BuildContext context) {
@@ -1197,6 +1223,7 @@ class _MessageHolderState
                                                 .colorScheme.primary)),
                                 onPressed: () async {
                                   // Remove the original message and notification
+                                  if (_showSendRecoveryIfNeeded(dismissDialog: context)) return;
                                   Navigator.of(context).pop();
                                   service.removeMessage(message);
                                   Message.delete(message.guid!);
@@ -1232,6 +1259,7 @@ class _MessageHolderState
                                             color: Get.context!.theme
                                                 .colorScheme.primary)),
                                 onPressed: () async {
+                                  if (_showSendRecoveryIfNeeded(dismissDialog: context)) return;
                                   Navigator.of(context).pop();
                                   // Delete the message from the DB
                                   Message.delete(message.guid!);

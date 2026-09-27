@@ -928,6 +928,24 @@ final class CloudSyncLocalSendJournal {
     }
   }
 
+  /// The legacy error dialog deletes a row and retries with a new GUID. That
+  /// must not replace any retained native submission, including a confirmed
+  /// send whose local reflection failed. GUID rewriting on the error path and
+  /// clearing stagingGuid after reflection do not remove the row's ownership.
+  /// This is a local preservation fence, never a delivery or upload verdict.
+  static bool hasRetainedSubmissionForMessage(Store store, Message message) {
+    final id = message.id;
+    if (id == null || id <= 0) return false;
+    final query = store.box<CloudSyncLocalSendIntentEntity>()
+        .query(CloudSyncLocalSendIntentEntity_.localMessageId.equals(id))
+        .build()..limit = 1;
+    try {
+      return query.findFirst() != null;
+    } finally {
+      query.close();
+    }
+  }
+
   /// Atomically claims only an untracked stale send for legacy failure
   /// normalization. Native receipt replay uses the same Store transaction
   /// boundary, so it cannot confirm between this check and the claim.
