@@ -2,6 +2,9 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:bluebubbles/database/models.dart';
+import 'package:bluebubbles/src/rust/api/api.dart' as api;
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_protected_page_lease_lifecycle.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_historical_create_adapter.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_historical_archive_journal.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_historical_archive_request.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_historical_outbox_binding.dart';
@@ -9,6 +12,7 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_historical_p
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_manual_shadow_sampler.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_models.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_protector.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_transport.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/objectbox_cloud_sync_store.dart';
 import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -72,6 +76,39 @@ void main() {
         logicalEntityKeyHash: 'L' * 43,
         serverRecordIdHash: 'M' * 43,
       );
+  Future<CloudOutboxOperation> adoptStage(
+    _StageTransport transport, {
+    ObjectBoxCloudSyncStore? database,
+    CloudSyncHistoricalCreateSource Function()? select,
+    Future<void> Function()? validate,
+  }) {
+    final target = database ?? durable();
+    return adoptCloudSyncHistoricalCreateStage(
+      stage: api.CloudSyncProtectedOutboundStage(
+        logicalEntityKeyHash: 'L' * 43,
+        serverRecordIdHash: 'M' * 43,
+        protectedPayloadReference: 'obcs2.ref.${'V' * 43}',
+        protectedServerRecordReference: 'obcs2.ref.${'V' * 43}',
+        payloadSha256: 'e' * 64,
+        payloadLength: BigInt.from(128),
+        leaseReference: 'obcs2.lease.${'f' * 32}',
+      ),
+      scope: _messageScope,
+      generation: generation,
+      durable: target,
+      journal: journal(),
+      selectSource: select ?? selection,
+      auth: auth,
+      validate: validate ?? () async {},
+      stillCurrent: () => true,
+      lifecycle: CloudProtectedPageLeaseLifecycle(
+        store: target,
+        transport: transport,
+      ),
+      transport: transport,
+    );
+  }
+
   CloudOutboxOperation admit(
     CloudSyncHistoricalCreateSource selected, {
     bool Function()? current,
@@ -104,21 +141,24 @@ void main() {
     );
   }
 
-  Message localMessage() =>
-      Message(
-          guid: _guid,
-          text: 'synthetic original text',
-          isFromMe: true,
-          dateCreated: _now.subtract(const Duration(days: 3)),
-        )
-        ..handle = sender
-        ..chat.target = chat;
+  Message localMessage() => Message(
+    guid: _guid,
+    text: 'synthetic original text',
+    attributedBody: [AttributedBody.raw('synthetic original text')],
+    isFromMe: true,
+    dateCreated: _now.subtract(const Duration(days: 3)),
+    handle: sender,
+  )..chat.target = chat;
 
   setUp(() async {
     directory = await Directory.systemTemp.createTemp('ob-history-create-');
     store = await openStore(directory: directory.path);
     final peer = Handle(address: 'peer@example.invalid', service: 'iMessage');
-    sender = Handle(address: 'owner@example.invalid', service: 'iMessage');
+    sender = Handle(
+      address: 'owner@example.invalid',
+      service: 'iMessage',
+      originalROWID: 102,
+    );
     store.box<Handle>().putMany([peer, sender]);
     chat = Chat(
       guid: 'iMessage;-;peer@example.invalid',
@@ -176,7 +216,13 @@ void main() {
       ),
       nowMs: _now.millisecondsSinceEpoch,
     );
-    expect(assessed, isA<CloudSyncHistoricalArchiveEligible>());
+    expect(
+      assessed,
+      isA<CloudSyncHistoricalArchiveEligible>(),
+      reason: assessed is CloudSyncHistoricalArchiveIneligible
+          ? assessed.reason
+          : null,
+    );
     request = (assessed as CloudSyncHistoricalArchiveEligible).request;
     store.box<Message>().remove(fixtureId);
     source = CloudSyncHistoricalProtectedSourceBinding(
@@ -243,6 +289,106 @@ void main() {
   });
 
   test(
+    'native stage is committed only after durable historical adoption',
+    () async {
+      final transport = _StageTransport()
+        ..beforeCommit = () {
+          expect(row().state, 3);
+          expect(store.box<CloudOutboxOperationEntity>().count(), 1);
+        };
+      final operation = await adoptStage(transport);
+      expect(transport.committed, ['obcs2.lease.${'f' * 32}']);
+      expect(transport.rolledBack, isEmpty);
+      expect(row().admittedOperationId, operation.operationId);
+      expect(operation.status, CloudOutboxStatus.pending);
+    },
+  );
+
+  test(
+    'source selection failure rolls back only the unowned create stage',
+    () async {
+      final transport = _StageTransport();
+      await expectLater(
+        adoptStage(
+          transport,
+          select: () => throw StateError('synthetic source changed'),
+        ),
+        throwsStateError,
+      );
+      expect(transport.rolledBack, ['obcs2.lease.${'f' * 32}']);
+      expect(transport.committed, isEmpty);
+      expect(row().state, 1);
+      expect(row().protectedSourceBinding, source.encode());
+      expect(store.box<CloudOutboxOperationEntity>().count(), 0);
+    },
+  );
+
+  test(
+    'lost native commit response retains exact queue ownership for recovery',
+    () async {
+      final transport = _StageTransport()..failCommit = true;
+      await expectLater(adoptStage(transport), throwsStateError);
+      final operationId = row().admittedOperationId!;
+      expect(transport.rolledBack, isEmpty);
+      expect(row().state, 3);
+      store.close();
+      store = await openStore(directory: directory.path);
+      final operation = durable().readHistoricalArchiveOperation(
+        _messageScope,
+        operationId,
+      )!;
+      expect(durable().readHistoricalArchiveSource(operation), isNotNull);
+      expect(store.box<CloudOutboxOperationEntity>().count(), 1);
+      expect(operation.attemptCount, 0);
+      expect(row().protectedSourceBinding, source.encode());
+    },
+  );
+
+  test(
+    'lost database adoption response never rolls back its committed stage owner',
+    () async {
+      final transport = _StageTransport();
+      final lost = _LostAdoptionStore(store: store);
+      await expectLater(
+        adoptStage(transport, database: lost),
+        throwsStateError,
+      );
+      expect(row().state, 3);
+      expect(transport.rolledBack, isEmpty);
+      expect(transport.committed, isEmpty);
+      final operation = durable().readHistoricalArchiveOperation(
+        _messageScope,
+        row().admittedOperationId!,
+      )!;
+      expect(durable().readHistoricalArchiveSource(operation), isNotNull);
+      expect(store.box<CloudOutboxOperationEntity>().count(), 1);
+    },
+  );
+
+  test(
+    'identity loss after native commit retains queue and immutable source',
+    () async {
+      final transport = _StageTransport();
+      await expectLater(
+        adoptStage(
+          transport,
+          validate: () async {
+            if (transport.committed.isNotEmpty) {
+              throw StateError('synthetic identity changed');
+            }
+          },
+        ),
+        throwsStateError,
+      );
+      expect(row().state, 3);
+      expect(row().protectedSourceBinding, source.encode());
+      expect(transport.committed, hasLength(1));
+      expect(transport.rolledBack, isEmpty);
+      expect(store.box<CloudOutboxOperationEntity>().count(), 1);
+    },
+  );
+
+  test(
     'changed fence rolls back source owner queue map and lease together',
     () {
       final selected = selection();
@@ -304,6 +450,41 @@ void main() {
       );
       expect(store.box<CloudOutboxOperationEntity>().count(), 1);
       expect(row().protectedSourceBinding, source.encode());
+    },
+  );
+
+  test(
+    'unchanged local sender resolves from persisted identity after restart',
+    () async {
+      final messageId = store.box<Message>().put(localMessage());
+      store.close();
+      store = await openStore(directory: directory.path);
+      expect(store.box<Message>().get(messageId)!.handle, isNull);
+      final operation = admit(selection());
+      journal().requireAdoptedDispatch(
+        transactionStore: store,
+        operation: operation,
+      );
+      expect(row().state, 3);
+    },
+  );
+
+  test(
+    'changed stored sender vetoes dispatch but preserves exact readback',
+    () {
+      store.box<Message>().put(localMessage());
+      final operation = admit(selection());
+      sender.address = 'other@example.invalid';
+      store.box<Handle>().put(sender);
+      expect(
+        () => journal().requireAdoptedDispatch(
+          transactionStore: store,
+          operation: operation,
+        ),
+        throwsStateError,
+      );
+      expect(durable().readHistoricalArchiveSource(operation), isNotNull);
+      expect(row().state, 3);
     },
   );
 
@@ -452,6 +633,62 @@ void main() {
       expect(row().admittedOperationId, operation.operationId);
     },
   );
+}
+
+class _StageTransport implements CloudProtectedPageLeaseTransport {
+  bool failCommit = false;
+  void Function()? beforeCommit;
+  final committed = <String>[];
+  final rolledBack = <String>[];
+  @override
+  String get protectedPageLeaseRecoveryIdentity => _protectedStore;
+  @override
+  Future<T> runProtectedStoreExclusive<T>(Future<T> Function() action) =>
+      action();
+  @override
+  Future<void> commitProtectedPageLease(
+    String reference,
+    Set<String> live,
+  ) async {
+    beforeCommit?.call();
+    expect(live, {'obcs2.ref.${'V' * 43}'});
+    committed.add(reference);
+    if (failCommit) throw StateError('synthetic lost commit response');
+  }
+
+  @override
+  Future<void> rollbackProtectedPageLease(String reference) async {
+    rolledBack.add(reference);
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) =>
+      throw StateError('unexpected native call');
+}
+
+class _LostAdoptionStore extends ObjectBoxCloudSyncStore {
+  _LostAdoptionStore({required super.store})
+    : super(protector: _SyntheticProtector(), clock: () => _now);
+
+  @override
+  CloudOutboxOperation admitProtectedHistoricalCreate({
+    required CloudOutboxDraft draft,
+    required CloudRecordMapEntry recordMapping,
+    required CloudSyncHistoricalArchiveJournal journal,
+    required CloudSyncHistoricalCreateSource source,
+    required CloudSyncNativeAuthSnapshot currentAuth,
+    required bool Function() stillCurrent,
+  }) {
+    super.admitProtectedHistoricalCreate(
+      draft: draft,
+      recordMapping: recordMapping,
+      journal: journal,
+      source: source,
+      currentAuth: currentAuth,
+      stillCurrent: stillCurrent,
+    );
+    throw StateError('synthetic lost database commit response');
+  }
 }
 
 class _SyntheticProtector implements CloudSyncProtector {

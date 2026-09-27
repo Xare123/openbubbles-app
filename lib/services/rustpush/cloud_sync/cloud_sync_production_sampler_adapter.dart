@@ -25,6 +25,7 @@ import 'cloud_sync_local_send_recovery.dart';
 import 'cloud_sync_local_send_journal.dart';
 import 'cloud_sync_received_archive_journal.dart';
 import 'cloud_sync_received_create_adapter.dart';
+import 'cloud_sync_historical_create_adapter.dart';
 import 'cloud_sync_safe_failure.dart';
 import 'cloud_sync_attachment_upload_journal.dart';
 import 'cloud_sync_attachment_plan_coordinator.dart';
@@ -900,6 +901,7 @@ final class CloudSyncProductionLocalSendAdapter {
     late final Future<frb_api.CloudSyncAttachmentParentGroupProof?> Function(
         CloudSyncScope, String) readParentGroupProof;
     late final CloudSyncReceivedCreateAdapter receivedCreates;
+    late final CloudSyncHistoricalCreateAdapter historicalCreates;
     frb_api.CloudSyncNativeSendReceiptContext? readParentContext(
       CloudSyncScope target, String operationId,
     ) {
@@ -921,6 +923,8 @@ final class CloudSyncProductionLocalSendAdapter {
           readParentGroupProof(operation.scope, operation.operationId),
       readReceivedArchiveProof: (operation) =>
           receivedCreates.openProof(operation.scope, operation.operationId),
+      readHistoricalArchiveProof: (operation) =>
+          historicalCreates.openProof(operation.scope, operation.operationId),
     );
     final transport = NativeProtectedCloudSyncTransport(
       cloudMessagesClient: auth.cloudMessagesClient,
@@ -931,6 +935,7 @@ final class CloudSyncProductionLocalSendAdapter {
       readAttachmentParentGroupProof: (target, operationId) =>
           readParentGroupProof(target, operationId),
       readReceivedArchiveProof: (target, operationId) => receivedCreates.openProof(target, operationId),
+      readHistoricalArchiveProof: (target, operationId) => historicalCreates.openProof(target, operationId),
       readCheckpointGeneration: (scope) async =>
           (await durable.readCheckpoint(scope)).generation,
       retainConfirmedReceiptsForReplay: true,
@@ -971,6 +976,13 @@ final class CloudSyncProductionLocalSendAdapter {
     );
     receivedCreates = CloudSyncReceivedCreateAdapter(
       store: objectBox, durable: durable, journal: receivedJournal, transport: transport,
+      auth: auth, storageDirectory: _privateStorageDirectory, readSession: identitySession,
+      validate: () => fence.run(() {}, accountFingerprint: scope.accountFingerprint),
+      stillCurrent: () => _stillCurrent() && !objectBox.isClosed() &&
+          identical(objectBox, Database.store) && identical(auth.cloudMessagesClient, _readActiveClient()),
+    );
+    historicalCreates = CloudSyncHistoricalCreateAdapter(
+      store: objectBox, durable: durable, transport: transport,
       auth: auth, storageDirectory: _privateStorageDirectory, readSession: identitySession,
       validate: () => fence.run(() {}, accountFingerprint: scope.accountFingerprint),
       stillCurrent: () => _stillCurrent() && !objectBox.isClosed() &&

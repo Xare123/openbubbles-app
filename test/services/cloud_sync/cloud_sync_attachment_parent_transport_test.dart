@@ -21,6 +21,8 @@ void main() {
   NativeProtectedCloudSyncTransport buildTransport({
     CloudSyncAttachmentParentContextReader? reader,
     CloudSyncAttachmentParentGroupProofReader? proofReader,
+    CloudSyncHistoricalArchiveProofReader? historicalProofReader,
+    CloudSyncReceivedArchiveProofReader? receivedProofReader,
     NativeProtectedCloudSyncBindings? overrideBindings,
   }) => NativeProtectedCloudSyncTransport(
     cloudMessagesClient: activeClient,
@@ -29,6 +31,8 @@ void main() {
     bindings: overrideBindings ?? bindings,
     readAttachmentParentContext: reader,
     readAttachmentParentGroupProof: proofReader,
+    readReceivedArchiveProof: receivedProofReader,
+    readHistoricalArchiveProof: historicalProofReader,
   );
 
   setUp(() async {
@@ -542,6 +546,267 @@ void main() {
       );
     },
   );
+
+  test(
+    'historical proof reaches prepare and preflight reconcile',
+    () async {
+      scope = _semanticScope(zone: 'messageManateeZone');
+      reconcileAbsent();
+      final proof = _FakeHistoricalProof();
+      final seenScopes = <CloudSyncScope>[];
+      final seenOperationIds = <String>[];
+      final transport = buildTransport(
+        historicalProofReader: (readScope, operationId) async {
+          seenScopes.add(readScope);
+          seenOperationIds.add(operationId);
+          return proof;
+        },
+      );
+      final operation = _messageOperation(scope);
+      await runV2(
+        () => transport.prepareSubmission(
+          scope,
+          submissionIdentity: _submissionIdentity(operation.operationId),
+          operations: [_protectedWriteOperation(operation)],
+        ),
+      );
+      expect(seenScopes, [scope]);
+      expect(seenOperationIds, [operation.operationId]);
+      expect(bindings.reconcileCalls, 1);
+      expect(bindings.prepareCalls, 1);
+      expect(
+        identical(bindings.reconcileInput!.historicalArchiveProof, proof),
+        isTrue,
+      );
+      expect(
+        identical(
+          bindings.preparedInputs.single.historicalArchiveProof,
+          proof,
+        ),
+        isTrue,
+      );
+      expect(bindings.reconcileInput!.receivedArchiveProof, isNull);
+      expect(bindings.preparedInputs.single.receivedArchiveProof, isNull);
+      expect(bindings.reconcileInput!.attachmentParentContext, isNull);
+      expect(bindings.preparedInputs.single.attachmentParentContext, isNull);
+    },
+  );
+
+  test(
+    'historical proof is reopened on confirmed readback without caching',
+    () async {
+      scope = _semanticScope(zone: 'messageManateeZone');
+      bindings.reconcileResult = frb_api.CloudSyncOutboundReconcileResult(
+        disposition: frb_api.CloudSyncOutboundReconcileDisposition.committed,
+        protectedProofReference: _reference('P'),
+        serverRecordIdHash: _hash('S'),
+        etagHash: _hash('E'),
+      );
+      final proofs = <_FakeHistoricalProof>[];
+      var proofInvocations = 0;
+      final transport = buildTransport(
+        historicalProofReader: (readScope, operationId) async {
+          proofInvocations++;
+          expect(readScope, scope);
+          expect(operationId, _confirmedMessageOperation(scope).operationId);
+          final proof = _FakeHistoricalProof();
+          proofs.add(proof);
+          return proof;
+        },
+      );
+      final operation = _confirmedMessageOperation(scope);
+      await runV2(
+        () => transport.verifyConfirmedMessageCreateNoSave(
+          scope,
+          operation: operation,
+        ),
+      );
+      await runV2(
+        () => transport.verifyConfirmedMessageCreateNoSave(
+          scope,
+          operation: operation,
+        ),
+      );
+      expect(proofInvocations, 2);
+      expect(identical(proofs.first, proofs.last), isFalse);
+      expect(
+        identical(bindings.reconcileInput!.historicalArchiveProof, proofs.last),
+        isTrue,
+      );
+      expect(bindings.reconcileInput!.receivedArchiveProof, isNull);
+    },
+  );
+
+  test(
+    'Chat and Attachment prepares never consult the historical proof reader',
+    () async {
+      reconcileAbsent();
+      var proofInvocations = 0;
+      final transport = buildTransport(
+        historicalProofReader: (readScope, operationId) async {
+          proofInvocations++;
+          return _FakeHistoricalProof();
+        },
+      );
+      final chatScope = _semanticScope(zone: 'chatManateeZone');
+      await runV2(
+        () => transport.prepareSubmission(
+          chatScope,
+          submissionIdentity: _submissionIdentity(
+            _chatOperation(chatScope).operationId,
+          ),
+          operations: [_protectedWriteOperation(_chatOperation(chatScope))],
+        ),
+      );
+      final attachmentScope = _semanticScope(zone: 'attachmentManateeZone');
+      await runV2(
+        () => transport.prepareSubmission(
+          attachmentScope,
+          submissionIdentity: _submissionIdentity(
+            _attachmentOperation(attachmentScope).operationId,
+          ),
+          operations: [
+            _protectedWriteOperation(_attachmentOperation(attachmentScope)),
+          ],
+        ),
+      );
+      expect(proofInvocations, 0);
+      expect(bindings.chatPreparedInputs.single.historicalArchiveProof, isNull);
+      expect(
+        bindings.attachmentPreparedInputs.single.historicalArchiveProof,
+        isNull,
+      );
+    },
+  );
+
+  test(
+    'historical plus received proofs are rejected before native I/O',
+    () async {
+      scope = _semanticScope(zone: 'messageManateeZone');
+      reconcileAbsent();
+      final transport = buildTransport(
+        historicalProofReader: (readScope, operationId) async =>
+            _FakeHistoricalProof(),
+        receivedProofReader: (readScope, operationId) async =>
+            _FakeReceivedProof(),
+      );
+      final operation = _messageOperation(scope);
+      await expectLater(
+        runV2(
+          () => transport.prepareSubmission(
+            scope,
+            submissionIdentity: _submissionIdentity(operation.operationId),
+            operations: [_protectedWriteOperation(operation)],
+          ),
+        ),
+        throwsA(
+          isA<CloudSyncFailure>().having(
+            (failure) => failure.safeCode,
+            'safeCode',
+            'cloud_sync_archive_origin_conflict',
+          ),
+        ),
+      );
+      expect(bindings.reconcileCalls, 0);
+      expect(bindings.prepareCalls, 0);
+    },
+  );
+
+  test(
+    'historical proof plus attachment-parent origin is rejected before native I/O',
+    () async {
+      scope = _semanticScope(zone: 'messageManateeZone');
+      reconcileAbsent();
+      final transport = buildTransport(
+        reader: (readScope, operationId) => parentContext(),
+        proofReader: (readScope, operationId) async => _FakeGroupProof(),
+        historicalProofReader: (readScope, operationId) async =>
+            _FakeHistoricalProof(),
+      );
+      final operation = _messageOperation(scope);
+      await expectLater(
+        runV2(
+          () => transport.prepareSubmission(
+            scope,
+            submissionIdentity: _submissionIdentity(operation.operationId),
+            operations: [_protectedWriteOperation(operation)],
+          ),
+        ),
+        throwsA(
+          isA<CloudSyncFailure>().having(
+            (failure) => failure.safeCode,
+            'safeCode',
+            'cloud_sync_archive_origin_conflict',
+          ),
+        ),
+      );
+      expect(bindings.reconcileCalls, 0);
+      expect(bindings.prepareCalls, 0);
+    },
+  );
+
+  test(
+    'confirmed readback rejects mixed historical and parent origins',
+    () async {
+      scope = _semanticScope(zone: 'messageManateeZone');
+      bindings.reconcileResult = frb_api.CloudSyncOutboundReconcileResult(
+        disposition: frb_api.CloudSyncOutboundReconcileDisposition.committed,
+        protectedProofReference: _reference('P'),
+        serverRecordIdHash: _hash('S'),
+        etagHash: _hash('E'),
+      );
+      final transport = buildTransport(
+        reader: (readScope, operationId) => parentContext(),
+        historicalProofReader: (readScope, operationId) async =>
+            _FakeHistoricalProof(),
+      );
+      final operation = _confirmedMessageOperation(scope);
+      await expectLater(
+        runV2(
+          () => transport.verifyConfirmedMessageCreateNoSave(
+            scope,
+            operation: operation,
+          ),
+        ),
+        throwsA(
+          isA<CloudSyncFailure>().having(
+            (failure) => failure.safeCode,
+            'safeCode',
+            'cloud_sync_archive_origin_conflict',
+          ),
+        ),
+      );
+      expect(bindings.reconcileCalls, 0);
+    },
+  );
+
+  test(
+    'null historical journal answer keeps message inputs proof-free',
+    () async {
+      scope = _semanticScope(zone: 'messageManateeZone');
+      reconcileAbsent();
+      var proofInvocations = 0;
+      final transport = buildTransport(
+        historicalProofReader: (readScope, operationId) async {
+          proofInvocations++;
+          return null;
+        },
+      );
+      final operation = _messageOperation(scope);
+      await runV2(
+        () => transport.prepareSubmission(
+          scope,
+          submissionIdentity: _submissionIdentity(operation.operationId),
+          operations: [_protectedWriteOperation(operation)],
+        ),
+      );
+      expect(proofInvocations, 1);
+      expect(bindings.reconcileCalls, 1);
+      expect(bindings.prepareCalls, 1);
+      expect(bindings.reconcileInput!.historicalArchiveProof, isNull);
+      expect(bindings.preparedInputs.single.historicalArchiveProof, isNull);
+    },
+  );
 }
 
 CloudSyncScope _messageScope() => CloudSyncScope(
@@ -712,6 +977,18 @@ final class _FakePreparedHandle
 
 final class _FakeGroupProof
     implements frb_api.CloudSyncAttachmentParentGroupProof {
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+final class _FakeHistoricalProof
+    implements frb_api.CloudSyncHistoricalArchiveCreateProof {
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+final class _FakeReceivedProof
+    implements frb_api.CloudSyncReceivedArchiveCreateProof {
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }

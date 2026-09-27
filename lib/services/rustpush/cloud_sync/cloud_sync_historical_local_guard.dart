@@ -50,6 +50,7 @@ final class CloudSyncHistoricalLocalGuard {
     }
     final message = matches.isEmpty ? null : matches.single;
     if (message != null) {
+      _resolveStoredSender(store, message);
       final chat = message.chat.target;
       if (chat == null ||
           message.chat.targetId != localChatId ||
@@ -60,30 +61,16 @@ final class CloudSyncHistoricalLocalGuard {
               request.dateCreatedMs) {
         throw StateError('cloud_sync_historical_local_source_changed');
       }
-      // Reassess the current row as a comparison, not as a newly qualified
-      // snapshot. Its full historical source digest must equal the original.
-      final assessment = assessHistoricalArchiveRow(
+      // Compare to the qualified original without manufacturing a manifest
+      // or inferring local account addresses from the remote peer.
+      if (!historicalArchiveRowMatchesRequest(
         mapHistoricalRow(
           message: message,
           chat: mapHistoricalChat(chat),
           rowSnapshotSha256: source.snapshotSha256,
         ),
-        CloudSyncHistoricalSourceManifest(
-          snapshotSha256: source.snapshotSha256,
-          accountFingerprint: source.accountFingerprint,
-          accountHandles: request.isFromMe
-              ? [request.senderAddress]
-              : [request.peerAddress],
-          messageCount: 1,
-          capturedAtMs: request.dateCreatedMs,
-        ),
-        CloudSyncHistoricalAccountBinding(
-          accountFingerprint: source.accountFingerprint,
-          protectedStoreIdentity: source.protectedStoreIdentity,
-        ),
-      );
-      if (assessment is! CloudSyncHistoricalArchiveEligible ||
-          assessment.request.sourceSha256 != source.sourceSha256) {
+        request,
+      )) {
         throw StateError('cloud_sync_historical_local_source_changed');
       }
     }
@@ -208,6 +195,7 @@ final class CloudSyncHistoricalLocalGuard {
     }
     if (localMessageId != 0) {
       final current = store.box<Message>().get(localMessageId);
+      if (current != null) _resolveStoredSender(store, current);
       if (current == null ||
           current.chat.targetId != localChatId ||
           current.guid == null ||
@@ -219,6 +207,30 @@ final class CloudSyncHistoricalLocalGuard {
     }
   }
 
+  // Message.handle is a transient cache. Always resolve the persisted exact
+  // handleId, and do not use a cached value or mutable Chat.usingHandle instead.
+  static void _resolveStoredSender(Store store, Message message) {
+    final handleId = message.handleId;
+    if (handleId == null || handleId <= 0) {
+      throw StateError('cloud_sync_historical_local_sender_missing');
+    }
+    final query =
+        store
+            .box<Handle>()
+            .query(Handle_.originalROWID.equals(handleId))
+            .build()
+          ..limit = 2;
+    try {
+      final matches = query.find();
+      if (matches.length != 1) {
+        throw StateError('cloud_sync_historical_local_sender_ambiguous');
+      }
+      message.handle = matches.single;
+    } finally {
+      query.close();
+    }
+  }
+
   static String _messageSnapshot(Message message) => _digest([
     'historical-local-row-v1',
     message.id,
@@ -226,6 +238,7 @@ final class CloudSyncHistoricalLocalGuard {
     message.chat.targetId,
     message.isFromMe,
     message.text,
+    message.handleId,
     message.handle?.address,
     message.dateCreated?.millisecondsSinceEpoch,
     message.dateEdited?.millisecondsSinceEpoch,

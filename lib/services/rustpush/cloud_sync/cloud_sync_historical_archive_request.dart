@@ -310,6 +310,70 @@ CloudSyncHistoricalArchiveAssessment assessHistoricalArchiveRow(
       CloudSyncHistoricalArchiveReasons.bindingMissing,
     );
   }
+  return _assessHistoricalBoundRow(
+    row,
+    snapshotSha256: manifest.snapshotSha256,
+    accountFingerprint: manifest.accountFingerprint,
+    protectedStoreIdentity: account.protectedStoreIdentity,
+    nowMs: now,
+    classifySender: (sender, fromMe) {
+      final senderIsLocal = manifest.accountHandles.contains(sender);
+      if (senderIsLocal && fromMe) {
+        return CloudSyncHistoricalArchiveOrigin.historicalSent;
+      }
+      if (!senderIsLocal && !fromMe) {
+        return CloudSyncHistoricalArchiveOrigin.historicalReceived;
+      }
+      return null;
+    },
+  );
+}
+
+/// Compares a current local row with an already-qualified immutable request.
+/// This grants no snapshot/account authority and constructs no account handles.
+/// In particular, the peer of a received message is not the local account.
+bool historicalArchiveRowMatchesRequest(
+  CloudSyncHistoricalRowView row,
+  CloudSyncHistoricalArchiveRequest request, {
+  int? nowMs,
+}) {
+  if (row.rowSnapshotSha256 != request.snapshotSha256 ||
+      row.guid != request.guid ||
+      row.chat.guid != request.chatGuid ||
+      row.chat.participantAddress != request.peerAddress ||
+      row.dateCreatedMs != request.dateCreatedMs) {
+    return false;
+  }
+  final assessment = _assessHistoricalBoundRow(
+    row,
+    snapshotSha256: request.snapshotSha256,
+    accountFingerprint: request.accountFingerprint,
+    protectedStoreIdentity: request.protectedStoreIdentity,
+    nowMs: nowMs ?? DateTime.now().millisecondsSinceEpoch,
+    classifySender: (sender, fromMe) =>
+        sender == request.senderAddress &&
+            fromMe == request.isFromMe &&
+            fromMe ==
+                (request.origin ==
+                    CloudSyncHistoricalArchiveOrigin.historicalSent)
+        ? request.origin
+        : null,
+  );
+  return assessment is CloudSyncHistoricalArchiveEligible &&
+      assessment.request.guidHash == request.guidHash &&
+      assessment.request.textSha256 == request.textSha256 &&
+      assessment.request.sourceSha256 == request.sourceSha256;
+}
+
+CloudSyncHistoricalArchiveAssessment _assessHistoricalBoundRow(
+  CloudSyncHistoricalRowView row, {
+  required String snapshotSha256,
+  required String accountFingerprint,
+  required String protectedStoreIdentity,
+  required int nowMs,
+  required CloudSyncHistoricalArchiveOrigin? Function(String, bool)
+  classifySender,
+}) {
   final guid = row.guid;
   if (!_boundedIdentifier(guid) ||
       guid.startsWith('temp') ||
@@ -345,19 +409,12 @@ CloudSyncHistoricalArchiveAssessment assessHistoricalArchiveRow(
       CloudSyncHistoricalArchiveReasons.directionMismatch,
     );
   }
-  final senderIsLocal = manifest.accountHandles.contains(sender);
-  final CloudSyncHistoricalArchiveOrigin origin;
-  if (senderIsLocal && fromMe) {
-    origin = CloudSyncHistoricalArchiveOrigin.historicalSent;
-  } else if (!senderIsLocal && !fromMe) {
-    origin = CloudSyncHistoricalArchiveOrigin.historicalReceived;
-  } else if (fromMe) {
-    return const CloudSyncHistoricalArchiveIneligible(
-      CloudSyncHistoricalArchiveReasons.identity,
-    );
-  } else {
-    return const CloudSyncHistoricalArchiveIneligible(
-      CloudSyncHistoricalArchiveReasons.directionMismatch,
+  final origin = classifySender(sender, fromMe);
+  if (origin == null) {
+    return CloudSyncHistoricalArchiveIneligible(
+      fromMe
+          ? CloudSyncHistoricalArchiveReasons.identity
+          : CloudSyncHistoricalArchiveReasons.directionMismatch,
     );
   }
   if (row.error != 0 ||
@@ -477,7 +534,7 @@ CloudSyncHistoricalArchiveAssessment assessHistoricalArchiveRow(
   final createdMs = row.dateCreatedMs;
   if (createdMs < _minDateCreatedMs ||
       createdMs > _maxDateCreatedMs ||
-      createdMs > now + _futureSkewMs) {
+      createdMs > nowMs + _futureSkewMs) {
     return const CloudSyncHistoricalArchiveIneligible(
       CloudSyncHistoricalArchiveReasons.timestamp,
     );
@@ -496,9 +553,9 @@ CloudSyncHistoricalArchiveAssessment assessHistoricalArchiveRow(
         createdMs,
         origin.name,
         fromMe,
-        manifest.snapshotSha256,
-        manifest.accountFingerprint,
-        account.protectedStoreIdentity,
+        snapshotSha256,
+        accountFingerprint,
+        protectedStoreIdentity,
       ]),
       origin: origin,
       textSha256: historicalTextDigest(text),
@@ -507,9 +564,9 @@ CloudSyncHistoricalArchiveAssessment assessHistoricalArchiveRow(
       isFromMe: fromMe,
       chatGuid: chat.guid,
       dateCreatedMs: createdMs,
-      snapshotSha256: manifest.snapshotSha256,
-      accountFingerprint: manifest.accountFingerprint,
-      protectedStoreIdentity: account.protectedStoreIdentity,
+      snapshotSha256: snapshotSha256,
+      accountFingerprint: accountFingerprint,
+      protectedStoreIdentity: protectedStoreIdentity,
     ),
   );
 }

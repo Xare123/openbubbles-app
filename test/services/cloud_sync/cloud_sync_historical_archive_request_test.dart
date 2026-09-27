@@ -556,4 +556,93 @@ void main() {
     final request = _eligible(_row(hasActualEditOrUnsend: false), _manifest());
     expect(request.guid, _guid);
   });
+
+  for (final structured in [false, true]) {
+    test('mapped model fixture requires structured body: $structured', () {
+      final peer = Handle(address: 'friend@example.com', service: 'iMessage');
+      final owner = Handle(address: 'me@example.com', service: 'iMessage');
+      final chat = Chat(
+        id: 7,
+        guid: 'iMessage;-;friend@example.com',
+        chatIdentifier: 'friend@example.com',
+        style: 45,
+        participants: [peer],
+      )..handles.add(peer);
+      final message = Message(
+        id: 11,
+        guid: _guid,
+        text: _text,
+        isFromMe: true,
+        handle: owner,
+        dateCreated: DateTime.fromMillisecondsSinceEpoch(_createdMs),
+        attributedBody: structured ? [AttributedBody.raw(_text)] : [],
+      );
+      final assessed = assessHistoricalArchiveRow(
+        mapHistoricalRow(
+          message: message,
+          chat: mapHistoricalChat(chat),
+          rowSnapshotSha256: _snapshot,
+        ),
+        _manifest(),
+        _accountBinding(),
+        nowMs: _nowMs,
+      );
+      if (structured) {
+        expect(assessed, isA<CloudSyncHistoricalArchiveEligible>());
+      } else {
+        expect(
+          (assessed as CloudSyncHistoricalArchiveIneligible).reason,
+          CloudSyncHistoricalArchiveReasons.body,
+        );
+      }
+    });
+  }
+
+  test(
+    'local comparison preserves incoming origin without a guessed account',
+    () {
+      final original = _eligible(_row());
+      expect(
+        historicalArchiveRowMatchesRequest(_row(), original, nowMs: _nowMs),
+        isTrue,
+      );
+      expect(original.peerAddress, original.senderAddress);
+    },
+  );
+
+  test('local comparison preserves the original qualified sent identity', () {
+    final row = _row(isFromMe: true, senderAddress: 'me@example.com');
+    final original = _eligible(row);
+    expect(
+      historicalArchiveRowMatchesRequest(row, original, nowMs: _nowMs),
+      isTrue,
+    );
+  });
+
+  final changedRows = <String, CloudSyncHistoricalRowView>{
+    'text': _row(text: 'changed'),
+    'sender': _row(senderAddress: 'other@example.com'),
+    'direction': _row(isFromMe: true),
+    'timestamp': _row(dateCreatedMs: _createdMs + 1),
+    'structured body': _row(attributedBodies: []),
+    'edit': _row(hasActualEditOrUnsend: true),
+    'unsend': _row(isDeleted: true),
+    'legacy owner': _row(ckSyncState: true),
+    'attachment': _row(attachmentCount: 1),
+    'subject': _row(subjectPresent: true),
+    'reply': _row(threadOriginatorPresent: true),
+    'snapshot': _row(rowSnapshotSha256: '0' * 64),
+  };
+  for (final changed in changedRows.entries) {
+    test('local comparison rejects changed ${changed.key}', () {
+      expect(
+        historicalArchiveRowMatchesRequest(
+          changed.value,
+          _eligible(_row()),
+          nowMs: _nowMs,
+        ),
+        isFalse,
+      );
+    });
+  }
 }

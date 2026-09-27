@@ -25,6 +25,7 @@ void main() {
   NativeProtectedCloudSyncTransport buildTransport({
     bool retainConfirmedReceiptsForReplay = false,
     CloudSyncReceivedArchiveProofReader? receivedReader,
+    CloudSyncHistoricalArchiveProofReader? historicalReader,
   }) => NativeProtectedCloudSyncTransport(
     cloudMessagesClient: activeClient,
     storageDirectory: 'private-storage',
@@ -33,6 +34,7 @@ void main() {
     readCheckpointGeneration: (_) async => activeCheckpointGeneration,
     retainConfirmedReceiptsForReplay: retainConfirmedReceiptsForReplay,
     readReceivedArchiveProof: receivedReader,
+    readHistoricalArchiveProof: historicalReader,
     writerMutationGuard: CloudKitWriterMutationGuard.forTest(
       store: writerStore,
       readActiveClient: () => activeClient,
@@ -44,6 +46,8 @@ void main() {
       reconciliationBinding: bindings,
       readReceivedArchiveProof: receivedReader == null ? null
           : (operation) => receivedReader(operation.scope, operation.operationId),
+      readHistoricalArchiveProof: historicalReader == null ? null
+          : (operation) => historicalReader(operation.scope, operation.operationId),
       buildDecision: const CloudKitWriterOwnershipDecision(
         owner: CloudKitWriterOwner.v2,
         configurationValid: true,
@@ -1984,6 +1988,45 @@ void main() {
     expect(proofs, hasLength(2));
     expect(bindings.reconcileInput!.receivedArchiveProof, same(proofs.last));
     expect(bindings.reconcileInput!.attachmentParentContext, isNull);
+    expect(bindings.consumeCalls, 0);
+  });
+
+  test('historical proof reopens through the actual unknown-outcome guard', () async {
+    scope = _semanticScope();
+    final proofs = <_FakeHistoricalProof>[];
+    transport = buildTransport(historicalReader: (target, operationId) async {
+      expect(target, scope);
+      expect(operationId, _unknownOutcomeOperation(scope).operationId);
+      final proof = _FakeHistoricalProof();
+      proofs.add(proof);
+      return proof;
+    });
+    final operation = _unknownOutcomeOperation(scope);
+    bindings.reconcileResult = frb_api.CloudSyncOutboundReconcileResult(
+      disposition: frb_api.CloudSyncOutboundReconcileDisposition.notApplied,
+      protectedProofReference: operation.encryptedPayloadReference);
+    final result = await runV2(() => transport.reconcileUnknownOutcome(scope,
+      operation: operation));
+    expect(result.disposition, CloudUnknownOutcomeDisposition.notApplied);
+    expect(proofs, hasLength(1));
+    expect(bindings.reconcileInput!.historicalArchiveProof, same(proofs.single));
+    expect(bindings.reconcileInput!.receivedArchiveProof, isNull);
+    expect(bindings.reconcileInput!.attachmentParentContext, isNull);
+    expect(bindings.prepareCalls, 0);
+    expect(bindings.consumeCalls, 0);
+  });
+
+  test('unknown-outcome guard refuses simultaneous historical and received origins', () async {
+    scope = _semanticScope();
+    transport = buildTransport(
+      historicalReader: (_, _) async => _FakeHistoricalProof(),
+      receivedReader: (_, _) async => _FakeReceivedProof());
+    await expectLater(runV2(() => transport.reconcileUnknownOutcome(scope,
+      operation: _unknownOutcomeOperation(scope))),
+      throwsA(isA<CloudKitWriterAuthorityFailure>().having(
+        (failure) => failure.safeCode, 'safeCode', 'cloud_sync_archive_origin_conflict')));
+    expect(bindings.reconcileCalls, 0);
+    expect(bindings.prepareCalls, 0);
     expect(bindings.consumeCalls, 0);
   });
 
@@ -4992,6 +5035,11 @@ final class _FakeBindings
     rollbackCalls++;
     return const NativeProtectedLeaseResult();
   }
+}
+
+final class _FakeHistoricalProof implements frb_api.CloudSyncHistoricalArchiveCreateProof {
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
 final class _FakeReceivedProof implements frb_api.CloudSyncReceivedArchiveCreateProof {

@@ -600,6 +600,10 @@ typedef CloudSyncReceivedArchiveProofReader =
     Future<frb_api.CloudSyncReceivedArchiveCreateProof?> Function(
       CloudSyncScope scope, String operationId);
 
+typedef CloudSyncHistoricalArchiveProofReader =
+    Future<frb_api.CloudSyncHistoricalArchiveCreateProof?> Function(
+      CloudSyncScope scope, String operationId);
+
 enum _CreatePreflightDisposition { absent, alreadyPresent }
 
 final class _NativeCloudSyncPreparedSubmission
@@ -755,6 +759,7 @@ final class NativeProtectedCloudSyncTransport
     this.readAttachmentParentContext,
     this.readAttachmentParentGroupProof,
     this.readReceivedArchiveProof,
+    this.readHistoricalArchiveProof,
   }) : _storageDirectory = storageDirectory,
        _protectedStoreIdentity = protectedStoreIdentity,
        _nativeWriterPauseToken = nativeWriterPauseToken,
@@ -799,6 +804,7 @@ final class NativeProtectedCloudSyncTransport
   final CloudSyncAttachmentParentGroupProofReader?
   readAttachmentParentGroupProof;
   final CloudSyncReceivedArchiveProofReader? readReceivedArchiveProof;
+  final CloudSyncHistoricalArchiveProofReader? readHistoricalArchiveProof;
   final Set<Future<void>> _activeNativeOperations = {};
   Future<void>? _nativeQuiescence;
   bool _nativeAdmissionClosed = false;
@@ -1670,6 +1676,9 @@ final class NativeProtectedCloudSyncTransport
             receivedArchiveProof: scope.zone == 'messageManateeZone'
                 ? await readReceivedArchiveProof?.call(scope, operation.operationId)
                 : null,
+            historicalArchiveProof: scope.zone == 'messageManateeZone'
+                ? await readHistoricalArchiveProof?.call(scope, operation.operationId)
+                : null,
           ),
         );
       }
@@ -1974,7 +1983,11 @@ final class NativeProtectedCloudSyncTransport
     frb_api.CloudSyncNativeSendReceiptContext? attachmentParentContext,
     frb_api.CloudSyncAttachmentParentGroupProof? attachmentParentGroupProof,
     frb_api.CloudSyncReceivedArchiveCreateProof? receivedArchiveProof,
-  }) => frb_api.CloudSyncPreparedMessageCreateInput(
+    frb_api.CloudSyncHistoricalArchiveCreateProof? historicalArchiveProof,
+  }) {
+    _requireExclusiveArchiveOrigin(attachmentParentContext, attachmentParentGroupProof,
+      receivedArchiveProof, historicalArchiveProof);
+    return frb_api.CloudSyncPreparedMessageCreateInput(
     localOperationId: operation.operationId,
     logicalEntityKeyHash: operation.logicalEntityKeyHash,
     protectedLeaseReference: operation.protectedLeaseReference!,
@@ -1987,7 +2000,22 @@ final class NativeProtectedCloudSyncTransport
     attachmentParentContext: attachmentParentContext,
     attachmentParentGroupProof: attachmentParentGroupProof,
     receivedArchiveProof: receivedArchiveProof,
+    historicalArchiveProof: historicalArchiveProof,
   );
+  }
+
+  void _requireExclusiveArchiveOrigin(
+    frb_api.CloudSyncNativeSendReceiptContext? parentContext,
+    frb_api.CloudSyncAttachmentParentGroupProof? parentProof,
+    frb_api.CloudSyncReceivedArchiveCreateProof? receivedProof,
+    frb_api.CloudSyncHistoricalArchiveCreateProof? historicalProof,
+  ) {
+    if ((historicalProof != null &&
+            (receivedProof != null || parentContext != null || parentProof != null)) ||
+        (receivedProof != null && (parentContext != null || parentProof != null))) {
+      throw _localStorage('cloud_sync_archive_origin_conflict');
+    }
+  }
 
   /// Journal-owned parent context for one message-zone prepare/reconcile
   /// input. Executes only under the protected-store exclusion (all callers
@@ -3506,7 +3534,13 @@ final class NativeProtectedCloudSyncTransport
         receivedArchiveProof: scope.zone == 'messageManateeZone'
             ? await readReceivedArchiveProof?.call(scope, operation.operationId)
             : null,
+        historicalArchiveProof: scope.zone == 'messageManateeZone'
+            ? await readHistoricalArchiveProof?.call(scope, operation.operationId)
+            : null,
       );
+      _requireExclusiveArchiveOrigin(input.attachmentParentContext,
+        input.attachmentParentGroupProof, input.receivedArchiveProof,
+        input.historicalArchiveProof);
       if (scope.zone == 'chatManateeZone') {
         return _requireChatWriteBindings().reconcileChatCreate(
           cloudMessagesClient: _cloudMessagesClient,

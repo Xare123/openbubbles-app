@@ -228,6 +228,7 @@ final class CloudKitWriterMutationGuard
     this.readAttachmentParentContext,
     this.readAttachmentParentGroupProof,
     this.readReceivedArchiveProof,
+    this.readHistoricalArchiveProof,
     DateTime Function()? clock,
   }) : _store = store,
        _readActiveClient = readActiveClient,
@@ -256,6 +257,7 @@ final class CloudKitWriterMutationGuard
     this.readAttachmentParentContext,
     this.readAttachmentParentGroupProof,
     this.readReceivedArchiveProof,
+    this.readHistoricalArchiveProof,
     DateTime Function()? clock,
   }) : _store = store,
        _readActiveClient = readActiveClient,
@@ -296,6 +298,9 @@ final class CloudKitWriterMutationGuard
   final Future<frb_api.CloudSyncReceivedArchiveCreateProof?> Function(
     CloudOutboxOperation operation,
   )? readReceivedArchiveProof;
+  final Future<frb_api.CloudSyncHistoricalArchiveCreateProof?> Function(
+    CloudOutboxOperation operation,
+  )? readHistoricalArchiveProof;
   final ObjectBoxCloudKitWriterAuthority _authority;
   final DateTime Function() _clock;
 
@@ -687,10 +692,16 @@ final class CloudKitWriterMutationGuard
     // authority before using it, without clearing the unknown-outcome fence.
     final receivedProof = isChat || isAttachment ? null
         : await readReceivedArchiveProof?.call(operation);
+    final historicalProof = isChat || isAttachment ? null
+        : await readHistoricalArchiveProof?.call(operation);
     if (receivedProof != null && (groupProof != null || parentContext != null)) {
       throw const CloudKitWriterAuthorityFailure('cloud_sync_received_archive_admission_changed');
     }
-    if (groupProof != null || receivedProof != null) {
+    if (historicalProof != null &&
+        (receivedProof != null || groupProof != null || parentContext != null)) {
+      throw const CloudKitWriterAuthorityFailure('cloud_sync_archive_origin_conflict');
+    }
+    if (groupProof != null || receivedProof != null || historicalProof != null) {
       await requireReconciliationAllowed(
         owner: owner,
         expectedClient: expectedClient,
@@ -735,6 +746,7 @@ final class CloudKitWriterMutationGuard
         attachmentParentContext: parentContext,
         attachmentParentGroupProof: groupProof,
         receivedArchiveProof: receivedProof,
+        historicalArchiveProof: historicalProof,
       ),
     );
     CloudKitOperationInterlock.requireActive(CloudKitOperationKind.v2ReadWrite);
