@@ -16,6 +16,8 @@ param(
   [switch]$Confirm,
   [string]$Package = 'com.bluebubbles.messaging.cloudkitcanary',
   [string]$Serial = '',
+  [ValidateNotNullOrEmpty()]
+  [string]$AdbExecutable = 'adb',
   [ValidateRange(5, 120)]
   [int]$TimeoutSec = 30
 )
@@ -35,7 +37,7 @@ function Invoke-Adb {
   $previousErrorActionPreference = $ErrorActionPreference
   try {
     $ErrorActionPreference = 'Continue'
-    $adbOutputItems = @(& adb @AdbArgs 2>&1)
+    $adbOutputItems = @(& $AdbExecutable @AdbArgs 2>&1)
     $adbExitCode = $LASTEXITCODE
   } finally {
     $ErrorActionPreference = $previousErrorActionPreference

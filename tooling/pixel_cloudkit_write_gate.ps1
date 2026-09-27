@@ -14,6 +14,10 @@
   The gate requires a manual-writer build with the automatic worker compiled
   out. It never installs, uninstalls, clears data, deletes rows, enables legacy
   sync, or touches Alpha. A timeout is unresolved and is never retried.
+  Before its diagnostic restart, a fresh Canary idle check must pass. This
+  point-in-time check is not a lease; the operator must reserve exclusive
+  live use and keep the app idle. An unavailable engine is not permission to
+  restart it blindly.
 #>
 
 [CmdletBinding()]
@@ -40,6 +44,7 @@ $ErrorActionPreference = 'Stop'
 $script:AdbPath = ''
 $script:DartPath = ''
 $script:Forwards = @()
+$script:CanaryControlPath = Join-Path $PSScriptRoot 'canary_adb_control.ps1'
 
 function Fail-Gate {
     param([Parameter(Mandatory = $true)][string] $Code)
@@ -143,7 +148,25 @@ function New-VmForward {
     return $localPort
 }
 
+function Assert-CanaryIdleBeforeRestart {
+    $controlScript = $script:CanaryControlPath
+    if (-not (Test-Path -LiteralPath $controlScript -PathType Leaf)) {
+        Fail-Gate 'idle_control_unavailable'
+    }
+    $pwshName = if ($IsWindows) { 'pwsh.exe' } else { 'pwsh' }
+    $pwshPath = Resolve-GateExecutable -Executable (Join-Path $PSHOME $pwshName) -Code 'powershell_unavailable'
+    # Reuse the real status contract. It rejects busy, missing, malformed and
+    # unfinished-outbox state without launching Canary or starting a pull.
+    $null = Invoke-BoundedText -FilePath $pwshPath -Arguments @(
+        '-NoProfile', '-NonInteractive', '-File', $controlScript,
+        '-Action', 'assert-idle', '-Serial', $AdbSerial,
+        '-Package', $CanaryPackage, '-AdbExecutable', $script:AdbPath,
+        '-TimeoutSec', '10'
+    ) -TimeoutSeconds 20 -FailureCode 'canary_not_idle'
+}
+
 function Open-VmChannel {
+    Assert-CanaryIdleBeforeRestart
     $startEpoch = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() / 1000.0
     $null = Invoke-AdbLines @('shell', 'am', 'force-stop', $CanaryPackage)
     Wait-CanaryStopped

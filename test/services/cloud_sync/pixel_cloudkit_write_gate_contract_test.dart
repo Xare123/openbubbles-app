@@ -66,6 +66,21 @@ void main() {
     expect(gate, isNot(contains('deleteSync')));
   });
 
+  test('diagnostic restart requires the existing fresh idle guard', () {
+    final openStart = gate.indexOf('function Open-VmChannel {');
+    final openEnd = gate.indexOf('function Remove-VmForward', openStart);
+    final open = gate.substring(openStart, openEnd);
+    expect(open.indexOf('Assert-CanaryIdleBeforeRestart'), greaterThanOrEqualTo(0));
+    expect(open.indexOf("'am', 'force-stop'"), greaterThanOrEqualTo(0));
+    expect(open.indexOf('Assert-CanaryIdleBeforeRestart'),
+        lessThan(open.indexOf("'am', 'force-stop'")));
+    expect(gate, contains("'-Action', 'assert-idle'"));
+    expect(gate, contains("'-AdbExecutable', \$script:AdbPath"));
+    expect(gate, contains("-FailureCode 'canary_not_idle'"));
+    final control = File('tooling/canary_adb_control.ps1').readAsStringSync();
+    expect(control, contains('& \$AdbExecutable @AdbArgs'));
+  });
+
   test('timeout is unresolved and no phase auto-retries a write', () {
     expect(gate, contains('child_timeout_unresolved'));
     expect(trigger, contains('cloud_sync_write_operation_still_running'));
