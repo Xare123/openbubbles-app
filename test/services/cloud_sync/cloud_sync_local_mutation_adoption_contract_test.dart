@@ -13,9 +13,14 @@
 //
 // The store seam also proves atomic journal/outbox adoption, exact predecessor
 // revalidation, idempotent restart recovery, and rollback on stale local or
-// remote state. Native preparation still owns the remaining target-GUID to
-// keyed-logical-hash and protected-predecessor proof; its explicit skipped
-// contract remains at the bottom until that boundary is exported.
+// remote state. The exported cloud_sync_prepare_message_update API owns the
+// target-GUID/keyed-logical-hash/protected-predecessor proof. Its production
+// assembly checks are exercised by cloud_sync_message_update_prepare_tests in
+// rust/src/api/api.rs (target/logical hash, record name/server hash, ETag, PCS
+// prefix and minimal conditional merge). Protected source/lease checks live in
+// cloud_sync_ids_mutation_stage tests. These are real native tests, not a Dart
+// mock of the FFI response. This fixture does not exercise the authenticated
+// exported entry end to end; named Windows/Pixel evidence covers that separately.
 import 'dart:io';
 
 import 'package:bluebubbles/database/models.dart';
@@ -964,17 +969,6 @@ void main() {
     });
   });
 
-  group(
-    'native mutation update preparation (missing exported seam)',
-    skip:
-        'native API must bind target GUID, keyed logical identity, mapped '
-        'record ID, ETag, PCS prefix, and staged envelope before adoption',
-    () {
-      test('target GUID and mapped predecessor are one native proof', () {
-        fail('missing native preparation API');
-      });
-    },
-  );
 }
 
 class _NoProtector implements CloudSyncProtector {

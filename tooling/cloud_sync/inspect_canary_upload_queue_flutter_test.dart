@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:bluebubbles/database/models.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_mutation_journal.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_send_journal.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_safe_failure.dart';
 import 'package:crypto/crypto.dart';
@@ -18,6 +19,29 @@ void main() {
         Platform.environment['OPENBUBBLES_TEST_MESSAGE_RECIPIENT'];
     final expectedGuidHash =
         Platform.environment['OPENBUBBLES_TEST_MESSAGE_GUID_HASH'];
+    final mutationTargetHash =
+        Platform.environment['OPENBUBBLES_MUTATION_TARGET_GUID_HASH'];
+    final mutationRecipient =
+        Platform.environment['OPENBUBBLES_MUTATION_RECIPIENT'];
+    final mutationText = Platform.environment['OPENBUBBLES_MUTATION_TEXT'];
+    final mutationExpectedState =
+        Platform.environment['OPENBUBBLES_MUTATION_EXPECTED_STATE'];
+    final inspectIntentHash =
+        Platform.environment['OPENBUBBLES_INSPECT_INTENT_GUID_HASH'];
+    final inspectIntentRecipient =
+        Platform.environment['OPENBUBBLES_INSPECT_INTENT_RECIPIENT'];
+    if (inspectIntentHash != null || inspectIntentRecipient != null) {
+      expect(inspectIntentHash, matches(RegExp(r'^[0-9a-f]{64}$')));
+      expect(inspectIntentRecipient, isNotEmpty);
+      expect(testText, isNotEmpty);
+    }
+    if (mutationTargetHash != null || mutationRecipient != null) {
+      expect(mutationTargetHash, matches(RegExp(r'^[0-9a-f]{64}$')));
+      expect(mutationRecipient, isNotEmpty);
+      if (mutationExpectedState != null) {
+        expect(mutationExpectedState, matches(RegExp(r'^[0-5]$')));
+      }
+    }
     if (expectedRecipient != null || expectedGuidHash != null) {
       expect(testText, isNotNull);
       expect(expectedRecipient, isNotEmpty);
@@ -151,6 +175,37 @@ void main() {
         final knownOperations = intents
             .map((i) => i.admittedOperationId)
             .toSet();
+        Map<String, Object?>? inspectedIntent;
+        if (inspectIntentHash != null && inspectIntentRecipient != null) {
+          final exact = intents.where((i) =>
+              i.messageGuidHash == inspectIntentHash).toList();
+          expect(exact, hasLength(1));
+          expect(testMessages, hasLength(1));
+          final row = exact.single;
+          final message = testMessages.single;
+          expect(message.id, row.localMessageId);
+          expect(message.isFromMe, isTrue);
+          expect(message.chat.target?.guid, 'iMessage;-;$inspectIntentRecipient');
+          expect(message.chat.target?.chatIdentifier, inspectIntentRecipient);
+          final operations = outbox.where((o) =>
+              row.admittedOperationId != null &&
+              o.operationId == row.admittedOperationId &&
+              o.accountFingerprint == row.accountFingerprint).toList();
+          expect(operations.length, lessThanOrEqualTo(1));
+          inspectedIntent = {
+            'scope': 'copied_database_intent_status_not_delivery_proof',
+            'exactTargetAndRecipient': true,
+            'state': row.state,
+            'positiveIdsConfirmationMarkerPresent':
+                row.idsConfirmationVersion == cloudSyncIdsConfirmationVersion,
+            'protectedSourcePresent': row.protectedSourceBinding != null,
+            'cloudOperationCount': operations.length,
+            'cloudOperationState': operations.isEmpty ? null : operations.single.state,
+            'messagePreserved': message.dateDeleted == null,
+            'messageHasError': message.error != 0,
+            'freshRemoteReadbackProven': false,
+          };
+        }
         Map<String, Object?>? exactTestReadback;
         if (expectedRecipient != null && expectedGuidHash != null) {
           // This diagnostic is pinned to the hash displayed by the actual
@@ -214,6 +269,78 @@ void main() {
         final mutations = store
             .box<CloudSyncLocalMutationIntentEntity>()
             .getAll();
+        Map<String, Object?>? exactMutation;
+        if (mutationTargetHash != null && mutationRecipient != null) {
+          // Pin a deliberately selected test target, never the newest mutation
+          // or another person's chat. This checks copied-row structure only;
+          // native receipt verification and fresh remote reads remain separate.
+          final rows = mutations
+              .where((row) => row.targetGuidHash == mutationTargetHash)
+              .toList();
+          expect(rows, hasLength(1));
+          final row = rows.single;
+          validateCloudSyncMutationRow(row);
+          if (mutationExpectedState != null) {
+            expect(row.state, int.parse(mutationExpectedState));
+          }
+          final target = store.box<Message>().get(row.localMessageId);
+          expect(target, isNotNull);
+          expect(
+            sha256.convert(utf8.encode(jsonEncode([
+              'cloud-sync-local-send-guid-v1', target!.guid,
+            ]))).toString(),
+            mutationTargetHash,
+          );
+          expect(target.chat.targetId, row.localChatId);
+          expect(target.isFromMe, isTrue);
+          final chat = target.chat.target;
+          expect(chat?.guid, 'iMessage;-;$mutationRecipient');
+          expect(chat?.chatIdentifier, mutationRecipient);
+          final summaries = target.messageSummaryInfo;
+          final summary = summaries.length == 1 ? summaries.single : null;
+          final history = summary?.editedContent['0'];
+          final lastBody = history?.isNotEmpty == true
+              ? history!.last.text : null;
+          final reflected = target.dateEdited != null &&
+              (row.kind == 0
+                  ? mutationText != null && target.text == mutationText &&
+                      target.attributedBody.length == 1 &&
+                      target.attributedBody.single.string == mutationText &&
+                      summary?.editedParts.contains(0) == true &&
+                      summary?.retractedParts.isEmpty == true &&
+                      lastBody?.values.length == 1 &&
+                      lastBody!.values.single.string == mutationText
+                  : summary?.retractedParts.where((part) => part == 0).length == 1);
+          final operations = outbox.where((operation) =>
+              operation.operationId == row.admittedOperationId &&
+              operation.accountFingerprint == row.accountFingerprint).toList();
+          expect(operations.length, lessThanOrEqualTo(1));
+          final operation = operations.isEmpty ? null : operations.single;
+          exactMutation = {
+            'scope': 'copied_database_mutation_diagnostics_only',
+            'singlePinnedTargetAndMutation': true,
+            'sourceBindingStructurallyValid': true,
+            'kind': row.kind,
+            'state': row.state,
+            'positiveIdsReceiptMarkerPresent': row.idsReceiptBindingSha256 != null,
+            'reflectionMarkerPresent': row.reflectedSnapshotSha256 != null,
+            'storedDisplayMatchesRequestedMutation': reflected,
+            'initialCreateIntentsForMutation': intents.where((intent) =>
+                intent.accountFingerprint == row.accountFingerprint &&
+                intent.messageGuidHash == row.mutationGuidHash).length,
+            'conditionalOperationPresent': operation != null,
+            'operationState': operation?.state,
+            'operationPayloadVersion': operation?.payloadVersion,
+            'operationAttempts': operation?.attemptCount,
+            'terminalReadbackMarkerPresent': row.state == 5,
+            'operationSettledAndLeaseReleased': operation != null &&
+                operation.state == 2 && operation.confirmedAtMs > 0 &&
+                operation.serverRecordIdHash != null &&
+                operation.protectedLeaseReference == null &&
+                operation.leaseIdHash == null && operation.leaseExpiresAtMs == 0,
+            'freshRemoteReadbackProven': false,
+          };
+        }
         final readySourceShapes = <String, int>{};
         var missingOrDeletedSources = 0;
         for (final intent in intents) {
@@ -299,6 +426,8 @@ void main() {
           'missingOrDeletedJournalSources': missingOrDeletedSources,
           if (testText != null) 'testMessageCount': testMessages.length,
           if (exactTestReadback != null) 'exactTestReadback': exactTestReadback,
+          if (exactMutation != null) 'exactMutation': exactMutation,
+          if (inspectedIntent != null) 'inspectedIntent': inspectedIntent,
           if (testText != null)
             'testMessageStates': [
               for (final message in testMessages)
