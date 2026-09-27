@@ -143,6 +143,7 @@ impl CloudSyncProtectionContext {
                     | "idsAttachmentSource"
                     | "idsMutationSource"
                     | "idsReceivedArchiveSource"
+                    | "historicalArchiveSource"
                     | "idsSendReceipt"
                     | "systemFields"
                     | "payloadReference"
@@ -951,6 +952,7 @@ mod tests {
             "idsAttachmentSource",
             "idsMutationSource",
             "idsReceivedArchiveSource",
+            "historicalArchiveSource",
             "idsSendReceipt",
             "outboundMessage",
             "outboundChat",
