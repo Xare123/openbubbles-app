@@ -408,6 +408,46 @@ cloudSyncOpenReceivedArchiveCreateProof({
   parentBindingSha256: parentBindingSha256,
 );
 
+/// Cached-only parent decode plus committed historical source reopening. No
+/// fresh absence, file staging, CloudKit write or new IDS provenance is implied.
+Future<CloudSyncHistoricalArchiveCreateProof>
+cloudSyncOpenHistoricalArchiveCreateProof({
+  required ArcCloudMessagesClientDefaultAnisetteProvider cloudMessagesClient,
+  required BigInt nativeWriterPauseToken,
+  required String storageDirectory,
+  required CloudSyncNativeAuthMetadata expectedAuth,
+  required CloudSyncNativeHistoricalArchiveSourceBinding historicalSource,
+  required BigInt chatGeneration,
+  required String chatLogicalEntityKeyHash,
+  required CloudSyncChatIdentitySourceInput chatSource,
+  required String parentBindingSha256,
+}) => RustLib.instance.api.crateApiApiCloudSyncOpenHistoricalArchiveCreateProof(
+  cloudMessagesClient: cloudMessagesClient,
+  nativeWriterPauseToken: nativeWriterPauseToken,
+  storageDirectory: storageDirectory,
+  expectedAuth: expectedAuth,
+  historicalSource: historicalSource,
+  chatGeneration: chatGeneration,
+  chatLogicalEntityKeyHash: chatLogicalEntityKeyHash,
+  chatSource: chatSource,
+  parentBindingSha256: parentBindingSha256,
+);
+
+/// Consumes one fresh native exact NotFound for this identical historical
+/// source. A discovery already consumed by the reader cannot create anything.
+/// Caller must hold local exclusion, recheck tombstone/newer-version evidence,
+/// adopt the returned lease atomically into the outbox, then commit that lease.
+/// This stages local encrypted bytes only; it never submits a remote write.
+Future<CloudSyncProtectedOutboundStage> cloudSyncStageHistoricalArchiveCreate({
+  required CloudSyncPreparedHistoricalDiscovery prepared,
+  required BigInt nativeWriterPauseToken,
+  required CloudSyncHistoricalArchiveCreateProof proof,
+}) => RustLib.instance.api.crateApiApiCloudSyncStageHistoricalArchiveCreate(
+  prepared: prepared,
+  nativeWriterPauseToken: nativeWriterPauseToken,
+  proof: proof,
+);
+
 Future<CloudSyncNativeSendReceiptPage> cloudSyncReplayNativeSendReceipts({
   required String storageDirectory,
   required String expectedAccountFingerprint,
@@ -2696,6 +2736,10 @@ abstract class CircleClientSessionDefaultAnisetteProvider
 abstract class CloudSyncAttachmentParentGroupProof
     implements RustOpaqueInterface {}
 
+// Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<CloudSyncHistoricalArchiveCreateProof>>
+abstract class CloudSyncHistoricalArchiveCreateProof
+    implements RustOpaqueInterface {}
+
 // Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<CloudSyncLocalStoreLease>>
 abstract class CloudSyncLocalStoreLease implements RustOpaqueInterface {}
 
@@ -4610,6 +4654,7 @@ class CloudSyncPreparedMessageCreateInput {
   /// Ephemeral retained-Chat authority, required only for group attachment parents.
   final CloudSyncAttachmentParentGroupProof? attachmentParentGroupProof;
   final CloudSyncReceivedArchiveCreateProof? receivedArchiveProof;
+  final CloudSyncHistoricalArchiveCreateProof? historicalArchiveProof;
 
   const CloudSyncPreparedMessageCreateInput({
     required this.localOperationId,
@@ -4623,6 +4668,7 @@ class CloudSyncPreparedMessageCreateInput {
     this.attachmentParentContext,
     this.attachmentParentGroupProof,
     this.receivedArchiveProof,
+    this.historicalArchiveProof,
   });
 
   @override
@@ -4637,7 +4683,8 @@ class CloudSyncPreparedMessageCreateInput {
       appleOperationUuid.hashCode ^
       attachmentParentContext.hashCode ^
       attachmentParentGroupProof.hashCode ^
-      receivedArchiveProof.hashCode;
+      receivedArchiveProof.hashCode ^
+      historicalArchiveProof.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -4655,7 +4702,8 @@ class CloudSyncPreparedMessageCreateInput {
           appleOperationUuid == other.appleOperationUuid &&
           attachmentParentContext == other.attachmentParentContext &&
           attachmentParentGroupProof == other.attachmentParentGroupProof &&
-          receivedArchiveProof == other.receivedArchiveProof;
+          receivedArchiveProof == other.receivedArchiveProof &&
+          historicalArchiveProof == other.historicalArchiveProof;
 }
 
 class CloudSyncPreparedMessageCreateResult {

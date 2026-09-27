@@ -2982,7 +2982,7 @@
     },
     {
       "id": "37:1644657105908350051",
-      "lastPropertyId": "8:7844681394164518328",
+      "lastPropertyId": "10:5050965769154371007",
       "name": "CloudSyncHistoricalArchiveIntentEntity",
       "properties": [
         {
@@ -3031,13 +3031,25 @@
           "id": "8:7844681394164518328",
           "name": "readerObservationBinding",
           "type": 9
+        },
+        {
+          "id": "9:4464396149052794009",
+          "name": "admittedOperationId",
+          "indexId": "108:4081572127477748998",
+          "type": 9,
+          "flags": 4096
+        },
+        {
+          "id": "10:5050965769154371007",
+          "name": "admittedBinding",
+          "type": 9
         }
       ],
       "relations": []
     }
   ],
   "lastEntityId": "37:1644657105908350051",
-  "lastIndexId": "107:8086057055477981296",
+  "lastIndexId": "108:4081572127477748998",
   "lastRelationId": "1:7492985733214117623",
   "lastSequenceId": "0:0",
   "modelVersion": 5,

@@ -43,6 +43,7 @@ void validateCloudSyncHistoricalDiscoverySelection({
   if (current == null ||
       current.id != intent.id ||
       !current.sourceLeaseCommitted ||
+      current.admittedOperationId != null ||
       current.source.encode() != source.encode() ||
       current.readerChangeId !=
           (adopted?.change.changeId ?? intent.readerChangeId)) {

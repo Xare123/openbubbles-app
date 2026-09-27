@@ -4,8 +4,12 @@ import 'package:bluebubbles/database/models.dart';
 import 'package:crypto/crypto.dart';
 
 import 'cloud_sync_historical_protected_source_binding.dart';
+import 'cloud_sync_historical_archive_request.dart';
+import 'cloud_sync_historical_local_guard.dart';
+import 'cloud_sync_historical_outbox_binding.dart';
 import 'cloud_sync_manual_shadow_sampler.dart';
 import 'cloud_sync_models.dart';
+import 'cloud_sync_outbound_chat_binding.dart';
 
 /// Validate a retained row using its own scope, not the current signed-in user.
 /// GC and interrupted lease recovery must retain old accounts and snapshots.
@@ -30,13 +34,40 @@ CloudSyncHistoricalProtectedSourceBinding validateCloudSyncHistoricalArchiveRow(
   if (row.id < 1 ||
       row.scopeKey != scopeKey ||
       row.intentKey != intentKey ||
-      (row.state != 0 && row.state != 1 && row.state != 2) ||
+      (row.state < 0 || row.state > 3) ||
       row.createdAtMs < 1 ||
       row.updatedAtMs < row.createdAtMs) {
     throw StateError('cloud_sync_historical_journal_record_invalid');
   }
   _historicalReaderChangeId(row, source);
+  readCloudSyncHistoricalOutboxBinding(row);
   return source;
+}
+
+/// Retained metadata only. No current account, Message or successful upload is
+/// inferred here; GC must also preserve unknown outcomes from older snapshots.
+CloudSyncHistoricalOutboxBinding? readCloudSyncHistoricalOutboxBinding(
+  CloudSyncHistoricalArchiveIntentEntity row,
+) {
+  if (row.state != 3) {
+    if (row.admittedOperationId != null || row.admittedBinding != null) {
+      throw StateError('cloud_sync_historical_outbox_binding_invalid');
+    }
+    return null;
+  }
+  final encoded = row.admittedBinding;
+  if (encoded == null || row.admittedOperationId == null ||
+      !RegExp(r'^op1:[a-f0-9]{64}$').hasMatch(row.admittedOperationId!)) {
+    throw StateError('cloud_sync_historical_outbox_binding_invalid');
+  }
+  final binding = CloudSyncHistoricalOutboxBinding.decode(encoded);
+  if (binding.source.intentId != row.id ||
+      binding.source.source.encode() != row.protectedSourceBinding ||
+      binding.source.createdAtMs != row.createdAtMs ||
+      row.readerObservationBinding != null) {
+    throw StateError('cloud_sync_historical_outbox_binding_invalid');
+  }
+  return binding;
 }
 
 // A reader handoff is bound to the complete historical source, not just its
@@ -83,12 +114,14 @@ final class CloudSyncHistoricalArchiveIntent {
     required this.source,
     required this.sourceLeaseCommitted,
     required this.readerChangeId,
+    required this.admittedOperationId,
   });
 
   final int id;
   final CloudSyncHistoricalProtectedSourceBinding source;
   final bool sourceLeaseCommitted;
   final String? readerChangeId;
+  final String? admittedOperationId;
 
   @override
   String toString() => 'CloudSyncHistoricalArchiveIntent(redacted)';
@@ -173,6 +206,7 @@ final class CloudSyncHistoricalArchiveJournal {
       source: source,
       sourceLeaseCommitted: row.state >= 1,
       readerChangeId: _historicalReaderChangeId(row, source),
+      admittedOperationId: row.admittedOperationId,
     );
   }
 
@@ -305,7 +339,8 @@ final class CloudSyncHistoricalArchiveJournal {
       throw StateError('cloud_sync_historical_journal_record_missing');
     }
     final retained = _decode(row);
-    if (!retained.sourceLeaseCommitted ||
+    if ((row.state != 1 && row.state != 2) ||
+        !retained.sourceLeaseCommitted ||
         retained.source.encode() != source.encode()) {
       throw StateError('cloud_sync_historical_reader_source_changed');
     }
@@ -364,6 +399,154 @@ final class CloudSyncHistoricalArchiveJournal {
       throw StateError('cloud_sync_historical_reader_admission_changed');
     }
   });
+
+  /// Called after native absent-only staging. The staged logical/server hashes
+  /// are checked again against the operation at atomic admission; this method
+  /// neither grants absence nor stages another protected payload.
+  CloudSyncHistoricalCreateSource readForCreateAdmission({
+    required CloudSyncScope scope,
+    required int intentId,
+    required CloudSyncNativeAuthSnapshot currentAuth,
+    required CloudSyncHistoricalArchiveRequest request,
+    required int localChatId,
+    required int generation,
+    required String logicalEntityKeyHash,
+    required String serverRecordIdHash,
+  }) => _store.runInTransaction(TxMode.read, () {
+    _requireCreateScope(scope, currentAuth);
+    final row = _store.box<CloudSyncHistoricalArchiveIntentEntity>().get(intentId);
+    if (row == null || row.state != 1) {
+      throw StateError('cloud_sync_historical_create_source_not_ready');
+    }
+    final retained = _decode(row);
+    final parent = requireCloudSyncRestoredDirectChatProofForId(
+      store: _store, messageScope: scope, chatId: localChatId);
+    return CloudSyncHistoricalCreateSource(
+      intentId: intentId, source: retained.source, localChatId: localChatId,
+      parentBinding: parent.binding, generation: generation,
+      logicalEntityKeyHash: logicalEntityKeyHash, serverRecordIdHash: serverRecordIdHash,
+      createdAtMs: row.createdAtMs,
+      localGuard: CloudSyncHistoricalLocalGuard.capture(
+        store: _store, request: request, source: retained.source, localChatId: localChatId),
+    );
+  });
+
+  void _requireCreateScope(CloudSyncScope scope, CloudSyncNativeAuthSnapshot auth) {
+    if (scope.accountFingerprint != accountFingerprint ||
+        scope.container != 'com.apple.messages.cloud' || scope.database != 'private' ||
+        scope.zone != 'messageManateeZone' || scope.schemaVersion != cloudSyncSchemaVersion ||
+        scope.streamKind != CloudSyncStreamKind.messages ||
+        scope.persistenceLane != CloudSyncPersistenceLane.semantic ||
+        auth.accountFingerprint != accountFingerprint ||
+        auth.protectedStoreIdentity != protectedStoreIdentity) {
+      throw StateError('cloud_sync_historical_create_identity_changed');
+    }
+  }
+
+  void validateCreateAdmission({
+    required Store transactionStore,
+    required CloudSyncScope scope,
+    required CloudSyncHistoricalCreateSource expected,
+    required CloudSyncNativeAuthSnapshot currentAuth,
+    required bool Function() stillCurrent,
+  }) {
+    if (!isBoundToStore(transactionStore) || !stillCurrent()) {
+      throw StateError('cloud_sync_historical_create_admission_changed');
+    }
+    _requireCreateScope(scope, currentAuth);
+    final row = _store.box<CloudSyncHistoricalArchiveIntentEntity>().get(expected.intentId);
+    if (row == null || row.state != 1) {
+      throw StateError('cloud_sync_historical_create_source_not_ready');
+    }
+    final retained = _decode(row);
+    if (retained.source.encode() != expected.source.encode() ||
+        row.createdAtMs != expected.createdAtMs ||
+        requireCloudSyncRestoredDirectChatProofForId(
+          store: _store, messageScope: scope, chatId: expected.localChatId).binding !=
+            expected.parentBinding) {
+      throw StateError('cloud_sync_historical_create_admission_changed');
+    }
+    expected.localGuard.requireUnchanged(
+      store: _store, source: expected.source, localChatId: expected.localChatId);
+    if (!stillCurrent()) {
+      throw StateError('cloud_sync_historical_create_admission_changed');
+    }
+  }
+
+  /// Joins the same synchronous write transaction as the queue/map/lease. A
+  /// lost return is recoverable by reading this exact ownership, not restaging.
+  void adoptInOutboxTransaction({
+    required Store transactionStore,
+    required CloudSyncHistoricalCreateSource expected,
+    required CloudSyncNativeAuthSnapshot currentAuth,
+    required bool Function() stillCurrent,
+    required CloudOutboxOperation operation,
+  }) {
+    if (!isBoundToStore(transactionStore) || !stillCurrent()) {
+      throw StateError('cloud_sync_historical_create_admission_changed');
+    }
+    _requireCreateScope(operation.scope, currentAuth);
+    final box = _store.box<CloudSyncHistoricalArchiveIntentEntity>();
+    final row = box.get(expected.intentId);
+    if (row == null) throw StateError('cloud_sync_historical_journal_record_missing');
+    _decode(row);
+    final existing = readCloudSyncHistoricalOutboxBinding(row);
+    if (existing != null) {
+      existing.requireOperation(operation);
+      if (row.admittedOperationId != operation.operationId ||
+          !existing.source.sameSourceAs(expected)) {
+        throw StateError('cloud_sync_historical_admitted_operation_changed');
+      }
+      return;
+    }
+    validateCreateAdmission(transactionStore: transactionStore, scope: operation.scope,
+      expected: expected, currentAuth: currentAuth, stillCurrent: stillCurrent);
+    final binding = CloudSyncHistoricalOutboxBinding.adopt(source: expected, operation: operation);
+    row
+      ..state = 3
+      ..admittedOperationId = operation.operationId
+      ..admittedBinding = binding.encode();
+    final now = _now();
+    if (now > row.updatedAtMs) row.updatedAtMs = now;
+    if (!stillCurrent()) throw StateError('cloud_sync_historical_create_admission_changed');
+    box.put(row);
+  }
+
+  /// Recovery intentionally does not inspect the mutable local Message or
+  /// newer-origin veto. Those must not prevent an exact unknown-outcome lookup.
+  CloudSyncHistoricalCreateSource? readAdoptedSource({
+    required Store transactionStore,
+    required CloudOutboxOperation operation,
+  }) {
+    if (!isBoundToStore(transactionStore)) {
+      throw StateError('cloud_sync_historical_create_admission_changed');
+    }
+    final query = _store.box<CloudSyncHistoricalArchiveIntentEntity>()
+      .query(CloudSyncHistoricalArchiveIntentEntity_.admittedOperationId.equals(operation.operationId))
+      .build()..limit = 2;
+    final List<CloudSyncHistoricalArchiveIntentEntity> rows;
+    try { rows = query.find(); } finally { query.close(); }
+    if (rows.isEmpty) return null;
+    if (rows.length != 1) throw StateError('cloud_sync_historical_admitted_operation_changed');
+    final row = rows.single;
+    _decode(row);
+    final binding = readCloudSyncHistoricalOutboxBinding(row);
+    if (binding == null) throw StateError('cloud_sync_historical_admitted_operation_changed');
+    binding.requireOperation(operation);
+    return binding.source;
+  }
+
+  void requireAdoptedDispatch({
+    required Store transactionStore,
+    required CloudOutboxOperation operation,
+  }) {
+    final source = readAdoptedSource(transactionStore: transactionStore, operation: operation);
+    if (source == null) throw StateError('cloud_sync_historical_admitted_operation_changed');
+    source.localGuard.requireUnchanged(
+      store: _store, source: source.source, localChatId: source.localChatId);
+    requireCloudSyncAdoptedChatDependency(store: _store, messageScope: operation.scope,
+      binding: source.parentBinding, expectedChatId: source.localChatId);
+  }
 
   /// Bounded recovery of adopted sources whose native commit may have been
   /// interrupted. It does not infer that a prior native commit failed.

@@ -118,6 +118,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       wire._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncAttachmentParentGroupProofPtr;
 
   CrossPlatformFinalizerArg
+  get rust_arc_decrement_strong_count_CloudSyncHistoricalArchiveCreateProofPtr =>
+      wire._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncHistoricalArchiveCreateProofPtr;
+
+  CrossPlatformFinalizerArg
   get rust_arc_decrement_strong_count_CloudSyncLocalStoreLeasePtr => wire
       ._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncLocalStoreLeasePtr;
 
@@ -400,6 +404,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   CloudSyncAttachmentParentGroupProof
   dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncAttachmentParentGroupProof(
+    dynamic raw,
+  );
+
+  @protected
+  CloudSyncHistoricalArchiveCreateProof
+  dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncHistoricalArchiveCreateProof(
     dynamic raw,
   );
 
@@ -766,6 +776,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   ArcTokenProviderDefaultAnisetteProvider
   dco_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcTokenProviderDefaultAnisetteProvider(
+    dynamic raw,
+  );
+
+  @protected
+  CloudSyncHistoricalArchiveCreateProof
+  dco_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncHistoricalArchiveCreateProof(
     dynamic raw,
   );
 
@@ -1177,6 +1193,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  CloudSyncHistoricalArchiveCreateProof
+  dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncHistoricalArchiveCreateProof(
+    dynamic raw,
+  );
+
+  @protected
   CloudSyncLocalStoreLease
   dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncLocalStoreLease(
     dynamic raw,
@@ -1506,6 +1528,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   CloudSyncAttachmentParentGroupProof
   dco_decode_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncAttachmentParentGroupProof(
+    dynamic raw,
+  );
+
+  @protected
+  CloudSyncHistoricalArchiveCreateProof
+  dco_decode_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncHistoricalArchiveCreateProof(
     dynamic raw,
   );
 
@@ -3168,6 +3196,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  CloudSyncHistoricalArchiveCreateProof?
+  dco_decode_opt_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncHistoricalArchiveCreateProof(
+    dynamic raw,
+  );
+
+  @protected
   CloudSyncPreparedMessageCreateHandle?
   dco_decode_opt_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncPreparedMessageCreateHandle(
     dynamic raw,
@@ -4272,6 +4306,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  CloudSyncHistoricalArchiveCreateProof
+  sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncHistoricalArchiveCreateProof(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   CloudSyncLocalStoreLease
   sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncLocalStoreLease(
     SseDeserializer deserializer,
@@ -4634,6 +4674,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   ArcTokenProviderDefaultAnisetteProvider
   sse_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcTokenProviderDefaultAnisetteProvider(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  CloudSyncHistoricalArchiveCreateProof
+  sse_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncHistoricalArchiveCreateProof(
     SseDeserializer deserializer,
   );
 
@@ -5069,6 +5115,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  CloudSyncHistoricalArchiveCreateProof
+  sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncHistoricalArchiveCreateProof(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   CloudSyncLocalStoreLease
   sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncLocalStoreLease(
     SseDeserializer deserializer,
@@ -5406,6 +5458,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   CloudSyncAttachmentParentGroupProof
   sse_decode_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncAttachmentParentGroupProof(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  CloudSyncHistoricalArchiveCreateProof
+  sse_decode_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncHistoricalArchiveCreateProof(
     SseDeserializer deserializer,
   );
 
@@ -7430,6 +7488,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  CloudSyncHistoricalArchiveCreateProof?
+  sse_decode_opt_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncHistoricalArchiveCreateProof(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   CloudSyncPreparedMessageCreateHandle?
   sse_decode_opt_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncPreparedMessageCreateHandle(
     SseDeserializer deserializer,
@@ -8750,6 +8814,13 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void
+  sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncHistoricalArchiveCreateProof(
+    CloudSyncHistoricalArchiveCreateProof self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void
   sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncLocalStoreLease(
     CloudSyncLocalStoreLease self,
     SseSerializer serializer,
@@ -9172,6 +9243,13 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void
   sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcTokenProviderDefaultAnisetteProvider(
     ArcTokenProviderDefaultAnisetteProvider self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void
+  sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncHistoricalArchiveCreateProof(
+    CloudSyncHistoricalArchiveCreateProof self,
     SseSerializer serializer,
   );
 
@@ -9684,6 +9762,13 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void
+  sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncHistoricalArchiveCreateProof(
+    CloudSyncHistoricalArchiveCreateProof self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void
   sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncLocalStoreLease(
     CloudSyncLocalStoreLease self,
     SseSerializer serializer,
@@ -10079,6 +10164,13 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void
   sse_encode_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncAttachmentParentGroupProof(
     CloudSyncAttachmentParentGroupProof self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void
+  sse_encode_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncHistoricalArchiveCreateProof(
+    CloudSyncHistoricalArchiveCreateProof self,
     SseSerializer serializer,
   );
 
@@ -12463,6 +12555,13 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void
+  sse_encode_opt_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncHistoricalArchiveCreateProof(
+    CloudSyncHistoricalArchiveCreateProof? self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void
   sse_encode_opt_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncPreparedMessageCreateHandle(
     CloudSyncPreparedMessageCreateHandle? self,
     SseSerializer serializer,
@@ -14622,6 +14721,40 @@ class RustLibWire implements BaseWire {
       );
   late final _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncAttachmentParentGroupProof =
       _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncAttachmentParentGroupProofPtr
+          .asFunction<void Function(ffi.Pointer<ffi.Void>)>();
+
+  void
+  rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncHistoricalArchiveCreateProof(
+    ffi.Pointer<ffi.Void> ptr,
+  ) {
+    return _rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncHistoricalArchiveCreateProof(
+      ptr,
+    );
+  }
+
+  late final _rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncHistoricalArchiveCreateProofPtr =
+      _lookup<ffi.NativeFunction<ffi.Void Function(ffi.Pointer<ffi.Void>)>>(
+        'frbgen_bluebubbles_rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncHistoricalArchiveCreateProof',
+      );
+  late final _rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncHistoricalArchiveCreateProof =
+      _rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncHistoricalArchiveCreateProofPtr
+          .asFunction<void Function(ffi.Pointer<ffi.Void>)>();
+
+  void
+  rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncHistoricalArchiveCreateProof(
+    ffi.Pointer<ffi.Void> ptr,
+  ) {
+    return _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncHistoricalArchiveCreateProof(
+      ptr,
+    );
+  }
+
+  late final _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncHistoricalArchiveCreateProofPtr =
+      _lookup<ffi.NativeFunction<ffi.Void Function(ffi.Pointer<ffi.Void>)>>(
+        'frbgen_bluebubbles_rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncHistoricalArchiveCreateProof',
+      );
+  late final _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncHistoricalArchiveCreateProof =
+      _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncHistoricalArchiveCreateProofPtr
           .asFunction<void Function(ffi.Pointer<ffi.Void>)>();
 
   void

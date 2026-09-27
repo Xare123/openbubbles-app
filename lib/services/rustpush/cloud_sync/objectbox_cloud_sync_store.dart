@@ -8,6 +8,7 @@ import 'cloud_operation_identity.dart';
 import 'cloud_shadow_journal_budget.dart';
 import 'cloud_sync_historical_archive_journal.dart';
 import 'cloud_sync_historical_protected_source_binding.dart';
+import 'cloud_sync_historical_outbox_binding.dart';
 import 'cloud_sync_local_send_journal.dart';
 import 'cloud_sync_local_send_source_binding.dart';
 import 'cloud_sync_received_archive_source_binding.dart';
@@ -2320,6 +2321,25 @@ class ObjectBoxCloudSyncStore
       stillCurrent: stillCurrent, operation: operation),
   );
 
+  /// Historical sources retain their own snapshot/provenance journal. They
+  /// share the one durable create queue, not the live-send/received receipts.
+  CloudOutboxOperation admitProtectedHistoricalCreate({
+    required CloudOutboxDraft draft,
+    required CloudRecordMapEntry recordMapping,
+    required CloudSyncHistoricalArchiveJournal journal,
+    required CloudSyncHistoricalCreateSource source,
+    required CloudSyncNativeAuthSnapshot currentAuth,
+    required bool Function() stillCurrent,
+  }) => _admitProtectedOutboundCreate(draft, recordMapping,
+    historicalArchiveSource: source,
+    validateFreshDependency: () => journal.validateCreateAdmission(
+      transactionStore: _store, scope: draft.scope, expected: source,
+      currentAuth: currentAuth, stillCurrent: stillCurrent),
+    onAdopt: (operation) => journal.adoptInOutboxTransaction(
+      transactionStore: _store, expected: source, currentAuth: currentAuth,
+      stillCurrent: stillCurrent, operation: operation),
+  );
+
   /// Atomically consumes one reflected local edit/unsend into a protected
   /// conditional-update outbox row. The mapped predecessor is re-read inside
   /// this exact transaction; a changed ETag, raw record, generation, identity,
@@ -2968,6 +2988,7 @@ class ObjectBoxCloudSyncStore
     CloudSyncLocalSendAdmissionSource? localSendSource,
     void Function()? validateFreshDependency,
     CloudSyncReceivedArchiveAdmissionSource? receivedArchiveSource,
+    CloudSyncHistoricalCreateSource? historicalArchiveSource,
     CloudSyncOutboundChatOrigin? chatOrigin,
     CloudSyncLocalSendAdmissionSource? chatLocalSendSource,
     CloudSyncChatIdentityEvidence? chatIdentityEvidence,
@@ -2975,7 +2996,10 @@ class ObjectBoxCloudSyncStore
     bool retainedAttachmentResume = false,
   }) {
     final isChatCreate = chatOrigin != null;
-    if (draft.action != CloudOutboxAction.save ||
+    if ([localSendSource, receivedArchiveSource, historicalArchiveSource]
+            .where((source) => source != null).length > 1 ||
+        (historicalArchiveSource != null && (isChatCreate || isAttachmentCreate)) ||
+        draft.action != CloudOutboxAction.save ||
         draft.payloadVersion !=
             (isAttachmentCreate
                 ? 1
@@ -3021,6 +3045,11 @@ class ObjectBoxCloudSyncStore
         logicalEntityKeyHash: draft.logicalEntityKeyHash,
         payloadVersion: draft.payloadVersion,
       );
+      final historicalOwner = _readHistoricalIntentForOperation(operationId);
+      if ((historicalOwner != null && historicalOwner.id != historicalArchiveSource?.intentId) ||
+          (historicalArchiveSource != null && _readReceivedIntentForOperation(operationId) != null)) {
+        throw StateError('cloud_sync_historical_admitted_origin_conflict');
+      }
       final existingOperation = _findOutboxByOperationIdLocked(operationId);
       if (existingOperation != null) {
         final existing = _outboxFromEntity(draft.scope, existingOperation);
@@ -3135,6 +3164,13 @@ class ObjectBoxCloudSyncStore
       } else if (receivedArchiveSource != null) {
         if (_receivedArchiveJournal == null || validateFreshDependency == null) {
           throw StateError('cloud_sync_received_archive_journal_required');
+        }
+        validateFreshDependency();
+        _requireMessagesCloudAccountProjectionReadyLocked(draft.scope,
+          allowRetainedForFreshCreate: true, freshRecordIdHash: draft.serverRecordIdHash);
+      } else if (historicalArchiveSource != null) {
+        if (validateFreshDependency == null) {
+          throw StateError('cloud_sync_historical_create_admission_changed');
         }
         validateFreshDependency();
         _requireMessagesCloudAccountProjectionReadyLocked(draft.scope,
@@ -4545,6 +4581,65 @@ class ObjectBoxCloudSyncStore
     } finally { query.close(); }
   }
 
+  CloudSyncHistoricalArchiveIntentEntity? _readHistoricalIntentForOperation(String operationId) {
+    final query = _store.box<CloudSyncHistoricalArchiveIntentEntity>()
+      .query(CloudSyncHistoricalArchiveIntentEntity_.admittedOperationId.equals(operationId))
+      .build()..limit = 2;
+    try {
+      final rows = query.find();
+      if (rows.length > 1) throw StateError('cloud_sync_historical_admitted_operation_changed');
+      return rows.isEmpty ? null : rows.single;
+    } finally { query.close(); }
+  }
+
+  CloudSyncHistoricalArchiveJournal _historicalJournalFor(
+    CloudSyncHistoricalArchiveIntentEntity row,
+  ) {
+    final source = validateCloudSyncHistoricalArchiveRow(row);
+    return CloudSyncHistoricalArchiveJournal(store: _store,
+      accountFingerprint: source.accountFingerprint,
+      protectedStoreIdentity: source.protectedStoreIdentity,
+      snapshotSha256: source.snapshotSha256, clock: _clock);
+  }
+
+  /// Reads the retained owner across snapshots, including after process restart.
+  /// Never requires the currently selected import session to be the same snapshot.
+  CloudSyncHistoricalCreateSource? readHistoricalArchiveSource(CloudOutboxOperation operation) =>
+      _store.runInTransaction(TxMode.read, () {
+    final row = _readHistoricalIntentForOperation(operation.operationId);
+    if (row == null) return null;
+    if (_readReceivedIntentForOperation(operation.operationId) != null) {
+      throw StateError('cloud_sync_historical_admitted_origin_conflict');
+    }
+    return _historicalJournalFor(row).readAdoptedSource(
+      transactionStore: _store, operation: operation);
+  });
+
+  CloudOutboxOperation? readHistoricalArchiveOperation(CloudSyncScope scope, String operationId) =>
+      _store.runInTransaction(TxMode.read, () {
+    final row = _readHistoricalIntentForOperation(operationId);
+    if (row == null) return null;
+    final entity = _findOutboxByOperationIdLocked(operationId);
+    if (entity == null || entity.scopeKey != _scopeKey(scope) ||
+        entity.accountFingerprint != scope.accountFingerprint || entity.zone != scope.zone) {
+      throw StateError('cloud_sync_historical_admitted_operation_changed');
+    }
+    final operation = _outboxFromEntity(scope, entity);
+    if (readHistoricalArchiveSource(operation) == null) {
+      throw StateError('cloud_sync_historical_admitted_operation_changed');
+    }
+    final checkpoint = _findCheckpointByKeyLocked(_scopeKey(scope));
+    final map = cloudSyncFindRecordMap(store: _store, scope: scope,
+      generation: operation.checkpointGeneration, logicalEntityKeyHash: operation.logicalEntityKeyHash,
+      serverRecordIdHash: operation.serverRecordIdHash);
+    if (checkpoint?.generation != operation.checkpointGeneration || map == null ||
+        ((operation.status != CloudOutboxStatus.confirmed || operation.protectedLeaseReference != null) &&
+            map.encryptedServerRecordId != operation.encryptedPayloadReference)) {
+      throw StateError('cloud_sync_historical_admitted_operation_changed');
+    }
+    return operation;
+  });
+
   CloudOutboxOperation? readReceivedArchiveOperation(CloudSyncScope scope, String operationId) =>
       _store.runInTransaction(TxMode.read, () {
     final intent = _readReceivedIntentForOperation(operationId);
@@ -5787,6 +5882,17 @@ class ObjectBoxCloudSyncStore
     final operation = _outboxFromEntity(scope, entity);
     if (scope.zone == 'messageManateeZone') {
       final received = _readReceivedIntentForOperation(operation.operationId);
+      final historical = _readHistoricalIntentForOperation(operation.operationId);
+      if (received != null && historical != null) {
+        throw StateError('cloud_sync_historical_admitted_origin_conflict');
+      }
+      if (historical != null) {
+        _historicalJournalFor(historical).requireAdoptedDispatch(
+          transactionStore: _store, operation: operation);
+        _requireMessagesCloudAccountProjectionReadyLocked(scope,
+          allowRetainedForFreshCreate: true, freshRecordIdHash: operation.serverRecordIdHash);
+        return;
+      }
       if (received != null) {
         final journal = _receivedArchiveJournal;
         if (journal == null) throw StateError('cloud_sync_received_archive_journal_required');

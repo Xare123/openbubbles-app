@@ -1346,13 +1346,21 @@ class CloudSyncHistoricalArchiveIntentEntity {
   String protectedSourceBinding;
 
   /// Stable codes: 0 source adopted, 1 exact source lease committed,
-  /// 2 an exact found record belongs to the ordinary reader inbox.
+  /// 2 an exact found record belongs to the ordinary reader inbox,
+  /// 3 an exact historical create belongs to the existing durable outbox.
   /// None establishes remote absence, upload authority or completed projection.
   @Index()
   int state;
 
   /// Source-bound reader linkage, with hashes only. Absent before state 2.
   String? readerObservationBinding;
+
+  /// Exact initial-create owner. Null before state 3; never a remote receipt.
+  @Index(type: IndexType.hash64)
+  String? admittedOperationId;
+
+  /// Immutable source/parent/operation metadata, no raw GUID or message body.
+  String? admittedBinding;
 
   int createdAtMs;
   int updatedAtMs;
@@ -1364,6 +1372,8 @@ class CloudSyncHistoricalArchiveIntentEntity {
     required this.protectedSourceBinding,
     this.state = 0,
     this.readerObservationBinding,
+    this.admittedOperationId,
+    this.admittedBinding,
     required this.createdAtMs,
     required this.updatedAtMs,
   });

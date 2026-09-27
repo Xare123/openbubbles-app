@@ -3461,7 +3461,7 @@ final _entities = <obx_int.ModelEntity>[
   obx_int.ModelEntity(
     id: const obx_int.IdUid(37, 1644657105908350051),
     name: 'CloudSyncHistoricalArchiveIntentEntity',
-    lastPropertyId: const obx_int.IdUid(8, 7844681394164518328),
+    lastPropertyId: const obx_int.IdUid(10, 5050965769154371007),
     flags: 0,
     properties: <obx_int.ModelProperty>[
       obx_int.ModelProperty(
@@ -3515,6 +3515,19 @@ final _entities = <obx_int.ModelEntity>[
         type: 9,
         flags: 0,
       ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(9, 4464396149052794009),
+        name: 'admittedOperationId',
+        type: 9,
+        flags: 4096,
+        indexId: const obx_int.IdUid(108, 4081572127477748998),
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(10, 5050965769154371007),
+        name: 'admittedBinding',
+        type: 9,
+        flags: 0,
+      ),
     ],
     relations: <obx_int.ModelRelation>[],
     backlinks: <obx_int.ModelBacklink>[],
@@ -3565,7 +3578,7 @@ obx_int.ModelDefinition getObjectBoxModel() {
     generatorVersion: obx_int.GeneratorVersion.v2025_12_16,
     entities: _entities,
     lastEntityId: const obx_int.IdUid(37, 1644657105908350051),
-    lastIndexId: const obx_int.IdUid(107, 8086057055477981296),
+    lastIndexId: const obx_int.IdUid(108, 4081572127477748998),
     lastRelationId: const obx_int.IdUid(1, 7492985733214117623),
     lastSequenceId: const obx_int.IdUid(0, 0),
     retiredEntityUids: const [
@@ -8210,7 +8223,14 @@ obx_int.ModelDefinition getObjectBoxModel() {
                     object.readerObservationBinding == null
                     ? null
                     : fbb.writeString(object.readerObservationBinding!);
-                fbb.startTable(9);
+                final admittedOperationIdOffset =
+                    object.admittedOperationId == null
+                    ? null
+                    : fbb.writeString(object.admittedOperationId!);
+                final admittedBindingOffset = object.admittedBinding == null
+                    ? null
+                    : fbb.writeString(object.admittedBinding!);
+                fbb.startTable(11);
                 fbb.addInt64(0, object.id);
                 fbb.addOffset(1, intentKeyOffset);
                 fbb.addOffset(2, scopeKeyOffset);
@@ -8219,6 +8239,8 @@ obx_int.ModelDefinition getObjectBoxModel() {
                 fbb.addInt64(5, object.createdAtMs);
                 fbb.addInt64(6, object.updatedAtMs);
                 fbb.addOffset(7, readerObservationBindingOffset);
+                fbb.addOffset(8, admittedOperationIdOffset);
+                fbb.addOffset(9, admittedBindingOffset);
                 fbb.finish(fbb.endTable());
                 return object.id;
               },
@@ -8249,6 +8271,12 @@ obx_int.ModelDefinition getObjectBoxModel() {
             final readerObservationBindingParam = const fb.StringReader(
               asciiOptimization: true,
             ).vTableGetNullable(buffer, rootOffset, 18);
+            final admittedOperationIdParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGetNullable(buffer, rootOffset, 20);
+            final admittedBindingParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGetNullable(buffer, rootOffset, 22);
             final createdAtMsParam = const fb.Int64Reader().vTableGet(
               buffer,
               rootOffset,
@@ -8268,6 +8296,8 @@ obx_int.ModelDefinition getObjectBoxModel() {
               protectedSourceBinding: protectedSourceBindingParam,
               state: stateParam,
               readerObservationBinding: readerObservationBindingParam,
+              admittedOperationId: admittedOperationIdParam,
+              admittedBinding: admittedBindingParam,
               createdAtMs: createdAtMsParam,
               updatedAtMs: updatedAtMsParam,
             );
@@ -11177,5 +11207,17 @@ class CloudSyncHistoricalArchiveIntentEntity_ {
   static final readerObservationBinding =
       obx.QueryStringProperty<CloudSyncHistoricalArchiveIntentEntity>(
         _entities[28].properties[7],
+      );
+
+  /// See [CloudSyncHistoricalArchiveIntentEntity.admittedOperationId].
+  static final admittedOperationId =
+      obx.QueryStringProperty<CloudSyncHistoricalArchiveIntentEntity>(
+        _entities[28].properties[8],
+      );
+
+  /// See [CloudSyncHistoricalArchiveIntentEntity.admittedBinding].
+  static final admittedBinding =
+      obx.QueryStringProperty<CloudSyncHistoricalArchiveIntentEntity>(
+        _entities[28].properties[9],
       );
 }
