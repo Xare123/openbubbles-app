@@ -13,6 +13,7 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_historical_a
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_historical_archive_coordinator.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_historical_archive_request.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_historical_outbox_binding.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_historical_objectbox_reader.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_historical_protected_source_binding.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_manual_shadow_sampler.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_models.dart';
@@ -1129,24 +1130,31 @@ void main() {
         transferName: 'photo.jpg', totalBytes: 128)..message.target = fixture;
       store.box<Attachment>().put(attachment);
       final persisted = store.box<Message>().get(fixture.id!)!;
-      sourceView = mapHistoricalRow(message: persisted, chat: mapHistoricalChat(chat),
-        rowSnapshotSha256: 'a' * 64, captureAttachmentInventory: true);
-      final assessed = assessHistoricalArchiveRow(sourceView,
-        CloudSyncHistoricalSourceManifest(snapshotSha256: 'a' * 64,
-          accountFingerprint: _account, accountHandles: [sender.address],
-          messageCount: 1, capturedAtMs: _now.millisecondsSinceEpoch),
-        CloudSyncHistoricalAccountBinding(accountFingerprint: _account,
-          protectedStoreIdentity: _protectedStore),
+      final manifest = CloudSyncHistoricalSourceManifest(snapshotSha256: 'a' * 64,
+        accountFingerprint: _account, accountHandles: [sender.address],
+        messageCount: 1, capturedAtMs: _now.millisecondsSinceEpoch);
+      final account = CloudSyncHistoricalAccountBinding(accountFingerprint: _account,
+        protectedStoreIdentity: _protectedStore);
+      // The model's sender cache is transient. Exercise the production reader's
+      // exact stored-handle resolution after a real database reload, just as
+      // snapshot capture does; do not invent a sender to bypass eligibility.
+      expect(persisted.handle, isNull);
+      expect(persisted.handleId, sender.originalROWID);
+      sourceView = CloudSyncHistoricalObjectBoxReader(store: store,
+        scope: historicalArchiveScope(manifest, account),
+        rowSnapshotSha256: manifest.snapshotSha256,
+        highWaterId: persisted.id!, expectedRowCount: 1)
+        .readPageInTransaction(limit: 1).views.single;
+      expect(sourceView.senderAddress, sender.address);
+      expect(sourceView.isFromMe, isTrue);
+      final assessed = assessHistoricalArchiveRow(sourceView, manifest, account,
         nowMs: _now.millisecondsSinceEpoch, includeMediaSource: true);
       expect(assessed, isA<CloudSyncHistoricalArchiveEligible>(),
         reason: assessed is CloudSyncHistoricalArchiveIneligible ? assessed.reason : null);
       request = (assessed as CloudSyncHistoricalArchiveEligible).request;
       canonicalBytes = encodeHistoricalSource(request: request, currentRow: sourceView,
-        manifest: CloudSyncHistoricalSourceManifest(snapshotSha256: 'a' * 64,
-          accountFingerprint: _account, accountHandles: [sender.address],
-          messageCount: 1, capturedAtMs: _now.millisecondsSinceEpoch),
-        account: CloudSyncHistoricalAccountBinding(accountFingerprint: _account,
-          protectedStoreIdentity: _protectedStore), nowMs: _now.millisecondsSinceEpoch).canonicalBytes;
+        manifest: manifest, account: account,
+        nowMs: _now.millisecondsSinceEpoch).canonicalBytes;
       source = CloudSyncHistoricalProtectedSourceBinding(accountFingerprint: _account,
         protectedStoreIdentity: _protectedStore, snapshotSha256: request.snapshotSha256,
         messageGuidHash: request.guidHash, sourceSha256: request.sourceSha256,
