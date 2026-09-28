@@ -1300,8 +1300,14 @@ void main() {
     var consumes = 0;
     final coordinator = archiveCoordinator(
       discover: (_) async => false,
-      consume: (_) async {
+      consume: (selected) async {
         consumes++;
+        // Missing-parent support may prepare the exact captured parent, but
+        // must never borrow this different conversation's local identity.
+        expect(selected.localChatId, isNull);
+        expect(selected.intentId, intentId);
+        expect(selected.request.chatGuid, request.chatGuid);
+        expect(selected.request.sourceSha256, request.sourceSha256);
         return const CloudSyncLocalSendConsumerResult();
       },
     );
@@ -1309,7 +1315,9 @@ void main() {
       coordinator.call(request, canonicalBytes),
       throwsStateError,
     );
-    expect(consumes, 0);
+    expect(consumes, 1);
+    expect(store.box<Chat>().getAll().single.guid, 'different-conversation');
+    expect(store.box<CloudOutboxOperationEntity>().count(), 0);
     expect(row().state, 1);
   });
 

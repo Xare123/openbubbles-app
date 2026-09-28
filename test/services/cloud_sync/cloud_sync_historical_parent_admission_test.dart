@@ -550,17 +550,28 @@ void main() {
     },
   );
 
-  test('direct ambiguous duplicate destinations fail closed', () {
+  test('direct ambiguous cloud-identity destinations fail closed', () {
     final req = directRequest(
       guid: 'synthetic-original-direct',
       chatGuid: 'iMessage;-;peer@example.invalid',
     );
     final directId = directIntent(req);
-    store.box<Chat>().put(Chat(guid: req.chatGuid, style: 45));
-    store.box<Chat>().put(Chat(guid: req.chatGuid, style: 45));
+    final exact = Chat(guid: req.chatGuid, style: 45);
+    store.box<Chat>().put(exact);
+    // Chat.guid is unique. A second valid row can still ambiguously claim the
+    // same historical cloud identity, which must not authorize either owner.
+    store.box<Chat>().put(
+      Chat(guid: 'iMessage;-;other@example.invalid', style: 45)
+        ..cloudGuid = req.chatGuid,
+    );
+    expect(store.box<Chat>().count(), 2);
     expect(
-      () => directOrigin(req: req, directId: directId, chatId: 1),
-      throwsA(anything),
+      () => directOrigin(req: req, directId: directId, chatId: exact.id),
+      throwsA(isA<StateError>().having(
+        (error) => error.message,
+        'code',
+        'cloud_sync_historical_chat_destination_changed',
+      )),
     );
     expect(store.box<CloudOutboxOperationEntity>().count(), 0);
   });
