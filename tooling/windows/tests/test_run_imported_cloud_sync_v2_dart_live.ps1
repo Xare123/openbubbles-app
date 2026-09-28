@@ -308,5 +308,53 @@ finally {
     Remove-Item Env:OPENBUBBLES_CLOUDKIT_WRITER_OWNER -ErrorAction SilentlyContinue
 }
 
+$repositoryFixtureRoot = [IO.Path]::GetFullPath((Join-Path ([IO.Path]::GetTempPath()) (
+    'ob-dart-repository-test-' + [guid]::NewGuid().ToString('N'))))
+$null = New-Item -ItemType Directory -Path $repositoryFixtureRoot
+try {
+    $null = New-Item -ItemType Directory -Path (Join-Path $repositoryFixtureRoot 'lib')
+    $trackedFixture = Join-Path $repositoryFixtureRoot 'lib/synthetic.dart'
+    [IO.File]::WriteAllText($trackedFixture, 'const fixture = 1;')
+    & git -C $repositoryFixtureRoot init --quiet
+    if ($LASTEXITCODE -ne 0) { throw 'synthetic repository init failed' }
+    & git -C $repositoryFixtureRoot add -- lib/synthetic.dart
+    if ($LASTEXITCODE -ne 0) { throw 'synthetic repository add failed' }
+    & git -C $repositoryFixtureRoot -c user.name=Fixture -c user.email=fixture@example.invalid `
+        -c commit.gpgsign=false commit --quiet -m fixture
+    if ($LASTEXITCODE -ne 0) { throw 'synthetic repository commit failed' }
+    $fixtureHead = (& git -C $repositoryFixtureRoot rev-parse HEAD).Trim()
+    Assert-Check 'clean-product-source-accepted' (
+        (Assert-DartApplierRepository -Path $repositoryFixtureRoot -ExpectedSource $fixtureHead) -ceq
+        $repositoryFixtureRoot)
+    [IO.File]::WriteAllText($trackedFixture, 'const fixture = 2;')
+    Assert-Fails 'unstaged-product-source-rejected' {
+        Assert-DartApplierRepository -Path $repositoryFixtureRoot -ExpectedSource $fixtureHead
+    } 'dart_applier_product_source_dirty'
+    & git -C $repositoryFixtureRoot add -- lib/synthetic.dart
+    if ($LASTEXITCODE -ne 0) { throw 'synthetic changed-source add failed' }
+    Assert-Fails 'staged-product-source-rejected' {
+        Assert-DartApplierRepository -Path $repositoryFixtureRoot -ExpectedSource $fixtureHead
+    } 'dart_applier_product_source_dirty'
+    & git -C $repositoryFixtureRoot -c user.name=Fixture -c user.email=fixture@example.invalid `
+        -c commit.gpgsign=false commit --quiet -m fixture-two
+    if ($LASTEXITCODE -ne 0) { throw 'synthetic changed-source commit failed' }
+    $fixtureHead = (& git -C $repositoryFixtureRoot rev-parse HEAD).Trim()
+    [IO.File]::WriteAllText((Join-Path $repositoryFixtureRoot 'lib/untracked.dart'), 'const fixture = 3;')
+    Assert-Fails 'untracked-product-source-rejected' {
+        Assert-DartApplierRepository -Path $repositoryFixtureRoot -ExpectedSource $fixtureHead
+    } 'dart_applier_product_source_untracked'
+}
+finally {
+    # Only this test's newly created synthetic repository is disposable.
+    $resolvedFixture = (Resolve-Path -LiteralPath $repositoryFixtureRoot).Path
+    $temporaryParent = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\', '/')
+    if ($resolvedFixture -cne $repositoryFixtureRoot -or
+        [IO.Path]::GetDirectoryName($resolvedFixture) -cne $temporaryParent -or
+        [IO.Path]::GetFileName($resolvedFixture) -cnotmatch '^ob-dart-repository-test-[0-9a-f]{32}$') {
+        throw 'synthetic repository cleanup target rejected'
+    }
+    Remove-Item -LiteralPath $resolvedFixture -Recurse -Force
+}
+
 Write-Host "RESULT pass=$script:Pass fail=$script:Fail"
 if ($script:Fail -ne 0) { exit 1 }

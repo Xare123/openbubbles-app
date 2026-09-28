@@ -169,7 +169,7 @@ function Assert-DartApplierRepository {
         'lib', 'test', 'pubspec.yaml', 'pubspec.lock', 'objectbox-model.json'
     )
     $diffArguments = @(
-        'diff', '--name-only', '--ignore-submodules=dirty', '--'
+        'diff', '--name-only', '--ignore-submodules=dirty', 'HEAD', '--'
     ) + $productPaths
     $changed = @(& git -C $resolved @diffArguments)
     if ($LASTEXITCODE -ne 0 -or $changed.Count -ne 0) {
