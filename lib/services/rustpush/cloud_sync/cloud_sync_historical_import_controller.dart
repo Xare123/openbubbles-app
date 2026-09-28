@@ -37,6 +37,7 @@ final class CloudSyncHistoricalImportPlan {
   CloudSyncHistoricalImportPlan({
     required this.snapshot,
     required this.accountLabel,
+    this.sourceLabel = 'Messages on this device',
     required this.archiveCursors,
     required this.registry,
     required this.stillCurrent,
@@ -45,6 +46,9 @@ final class CloudSyncHistoricalImportPlan {
   }) {
     if (accountLabel.trim().isEmpty ||
         accountLabel.length > 512 ||
+        sourceLabel.trim().isEmpty ||
+        sourceLabel.length > 120 ||
+        sourceLabel.contains(RegExp(r'[\r\n\x00]')) ||
         (archiveCursors is CloudSyncHistoricalCursorFile &&
             (archiveCursors as CloudSyncHistoricalCursorFile).mode !=
                 CloudSyncHistoricalCursorMode.archive)) {
@@ -54,6 +58,7 @@ final class CloudSyncHistoricalImportPlan {
 
   final CloudSyncHistoricalSnapshot snapshot;
   final String accountLabel;
+  final String sourceLabel;
   final HistoricalCursorStore archiveCursors;
   final HistoricalOwnershipRegistry registry;
   final bool Function() stillCurrent;
@@ -78,6 +83,7 @@ final class CloudSyncHistoricalImportConfirmation {
   CloudSyncHistoricalImportConfirmation._(this._plan);
   final CloudSyncHistoricalImportPlan _plan;
   String get accountLabel => _plan.accountLabel;
+  String get sourceLabel => _plan.sourceLabel;
   int get messageCount => _plan.snapshot.manifest.messageCount;
   DateTime get capturedAt =>
       DateTime.fromMillisecondsSinceEpoch(_plan.snapshot.manifest.capturedAtMs);
@@ -303,6 +309,8 @@ final class CloudSyncHistoricalImportController extends ChangeNotifier {
       'cloud_sync_historical_import_busy',
       'cloud_sync_historical_archive_confirmation_pending',
       'cloud_sync_historical_create_parent_not_ready',
+      'cloud_sync_historical_import_source_invalid',
+      'cloud_sync_historical_import_source_changed',
       'cloud_sync_historical_snapshot_empty',
       'cloud_sync_historical_snapshot_limit',
       'cloud_sync_historical_snapshot_invalid',

@@ -67,6 +67,9 @@ class _HistoricalImportCardState extends State<CloudSyncHistoricalImportCard> {
         'The account or confirmation changed. Review the destination again before continuing.',
       'cloud_sync_historical_import_owner_required' =>
         'History uploads are not enabled for this account yet. No messages were submitted.',
+      'cloud_sync_historical_import_source_invalid' ||
+      'cloud_sync_historical_import_source_changed' =>
+        'The selected history does not match its saved snapshot. Review the source again. Existing messages and saved uploads are preserved.',
       'cloud_sync_historical_import_reader_pending' =>
         'Downloaded history still needs processing. Let normal sync finish, then review this import again.',
       'cloud_sync_historical_archive_confirmation_pending' =>
@@ -116,6 +119,7 @@ class _HistoricalImportCardState extends State<CloudSyncHistoricalImportCard> {
                 style: Theme.of(context).textTheme.titleMedium,
               ),
               const SizedBox(height: 12),
+              Text(preview.sourceLabel),
               Text(
                 '${preview.messageCount} local messages captured on '
                 '${MaterialLocalizations.of(context).formatMediumDate(preview.capturedAt)}.',

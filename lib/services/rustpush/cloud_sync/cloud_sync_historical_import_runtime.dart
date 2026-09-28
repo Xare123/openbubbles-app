@@ -1,5 +1,6 @@
 import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/src/rust/api/api.dart' as api;
+import 'package:bluebubbles/src/rust/lib.dart' as rustlib;
 
 import 'cloud_sync_historical_archive_coordinator.dart';
 import 'cloud_sync_historical_archive_journal.dart';
@@ -7,7 +8,9 @@ import 'cloud_sync_historical_archive_request.dart';
 import 'cloud_sync_historical_archive_staging.dart';
 import 'cloud_sync_historical_cursor_file.dart';
 import 'cloud_sync_historical_import_controller.dart';
+import 'cloud_sync_historical_import_source.dart';
 import 'cloud_sync_historical_ownership.dart';
+import 'cloud_sync_historical_protected_source_binding.dart';
 import 'cloud_sync_historical_snapshot.dart';
 import 'cloud_sync_historical_snapshot_file.dart';
 import 'cloud_sync_historical_stage_adapter.dart';
@@ -36,12 +39,112 @@ Future<CloudSyncHistoricalImportPlan> prepareCloudSyncHistoricalImportPlan({
   required String accountLabel,
   required bool Function() stillCurrent,
   required Future<void> Function() settleReader,
+  CloudSyncHistoricalImportSource? source,
 }) async {
   final client = state.icloudServices?.cloudMessagesClient;
   if (client == null || store.isClosed() || !stillCurrent()) {
     throw StateError('cloud_sync_historical_import_identity_changed');
   }
-  final metadata = await api.cloudSyncCaptureReceivedIdentity(state: state);
+  return _prepareHistoricalImport(
+    client: client,
+    store: store,
+    storageDirectory: storageDirectory,
+    accountLabel: accountLabel,
+    stillCurrent: stillCurrent,
+    settleReader: settleReader,
+    source: source,
+    captureIdentity: () => api.cloudSyncCaptureReceivedIdentity(state: state),
+    stageNative: (auth, request, bytes) =>
+        api.cloudSyncStageHistoricalArchiveSource(
+          state: state,
+          expectedAuth: auth,
+          snapshotSha256: request.snapshotSha256,
+          expectedSourceSha256: request.sourceSha256,
+          sourceBytes: bytes,
+        ),
+    captureLocal: (account, validate) async {
+      final handles = await api.getHandles(state: state.client);
+      await validate();
+      // Never borrow a chat's mutable selected address for an older message.
+      final bareHandles = handles
+          .map((h) => h.replaceFirst(RegExp(r'^(mailto:|tel:)'), ''))
+          .toSet()
+          .toList(growable: false);
+      return CloudSyncHistoricalSnapshot.captureAsync(
+        store: store,
+        account: account,
+        accountHandles: bareHandles,
+        capturedAtMs: DateTime.now().millisecondsSinceEpoch,
+        validateSource: validate,
+        stillCurrent: stillCurrent,
+      );
+    },
+  );
+}
+
+/// Uses the same archival engine for a separately qualified Windows source.
+/// No SharedPushState, IDS registration, or global messaging services are
+/// restored. The caller owns its isolated profile and exclusive relay window.
+Future<CloudSyncHistoricalImportPlan>
+prepareCloudSyncHistoricalImportPlanForClient({
+  required rustlib.ArcCloudMessagesClientDefaultAnisetteProvider client,
+  required Store store,
+  required String storageDirectory,
+  required String accountLabel,
+  required CloudSyncHistoricalImportSource source,
+  required bool Function() stillCurrent,
+  required Future<void> Function() settleReader,
+}) => _prepareHistoricalImport(
+  client: client,
+  store: store,
+  storageDirectory: storageDirectory,
+  accountLabel: accountLabel,
+  stillCurrent: stillCurrent,
+  settleReader: settleReader,
+  source: source,
+  captureIdentity: () => api.cloudSyncCaptureAuthSnapshot(
+    cloudMessagesClient: client,
+    storageDirectory: storageDirectory,
+  ),
+  stageNative: (auth, request, bytes) =>
+      api.cloudSyncStageHistoricalArchiveSourceForClient(
+        cloudMessagesClient: client,
+        storageDirectory: storageDirectory,
+        expectedAuth: auth,
+        snapshotSha256: request.snapshotSha256,
+        expectedSourceSha256: request.sourceSha256,
+        sourceBytes: bytes,
+      ),
+  // Required source means this fallback must never be used by the Windows path.
+  captureLocal: (_, _) =>
+      throw StateError('cloud_sync_historical_import_source_invalid'),
+);
+
+Future<CloudSyncHistoricalImportPlan> _prepareHistoricalImport({
+  required rustlib.ArcCloudMessagesClientDefaultAnisetteProvider client,
+  required Store store,
+  required String storageDirectory,
+  required String accountLabel,
+  required bool Function() stillCurrent,
+  required Future<void> Function() settleReader,
+  required Future<api.CloudSyncNativeAuthMetadata> Function() captureIdentity,
+  required Future<api.CloudSyncNativeHistoricalArchiveSourceBinding> Function(
+    api.CloudSyncNativeAuthMetadata,
+    CloudSyncHistoricalArchiveRequest,
+    List<int>,
+  )
+  stageNative,
+  required Future<CloudSyncHistoricalSnapshot> Function(
+    CloudSyncHistoricalAccountBinding,
+    Future<void> Function(),
+  )
+  captureLocal,
+  CloudSyncHistoricalImportSource? source,
+}) async {
+  if (store.isClosed() || !stillCurrent()) {
+    throw StateError('cloud_sync_historical_import_identity_changed');
+  }
+  final metadata = await captureIdentity();
   if (!stillCurrent()) {
     throw StateError('cloud_sync_historical_import_identity_changed');
   }
@@ -59,7 +162,7 @@ Future<CloudSyncHistoricalImportPlan> prepareCloudSyncHistoricalImportPlan({
     if (store.isClosed() || !stillCurrent()) {
       throw StateError('cloud_sync_historical_import_identity_changed');
     }
-    final latest = await api.cloudSyncCaptureReceivedIdentity(state: state);
+    final latest = await captureIdentity();
     if (store.isClosed() ||
         !stillCurrent() ||
         latest.nativeSessionId != metadata.nativeSessionId ||
@@ -76,6 +179,7 @@ Future<CloudSyncHistoricalImportPlan> prepareCloudSyncHistoricalImportPlan({
   }
 
   await validate();
+  source?.requireDestination(account);
   final transport = NativeProtectedCloudSyncTransport(
     cloudMessagesClient: client,
     storageDirectory: storageDirectory,
@@ -85,6 +189,7 @@ Future<CloudSyncHistoricalImportPlan> prepareCloudSyncHistoricalImportPlan({
   final file = CloudSyncHistoricalSnapshotFile(
     privateStorageDirectory: storageDirectory,
     account: account,
+    sourceIdentitySha256: source?.identitySha256,
     protector: protector,
     transport: transport,
     validateIdentity: validate,
@@ -94,24 +199,11 @@ Future<CloudSyncHistoricalImportPlan> prepareCloudSyncHistoricalImportPlan({
   try {
     final retained = await file.load();
     if (retained != null) {
+      source?.requireSameSnapshot(retained);
       snapshot = retained;
     } else {
-      final handles = await api.getHandles(state: state.client);
+      snapshot = source?.snapshot ?? await captureLocal(account, validate);
       await validate();
-      // The stored row mapper uses bare mail/telephone identifiers too. Do not
-      // borrow a chat's mutable selected sending address for older messages.
-      final bareHandles = handles
-          .map((h) => h.replaceFirst(RegExp(r'^(mailto:|tel:)'), ''))
-          .toSet()
-          .toList(growable: false);
-      snapshot = await CloudSyncHistoricalSnapshot.captureAsync(
-        store: store,
-        account: account,
-        accountHandles: bareHandles,
-        capturedAtMs: DateTime.now().millisecondsSinceEpoch,
-        validateSource: validate,
-        stillCurrent: stillCurrent,
-      );
       await file.save(snapshot);
     }
     await validate();
@@ -156,8 +248,11 @@ Future<CloudSyncHistoricalImportPlan> prepareCloudSyncHistoricalImportPlan({
   CloudSyncHistoricalArchiveDisposition? disposition;
   final coordinator = CloudSyncHistoricalArchiveCoordinator.production(
     store: store,
-    staging: CloudSyncHistoricalStageAdapter.production(
-      state: state,
+    staging: CloudSyncHistoricalStageAdapter(
+      stageNative: (request, bytes) async =>
+          CloudSyncHistoricalProtectedSourceBinding.fromNative(
+            await stageNative(metadata, request, bytes),
+          ),
       staging: CloudSyncHistoricalArchiveStaging(
         journal: journal,
         transport: transport,
@@ -176,6 +271,7 @@ Future<CloudSyncHistoricalImportPlan> prepareCloudSyncHistoricalImportPlan({
   return CloudSyncHistoricalImportPlan(
     snapshot: snapshot,
     accountLabel: accountLabel,
+    sourceLabel: source?.label ?? 'Messages on this device',
     archiveCursors: CloudSyncHistoricalCursorFile(
       privateStorageDirectory: storageDirectory,
       manifest: snapshot.manifest,

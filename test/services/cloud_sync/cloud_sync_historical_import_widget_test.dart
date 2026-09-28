@@ -91,12 +91,38 @@ void main() {
     await tester.pumpWidget(host());
     await review(tester);
     expect(find.text('test-account@example.com'), findsOneWidget);
+    expect(find.text('Messages on this device'), findsOneWidget);
     expect(find.textContaining('3 local messages captured'), findsOneWidget);
     expect(calls, 0);
     await tester.tap(find.text('Cancel'));
     await tester.pumpAndSettle();
     expect(calls, 0);
     expect(controller.phase, CloudSyncHistoricalImportPhase.idle);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('external source is named before the exact import is confirmed', (
+    tester,
+  ) async {
+    final original = plan;
+    plan = CloudSyncHistoricalImportPlan(
+      snapshot: original.snapshot,
+      accountLabel: original.accountLabel,
+      sourceLabel: 'Alpha history',
+      archiveCursors: original.archiveCursors,
+      registry: original.registry,
+      stillCurrent: original.stillCurrent,
+      validateIdentity: original.validateIdentity,
+      archive: original.archive,
+    );
+    await tester.pumpWidget(host());
+    await review(tester);
+    expect(find.text('Alpha history'), findsOneWidget);
+    expect(find.text('test-account@example.com'), findsOneWidget);
+    expect(calls, 0);
+    await tester.tap(find.text('Cancel'));
+    await tester.pumpAndSettle();
+    expect(calls, 0);
     await tester.pumpWidget(const SizedBox.shrink());
   });
 

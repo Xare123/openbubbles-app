@@ -171,6 +171,28 @@ cloudSyncStageHistoricalArchiveSource({
   sourceBytes: sourceBytes,
 );
 
+/// CloudKit-only equivalent for an isolated Windows history importer. Does not
+/// restore SharedPushState, register IDS, refresh account credentials or upload.
+/// The caller supplies an already configured client and retains the same local
+/// lifecycle exclusion, source ownership and adoption obligations as above.
+Future<CloudSyncNativeHistoricalArchiveSourceBinding>
+cloudSyncStageHistoricalArchiveSourceForClient({
+  required ArcCloudMessagesClientDefaultAnisetteProvider cloudMessagesClient,
+  required String storageDirectory,
+  required CloudSyncNativeAuthMetadata expectedAuth,
+  required String snapshotSha256,
+  required String expectedSourceSha256,
+  required List<int> sourceBytes,
+}) => RustLib.instance.api
+    .crateApiApiCloudSyncStageHistoricalArchiveSourceForClient(
+      cloudMessagesClient: cloudMessagesClient,
+      storageDirectory: storageDirectory,
+      expectedAuth: expectedAuth,
+      snapshotSha256: snapshotSha256,
+      expectedSourceSha256: expectedSourceSha256,
+      sourceBytes: sourceBytes,
+    );
+
 /// Protects an observed receive using one configured SharedPushState. Uses
 /// cached account validation and registered handles only: no dependency warm,
 /// keychain sync, IDS directory query, re-registration, send or CloudKit save.

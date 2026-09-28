@@ -153,7 +153,7 @@ async fn cloudkit_only_historical_capture_rejects_stale_identity_before_staging(
     let recovery =
         cloud_sync_recover_abandoned_page_leases(directory.path().to_path_buf(), &[], &[], true)
             .unwrap();
-    assert_eq!(recovery.rolled_back, 0);
+    assert_eq!(recovery.rolled_back_count(), 0);
 }
 
 #[tokio::test]
@@ -219,7 +219,8 @@ async fn cloudkit_only_historical_capture_rolls_back_only_fresh_unadopted_stage(
         )
         .unwrap();
         assert_eq!(
-            recovery.rolled_back, 0,
+            recovery.rolled_back_count(),
+            0,
             "fresh failed stage was already rolled back"
         );
         assert_eq!(
