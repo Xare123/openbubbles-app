@@ -3,6 +3,8 @@ import 'package:bluebubbles/src/rust/api/cloud_sync_chat_identity.dart'
     as native;
 
 import 'cloud_sync_chat_identity_read_set.dart';
+import 'cloud_sync_chat_identity_origin.dart';
+import 'cloud_sync_historical_parent_origin.dart';
 import 'cloud_sync_local_send_journal.dart';
 import 'cloud_sync_manual_shadow_sampler.dart';
 import 'cloud_sync_models.dart';
@@ -12,11 +14,14 @@ import 'cloud_sync_outbound_staging.dart';
 /// This edge must call the native observer with the exact staged candidate.
 /// A diagnostic comparison of an unstaged Chat cannot satisfy this contract.
 typedef CloudSyncStagedChatIdentityObserver =
+    CloudSyncChatIdentityObserver<CloudSyncOutboundChatOrigin>;
+
+typedef CloudSyncChatIdentityObserver<T extends CloudSyncChatIdentityOrigin> =
     Future<native.CloudSyncChatIdentityResult> Function(
       CloudSyncChatIdentityReadSet readSet,
       CloudSyncChatIdentitySource source,
       CloudSyncProtectedOutboundStageData stage,
-      CloudSyncOutboundChatOrigin origin,
+      T origin,
     );
 
 /// In-memory coverage of retained saved Chat identities, NOT write authority.
@@ -25,7 +30,7 @@ typedef CloudSyncStagedChatIdentityObserver =
 final class CloudSyncChatIdentityEvidence {
   CloudSyncChatIdentityEvidence._({
     required CloudSyncChatIdentityReadSet readSet,
-    required CloudSyncOutboundChatOrigin origin,
+    required CloudSyncChatIdentityOrigin origin,
     required this._stage,
     required this._auth,
     required this._authFence,
@@ -44,13 +49,13 @@ final class CloudSyncChatIdentityEvidence {
 
   /// All sources are awaited serially under the caller's controlled native
   /// read-auth scope. No exception, unknown shape or partial set means disjoint.
-  static Future<CloudSyncChatIdentityEvidence?> observe({
+  static Future<CloudSyncChatIdentityEvidence?> observe<T extends CloudSyncChatIdentityOrigin>({
     required Store store,
-    required CloudSyncOutboundChatOrigin origin,
+    required T origin,
     required CloudSyncProtectedOutboundStageData stage,
     required CloudSyncNativeAuthSnapshot auth,
     required CloudSyncLocalSendAuthFence authFence,
-    required CloudSyncStagedChatIdentityObserver observer,
+    required CloudSyncChatIdentityObserver<T> observer,
   }) async {
     authFence.requireCurrentBinding(auth);
     if (origin.scope.accountFingerprint != auth.accountFingerprint ||
@@ -63,7 +68,8 @@ final class CloudSyncChatIdentityEvidence {
     }
     final readSet = await authFence.run(() {
       origin.requireUnchanged(store);
-      return CloudSyncChatIdentityReadSet.capture(store, origin.scope);
+      return CloudSyncChatIdentityReadSet.capture(store, origin.scope,
+        includeAppliedSaves: origin is CloudSyncHistoricalParentOrigin);
     }, accountFingerprint: origin.scope.accountFingerprint);
     if (readSet.retainedSaves.isEmpty) return null;
     String? candidateBinding;
@@ -113,7 +119,7 @@ final class CloudSyncChatIdentityEvidence {
   /// future network sender must still perform its independent authorization.
   void requireMatches({
     required Store store,
-    required CloudSyncOutboundChatOrigin origin,
+    required CloudSyncChatIdentityOrigin origin,
     required String logicalEntityKeyHash,
     required String? serverRecordIdHash,
     required String? payloadSha256,
@@ -122,6 +128,7 @@ final class CloudSyncChatIdentityEvidence {
   }) {
     _authFence.requireCurrentBinding(_auth);
     if (origin.scope != _readSet.scope ||
+        (origin is CloudSyncHistoricalParentOrigin && !_readSet.includeAppliedSaves) ||
         origin.binding(_readSet.generation) != _originBinding ||
         logicalEntityKeyHash != _stage.logicalEntityKeyHash ||
         serverRecordIdHash != _stage.serverRecordIdHash ||
@@ -136,7 +143,7 @@ final class CloudSyncChatIdentityEvidence {
 
   void requireOperation({
     required Store store,
-    required CloudSyncOutboundChatOrigin origin,
+    required CloudSyncChatIdentityOrigin origin,
     required CloudOutboxOperation operation,
   }) {
     if (operation.scope != origin.scope ||

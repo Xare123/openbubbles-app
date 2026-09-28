@@ -4,6 +4,9 @@ import 'package:bluebubbles/database/models.dart';
 import 'package:crypto/crypto.dart';
 
 import 'cloud_inbox_applier.dart';
+import 'cloud_sync_chat_identity_origin.dart';
+import 'cloud_sync_historical_chat_origin.dart';
+import 'cloud_sync_historical_parent_origin.dart';
 import 'cloud_merge_policy.dart';
 import 'cloud_operation_identity.dart';
 import 'cloud_sync_models.dart';
@@ -12,7 +15,7 @@ import 'cloud_sync_record_maps.dart';
 
 /// Transient local identity captured before native staging. Raw identifiers
 /// never enter the outbox: only [binding] is persisted with the operation.
-final class CloudSyncOutboundChatOrigin {
+final class CloudSyncOutboundChatOrigin implements CloudSyncChatIdentityOrigin {
   CloudSyncOutboundChatOrigin._({
     required this.scope,
     required this.chatId,
@@ -54,6 +57,7 @@ final class CloudSyncOutboundChatOrigin {
     );
   }
 
+  @override
   final CloudSyncScope scope;
   final int chatId;
   final String originalGuid;
@@ -70,6 +74,7 @@ final class CloudSyncOutboundChatOrigin {
     value,
   ]);
 
+  @override
   String binding(int generation, {String? localSendProof}) {
     if (generation <= 0) _reject('cloud_sync_outbound_chat_generation_invalid');
     return jsonEncode([
@@ -86,6 +91,7 @@ final class CloudSyncOutboundChatOrigin {
 
   /// Re-read the same row inside admission's write transaction. Changes to
   /// names, mute settings or message contents are irrelevant to this identity.
+  @override
   void requireUnchanged(Store store) {
     final current = store.box<Chat>().get(chatId);
     if (current == null ||
@@ -136,6 +142,11 @@ Chat? resolveCloudSyncOutboundChatOrigin({
   if (origins.isEmpty) return null;
   if (origins.length != 1) _reject('cloud_sync_outbound_chat_origin_ambiguous');
   final operation = origins.single;
+  if (isCloudSyncHistoricalChatOrigin(operation.localChatOrigin!)) {
+    return _resolveHistoricalOrigin(store: store, scope: scope,
+      generation: generation, payload: payload, snapshot: snapshot,
+      canonicalChat: canonicalChat, operation: operation);
+  }
   final proof = _decodeBinding(operation.localChatOrigin!);
   if (operation.accountFingerprint != scope.accountFingerprint ||
       operation.zone != scope.zone ||
@@ -211,6 +222,70 @@ Chat? resolveCloudSyncOutboundChatOrigin({
   return local;
 }
 
+Chat? _resolveHistoricalOrigin({
+  required Store store,
+  required CloudSyncScope scope,
+  required int generation,
+  required CloudChatEntityPayload payload,
+  required CloudSemanticSnapshot snapshot,
+  required Chat? canonicalChat,
+  required CloudOutboxOperationEntity operation,
+}) {
+  final origin = CloudSyncHistoricalChatOrigin.decode(operation.localChatOrigin!);
+  requireCloudSyncHistoricalChatSource(store: store, scope: scope, origin: origin);
+  if (operation.accountFingerprint != scope.accountFingerprint ||
+      operation.zone != scope.zone ||
+      operation.checkpointGeneration != generation || origin.generation != generation ||
+      operation.action != CloudOutboxAction.save.index ||
+      operation.payloadVersion != cloudSyncOutboundChatPayloadVersion ||
+      operation.operationId != CloudOperationIdentity.forInitialCreate(
+        scope: scope, logicalEntityKeyHash: payload.logicalEntityKeyHash,
+        payloadVersion: cloudSyncOutboundChatPayloadVersion,
+      )) {
+    _reject('cloud_sync_historical_chat_origin_scope_changed');
+  }
+  if (canonicalChat != null) {
+    if (origin.localChatId != null && canonicalChat.id != origin.localChatId) {
+      _reject('cloud_sync_historical_chat_origin_row_conflict');
+    }
+    return canonicalChat;
+  }
+  String guidHash(String value) => sha256.convert(utf8.encode(value)).toString();
+  if (payload.service != CloudSemanticService.iMessage ||
+      payload.style != CloudSemanticChatStyle.group ||
+      ![payload.canonicalGuid, payload.groupId, payload.originalGroupId]
+          .whereType<String>().any((id) => guidHash(id) == origin.sourceChatGuidSha256) ||
+      !{CloudOutboxStatus.leased.index, CloudOutboxStatus.unknownOutcome.index,
+        CloudOutboxStatus.confirmed.index}.contains(operation.state) ||
+      !_uuidV4.hasMatch(operation.appleRequestUuid ?? '') ||
+      !_uuidV4.hasMatch(operation.appleOperationUuid ?? '') ||
+      operation.encryptedPayloadRef == null || operation.payloadSha256 == null ||
+      (operation.protectedLeaseReference == null &&
+        operation.state != CloudOutboxStatus.confirmed.index)) {
+    _reject('cloud_sync_historical_chat_origin_not_confirmed');
+  }
+  final mapping = cloudSyncFindRecordMap(store: store, scope: scope,
+    generation: generation, logicalEntityKeyHash: payload.logicalEntityKeyHash,
+    serverRecordIdHash: operation.serverRecordIdHash);
+  if (mapping == null || mapping.serverRecordIdHash != operation.serverRecordIdHash ||
+      snapshot.etagHash == null || mapping.etagHash != snapshot.etagHash ||
+      snapshot.encryptedRawRecordReference == null ||
+      mapping.encryptedRawRecordRef != snapshot.encryptedRawRecordReference) {
+    _reject('cloud_sync_historical_chat_origin_record_changed');
+  }
+  // No placeholder Chat was inserted during admission. The canonical reader
+  // creates a normal row now, with the same record mapping it just verified.
+  if (origin.localChatId == null) return null;
+  final local = store.box<Chat>().get(origin.localChatId!);
+  if (local == null ||
+      ![local.guid, local.cloudGuid].whereType<String>()
+          .any((id) => guidHash(id) == origin.sourceChatGuidSha256) ||
+      local.isRpSms || local.isRoutingStub || local.dateDeleted != null) {
+    _reject('cloud_sync_historical_chat_origin_destination_changed');
+  }
+  return local;
+}
+
 List<dynamic> _decodeBinding(String encoded) {
   if (encoded.length > 512) {
     _reject('cloud_sync_outbound_chat_origin_malformed');
@@ -241,9 +316,15 @@ int cloudSyncOutboundChatOriginId(String encoded) =>
 
 /// Version 1's row identity remains stable when version 2 adds journal proof.
 String cloudSyncOutboundChatOriginIdentity(String encoded) =>
-    jsonEncode([1, ..._decodeBinding(encoded).skip(1).take(6)]);
+    isCloudSyncHistoricalChatOrigin(encoded)
+        ? CloudSyncHistoricalChatOrigin.decode(encoded).encode()
+        : jsonEncode([1, ..._decodeBinding(encoded).skip(1).take(6)]);
 
 String? cloudSyncOutboundChatOriginSendProof(String encoded) {
+  if (isCloudSyncHistoricalChatOrigin(encoded)) {
+    CloudSyncHistoricalChatOrigin.decode(encoded);
+    return null;
+  }
   final value = _decodeBinding(encoded);
   return {2, 3}.contains(value[0]) ? value[7] as String : null;
 }
@@ -253,6 +334,9 @@ String? cloudSyncOutboundChatOriginSendProof(String encoded) {
 // Version 3 is committed atomically with submission UUIDs and never cleared by
 // retry/reconciliation. Retry counts alone cannot prove a remote attempt.
 String cloudSyncSubmittedChatOrigin(String encoded) {
+  if (isCloudSyncHistoricalChatOrigin(encoded)) {
+    return CloudSyncHistoricalChatOrigin.decode(encoded).encode();
+  }
   final value = _decodeBinding(encoded);
   if (value[0] == 4) _reject('cloud_sync_outbound_chat_source_retired');
   return value[0] == 2 ? jsonEncode([3, ...value.skip(1)]) : encoded;
@@ -264,11 +348,20 @@ String cloudSyncRetiredChatOrigin(String encoded) {
   return jsonEncode([4, ...value.skip(1)]);
 }
 
-bool cloudSyncChatOriginIsRetired(String encoded) => _decodeBinding(encoded)[0] == 4;
+bool cloudSyncChatOriginIsRetired(String encoded) {
+  if (isCloudSyncHistoricalChatOrigin(encoded)) {
+    CloudSyncHistoricalChatOrigin.decode(encoded);
+    return false;
+  }
+  return _decodeBinding(encoded)[0] == 4;
+}
 
 /// Pin immutable authorization while allowing its atomic consumption. A
 /// retirement is deliberately not normalized and ends an exact selection.
 String cloudSyncActiveChatOriginBinding(String encoded) {
+  if (isCloudSyncHistoricalChatOrigin(encoded)) {
+    return CloudSyncHistoricalChatOrigin.decode(encoded).encode();
+  }
   final value = _decodeBinding(encoded);
   return value[0] == 3 ? jsonEncode([2, ...value.skip(1)]) : encoded;
 }
@@ -340,6 +433,11 @@ bool cloudSyncOutboundChatOriginMatchesCanonical(
   CloudSyncScope scope,
   String canonicalGuid,
 ) {
+  if (isCloudSyncHistoricalChatOrigin(encoded)) {
+    final origin = CloudSyncHistoricalChatOrigin.decode(encoded);
+    return scope.accountFingerprint == origin.source.accountFingerprint &&
+        origin.sourceChatGuidSha256 == sha256.convert(utf8.encode(canonicalGuid)).toString();
+  }
   final value = _decodeBinding(encoded);
   return value[4] == _digest([
     'cloud-sync-local-chat-origin-v1', scope.storageKey,

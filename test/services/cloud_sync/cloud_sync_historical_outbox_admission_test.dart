@@ -1055,6 +1055,7 @@ void main() {
     consume,
     Future<void> Function()? validate,
     void Function(CloudSyncHistoricalArchiveDisposition)? onDisposition,
+    Future<void> Function()? settleParentReader,
   }) => CloudSyncHistoricalArchiveCoordinator(
     store: store,
     journal: journal(),
@@ -1069,7 +1070,54 @@ void main() {
       byteLength: source.payloadLength,
     ),
     onDisposition: onDisposition,
+    settleParentReader: settleParentReader,
   );
+
+  test('confirmed parent hands off to reader once before same historical message resumes', () async {
+    final events = <String>[];
+    var consumes = 0;
+    final coordinator = archiveCoordinator(
+      discover: (_) async => false,
+      settleParentReader: () async { events.add('reader'); },
+      consume: (selected) async {
+        expect(selected.intentId, row().id);
+        expect(selected.request.sourceSha256, request.sourceSha256);
+        consumes++;
+        events.add('consume$consumes');
+        if (consumes == 1) return const CloudSyncLocalSendConsumerResult(chatReadbackPending: true);
+        admit(selection());
+        final entity = store.box<CloudOutboxOperationEntity>().getAll().single
+          ..state = CloudOutboxStatus.confirmed.index
+          ..confirmedAtMs = _now.millisecondsSinceEpoch
+          ..protectedLeaseReference = null;
+        store.box<CloudOutboxOperationEntity>().put(entity);
+        return const CloudSyncLocalSendConsumerResult(admitted: 1);
+      },
+    );
+    expect((await coordinator.call(request, canonicalBytes)).sha256, source.payloadSha256);
+    expect(events, ['consume1', 'reader', 'consume2']);
+    expect(store.box<CloudOutboxOperationEntity>().count(), 1);
+  });
+
+  for (final blocked in [false, true]) {
+    test('parent reader handoff is bounded and never crosses unknown work blocked=$blocked', () async {
+      var consumes = 0;
+      var reads = 0;
+      final coordinator = archiveCoordinator(
+        discover: (_) async => false,
+        settleParentReader: () async { reads++; },
+        consume: (_) async {
+          consumes++;
+          return CloudSyncLocalSendConsumerResult(chatReadbackPending: true, outboxBlocked: blocked);
+        },
+      );
+      await expectLater(coordinator.call(request, canonicalBytes), throwsStateError);
+      expect(consumes, blocked ? 1 : 2);
+      expect(reads, blocked ? 0 : 1);
+      expect(row().state, 1);
+      expect(store.box<CloudOutboxOperationEntity>().count(), 0);
+    });
+  }
 
   test(
     'archive orchestration does not label a successful callback as a receipt',

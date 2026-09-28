@@ -2,6 +2,7 @@ import 'package:bluebubbles/database/models.dart';
 
 import 'cloud_sync_historical_archive_journal.dart';
 import 'cloud_sync_historical_archive_request.dart';
+import 'cloud_sync_historical_chat_origin.dart';
 import 'cloud_sync_local_send_journal.dart';
 import 'cloud_sync_manual_shadow_sampler.dart';
 import 'cloud_sync_models.dart';
@@ -16,15 +17,19 @@ final class CloudSyncHistoricalCreateSelection {
     required this.intentId,
     required this.localChatId,
   }) {
-    if (intentId < 1 || localChatId < 1) {
+    if (intentId < 1 || (localChatId != null && localChatId! < 1)) {
       throw StateError('cloud_sync_historical_selection_invalid');
     }
   }
 
   final CloudSyncHistoricalArchiveRequest request;
   final int intentId;
-  final int localChatId;
+  final int? localChatId;
   String? _operationId;
+  String? _chatOperationId;
+  int? _messageLocalChatId;
+  CloudOutboxOperation? _chatOperation;
+  CloudOutboxOperation? get chatOperation => _chatOperation;
   Store? _boundStore;
   String? _sourceBinding;
   final Map<String, String> _inertAuditRows = {};
@@ -104,10 +109,12 @@ final class CloudSyncHistoricalCreateSelection {
           : durable.readHistoricalArchiveSource(operation);
       if (source == null ||
           source.intentId != intentId ||
-          source.localChatId != localChatId ||
+          (localChatId != null && source.localChatId != localChatId) ||
+          (_messageLocalChatId != null && source.localChatId != _messageLocalChatId) ||
           source.source.encode() != sourceBinding) {
         throw StateError('cloud_sync_historical_selection_changed');
       }
+      _messageLocalChatId ??= source.localChatId;
     }
 
     // Scope filtering is not authority: the queue leases at scope level. Pin
@@ -115,8 +122,27 @@ final class CloudSyncHistoricalCreateSelection {
     // before lease, submission and recovery transactions can change anything.
     // Retained pre-proof sends remain untouched, never promoted or reconciled.
     final inert = <String, String>{};
+    CloudOutboxOperation? chatOperation;
     for (final row in store.box<CloudOutboxOperationEntity>().getAll()) {
       if (row.operationId == operationId) continue;
+      final encoded = row.localChatOrigin;
+      if (encoded != null && isCloudSyncHistoricalChatOrigin(encoded)) {
+        final parent = CloudSyncHistoricalChatOrigin.decode(encoded);
+        if (parent.intentId == intentId && parent.source.encode() == sourceBinding) {
+          if (chatOperation != null) {
+            throw StateError('cloud_sync_historical_selection_changed');
+          }
+          final chatScope = CloudSyncScope(accountFingerprint: scope.accountFingerprint,
+            container: scope.container, database: scope.database, zone: 'chatManateeZone',
+            streamKind: scope.streamKind, schemaVersion: scope.schemaVersion,
+            persistenceLane: scope.persistenceLane);
+          chatOperation = durable.readHistoricalChatCreate(chatScope, parent);
+          if (chatOperation == null || chatOperation.operationId != row.operationId) {
+            throw StateError('cloud_sync_historical_selection_changed');
+          }
+          continue;
+        }
+      }
       final fingerprint =
           ObjectBoxCloudSyncPreflightReader.settledAuditFingerprint([row]) ??
           (localSendJournal == null
@@ -137,22 +163,28 @@ final class CloudSyncHistoricalCreateSelection {
     if (_boundStore != null && inert.length != _inertAuditRows.length) {
       throw StateError('cloud_sync_historical_selection_changed');
     }
+    if (_chatOperationId != null && _chatOperationId != chatOperation?.operationId) {
+      throw StateError('cloud_sync_historical_selection_changed');
+    }
     _boundStore ??= store;
     _sourceBinding ??= sourceBinding;
     _inertAuditRows
       ..clear()
       ..addAll(inert);
     _operationId = operationId;
+    _chatOperationId = chatOperation?.operationId;
+    _chatOperation = chatOperation;
     return operation;
   });
 
   bool owns(CloudOutboxOperation operation) =>
-      _operationId != null &&
-      operation.operationId == _operationId &&
+      ((operation.scope.zone == 'messageManateeZone' && _operationId != null &&
+        operation.operationId == _operationId) ||
+       (operation.scope.zone == 'chatManateeZone' && _chatOperationId != null &&
+        operation.operationId == _chatOperationId)) &&
       operation.scope.accountFingerprint == request.accountFingerprint &&
       operation.scope.container == 'com.apple.messages.cloud' &&
       operation.scope.database == 'private' &&
-      operation.scope.zone == 'messageManateeZone' &&
       operation.scope.streamKind == CloudSyncStreamKind.messages &&
       operation.scope.schemaVersion == 2 &&
       operation.scope.persistenceLane == CloudSyncPersistenceLane.semantic;

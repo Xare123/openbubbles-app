@@ -745,6 +745,47 @@ Future<CloudSyncProtectedOutboundStageResult> cloudSyncStageOutboundChat({
   chat: chat,
 );
 
+/// Stage a parent from one committed historical snapshot source. This does not
+/// admit the candidate, prove remote absence, or submit a CloudKit operation.
+/// The caller retains one stage in its historical origin before retrying.
+Future<CloudSyncProtectedOutboundStageResult>
+cloudSyncStageHistoricalChatCreate({
+  required ArcCloudMessagesClientDefaultAnisetteProvider cloudMessagesClient,
+  required String storageDirectory,
+  required CloudSyncNativeAuthMetadata expectedAuth,
+  required CloudSyncNativeHistoricalArchiveSourceBinding historicalSource,
+}) => RustLib.instance.api.crateApiApiCloudSyncStageHistoricalChatCreate(
+  cloudMessagesClient: cloudMessagesClient,
+  storageDirectory: storageDirectory,
+  expectedAuth: expectedAuth,
+  historicalSource: historicalSource,
+);
+
+/// Read-only identity comparison of an exact historical parent before or after
+/// admission. Reuses the retained-Chat observer and its existing read-auth pause.
+/// No parent plaintext, network lookup/save or write capability is returned.
+Future<CloudSyncChatIdentityResult> cloudSyncObserveHistoricalChatIdentity({
+  required ArcCloudMessagesClientDefaultAnisetteProvider cloudMessagesClient,
+  required BigInt nativeWriterPauseToken,
+  required String storageDirectory,
+  required CloudSyncNativeAuthMetadata expectedAuth,
+  required BigInt generation,
+  required String readSetFenceSha256,
+  required CloudSyncNativeHistoricalArchiveSourceBinding historicalSource,
+  required CloudSyncProtectedOutboundStage stagedCandidate,
+  required CloudSyncChatIdentitySourceInput retainedSource,
+}) => RustLib.instance.api.crateApiApiCloudSyncObserveHistoricalChatIdentity(
+  cloudMessagesClient: cloudMessagesClient,
+  nativeWriterPauseToken: nativeWriterPauseToken,
+  storageDirectory: storageDirectory,
+  expectedAuth: expectedAuth,
+  generation: generation,
+  readSetFenceSha256: readSetFenceSha256,
+  historicalSource: historicalSource,
+  stagedCandidate: stagedCandidate,
+  retainedSource: retainedSource,
+);
+
 /// Prepares a create-only CloudKit request without performing remote I/O. The
 /// returned opaque handle owns PCS material, prepared authentication, exact
 /// request identity, and all operations. It can be consumed only once.
@@ -4678,6 +4719,10 @@ class CloudSyncPreparedMessageCreateInput {
   final CloudSyncReceivedArchiveCreateProof? receivedArchiveProof;
   final CloudSyncHistoricalArchiveCreateProof? historicalArchiveProof;
 
+  /// Exact committed historical source for a group-parent Chat create. This
+  /// is a separate lane, never an IDS receipt or a Message parent proof.
+  final CloudSyncNativeHistoricalArchiveSourceBinding? historicalChatSource;
+
   const CloudSyncPreparedMessageCreateInput({
     required this.localOperationId,
     required this.logicalEntityKeyHash,
@@ -4691,6 +4736,7 @@ class CloudSyncPreparedMessageCreateInput {
     this.attachmentParentGroupProof,
     this.receivedArchiveProof,
     this.historicalArchiveProof,
+    this.historicalChatSource,
   });
 
   @override
@@ -4706,7 +4752,8 @@ class CloudSyncPreparedMessageCreateInput {
       attachmentParentContext.hashCode ^
       attachmentParentGroupProof.hashCode ^
       receivedArchiveProof.hashCode ^
-      historicalArchiveProof.hashCode;
+      historicalArchiveProof.hashCode ^
+      historicalChatSource.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -4725,7 +4772,8 @@ class CloudSyncPreparedMessageCreateInput {
           attachmentParentContext == other.attachmentParentContext &&
           attachmentParentGroupProof == other.attachmentParentGroupProof &&
           receivedArchiveProof == other.receivedArchiveProof &&
-          historicalArchiveProof == other.historicalArchiveProof;
+          historicalArchiveProof == other.historicalArchiveProof &&
+          historicalChatSource == other.historicalChatSource;
 }
 
 class CloudSyncPreparedMessageCreateResult {

@@ -275,6 +275,7 @@ Future<CloudSyncHistoricalImportPlan> _prepareHistoricalImport({
     validate: validate,
     onDisposition: (value) => disposition = value,
     receivedEndpointTrial: receivedEndpointTrial,
+    settleParentReader: settleReader,
   );
   return CloudSyncHistoricalImportPlan(
     snapshot: snapshot,

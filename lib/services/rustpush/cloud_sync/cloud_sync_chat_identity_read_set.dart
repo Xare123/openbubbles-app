@@ -22,6 +22,7 @@ final class CloudSyncChatIdentityReadSet {
     required this.appliedSequence,
     required this.retainedTombstones,
     required this.fenceSha256,
+    required this.includeAppliedSaves,
     required List<CloudSyncChatIdentitySource> retainedSaves,
   }) : retainedSaves = List.unmodifiable(retainedSaves);
 
@@ -33,12 +34,14 @@ final class CloudSyncChatIdentityReadSet {
   final int appliedSequence;
   final int retainedTombstones;
   final String fenceSha256;
+  final bool includeAppliedSaves;
   final List<CloudSyncChatIdentitySource> retainedSaves;
 
   /// Synchronous, bounded and read-only. Protected references stay opaque.
   static CloudSyncChatIdentityReadSet capture(
     Store store,
     CloudSyncScope scope,
+    {bool includeAppliedSaves = false}
   ) {
     if (scope.container != 'com.apple.messages.cloud' ||
         scope.database != 'private' ||
@@ -140,7 +143,7 @@ final class CloudSyncChatIdentityReadSet {
             row.isTombstone != (row.changeType == 'delete')) {
           throw StateError('cloud_sync_chat_identity_journal_incomplete');
         }
-        if (row.status == CloudInboxStatus.applied.index) continue;
+        if (row.status == CloudInboxStatus.applied.index && !includeAppliedSaves) continue;
         if (row.isTombstone) {
           if (row.failureCategory != null ||
               row.preflightCategory != null ||
@@ -160,11 +163,30 @@ final class CloudSyncChatIdentityReadSet {
           sources.add(CloudSyncChatIdentitySource._(row));
         }
       }
+      // Historical groups may allocate a canonical route while retaining a
+      // stable group ID. Direct-GUID alias checks alone cannot prove that an
+      // already projected record is disjoint. Compare protected applied saves
+      // as well; missing/retired envelopes fail at observation, never imply
+      // absence. Prior generations remain part of this bounded coverage.
+      if (includeAppliedSaves) {
+        for (final row in rows.where((row) => row.generation != generation && !row.isTombstone)) {
+          if (!_digest.hasMatch(row.payloadSha256 ?? '') ||
+              !_nativeDigest.hasMatch(row.changeIdHash) ||
+              !_nativeDigest.hasMatch(row.serverRecordIdHash) ||
+              !_nativeDigest.hasMatch(row.etagHash ?? '') ||
+              !_reference.hasMatch(row.encryptedPayloadRef ?? '') ||
+              !_opaque(row.encryptedServerRecordId) || row.changeType != 'save') {
+            throw StateError('cloud_sync_chat_identity_source_incomplete');
+          }
+          sources.add(CloudSyncChatIdentitySource._(row));
+        }
+      }
       final fence = sha256
           .convert(
             utf8.encode(
               jsonEncode([
                 'cloud-sync-chat-identity-read-set-v1',
+                if (includeAppliedSaves) 'including-applied-saves-v1',
                 scope.storageKey,
                 checkpoint.id,
                 checkpoint.generation,
@@ -212,6 +234,7 @@ final class CloudSyncChatIdentityReadSet {
         appliedSequence: checkpoint.appliedSequence,
         retainedTombstones: tombstones,
         fenceSha256: fence,
+        includeAppliedSaves: includeAppliedSaves,
         retainedSaves: sources,
       );
     });
@@ -222,7 +245,7 @@ final class CloudSyncChatIdentityReadSet {
   /// files were copied byte-for-byte. This read-set is not a persisted permit.
   void requireUnchanged(Store store) {
     if (!identical(store, _store) ||
-        capture(store, scope).fenceSha256 != fenceSha256) {
+        capture(store, scope, includeAppliedSaves: includeAppliedSaves).fenceSha256 != fenceSha256) {
       throw StateError('cloud_sync_chat_identity_read_set_changed');
     }
   }
@@ -243,7 +266,8 @@ final class CloudSyncChatIdentityReadSet {
 /// Copied values only, never mutable ObjectBox entities or cleartext identity.
 final class CloudSyncChatIdentitySource {
   CloudSyncChatIdentitySource._(CloudInboxChangeEntity row)
-    : sequence = row.fetchSequence,
+    : generation = row.generation,
+      sequence = row.fetchSequence,
       changeIdHash = row.changeIdHash,
       recordIdHash = row.serverRecordIdHash,
       etagHash = row.etagHash!,
@@ -252,6 +276,9 @@ final class CloudSyncChatIdentitySource {
       payloadSha256 = row.payloadSha256!,
       serverModifiedAtMs = cloudInboxCanonicalServerModifiedAtMillis(row);
 
+  /// The retained raw envelope is protected under this original generation,
+  /// not necessarily the current read-set/candidate admission generation.
+  final int generation;
   final int sequence;
   final String changeIdHash;
   final String recordIdHash;

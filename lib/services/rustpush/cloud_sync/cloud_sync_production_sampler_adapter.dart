@@ -28,6 +28,7 @@ import 'cloud_sync_received_create_adapter.dart';
 import 'cloud_sync_historical_create_adapter.dart';
 import 'cloud_sync_historical_create_selection.dart';
 import 'cloud_sync_historical_archive_journal.dart';
+import 'cloud_sync_historical_parent_origin.dart';
 import 'cloud_sync_safe_failure.dart';
 import 'cloud_sync_attachment_upload_journal.dart';
 import 'cloud_sync_attachment_plan_coordinator.dart';
@@ -889,6 +890,7 @@ final class CloudSyncProductionLocalSendAdapter {
     // Ephemeral per pass. Admission changes the read-set revision; refresh
     // against the ORIGINAL staged operation before lease, including restart.
     final chatEvidence = <String, CloudSyncChatIdentityEvidence>{};
+    final historicalChatOrigins = <String, CloudSyncHistoricalParentOrigin>{};
     late final void Function() validateHistoricalSelection;
     final durable = ObjectBoxCloudSyncStore(
       store: objectBox,
@@ -897,6 +899,7 @@ final class CloudSyncProductionLocalSendAdapter {
       receivedArchiveJournal: receivedJournal,
       attachmentUploadJournal: uploads,
       readChatIdentityEvidence: (operation) => chatEvidence[operation.operationId],
+      readHistoricalChatOrigin: (operation) => historicalChatOrigins[operation.operationId],
       recordExistingHistoryDiagnostic: existingHistoryDiagnostics.record,
       validateOutboxDispatch: historical == null ? null : () => validateHistoricalSelection(),
     );
@@ -947,6 +950,8 @@ final class CloudSyncProductionLocalSendAdapter {
           receivedCreates.openProof(operation.scope, operation.operationId),
       readHistoricalArchiveProof: (operation) =>
           historicalCreates.openProof(operation.scope, operation.operationId),
+      readHistoricalChatSource: (operation) =>
+          historicalCreates.openParentSource(operation.scope, operation.operationId),
     );
     final transport = NativeProtectedCloudSyncTransport(
       cloudMessagesClient: auth.cloudMessagesClient,
@@ -958,6 +963,7 @@ final class CloudSyncProductionLocalSendAdapter {
           readParentGroupProof(target, operationId),
       readReceivedArchiveProof: (target, operationId) => receivedCreates.openProof(target, operationId),
       readHistoricalArchiveProof: (target, operationId) => historicalCreates.openProof(target, operationId),
+      readHistoricalChatSource: (target, operationId) => historicalCreates.openParentSource(target, operationId),
       readCheckpointGeneration: (scope) async =>
           (await durable.readCheckpoint(scope)).generation,
       retainConfirmedReceiptsForReplay: true,
@@ -1120,9 +1126,24 @@ final class CloudSyncProductionLocalSendAdapter {
     ));
     Future<void> refreshQueuedChatEvidence(CloudSyncScope target) async {
       chatEvidence.clear();
+      historicalChatOrigins.clear();
       if (target != chatScope) return;
       for (final operation in await durable.readOutboxEntries(target)) {
         if (operation.status != CloudOutboxStatus.pending) continue;
+        final retainedHistory = durable.readHistoricalChatSource(operation);
+        if (retainedHistory != null) {
+          // A normal send pass cannot borrow historical snapshot authority.
+          if (historical == null || !historical.owns(operation)) continue;
+          final origin = historicalCreates.reopenParent(operation: operation,
+            journal: historicalJournal!, request: historical.request, intentId: historical.intentId);
+          final evidence = await historicalCreates.observeParent(origin: origin,
+            stage: CloudSyncHistoricalCreateAdapter.retainedParentStage(operation, retainedHistory),
+            authFence: fence);
+          await validateSelection();
+          historicalChatOrigins[operation.operationId] = origin;
+          if (evidence != null) chatEvidence[operation.operationId] = evidence;
+          continue;
+        }
         if (durable.isRetainedPreproofPendingCreate(operation)) continue;
         final origin = await fence.run(
           () => durable.captureQueuedChatObservationOrigin(operation));
@@ -1206,7 +1227,7 @@ final class CloudSyncProductionLocalSendAdapter {
         return false;
       }
       final settled = await drainCloudSyncCreateQueues(
-        scopes: historical == null ? [chatScope, attachmentScope, scope] : [scope],
+        scopes: historical == null ? [chatScope, attachmentScope, scope] : [chatScope, scope],
         isRetiredUnsubmittedChatCreate: (operation) async =>
             durable.isRetiredUnsubmittedChatCreate(operation),
         isRetainedPreproofPendingCreate: (operation) async =>
@@ -1263,6 +1284,7 @@ final class CloudSyncProductionLocalSendAdapter {
             await engineFor(target).synchronize(trigger: CloudSyncTrigger.localOutbox);
           } finally {
             chatEvidence.clear();
+            historicalChatOrigins.clear();
           }
         },
         acknowledgeConfirmed: (target, operation) async {
@@ -1481,9 +1503,29 @@ final class CloudSyncProductionLocalSendAdapter {
           final alreadyAdmitted = historical.validate(store: objectBox, scope: scope,
             journal: historicalJournal!, durable: durable, auth: auth,
             localSendJournal: journal) != null;
+          if (!alreadyAdmitted && historicalCreates.confirmedParentId(scope, historical.request) == null) {
+            if (historical.request.groupMetadata == null || historical.request.parentState == null) {
+              throw StateError('cloud_sync_historical_create_parent_not_ready');
+            }
+            if (historical.chatOperation == null) {
+              await historicalCreates.admitParent(scope: chatScope, journal: historicalJournal,
+                request: historical.request, intentId: historical.intentId,
+                localChatId: historical.localChatId, authFence: fence,
+                validateSelection: validateSelection);
+              await validateSelection();
+            }
+            final parentSettled = await drainExisting();
+            // Protected receipt confirmation precedes canonical reader projection.
+            // The finite history job resumes this SAME source after its read pass.
+            return CloudSyncLocalSendConsumerResult(outboxBlocked: !parentSettled,
+              chatReadbackPending: parentSettled);
+          }
+          final parentId = alreadyAdmitted ? historical.localChatId :
+              historicalCreates.confirmedParentId(scope, historical.request);
+          if (parentId == null) throw StateError('cloud_sync_historical_create_parent_not_ready');
           await historicalCreates.admit(scope: scope, journal: historicalJournal,
             request: historical.request, intentId: historical.intentId,
-            localChatId: historical.localChatId);
+            localChatId: parentId);
           await validateSelection();
           final settled = await drainExisting();
           return CloudSyncLocalSendConsumerResult(

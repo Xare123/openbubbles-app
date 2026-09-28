@@ -41,6 +41,7 @@ final class CloudSyncHistoricalArchiveCoordinator {
     required this.consume,
     this.onDisposition,
     this.receivedEndpointTrial,
+    this.settleParentReader,
   });
 
   factory CloudSyncHistoricalArchiveCoordinator.production({
@@ -53,6 +54,7 @@ final class CloudSyncHistoricalArchiveCoordinator {
     required Future<void> Function() validate,
     void Function(CloudSyncHistoricalArchiveDisposition)? onDisposition,
     CloudSyncHistoricalReceivedEndpointTrial? receivedEndpointTrial,
+    Future<void> Function()? settleParentReader,
   }) => CloudSyncHistoricalArchiveCoordinator(
     store: store,
     journal: staging.staging.journal,
@@ -72,6 +74,7 @@ final class CloudSyncHistoricalArchiveCoordinator {
     ).runHistoricalRequest(selection),
     onDisposition: onDisposition,
     receivedEndpointTrial: receivedEndpointTrial,
+    settleParentReader: settleParentReader,
   );
 
   final Store store;
@@ -86,6 +89,7 @@ final class CloudSyncHistoricalArchiveCoordinator {
   consume;
   final void Function(CloudSyncHistoricalArchiveDisposition)? onDisposition;
   final CloudSyncHistoricalReceivedEndpointTrial? receivedEndpointTrial;
+  final Future<void> Function()? settleParentReader;
   bool _running = false;
 
   CloudSyncScope get _scope => CloudSyncScope(
@@ -126,7 +130,7 @@ final class CloudSyncHistoricalArchiveCoordinator {
     return intent;
   }
 
-  int _localChatId(
+  int? _localChatId(
     CloudSyncHistoricalArchiveRequest request,
     CloudSyncHistoricalArchiveIntent intent,
   ) {
@@ -161,6 +165,9 @@ final class CloudSyncHistoricalArchiveCoordinator {
           ..limit = 2;
     try {
       final chats = query.find();
+      if (chats.isEmpty && request.groupMetadata != null && request.parentState != null) {
+        return null; // Historical parent path, never a fabricated local Chat.
+      }
       if (chats.length != 1 || chats.single.id == null) {
         throw StateError('cloud_sync_historical_create_parent_not_ready');
       }
@@ -242,7 +249,7 @@ final class CloudSyncHistoricalArchiveCoordinator {
         );
         return sealed;
       }
-      final result = await consume(
+      var result = await consume(
         CloudSyncHistoricalCreateSelection(
           request: request,
           intentId: intent.id,
@@ -250,6 +257,18 @@ final class CloudSyncHistoricalArchiveCoordinator {
         ),
       );
       await validate();
+      if (result.chatReadbackPending && !result.outboxBlocked && settleParentReader != null) {
+        // The writer has quiesced and released its interlock. Let the ordinary
+        // reader project this confirmed Chat before this same Message resumes.
+        // Never run a read over an unknown save or loop a stalled cursor here.
+        await settleParentReader!();
+        await validate();
+        intent = _retained(request, sealed);
+        result = await consume(CloudSyncHistoricalCreateSelection(
+          request: request, intentId: intent.id,
+          localChatId: _localChatId(request, intent)));
+        await validate();
+      }
       final retained = _retained(request, sealed);
       if (result.outboxBlocked ||
           result.chatReadbackPending ||

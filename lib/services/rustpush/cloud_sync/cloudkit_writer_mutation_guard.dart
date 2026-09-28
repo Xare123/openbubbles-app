@@ -229,6 +229,7 @@ final class CloudKitWriterMutationGuard
     this.readAttachmentParentGroupProof,
     this.readReceivedArchiveProof,
     this.readHistoricalArchiveProof,
+    this.readHistoricalChatSource,
     DateTime Function()? clock,
   }) : _store = store,
        _readActiveClient = readActiveClient,
@@ -258,6 +259,7 @@ final class CloudKitWriterMutationGuard
     this.readAttachmentParentGroupProof,
     this.readReceivedArchiveProof,
     this.readHistoricalArchiveProof,
+    this.readHistoricalChatSource,
     DateTime Function()? clock,
   }) : _store = store,
        _readActiveClient = readActiveClient,
@@ -297,10 +299,16 @@ final class CloudKitWriterMutationGuard
   readAttachmentParentGroupProof;
   final Future<frb_api.CloudSyncReceivedArchiveCreateProof?> Function(
     CloudOutboxOperation operation,
-  )? readReceivedArchiveProof;
+  )?
+  readReceivedArchiveProof;
   final Future<frb_api.CloudSyncHistoricalArchiveCreateProof?> Function(
     CloudOutboxOperation operation,
-  )? readHistoricalArchiveProof;
+  )?
+  readHistoricalArchiveProof;
+  final Future<frb_api.CloudSyncNativeHistoricalArchiveSourceBinding?> Function(
+    CloudOutboxOperation operation,
+  )?
+  readHistoricalChatSource;
   final ObjectBoxCloudKitWriterAuthority _authority;
   final DateTime Function() _clock;
 
@@ -690,18 +698,42 @@ final class CloudKitWriterMutationGuard
     }
     // Opening a retained group proof may await. Recheck account and mutation
     // authority before using it, without clearing the unknown-outcome fence.
-    final receivedProof = isChat || isAttachment ? null
+    final receivedProof = isChat || isAttachment
+        ? null
         : await readReceivedArchiveProof?.call(operation);
-    final historicalProof = isChat || isAttachment ? null
+    final historicalProof = isChat || isAttachment
+        ? null
         : await readHistoricalArchiveProof?.call(operation);
-    if (receivedProof != null && (groupProof != null || parentContext != null)) {
-      throw const CloudKitWriterAuthorityFailure('cloud_sync_received_archive_admission_changed');
+    final historicalChatSource = isChat
+        ? await readHistoricalChatSource?.call(operation)
+        : null;
+    if (receivedProof != null &&
+        (groupProof != null || parentContext != null)) {
+      throw const CloudKitWriterAuthorityFailure(
+        'cloud_sync_received_archive_admission_changed',
+      );
     }
     if (historicalProof != null &&
-        (receivedProof != null || groupProof != null || parentContext != null)) {
-      throw const CloudKitWriterAuthorityFailure('cloud_sync_archive_origin_conflict');
+        (receivedProof != null ||
+            groupProof != null ||
+            parentContext != null)) {
+      throw const CloudKitWriterAuthorityFailure(
+        'cloud_sync_archive_origin_conflict',
+      );
     }
-    if (groupProof != null || receivedProof != null || historicalProof != null) {
+    if (historicalChatSource != null &&
+        (receivedProof != null ||
+            historicalProof != null ||
+            groupProof != null ||
+            parentContext != null)) {
+      throw const CloudKitWriterAuthorityFailure(
+        'cloud_sync_archive_origin_conflict',
+      );
+    }
+    if (groupProof != null ||
+        receivedProof != null ||
+        historicalProof != null ||
+        historicalChatSource != null) {
       await requireReconciliationAllowed(
         owner: owner,
         expectedClient: expectedClient,
@@ -728,6 +760,15 @@ final class CloudKitWriterMutationGuard
         'cloudkit_writer_reconciliation_parent_context_mismatch',
       );
     }
+    if (historicalChatSource != null &&
+        (historicalChatSource.accountFingerprint !=
+                identity.accountFingerprint ||
+            historicalChatSource.protectedStoreIdentity !=
+                identity.protectedStoreIdentity)) {
+      throw const CloudKitWriterAuthorityFailure(
+        'cloudkit_writer_reconciliation_historical_chat_source_mismatch',
+      );
+    }
     final result = await reconcile(
       cloudMessagesClient: expectedClient,
       storageDirectory: _privateStorageDirectory,
@@ -747,6 +788,7 @@ final class CloudKitWriterMutationGuard
         attachmentParentGroupProof: groupProof,
         receivedArchiveProof: receivedProof,
         historicalArchiveProof: historicalProof,
+        historicalChatSource: historicalChatSource,
       ),
     );
     CloudKitOperationInterlock.requireActive(CloudKitOperationKind.v2ReadWrite);

@@ -536,6 +536,28 @@ void main() {
     store.box<CloudInboxChangeEntity>().put(previous..status = 1);
     expect(CloudSyncChatIdentityReadSet.capture(store, scope).generation, 2);
   });
+  test('historical coverage preserves each envelope generation and current fence', () {
+    store.box<CloudSyncCheckpointEntity>().put(checkpoint()..generation = 2);
+    final current = store.box<CloudInboxChangeEntity>().getAll();
+    for (final row in current) {
+      row.generation = 2;
+    }
+    store.box<CloudInboxChangeEntity>().putMany(current);
+    final previous = row(10, status: CloudInboxStatus.applied.index);
+    store.box<CloudInboxChangeEntity>().put(previous);
+    final historical = CloudSyncChatIdentityReadSet.capture(
+      store, scope, includeAppliedSaves: true);
+    expect(historical.generation, 2);
+    expect(historical.retainedSaves.map((source) => source.generation), [2, 2, 1]);
+    expect(historical.retainedSaves.last.changeIdHash, previous.changeIdHash);
+    expect(CloudSyncChatIdentityReadSet.capture(store, scope)
+        .retainedSaves.map((source) => source.generation), [2]);
+    historical.requireUnchanged(store);
+    // A reset fence is not permission to disregard a retained identity.
+    store.box<CloudInboxChangeEntity>().put(previous..generation = 0);
+    expect(() => historical.requireUnchanged(store), throwsStateError);
+  });
+
   test('rejects applied future-generation rows instead of ignoring them', () {
     store.box<CloudInboxChangeEntity>().put(row(10, status: 1)..generation = 2);
     expect(

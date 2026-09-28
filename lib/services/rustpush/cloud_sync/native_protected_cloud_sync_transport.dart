@@ -604,6 +604,13 @@ typedef CloudSyncHistoricalArchiveProofReader =
     Future<frb_api.CloudSyncHistoricalArchiveCreateProof?> Function(
       CloudSyncScope scope, String operationId);
 
+/// Journal-owned historical source for one chat-zone create input. A null
+/// answer means no historical origin: the input stays source-free and the
+/// existing direct chat path is unchanged.
+typedef CloudSyncHistoricalChatSourceReader =
+    Future<frb_api.CloudSyncNativeHistoricalArchiveSourceBinding?> Function(
+      CloudSyncScope scope, String operationId);
+
 enum _CreatePreflightDisposition { absent, alreadyPresent }
 
 final class _NativeCloudSyncPreparedSubmission
@@ -760,6 +767,7 @@ final class NativeProtectedCloudSyncTransport
     this.readAttachmentParentGroupProof,
     this.readReceivedArchiveProof,
     this.readHistoricalArchiveProof,
+    this.readHistoricalChatSource,
   }) : _storageDirectory = storageDirectory,
        _protectedStoreIdentity = protectedStoreIdentity,
        _nativeWriterPauseToken = nativeWriterPauseToken,
@@ -805,6 +813,12 @@ final class NativeProtectedCloudSyncTransport
   readAttachmentParentGroupProof;
   final CloudSyncReceivedArchiveProofReader? readReceivedArchiveProof;
   final CloudSyncHistoricalArchiveProofReader? readHistoricalArchiveProof;
+
+  /// Journal-owned lookup for the exact historical source of a chat-zone
+  /// create. Invoked only for chatManateeZone operations, only under the
+  /// protected-store exclusion, and only with the exact submission scope.
+  /// Null means no historical origin: native inputs stay source-free.
+  final CloudSyncHistoricalChatSourceReader? readHistoricalChatSource;
   final Set<Future<void>> _activeNativeOperations = {};
   Future<void>? _nativeQuiescence;
   bool _nativeAdmissionClosed = false;
@@ -1679,6 +1693,9 @@ final class NativeProtectedCloudSyncTransport
             historicalArchiveProof: scope.zone == 'messageManateeZone'
                 ? await readHistoricalArchiveProof?.call(scope, operation.operationId)
                 : null,
+            historicalChatSource: scope.zone == 'chatManateeZone'
+                ? await _readHistoricalChatSourceForPrepare(scope, operation.operationId)
+                : null,
           ),
         );
       }
@@ -1984,9 +2001,15 @@ final class NativeProtectedCloudSyncTransport
     frb_api.CloudSyncAttachmentParentGroupProof? attachmentParentGroupProof,
     frb_api.CloudSyncReceivedArchiveCreateProof? receivedArchiveProof,
     frb_api.CloudSyncHistoricalArchiveCreateProof? historicalArchiveProof,
+    frb_api.CloudSyncNativeHistoricalArchiveSourceBinding? historicalChatSource,
   }) {
-    _requireExclusiveArchiveOrigin(attachmentParentContext, attachmentParentGroupProof,
-      receivedArchiveProof, historicalArchiveProof);
+    _requireExclusiveArchiveOrigin(
+      attachmentParentContext,
+      attachmentParentGroupProof,
+      receivedArchiveProof,
+      historicalArchiveProof,
+      historicalChatSource,
+    );
     return frb_api.CloudSyncPreparedMessageCreateInput(
     localOperationId: operation.operationId,
     logicalEntityKeyHash: operation.logicalEntityKeyHash,
@@ -2001,6 +2024,7 @@ final class NativeProtectedCloudSyncTransport
     attachmentParentGroupProof: attachmentParentGroupProof,
     receivedArchiveProof: receivedArchiveProof,
     historicalArchiveProof: historicalArchiveProof,
+    historicalChatSource: historicalChatSource,
   );
   }
 
@@ -2009,10 +2033,16 @@ final class NativeProtectedCloudSyncTransport
     frb_api.CloudSyncAttachmentParentGroupProof? parentProof,
     frb_api.CloudSyncReceivedArchiveCreateProof? receivedProof,
     frb_api.CloudSyncHistoricalArchiveCreateProof? historicalProof,
+    frb_api.CloudSyncNativeHistoricalArchiveSourceBinding? historicalChatSource,
   ) {
     if ((historicalProof != null &&
             (receivedProof != null || parentContext != null || parentProof != null)) ||
-        (receivedProof != null && (parentContext != null || parentProof != null))) {
+        (receivedProof != null && (parentContext != null || parentProof != null)) ||
+        (historicalChatSource != null &&
+            (receivedProof != null ||
+                historicalProof != null ||
+                parentContext != null ||
+                parentProof != null))) {
       throw _localStorage('cloud_sync_archive_origin_conflict');
     }
   }
@@ -2039,6 +2069,44 @@ final class NativeProtectedCloudSyncTransport
     }
     _validateAttachmentParentContext(scope, context);
     return context;
+  }
+
+  /// Journal-owned historical source for one chat-zone prepare/reconcile
+  /// input. Executes only under the protected-store exclusion (all callers
+  /// run inside [_runProtectedStoreOperation]) and only for
+  /// chatManateeZone; Message and Attachment zones never invoke the
+  /// callback and never leak a source into their native inputs. A null
+  /// journal answer means no historical origin and preserves the
+  /// source-free input. A source bound to another account or store fails
+  /// closed before any native call.
+  Future<frb_api.CloudSyncNativeHistoricalArchiveSourceBinding?>
+  _readHistoricalChatSourceForPrepare(
+    CloudSyncScope scope,
+    String operationId,
+  ) async {
+    final reader = readHistoricalChatSource;
+    if (scope.zone != 'chatManateeZone' || reader == null) {
+      return null;
+    }
+    final source = await reader(scope, operationId);
+    if (source == null) {
+      return null;
+    }
+    _validateHistoricalChatSource(scope, source);
+    return source;
+  }
+
+  /// Rejects a historical source that does not belong to this transport
+  /// and scope before any native call. Pure field comparison: the journal
+  /// owns admission, this gate only proves the source matches.
+  void _validateHistoricalChatSource(
+    CloudSyncScope scope,
+    frb_api.CloudSyncNativeHistoricalArchiveSourceBinding source,
+  ) {
+    if (source.accountFingerprint != scope.accountFingerprint ||
+        source.protectedStoreIdentity != _protectedStoreIdentity) {
+      throw _localStorage('cloud_sync_historical_chat_source_invalid');
+    }
   }
 
   /// Opens the ephemeral group-parent proof for one message-zone operation.
@@ -3537,10 +3605,17 @@ final class NativeProtectedCloudSyncTransport
         historicalArchiveProof: scope.zone == 'messageManateeZone'
             ? await readHistoricalArchiveProof?.call(scope, operation.operationId)
             : null,
+        historicalChatSource: scope.zone == 'chatManateeZone'
+            ? await _readHistoricalChatSourceForPrepare(scope, operation.operationId)
+            : null,
       );
-      _requireExclusiveArchiveOrigin(input.attachmentParentContext,
-        input.attachmentParentGroupProof, input.receivedArchiveProof,
-        input.historicalArchiveProof);
+      _requireExclusiveArchiveOrigin(
+        input.attachmentParentContext,
+        input.attachmentParentGroupProof,
+        input.receivedArchiveProof,
+        input.historicalArchiveProof,
+        input.historicalChatSource,
+      );
       if (scope.zone == 'chatManateeZone') {
         return _requireChatWriteBindings().reconcileChatCreate(
           cloudMessagesClient: _cloudMessagesClient,

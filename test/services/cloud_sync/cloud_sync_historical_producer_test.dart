@@ -507,8 +507,11 @@ void main() {
         if (staged.guid == 'guid-group-1') {
           // Eligibility stages a group source, not a remote create. Parent
           // discovery/proof and incoming-endpoint policy are downstream gates.
-          expect(payload['format'], 'cloud-sync-historical-source-v2');
+          expect(payload['format'], 'cloud-sync-historical-source-v3');
           expect(payload['groupMetadata'], isA<List>());
+          // The real database capture freezes parent conversion state too.
+          // Older v1/v2 sources remain covered by the codec compatibility tests.
+          expect(payload['parentState'], isA<List>());
         }
         expect(staged.key.length, 64);
         expect(staged.byteLength, seen[staged.guid]!.length);
