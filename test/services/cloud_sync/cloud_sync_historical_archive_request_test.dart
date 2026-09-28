@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_historical_archive_request.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_historical_chat_state.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_historical_staging.dart';
 import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -43,6 +44,7 @@ CloudSyncHistoricalChatView _chat({
   String participantAddress = 'friend@example.com',
   String participantService = 'iMessage',
   CloudSyncHistoricalGroupMetadata? groupMetadata,
+  CloudSyncHistoricalChatState? parentState,
 }) {
   return CloudSyncHistoricalChatView(
     id: id,
@@ -56,6 +58,7 @@ CloudSyncHistoricalChatView _chat({
     participantAddress: participantAddress,
     participantService: participantService,
     groupMetadata: groupMetadata,
+    parentState: parentState,
   );
 }
 
@@ -174,9 +177,25 @@ String _reason(
   return (assessment as CloudSyncHistoricalArchiveIneligible).reason;
 }
 
+CloudSyncHistoricalChatState _parentState(List<dynamic> wire) =>
+    CloudSyncHistoricalChatState(
+      cloudGuid: wire[1] as String?,
+      usingHandle: wire[2] as String?,
+      displayName: wire[3] as String?,
+      groupVersion: wire[4] as int?,
+      lastReadMessageGuid: wire[5] as String?,
+      latestMessageDateMs: wire[6] as int?,
+      photoAttachmentGuid: wire[7] as String?,
+      customAvatarPresent: wire[8] as bool,
+      ckRecordId: wire[9] as String?,
+      ckSyncState: wire[10] as bool,
+      cloudDataBase64: wire[11] as String?,
+      guidRefs: (wire[12] as List).cast<String>(),
+    );
+
 void main() {
   final vectors = [
-    for (final version in [1, 2])
+    for (final version in [1, 2, 3])
       ...(jsonDecode(File(
         'test/fixtures/cloud_sync/historical_source_v$version.json',
       ).readAsStringSync()) as List).cast<Map<String, dynamic>>(),
@@ -188,17 +207,20 @@ void main() {
               as Map<String, dynamic>;
       final text = payload['text'] as String;
       final group = payload['groupMetadata'] as List?;
+      final parent = payload['parentState'] as List?;
+      final parentState = parent == null ? null : _parentState(parent);
       final request = _eligible(
         _row(
           guid: payload['guid'] as String,
           text: text,
           senderAddress: payload['senderAddress'] as String,
           isFromMe: payload['isFromMe'] as bool,
-          chat: group == null ? null : _chat(
+          chat: group == null ? _chat(parentState: parentState) : _chat(
             guid: payload['chatGuid'] as String,
             style: 43,
             chatIdentifier: 'historical-group',
             participantCount: (group[2] as List).length,
+            parentState: parentState,
             groupMetadata: CloudSyncHistoricalGroupMetadata(
               cloudGuid: group[1] as String?,
               participants: (group[2] as List).map((member) =>
@@ -216,6 +238,44 @@ void main() {
       );
     });
   }
+
+  test('frozen parent state is bound without reinterpreting the endpoint', () {
+    final wire = (jsonDecode(vectors.last['canonicalPayload'] as String)
+        as Map<String, dynamic>)['parentState'] as List;
+    final original = _row(chat: _chat(parentState: _parentState(wire)));
+    final request = _eligible(original);
+    expect(stagedHistoricalPayload(request: request, text: _text)['format'],
+        'cloud-sync-historical-source-v3');
+    expect(request.senderAddress, 'friend@example.com');
+    expect(request.peerAddress, 'friend@example.com');
+    final changedWire = List<dynamic>.of(wire)..[3] = 'Newer title';
+    final changed = _row(chat: _chat(parentState: _parentState(changedWire)));
+    expect(_eligible(changed).sourceSha256, isNot(request.sourceSha256));
+    expect(() => encodeHistoricalSource(request: request, currentRow: changed,
+        manifest: _manifest(), account: _accountBinding(), nowMs: _nowMs),
+        throwsStateError);
+    // Current-row veto still checks the message/route. It does not replace the
+    // parent's immutable conversion input with newer display/cloud metadata.
+    expect(historicalArchiveRowMatchesRequest(changed, request, nowMs: _nowMs),
+        isTrue);
+    expect(historicalArchiveRowMatchesRequest(
+        _row(text: 'newer message', chat: changed.chat), request, nowMs: _nowMs),
+        isFalse);
+  });
+
+  test('older sources still match rows that now capture parent metadata', () {
+    final wire = (jsonDecode(vectors.last['canonicalPayload'] as String)
+        as Map<String, dynamic>)['parentState'] as List;
+    final request = _eligible(_row());
+    final current = _row(chat: _chat(parentState: _parentState(wire)));
+    expect(request.parentState, isNull);
+    expect(historicalArchiveRowMatchesRequest(current, request, nowMs: _nowMs),
+        isTrue);
+    expect(historicalArchiveRowMatchesRequest(
+        _row(chat: _chat(guid: 'iMessage;-;other@example.com',
+            chatIdentifier: 'other@example.com', participantAddress: 'other@example.com',
+            parentState: _parentState(wire))), request, nowMs: _nowMs), isFalse);
+  });
 
   CloudSyncHistoricalGroupMetadata groupMetadata({
     String? cloudGuid = 'opaque-group-id',

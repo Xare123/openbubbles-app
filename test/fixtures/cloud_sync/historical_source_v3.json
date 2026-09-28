@@ -1,0 +1,14 @@
+[
+  {
+    "name": "received_direct_with_parent_state",
+    "canonicalPayload": "{\"format\":\"cloud-sync-historical-source-v3\",\"guid\":\"A1B2C3D4-E5F6-4A7B-8C9D-E0F1A2B3C4D5\",\"text\":\"hello from before the upgrade\",\"origin\":\"historicalReceived\",\"isFromMe\":false,\"senderAddress\":\"friend@example.com\",\"peerAddress\":\"friend@example.com\",\"chatGuid\":\"iMessage;-;friend@example.com\",\"dateCreatedMs\":1699000000000,\"snapshotSha256\":\"ab12cd34ab12cd34ab12cd34ab12cd34ab12cd34ab12cd34ab12cd34ab12cd34\",\"accountFingerprint\":\"account-fp-xyz789\",\"protectedStoreIdentity\":\"store-1\",\"parentState\":[1,\"D17EC710-2222-4333-8444-555555555555\",\"mailto:me@example.com\",null,3,\"read-guid\",1699000000000,null,false,null,false,\"YnBsaXN0MDA=\",[\"older-alias\"]]}",
+    "guidHash": "7031df14081df0fc966a842743d83289f1671c9e2130b1481f07dc7f33f41246",
+    "sourceSha256": "01c60503cde9cfa13f10dae4a74dee32206d85d5b82a132db68682883325dd67"
+  },
+  {
+    "name": "received_group_with_parent_state",
+    "canonicalPayload": "{\"format\":\"cloud-sync-historical-source-v3\",\"guid\":\"A1B2C3D4-E5F6-4A7B-8C9D-E0F1A2B3C4D5\",\"text\":\"hello from before the upgrade\",\"origin\":\"historicalReceived\",\"isFromMe\":false,\"senderAddress\":\"friend@example.com\",\"peerAddress\":\"friend@example.com\",\"chatGuid\":\"iMessage;+;historical-group\",\"dateCreatedMs\":1699000000000,\"snapshotSha256\":\"ab12cd34ab12cd34ab12cd34ab12cd34ab12cd34ab12cd34ab12cd34ab12cd34\",\"accountFingerprint\":\"account-fp-xyz789\",\"protectedStoreIdentity\":\"store-1\",\"groupMetadata\":[1,\"opaque-group-id\",[[\"friend@example.com\",\"iMessage\"],[\"other@example.com\",\"iMessage\"]]],\"parentState\":[1,\"opaque-group-id\",\"mailto:me@example.com\",\"Retained title\",3,\"read-guid\",1699000000000,null,false,null,false,\"YnBsaXN0MDA=\",[\"older-alias\"]]}",
+    "guidHash": "7031df14081df0fc966a842743d83289f1671c9e2130b1481f07dc7f33f41246",
+    "sourceSha256": "31685a6f33e17093f7353d3b87161037f36f035ba3c2283b0a7cb416a408140a"
+  }
+]

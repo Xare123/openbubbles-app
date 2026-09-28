@@ -593,14 +593,13 @@ mod tests {
         let key = CloudSemanticIdentifierHasher::new(b"test-key").unwrap();
         let remote = distinct_group();
         let mut candidate = group_candidate();
-        candidate
-            .properties
-            .as_mut()
-            .unwrap()
-            .legacy_group_identifiers = vec![format!(
-            "iMessage;+;{}",
-            remote.original_group_id.to_lowercase()
-        )];
+        candidate.properties = Some(CloudProp {
+            legacy_group_identifiers: vec![format!(
+                "iMessage;+;{}",
+                remote.original_group_id.to_lowercase()
+            )],
+            ..Default::default()
+        });
         assert_eq!(
             observe_chat_identity(&candidate, &remote, &presence(None, false), &key)
                 .unwrap()

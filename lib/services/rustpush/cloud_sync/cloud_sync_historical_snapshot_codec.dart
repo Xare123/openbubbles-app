@@ -3,10 +3,11 @@ import 'dart:convert';
 import 'package:bluebubbles/database/models.dart';
 
 import 'cloud_sync_historical_archive_request.dart';
+import 'cloud_sync_historical_chat_state.dart';
 
-/// Canonical v1 snapshot codec with an optional group-metadata extension.
-/// Existing ten-field chat rows, including old groups, re-encode byte-exactly.
-/// The extension records metadata only; it does not enable group uploads.
+/// Canonical v1 snapshot codec with additive group and parent-state fields.
+/// Existing ten/eleven-field chat rows re-encode byte-exactly; missing metadata
+/// is never reconstructed from current state. These fields grant no upload.
 ///
 /// The encoder preserves every row/chat field the eligibility check reads,
 /// including unsupported markers (unknown direction, attachments, edits,
@@ -130,7 +131,9 @@ List<Object?> _chatFields(CloudSyncHistoricalChatView chat) => <Object?>[
   chat.participantCount,
   chat.participantAddress,
   chat.participantService,
-  if (chat.groupMetadata case final group?) group.toWire(),
+  if (chat.groupMetadata != null || chat.parentState != null)
+    chat.groupMetadata?.toWire(),
+  if (chat.parentState case final parent?) parent.toWire(),
 ];
 
 CloudSyncHistoricalRowView _rowView(Object? value, String snapshotSha256) {
@@ -180,7 +183,7 @@ CloudSyncHistoricalRowView _rowView(Object? value, String snapshotSha256) {
 
 CloudSyncHistoricalChatView _chat(Object? value) {
   if (value is! List ||
-      (value.length != _chatFieldCount && value.length != _chatFieldCount + 1)) {
+      (value.length < _chatFieldCount || value.length > _chatFieldCount + 2)) {
     throw StateError(_invalid);
   }
   return CloudSyncHistoricalChatView(
@@ -194,14 +197,50 @@ CloudSyncHistoricalChatView _chat(Object? value) {
     participantCount: _integer(value[7]),
     participantAddress: _string(value[8]),
     participantService: _string(value[9]),
-    groupMetadata: value.length == _chatFieldCount
+    groupMetadata:
+        value.length == _chatFieldCount ||
+            (value.length == _chatFieldCount + 2 && value[10] == null)
         ? null
         : _groupMetadata(value[10]),
+    parentState: value.length == _chatFieldCount + 2
+        ? _parentState(value[11])
+        : null,
+  );
+}
+
+CloudSyncHistoricalChatState _parentState(Object? value) {
+  if (value is! List ||
+      value.length != 13 ||
+      value[0] != 1 ||
+      value[12] is! List) {
+    throw StateError(_invalid);
+  }
+  final cloudData = _optionalString(value[11]);
+  if (cloudData != null &&
+      base64.encode(base64.decode(cloudData)) != cloudData) {
+    throw StateError(_invalid);
+  }
+  return CloudSyncHistoricalChatState(
+    cloudGuid: _optionalString(value[1]),
+    usingHandle: _optionalString(value[2]),
+    displayName: _optionalString(value[3]),
+    groupVersion: _optionalInteger(value[4]),
+    lastReadMessageGuid: _optionalString(value[5]),
+    latestMessageDateMs: _optionalInteger(value[6]),
+    photoAttachmentGuid: _optionalString(value[7]),
+    customAvatarPresent: _boolean(value[8]),
+    ckRecordId: _optionalString(value[9]),
+    ckSyncState: _boolean(value[10]),
+    cloudDataBase64: cloudData,
+    guidRefs: (value[12] as List).map(_string),
   );
 }
 
 CloudSyncHistoricalGroupMetadata _groupMetadata(Object? value) {
-  if (value is! List || value.length != 3 || value[0] != 1 || value[2] is! List) {
+  if (value is! List ||
+      value.length != 3 ||
+      value[0] != 1 ||
+      value[2] is! List) {
     throw StateError(_invalid);
   }
   return CloudSyncHistoricalGroupMetadata(

@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_historical_archive_request.dart';
@@ -571,11 +572,23 @@ void main() {
   );
 
   test('consistent export survives in-place edits, deletion and database restart', () async {
+    chat
+      ..displayName = 'saved title'
+      ..groupVersion = 4
+      ..cloudData = Uint8List.fromList([1, 2, 3])
+      ..guidRefs = ['saved-alias'];
+    store.box<Chat>().put(chat);
     final message = putMessage(guid: 'stable', text: 'before', isFromMe: true, sender: me, owner: chat);
     final snapshot = capture();
     message.text = 'after';
     message.attributedBody = [AttributedBody.raw('after')];
     store.box<Message>().put(message);
+    chat
+      ..displayName = 'new title'
+      ..groupVersion = 5
+      ..cloudData = Uint8List.fromList([4, 5, 6])
+      ..guidRefs = ['new-alias'];
+    store.box<Chat>().put(chat);
     final changed = capture();
     expect(changed.manifest.snapshotSha256, isNot(snapshot.manifest.snapshotSha256));
     store.box<Message>().remove(message.id!);
@@ -585,6 +598,10 @@ void main() {
     expect(original.text, 'before');
     expect(original.attributedBodies.single.string, 'before');
     expect(original.senderAddress, me.address);
+    expect(original.chat.parentState!.displayName, 'saved title');
+    expect(original.chat.parentState!.groupVersion, 4);
+    expect(original.chat.parentState!.cloudDataBase64, 'AQID');
+    expect(original.chat.parentState!.guidRefs, ['saved-alias']);
     expect((await snapshot.readPage(limit: 10)).views.single.guid, 'stable');
     expect(store.box<Message>().count(), 0);
   });
@@ -633,6 +650,10 @@ void main() {
   );
 
   test('worker capture returns detached content and keeps caller store open', () async {
+    chat
+      ..usingHandle = 'mailto:me@example.com'
+      ..displayName = 'worker original';
+    store.box<Chat>().put(chat);
     final message = putMessage(guid: 'worker', text: 'before', isFromMe: true, sender: me, owner: chat);
     var validations = 0;
     final handles = ['me@example.com'];
@@ -644,12 +665,19 @@ void main() {
         message.text = 'after';
         message.attributedBody = [AttributedBody.raw('after')];
         store.box<Message>().put(message);
+        chat
+          ..usingHandle = 'mailto:changed@example.com'
+          ..displayName = 'worker changed';
+        store.box<Chat>().put(chat);
       }
     });
     expect(validations, 2);
     expect(store.isClosed(), isFalse);
     expect(snapshot.manifest.accountHandles, ['me@example.com']);
     expect((await snapshot.readExact('worker'))!.text, 'before');
+    final parent = (await snapshot.readExact('worker'))!.chat.parentState!;
+    expect(parent.usingHandle, 'mailto:me@example.com');
+    expect(parent.displayName, 'worker original');
     expect(store.box<Message>().get(message.id!)!.text, 'after');
   });
 

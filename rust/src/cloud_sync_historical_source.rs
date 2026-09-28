@@ -8,11 +8,13 @@
 #![cfg_attr(not(test), allow(dead_code))]
 
 use crate::cloud_sync_outbound::CloudSyncOutboundFailure as Failure;
+use base64::{engine::general_purpose::STANDARD, Engine as _};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 const FORMAT: &str = "cloud-sync-historical-source-v1";
 const GROUP_FORMAT: &str = "cloud-sync-historical-source-v2";
+const PARENT_FORMAT: &str = "cloud-sync-historical-source-v3";
 const MAX_BYTES: usize = 1024 * 1024;
 const MAX_TEXT_BYTES: usize = 256 * 1024;
 const MAX_IDENTIFIER_BYTES: usize = 4096;
@@ -68,6 +70,50 @@ pub(crate) struct HistoricalGroupMetadata(
     pub(crate) Vec<(String, String)>,
 );
 
+/// Frozen conversion inputs, never native ownership/create authority. Tuple
+/// order is the Dart CloudSyncHistoricalChatState wire format. Saved plist bytes
+/// remain opaque until a parent projector validates their full routing identity.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct HistoricalParentState(
+    pub(crate) u8,             // version
+    pub(crate) Option<String>, // cloudGuid
+    pub(crate) Option<String>, // usingHandle
+    pub(crate) Option<String>, // displayName
+    pub(crate) Option<i64>,    // groupVersion
+    pub(crate) Option<String>, // lastReadMessageGuid
+    pub(crate) Option<i64>,    // latestMessageDateMs
+    pub(crate) Option<String>, // photoAttachmentGuid
+    pub(crate) bool,           // customAvatarPresent
+    pub(crate) Option<String>, // ckRecordId
+    pub(crate) bool,           // ckSyncState
+    pub(crate) Option<String>, // cloudDataBase64
+    pub(crate) Vec<String>,    // guidRefs
+);
+
+impl HistoricalParentState {
+    fn validate(&self) -> Result<(), Failure> {
+        if self.0 != 1 {
+            return Err(Failure::MalformedMessage);
+        }
+        // Capture retains metadata, including unsupported values, under the
+        // existing whole-source byte limit. The parent projector must validate
+        // identity before use; chat preferences cannot invalidate otherwise
+        // supported messages whose parents already exist. Match the Dart codec.
+        if let Some(encoded) = &self.11 {
+            if encoded.len() > MAX_BYTES {
+                return Err(Failure::OversizedMessage);
+            }
+            let bytes = STANDARD
+                .decode(encoded)
+                .map_err(|_| Failure::MalformedMessage)?;
+            if STANDARD.encode(bytes) != *encoded {
+                return Err(Failure::MalformedMessage);
+            }
+        }
+        Ok(())
+    }
+}
+
 /// Exact Dart stagedHistoricalPayload wire shape, in fixed field order:
 /// format, guid, text, origin, isFromMe, senderAddress, peerAddress,
 /// chatGuid, dateCreatedMs, snapshotSha256, accountFingerprint,
@@ -102,6 +148,12 @@ struct Source {
         rename = "groupMetadata"
     )]
     group_metadata: Option<HistoricalGroupMetadata>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        rename = "parentState"
+    )]
+    parent_state: Option<HistoricalParentState>,
 }
 
 pub(crate) struct HistoricalArchiveSource(Source);
@@ -133,6 +185,19 @@ impl HistoricalArchiveSource {
         sender_is_local: bool,
         group_metadata: Option<HistoricalGroupMetadata>,
     ) -> Result<Self, Failure> {
+        Self::capture_with_parent(row, binding, sender_is_local, group_metadata, None)
+    }
+
+    pub(crate) fn capture_with_parent(
+        row: &HistoricalRow,
+        binding: &HistoricalBinding,
+        sender_is_local: bool,
+        group_metadata: Option<HistoricalGroupMetadata>,
+        parent_state: Option<HistoricalParentState>,
+    ) -> Result<Self, Failure> {
+        if let Some(parent) = &parent_state {
+            parent.validate()?;
+        }
         identifier(row.guid)?;
         if row.guid.starts_with("temp") || row.guid.starts_with("error") {
             return Err(Failure::UnsupportedMessage);
@@ -178,7 +243,9 @@ impl HistoricalArchiveSource {
             _ => return Err(Failure::BindingMismatch),
         };
         let source = Source {
-            format: if group_metadata.is_some() {
+            format: if parent_state.is_some() {
+                PARENT_FORMAT
+            } else if group_metadata.is_some() {
                 GROUP_FORMAT
             } else {
                 FORMAT
@@ -196,6 +263,7 @@ impl HistoricalArchiveSource {
             account_fingerprint: binding.account_fingerprint.into(),
             protected_store_identity: binding.protected_store_identity.into(),
             group_metadata,
+            parent_state,
         };
         let staged = Self(source);
         staged.encode()?;
@@ -225,7 +293,9 @@ impl HistoricalArchiveSource {
         snapshot_hex(expected_source_sha256)?;
         let source: Source =
             serde_json::from_slice(bytes).map_err(|_| Failure::MalformedMessage)?;
-        let expected_format = if source.group_metadata.is_some() {
+        let expected_format = if source.parent_state.is_some() {
+            PARENT_FORMAT
+        } else if source.group_metadata.is_some() {
             GROUP_FORMAT
         } else {
             FORMAT
@@ -249,11 +319,12 @@ impl HistoricalArchiveSource {
             date_created_ms: source.sent_timestamp,
             is_from_me: source.is_from_me,
         };
-        let canonical = Self::capture_with_group(
+        let canonical = Self::capture_with_parent(
             &row,
             binding,
             sender_is_local,
             source.group_metadata.clone(),
+            source.parent_state.clone(),
         )?;
         if canonical.0 != source
             || canonical.encode()? != bytes
@@ -288,6 +359,9 @@ impl HistoricalArchiveSource {
     pub(crate) fn group_metadata(&self) -> Option<&HistoricalGroupMetadata> {
         self.0.group_metadata.as_ref()
     }
+    pub(crate) fn parent_state(&self) -> Option<&HistoricalParentState> {
+        self.0.parent_state.as_ref()
+    }
     pub(crate) fn require_account_store(&self, account: &str, store: &str) -> Result<(), Failure> {
         if self.0.account_fingerprint != account || self.0.protected_store_identity != store {
             return Err(Failure::BindingMismatch);
@@ -304,7 +378,9 @@ impl HistoricalArchiveSource {
     /// Lane-local source digest over the full validated binding.
     pub(crate) fn source_sha256(&self) -> Result<String, Failure> {
         let s = &self.0;
-        let mut fields = vec![serde_json::json!(if s.group_metadata.is_some() {
+        let mut fields = vec![serde_json::json!(if s.parent_state.is_some() {
+            "cloud-sync-historical-archive-source-v3"
+        } else if s.group_metadata.is_some() {
             "cloud-sync-historical-archive-source-v2"
         } else {
             "cloud-sync-historical-archive-source-v1"
@@ -330,6 +406,9 @@ impl HistoricalArchiveSource {
         );
         if let Some(group) = &s.group_metadata {
             fields.push(serde_json::to_value(group).map_err(|_| Failure::MalformedMessage)?);
+        }
+        if let Some(parent) = &s.parent_state {
+            fields.push(serde_json::to_value(parent).map_err(|_| Failure::MalformedMessage)?);
         }
         digest(&serde_json::Value::Array(fields))
     }
@@ -591,7 +670,13 @@ mod tests {
             ))
             .unwrap(),
         );
-        assert_eq!(vectors.len(), 4);
+        vectors.extend(
+            serde_json::from_str::<Vec<serde_json::Value>>(include_str!(
+                "../../test/fixtures/cloud_sync/historical_source_v3.json"
+            ))
+            .unwrap(),
+        );
+        assert_eq!(vectors.len(), 6);
         for vector in vectors {
             let bytes = vector["canonicalPayload"].as_str().unwrap().as_bytes();
             let source: Source = serde_json::from_slice(bytes).unwrap();
@@ -612,6 +697,99 @@ mod tests {
                 vector["guidHash"].as_str().unwrap()
             );
         }
+    }
+
+    #[test]
+    fn frozen_parent_metadata_is_exactly_bound_and_never_receiving_endpoint() {
+        let vectors: Vec<serde_json::Value> = serde_json::from_str(include_str!(
+            "../../test/fixtures/cloud_sync/historical_source_v3.json"
+        ))
+        .unwrap();
+        let bytes = vectors[0]["canonicalPayload"].as_str().unwrap().as_bytes();
+        let expected = vectors[0]["sourceSha256"].as_str().unwrap();
+        let original = HistoricalArchiveSource::decode(bytes, &binding(), expected).unwrap();
+        assert_eq!(original.sender(), "friend@example.com");
+        assert_eq!(
+            original.parent_state().unwrap().2.as_deref(),
+            Some("mailto:me@example.com")
+        );
+        let changes: &[fn(&mut HistoricalParentState)] = &[
+            |p| p.1 = Some("different-cloud-guid".into()),
+            |p| p.2 = Some("other-owner@example.com".into()),
+            |p| p.3 = Some("Different title".into()),
+            |p| p.4 = Some(4),
+            |p| p.5 = Some("different-read-guid".into()),
+            |p| p.6 = Some(1_699_000_000_001),
+            |p| p.7 = Some("photo-guid".into()),
+            |p| p.8 = !p.8,
+            |p| p.9 = Some("existing-record".into()),
+            |p| p.10 = !p.10,
+            |p| p.11 = Some(STANDARD.encode(b"different saved plist")),
+            |p| p.12.push("different-alias".into()),
+        ];
+        for change in changes {
+            let mut changed = HistoricalArchiveSource(original.0.clone());
+            change(changed.0.parent_state.as_mut().unwrap());
+            let changed_bytes = changed.encode().unwrap();
+            let changed_hash = changed.source_sha256().unwrap();
+            assert_ne!(changed_hash, expected);
+            assert!(matches!(
+                HistoricalArchiveSource::decode(&changed_bytes, &binding(), expected),
+                Err(Failure::BindingMismatch)
+            ));
+            assert!(
+                HistoricalArchiveSource::decode(&changed_bytes, &binding(), &changed_hash).is_ok()
+            );
+        }
+    }
+
+    #[test]
+    fn parent_metadata_format_and_base64_cannot_be_downgraded_or_relabelled() {
+        let vectors: Vec<serde_json::Value> = serde_json::from_str(include_str!(
+            "../../test/fixtures/cloud_sync/historical_source_v3.json"
+        ))
+        .unwrap();
+        let original = HistoricalArchiveSource::decode(
+            vectors[0]["canonicalPayload"].as_str().unwrap().as_bytes(),
+            &binding(),
+            vectors[0]["sourceSha256"].as_str().unwrap(),
+        )
+        .unwrap();
+        for format in [FORMAT, GROUP_FORMAT] {
+            let mut changed = HistoricalArchiveSource(original.0.clone());
+            changed.0.format = format.into();
+            assert!(HistoricalArchiveSource::decode(
+                &changed.encode().unwrap(),
+                &binding(),
+                &changed.source_sha256().unwrap()
+            )
+            .is_err());
+        }
+        for value in ["Yg", "not-base64"] {
+            let mut changed = HistoricalArchiveSource(original.0.clone());
+            changed.0.parent_state.as_mut().unwrap().11 = Some(value.into());
+            assert!(HistoricalArchiveSource::decode(
+                &changed.encode().unwrap(),
+                &binding(),
+                &changed.source_sha256().unwrap()
+            )
+            .is_err());
+        }
+        let mut changed = HistoricalArchiveSource(original.0.clone());
+        changed.0.parent_state.as_mut().unwrap().0 = 2;
+        assert!(HistoricalArchiveSource::decode(
+            &changed.encode().unwrap(),
+            &binding(),
+            &changed.source_sha256().unwrap()
+        )
+        .is_err());
+        changed.0.parent_state = None;
+        assert!(HistoricalArchiveSource::decode(
+            &changed.encode().unwrap(),
+            &binding(),
+            &changed.source_sha256().unwrap()
+        )
+        .is_err());
     }
 
     #[test]

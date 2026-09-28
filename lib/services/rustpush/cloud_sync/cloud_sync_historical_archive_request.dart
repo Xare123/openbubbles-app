@@ -5,6 +5,8 @@ import 'dart:convert';
 import 'package:bluebubbles/database/models.dart';
 import 'package:crypto/crypto.dart';
 
+import 'cloud_sync_historical_chat_state.dart';
+
 /// Pure eligibility for one stored on-device message row as a historical
 /// archive candidate (v2: supervisor review corrections applied).
 /// Grants no upload authority; performs no network or database work.
@@ -130,10 +132,9 @@ final class CloudSyncHistoricalGroupMetadata {
   List<Object?> toWire() => <Object?>[
     1,
     cloudGuid,
-    participants.map((member) => <Object?>[
-      member.address,
-      member.service,
-    ]).toList(),
+    participants
+        .map((member) => <Object?>[member.address, member.service])
+        .toList(),
   ];
 }
 
@@ -152,6 +153,7 @@ class CloudSyncHistoricalChatView {
     required this.participantAddress,
     required this.participantService,
     this.groupMetadata,
+    this.parentState,
   });
 
   final int id;
@@ -165,6 +167,7 @@ class CloudSyncHistoricalChatView {
   final String participantAddress;
   final String participantService;
   final CloudSyncHistoricalGroupMetadata? groupMetadata;
+  final CloudSyncHistoricalChatState? parentState;
 }
 
 /// Plain view of one stored row. Built by mapHistoricalRow; never read
@@ -284,6 +287,7 @@ class CloudSyncHistoricalArchiveRequest {
     required this.senderAddress,
     required this.peerAddress,
     this.groupMetadata,
+    this.parentState,
   });
 
   final String guid;
@@ -300,6 +304,7 @@ class CloudSyncHistoricalArchiveRequest {
   final String senderAddress;
   final String peerAddress;
   final CloudSyncHistoricalGroupMetadata? groupMetadata;
+  final CloudSyncHistoricalChatState? parentState;
 }
 
 /// Fixed reason codes. None carries content, GUIDs, handles, or times.
@@ -355,6 +360,7 @@ CloudSyncHistoricalArchiveAssessment assessHistoricalArchiveRow(
   }
   return _assessHistoricalBoundRow(
     row,
+    snapshotParentState: row.chat.parentState,
     snapshotSha256: manifest.snapshotSha256,
     accountFingerprint: manifest.accountFingerprint,
     protectedStoreIdentity: account.protectedStoreIdentity,
@@ -389,6 +395,11 @@ bool historicalArchiveRowMatchesRequest(
   }
   final assessment = _assessHistoricalBoundRow(
     row,
+    // The veto below compares the current message and route, not mutable chat
+    // preferences or newly restored cloud bookkeeping. Parent creation uses
+    // the original protected snapshot separately. Re-reading newer metadata
+    // here would invalidate old v1/v2 sources and ordinary parent readback.
+    snapshotParentState: request.parentState,
     snapshotSha256: request.snapshotSha256,
     accountFingerprint: request.accountFingerprint,
     protectedStoreIdentity: request.protectedStoreIdentity,
@@ -410,6 +421,7 @@ bool historicalArchiveRowMatchesRequest(
 
 CloudSyncHistoricalArchiveAssessment _assessHistoricalBoundRow(
   CloudSyncHistoricalRowView row, {
+  required CloudSyncHistoricalChatState? snapshotParentState,
   required String snapshotSha256,
   required String accountFingerprint,
   required String protectedStoreIdentity,
@@ -525,7 +537,8 @@ CloudSyncHistoricalArchiveAssessment _assessHistoricalBoundRow(
       CloudSyncHistoricalArchiveReasons.route,
     );
   }
-  final isGroup = chat.participantCount > 1 ||
+  final isGroup =
+      chat.participantCount > 1 ||
       chat.style == 43 ||
       chat.guid.startsWith('iMessage;+;');
   final group = isGroup ? chat.groupMetadata : null;
@@ -590,9 +603,11 @@ CloudSyncHistoricalArchiveAssessment _assessHistoricalBoundRow(
       guid: guid,
       guidHash: _digest(['cloud-sync-historical-archive-guid-v1', guid]),
       sourceSha256: _digest([
-        group == null
-            ? 'cloud-sync-historical-archive-source-v1'
-            : 'cloud-sync-historical-archive-source-v2',
+        snapshotParentState != null
+            ? 'cloud-sync-historical-archive-source-v3'
+            : group == null
+                ? 'cloud-sync-historical-archive-source-v1'
+                : 'cloud-sync-historical-archive-source-v2',
         guid,
         text,
         sender,
@@ -605,6 +620,7 @@ CloudSyncHistoricalArchiveAssessment _assessHistoricalBoundRow(
         accountFingerprint,
         protectedStoreIdentity,
         if (group != null) group.toWire(),
+        if (snapshotParentState case final parent?) parent.toWire(),
       ]),
       origin: origin,
       textSha256: historicalTextDigest(text),
@@ -617,6 +633,7 @@ CloudSyncHistoricalArchiveAssessment _assessHistoricalBoundRow(
       accountFingerprint: accountFingerprint,
       protectedStoreIdentity: protectedStoreIdentity,
       groupMetadata: group,
+      parentState: snapshotParentState,
     ),
   );
 }
@@ -628,21 +645,28 @@ bool _validGroupMetadata(
   CloudSyncHistoricalChatView chat,
   CloudSyncHistoricalGroupMetadata? group,
 ) {
-  if (group == null || chat.isRoutingStub ||
+  if (group == null ||
+      chat.isRoutingStub ||
       group.participants.isEmpty ||
       group.participants.length != chat.participantCount ||
       (group.cloudGuid != null && !_boundedIdentifier(group.cloudGuid!))) {
     return false;
   }
   final identifier = chat.chatIdentifier;
-  final canonical = chat.style == 43 && identifier != null &&
-      _boundedIdentifier(identifier) && chat.guid == 'iMessage;+;$identifier';
-  final provisional = _uuid.hasMatch(chat.guid) &&
-      (chat.style == null || chat.style == 43) && identifier == null;
+  final canonical =
+      chat.style == 43 &&
+      identifier != null &&
+      _boundedIdentifier(identifier) &&
+      chat.guid == 'iMessage;+;$identifier';
+  final provisional =
+      _uuid.hasMatch(chat.guid) &&
+      (chat.style == null || chat.style == 43) &&
+      identifier == null;
   if (!canonical && !provisional) return false;
   final members = <String>{};
   for (final member in group.participants) {
-    if (member.service != 'iMessage' || !_boundedIdentifier(member.address) ||
+    if (member.service != 'iMessage' ||
+        !_boundedIdentifier(member.address) ||
         !_boundedIdentifier(_bare(member.address)) ||
         !members.add(_bare(member.address))) {
       return false;
@@ -676,8 +700,10 @@ CloudSyncHistoricalDedupeVerdict resolveHistoricalDedupe({
 CloudSyncHistoricalChatView mapHistoricalChat(Chat chat) {
   final handles = chat.handles.toList(growable: false);
   final first = handles.isEmpty ? null : handles.first;
-  final group = handles.length > 1 ||
-      chat.style == 43 || chat.guid.startsWith('iMessage;+;');
+  final group =
+      handles.length > 1 ||
+      chat.style == 43 ||
+      chat.guid.startsWith('iMessage;+;');
   return CloudSyncHistoricalChatView(
     id: chat.id ?? -1,
     guid: chat.guid,
@@ -689,13 +715,16 @@ CloudSyncHistoricalChatView mapHistoricalChat(Chat chat) {
     participantCount: handles.length,
     participantAddress: first?.address ?? '',
     participantService: first?.service ?? '',
+    parentState: CloudSyncHistoricalChatState.capture(chat),
     groupMetadata: group
         ? CloudSyncHistoricalGroupMetadata(
             cloudGuid: chat.cloudGuid,
-            participants: handles.map((handle) => CloudSyncHistoricalParticipantView(
-              address: handle.address,
-              service: handle.service,
-            )),
+            participants: handles.map(
+              (handle) => CloudSyncHistoricalParticipantView(
+                address: handle.address,
+                service: handle.service,
+              ),
+            ),
           )
         : null,
   );
