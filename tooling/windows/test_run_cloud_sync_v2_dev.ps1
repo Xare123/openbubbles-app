@@ -83,6 +83,13 @@ New-Item -ItemType Directory -Path $testDirectory | Out-Null
 $children = [System.Collections.Generic.List[System.Diagnostics.Process]]::new()
 
 try {
+    & $launcher -FunctionsOnlyForTest -HistoricalImport -BuildOnly
+    $historicalConflict = Invoke-ExpectedFailure {
+        & $launcher -FunctionsOnlyForTest -HistoricalImport -LocalWrite
+    }
+    Assert-True -Condition ($historicalConflict -eq 'Choose only one harness operation.') `
+        -Message 'Historical import was allowed to overlap local sending.'
+
     $bundle = Join-Path $testDirectory 'bundle'
     $nestedBundle = Join-Path $bundle 'nested'
     New-Item -ItemType Directory -Path $nestedBundle -Force | Out-Null
@@ -238,8 +245,8 @@ try {
         -Condition ($launcherSource.Contains('$MessageFeedProbe -or $FindMyProbe)')) `
         -Message 'Writer and live feed-probe reuse must use the exact binary-and-configuration receipt check.'
     Assert-True `
-        -Condition ($launcherSource.Contains('$expectedRuntimeBuildIdentifier = if ($FindMyProbe -or $MessageFeedProbe)')) `
-        -Message 'Live feed-probe status must be bound to the exact harness build identifier.'
+        -Condition ($launcherSource.Contains('$expectedRuntimeBuildIdentifier = if ($FindMyProbe -or $MessageFeedProbe -or $HistoricalImport)')) `
+        -Message 'Live feed-probe and historical-import status must be bound to the exact harness build identifier.'
     $buildOnlyMatches = [regex]::Matches(
         $launcherSource,
         '(?m)^\s+if \(\$BuildOnly\) \{\s*$'
@@ -594,7 +601,8 @@ try {
 
     foreach ($case in @(
         @{ Operation = 'message-feed-probe'; Stage = 'message-feed-probe-complete' },
-        @{ Operation = 'local-write'; Stage = 'windows-local-write-pass-complete' }
+        @{ Operation = 'local-write'; Stage = 'windows-local-write-pass-complete' },
+        @{ Operation = 'historical-import'; Stage = 'historical-import-pass-complete' }
     )) {
         $modeProcess = Start-TestHarnessProcess -Executable $testExecutable
         $children.Add($modeProcess)

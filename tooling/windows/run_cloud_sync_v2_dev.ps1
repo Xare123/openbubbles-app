@@ -25,6 +25,7 @@ param(
     [switch] $ChatIdentityObservation,
     [switch] $StagedChatIdentityObservation,
     [switch] $LocalWrite,
+    [switch] $HistoricalImport,
     [switch] $MessageFeedProbe,
     [switch] $FindMyProbe,
     [ValidateRange(30, 3600)]
@@ -51,6 +52,7 @@ $selectedOperations = @(
         $ChatIdentityObservation,
         $StagedChatIdentityObservation,
         $LocalWrite,
+        $HistoricalImport,
         $MessageFeedProbe,
         $FindMyProbe
     ) | Where-Object { $_ }
@@ -64,7 +66,8 @@ if ($FindMyProbe -and $ReplayExcludedChats) {
 if ($BuildOnly -and $SkipBuild) {
     throw "BuildOnly cannot be combined with SkipBuild."
 }
-if ($BuildOnly -and $selectedOperations.Count -ne 0 -and -not $LocalWrite) {
+$writerRequested = $LocalWrite -or $HistoricalImport
+if ($BuildOnly -and $selectedOperations.Count -ne 0 -and -not $writerRequested) {
     throw "BuildOnly can select LocalWrite compilation, but cannot run an operation."
 }
 
@@ -675,6 +678,7 @@ function Wait-HarnessOperation {
             'chat-identity-observation',
             'staged-chat-identity-observation',
             'local-write',
+            'historical-import',
             'message-feed-probe',
             'findmy-probe'
         )]
@@ -718,6 +722,9 @@ function Wait-HarnessOperation {
                 }
                 elseif ($ExpectedOperation -eq 'local-write') {
                     $status.stage -eq 'windows-local-write-pass-complete'
+                }
+                elseif ($ExpectedOperation -eq 'historical-import') {
+                    $status.stage -eq 'historical-import-pass-complete'
                 }
                 elseif ($ExpectedOperation -eq 'message-feed-probe') {
                     $status.stage -eq 'message-feed-probe-complete'
@@ -867,7 +874,7 @@ if (-not (Test-Path -LiteralPath $harnessSource -PathType Leaf)) {
 }
 $buildIdentifier = Resolve-HarnessBuildIdentifier -Repository $repo
 $buildIdentifier = Get-HarnessConfigurationIdentifier `
-    -SourceIdentifier $buildIdentifier -WriterBuild:$LocalWrite -ReplayBuild:$ReplayExcludedChats
+    -SourceIdentifier $buildIdentifier -WriterBuild:$writerRequested -ReplayBuild:$ReplayExcludedChats
 $storeExecutable = Resolve-StoreOpenBubblesExecutable
 $runnerDirectory = Join-Path $repo "build\windows\arm64\runner\Debug"
 $runnerDirectory = [System.IO.Path]::GetFullPath($runnerDirectory).TrimEnd('\')
@@ -894,7 +901,7 @@ $arguments = @(
 if ($ReplayExcludedChats) {
     $arguments += '--dart-define=OPENBUBBLES_CLOUD_SYNC_V2_WINDOWS_REPLAY_EXCLUDED_CHATS=true'
 }
-if ($LocalWrite) {
+if ($writerRequested) {
     $arguments += '--dart-define=OPENBUBBLES_CLOUD_SYNC_V2_OUTBOUND_CANARY=true'
     $arguments += '--dart-define=OPENBUBBLES_CLOUDKIT_WRITER_OWNER=v2'
 }
@@ -1019,7 +1026,7 @@ try {
             -Runner $runner `
             -RustLibrary $rustLibrary
     }
-    elseif ($ProjectionViewer -or $ProjectionDetailViewer -or $LocalWrite -or
+    elseif ($ProjectionViewer -or $ProjectionDetailViewer -or $writerRequested -or
         $MessageFeedProbe -or $FindMyProbe) {
         if (-not (Test-HarnessBuildReceipt `
             -ReceiptPath $buildReceiptPath `
@@ -1096,6 +1103,9 @@ try {
     elseif ($LocalWrite) {
         $harnessArguments = @("local-write") + $harnessArguments
     }
+    elseif ($HistoricalImport) {
+        $harnessArguments = @('historical-import') + $harnessArguments
+    }
     elseif ($MessageFeedProbe) {
         $harnessArguments = @("probe-message-feed") + $harnessArguments
     }
@@ -1108,7 +1118,7 @@ try {
         PassThru = $true
         ArgumentList = $harnessArguments
     }
-    if ($ChatIdentityObservation -or $StagedChatIdentityObservation -or $LocalWrite -or $MessageFeedProbe -or $FindMyProbe) { $startParameters.WindowStyle = 'Hidden' }
+    if ($ChatIdentityObservation -or $StagedChatIdentityObservation -or $writerRequested -or $MessageFeedProbe -or $FindMyProbe) { $startParameters.WindowStyle = 'Hidden' }
     $statusPath = Join-Path $profile "cloud-sync-v2\windows-harness-status.json"
     $statusBaselineWriteUtc = [datetime]::MinValue
     if (Test-Path -LiteralPath $statusPath -PathType Leaf) {
@@ -1129,7 +1139,7 @@ try {
         throw "The Windows Cloud Sync V2 harness exited during startup."
     }
     Write-Host "Cloud Sync V2 Windows harness started (PID $($process.Id))."
-    if ($RunOnce -or $Drain -or $AttachmentProbe -or $AttachmentProbeReuse -or $ChatIdentityObservation -or $StagedChatIdentityObservation -or $LocalWrite -or $MessageFeedProbe -or $FindMyProbe) {
+    if ($RunOnce -or $Drain -or $AttachmentProbe -or $AttachmentProbeReuse -or $ChatIdentityObservation -or $StagedChatIdentityObservation -or $writerRequested -or $MessageFeedProbe -or $FindMyProbe) {
         $operationTimeoutSeconds = if ($FindMyProbe) {
             120
         }
@@ -1142,7 +1152,7 @@ try {
         else {
             $RunOnceTimeoutSeconds
         }
-        $expectedRuntimeBuildIdentifier = if ($FindMyProbe -or $MessageFeedProbe) {
+        $expectedRuntimeBuildIdentifier = if ($FindMyProbe -or $MessageFeedProbe -or $HistoricalImport) {
             $buildIdentifier
         }
         else {
@@ -1168,6 +1178,8 @@ try {
                 'staged-chat-identity-observation'
             } elseif ($LocalWrite) {
                 'local-write'
+            } elseif ($HistoricalImport) {
+                'historical-import'
             } elseif ($MessageFeedProbe) {
                 'message-feed-probe'
             } elseif ($FindMyProbe) {

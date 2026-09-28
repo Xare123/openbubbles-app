@@ -8,6 +8,22 @@ import 'package:bluebubbles/src/rust/api/api.dart' as api;
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('historical import is a distinct exclusive launch, not local sending', () {
+    final launchId = '--launch-id=${'a' * 32}';
+    expect(CloudSyncV2WindowsHarnessLaunch.parse(['historical-import', launchId]).operation,
+        CloudSyncV2WindowsHarnessOperation.historicalImport);
+    for (final other in ['local-write', 'drain', 'run-once']) {
+      expect(() => CloudSyncV2WindowsHarnessLaunch.parse(['historical-import', other, launchId]),
+          throwsStateError);
+    }
+    final source = File('lib/cloud_sync_v2_windows_harness.dart').readAsStringSync();
+    final start = source.indexOf('Future<void> _runHistoricalImport()');
+    final body = source.substring(start, source.indexOf('Future<void> _runLocalWrite()', start));
+    expect(body, contains('runCloudSyncWindowsHistoricalImport('));
+    expect(body, isNot(contains('SharedPushState')));
+    expect(body, isNot(contains('prepareIds')));
+    expect(body, isNot(contains('_handleMissingReadAuthentication')));
+  });
   test('retained date inspection reports fixed shapes without values', () {
     expect(cloudSyncV2RetainedDateShape(null), {'present': false});
     expect(cloudSyncV2RetainedDateShape(0)['zero'], isTrue);

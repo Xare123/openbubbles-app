@@ -53,6 +53,7 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart'
     show ExternalLibrary;
 import 'package:path/path.dart' as path;
 import 'cloud_sync_v2_windows_local_write.dart';
+import 'cloud_sync_v2_windows_historical_import.dart';
 import 'cloud_sync_v2_windows_feed_probe.dart';
 import 'cloud_sync_v2_windows_findmy_probe.dart';
 import 'cloud_sync_v2_windows_parent_observation.dart';
@@ -213,6 +214,7 @@ enum CloudSyncV2WindowsHarnessOperation {
   chatIdentityObservation,
   stagedChatIdentityObservation,
   localWrite,
+  historicalImport,
   messageFeedProbe,
   findMyProbe;
 
@@ -622,6 +624,12 @@ final class CloudSyncV2WindowsHarnessLaunch {
             throw StateError('cloud_sync_windows_dev_launch_mode_invalid');
           }
           operation = CloudSyncV2WindowsHarnessOperation.localWrite;
+          operationSeen = true;
+        case 'historical-import':
+          if (operationSeen) {
+            throw StateError('cloud_sync_windows_dev_launch_mode_invalid');
+          }
+          operation = CloudSyncV2WindowsHarnessOperation.historicalImport;
           operationSeen = true;
         case 'probe-message-feed':
           if (operationSeen) {
@@ -2419,6 +2427,8 @@ class CloudSyncV2WindowsHarnessState extends State<CloudSyncV2WindowsHarness> {
         await _runChatIdentityObservation();
       case CloudSyncV2WindowsHarnessOperation.localWrite:
         await _runLocalWrite();
+      case CloudSyncV2WindowsHarnessOperation.historicalImport:
+        await _runHistoricalImport();
       case CloudSyncV2WindowsHarnessOperation.messageFeedProbe:
         final client = _activeClient;
         if (client is! rustlib.ArcCloudMessagesClientDefaultAnisetteProvider) {
@@ -2434,6 +2444,52 @@ class CloudSyncV2WindowsHarnessState extends State<CloudSyncV2WindowsHarness> {
           state: 'finished',
           detail: jsonEncode(result),
         );
+    }
+  }
+
+  Future<void> _runHistoricalImport() async {
+    if (_busy) return;
+    setState(() {
+      _busy = true;
+      _status = 'Preparing the explicit historical snapshot request...';
+    });
+    await _setRuntimeStage('historical-import', state: 'running');
+    try {
+      final client = _activeClient;
+      final adapter = _adapter;
+      final reportWriter = _reportWriter;
+      if (!fs.cloudSyncV2WindowsDevProfileActive ||
+          client is! rustlib.ArcCloudMessagesClientDefaultAnisetteProvider ||
+          adapter == null || reportWriter == null) {
+        throw StateError('cloud_sync_windows_historical_client_missing');
+      }
+      final store = Database.store;
+      final result = await runCloudSyncWindowsHistoricalImport(
+        profile: fs.appDocDir,
+        store: store,
+        client: client,
+        stillCurrent: () => mounted && identical(_activeClient, client) && !store.isClosed(),
+        settleReader: () async {
+          final report = await adapter.sampler.runConfirmed();
+          await reportWriter.write(report);
+          if (!report.safeToContinueDrain) {
+            throw StateError('cloud_sync_historical_import_reader_pending');
+          }
+        },
+      );
+      if (mounted) {
+        setState(() {
+          _busy = false;
+          _status = 'Historical ${result['action']} pass finished. '
+              'Confirmed this pass: ${result['confirmed_creates_this_session']}; '
+              'scan complete: ${result['scan_complete']}.';
+        });
+      }
+      await _setRuntimeStage('historical-import-pass-complete',
+          state: 'finished', detail: jsonEncode(result));
+    } catch (error) {
+      // Never replay an archival request through fresh send/auth recovery.
+      _showFailure(error);
     }
   }
 

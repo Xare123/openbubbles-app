@@ -333,6 +333,57 @@ void main() {
     expect(archive.callsByGuid.length, 3);
   });
 
+  test(
+    'single-row checkpoints retain progress through ineligible rows',
+    () async {
+      final snap = _snapshot([_row(1, attachments: true), _row(2), _row(3)]);
+      for (var pass = 0; pass < 3; pass++) {
+        final controller = CloudSyncHistoricalImportController(pageSize: 1);
+        controller.addListener(() {
+          if (controller.assessed == 1 &&
+              controller.phase == CloudSyncHistoricalImportPhase.running) {
+            controller.pause();
+          }
+        });
+        await controller.confirm(await prepareFor(controller, snap));
+        expect(controller.assessed, 1);
+        expect(controller.confirmedCreates, pass == 0 ? 0 : 1);
+        expect(controller.scanComplete, pass == 2);
+        expect((await cursors.load())!.done, pass == 2);
+        if (pass == 0) expect(controller.ineligibleByReason, isNotEmpty);
+        controller.dispose();
+      }
+      expect(archive.calls, 2);
+      expect(archive.callsByGuid.values, everyElement(1));
+    },
+  );
+
+  test('single-row checkpoint cannot pass an uncertain archive', () async {
+    final controller = CloudSyncHistoricalImportController(pageSize: 1);
+    archive.throwFor = (_) => true;
+    await expectLater(
+      controller.confirm(await prepareFor(controller, snapshot())),
+      throwsStateError,
+    );
+    expect(await cursors.load(), isNull);
+    expect(controller.scanComplete, isFalse);
+    expect(controller.confirmedCreates, 0);
+    expect(archive.calls, 1);
+    controller.dispose();
+  });
+
+  test('page size remains bounded without changing the Profile default', () {
+    final controller = CloudSyncHistoricalImportController();
+    expect(controller.pageSize, 20);
+    controller.dispose();
+    for (final size in [0, -1, 21, 500]) {
+      expect(
+        () => CloudSyncHistoricalImportController(pageSize: size),
+        throwsArgumentError,
+      );
+    }
+  });
+
   test('scan continues across the 20-row page boundary', () async {
     final controller = CloudSyncHistoricalImportController();
     final confirmation = await prepareFor(controller, snapshot(25));

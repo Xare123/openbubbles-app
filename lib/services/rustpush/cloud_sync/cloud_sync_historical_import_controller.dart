@@ -98,6 +98,17 @@ final class CloudSyncHistoricalImportConfirmation {
 /// Presentation counts reset per confirmed session; durable cursors/journals,
 /// not these counters, own progress and remote outcome.
 final class CloudSyncHistoricalImportController extends ChangeNotifier {
+  CloudSyncHistoricalImportController({this.pageSize = 20}) {
+    if (pageSize < 1 || pageSize > 20) {
+      throw ArgumentError.value(pageSize, 'pageSize');
+    }
+  }
+
+  /// Profile uses bounded bulk pages. A tightly budgeted operator run uses one
+  /// row per page so a settled row's cursor persists before its budget pauses
+  /// admission. This does not advance past failed or uncertain operations.
+  final int pageSize;
+
   CloudSyncHistoricalImportPhase phase = CloudSyncHistoricalImportPhase.idle;
   String? failureCode;
   int sourceRows = 0;
@@ -274,7 +285,7 @@ final class CloudSyncHistoricalImportController extends ChangeNotifier {
             }
             return result.source;
           },
-          pageLimit: 20,
+          pageLimit: pageSize,
           maxPages: 1,
           shouldContinue: admittedWindow,
           onProgress: progress,
