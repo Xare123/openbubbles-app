@@ -4,7 +4,10 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge.dart';
 
 import 'cloud_sync_attachment_plan_coordinator.dart';
 import 'cloud_sync_attachment_upload_executor.dart';
+import 'cloud_sync_attachment_upload_origin.dart';
 import 'cloud_sync_attachment_upload_journal.dart';
+import 'cloud_sync_historical_archive_journal.dart';
+import 'cloud_sync_historical_protected_source_binding.dart';
 import 'cloud_sync_local_send_source_binding.dart';
 import 'cloud_sync_manual_shadow_sampler.dart';
 import 'cloud_sync_outbound_staging.dart';
@@ -17,9 +20,10 @@ import 'objectbox_cloud_sync_store.dart';
 /// fence. No substitute token or new ownership rules are introduced here.
 final class GuardedCloudSyncAttachmentUploadMutationGate
     implements CloudSyncAttachmentUploadMutationGate {
-  const GuardedCloudSyncAttachmentUploadMutationGate(this.guard);
+  const GuardedCloudSyncAttachmentUploadMutationGate(this.guard, {this.historicalJournal});
 
   final CloudKitWriterMutationGuard guard;
+  final CloudSyncHistoricalArchiveJournal? historicalJournal;
 
   @override
   Future<T> runAuthorized<T>({
@@ -51,6 +55,7 @@ final class GuardedCloudSyncAttachmentUploadMutationGate
     expectedClient: expectedClient,
     uploads: uploads,
     uploadId: uploadId,
+    historicalJournal: historicalJournal,
   );
 
   @override
@@ -61,9 +66,10 @@ final class GuardedCloudSyncAttachmentUploadMutationGate
 /// checks shared ownership, checkpoint generation, IDS proof and read readiness.
 final class ObjectBoxCloudSyncCompletedUploadAdmitter
     implements CloudSyncCompletedUploadAdmitter {
-  const ObjectBoxCloudSyncCompletedUploadAdmitter(this.store);
+  const ObjectBoxCloudSyncCompletedUploadAdmitter(this.store, {this.historicalJournal});
 
   final ObjectBoxCloudSyncStore store;
+  final CloudSyncHistoricalArchiveJournal? historicalJournal;
 
   @override
   CloudAttachmentUploadSnapshot admitCompletedAttachmentUpload({
@@ -75,6 +81,7 @@ final class ObjectBoxCloudSyncCompletedUploadAdmitter
     uploads: uploads,
     uploadId: uploadId,
     createdAt: createdAt,
+    historicalJournal: historicalJournal,
   );
 }
 
@@ -90,6 +97,47 @@ final class FrbCloudSyncAttachmentPlanSource {
   }
 
   final String storageDirectory;
+
+  api.CloudSyncHistoricalAttachmentContext historicalContext(
+    CloudSyncHistoricalProtectedSourceBinding source,
+    CloudSyncNativeAuthSnapshot auth,
+  ) => CloudSyncAttachmentUploadOrigin.historical(source).historicalContext(
+    storageDirectory: storageDirectory,
+    auth: api.CloudSyncNativeAuthMetadata(nativeSessionId: auth.nativeSessionId,
+      accountFingerprint: auth.accountFingerprint,
+      protectedStoreIdentity: auth.protectedStoreIdentity));
+
+  Future<List<CloudSyncAttachmentPlanInventoryItem>> inspectHistorical(
+    CloudSyncHistoricalProtectedSourceBinding source,
+    CloudSyncNativeAuthSnapshot auth,
+  ) async {
+    final entries = await _nativePlanCall('cloud_sync_attachment_plan_inventory_failed',
+      () => api.cloudSyncInspectHistoricalAttachmentSources(
+        cloudMessagesClient: _client(auth), context: historicalContext(source, auth)));
+    return List.unmodifiable(entries.map((item) => CloudSyncAttachmentPlanInventoryItem(
+      originalAttachmentGuid: item.originalAttachmentGuid,
+      reflectedAttachmentGuid: item.reflectedAttachmentGuid,
+      logicalEntityKeyHash: item.logicalEntityKeyHash)));
+  }
+
+  Future<CloudSyncProtectedOutboundStageData> stageHistorical(
+    CloudSyncAttachmentPlanInventoryItem item,
+    CloudSyncHistoricalProtectedSourceBinding source,
+    CloudSyncNativeAuthSnapshot auth, {
+    required String sourcePath,
+  }) async {
+    if (sourcePath.isEmpty) throw StateError('cloud_sync_attachment_plan_source_unavailable');
+    final result = await _nativePlanCall('cloud_sync_attachment_plan_native_stage_failed',
+      () => api.cloudSyncStageHistoricalAttachmentUploadPlan(
+        cloudMessagesClient: _client(auth), context: historicalContext(source, auth),
+        originalAttachmentGuid: item.originalAttachmentGuid, sourcePath: sourcePath));
+    final stage = result.stage;
+    return CloudSyncProtectedOutboundStageData(
+      logicalEntityKeyHash: stage.logicalEntityKeyHash,
+      protectedEnvelopeReference: stage.protectedPayloadReference,
+      payloadSha256: stage.payloadSha256, serverRecordIdHash: stage.serverRecordIdHash,
+      leaseReference: stage.leaseReference);
+  }
 
   Future<List<CloudSyncAttachmentPlanInventoryItem>> inspect(
     CloudSyncLocalSendSourceBinding source,

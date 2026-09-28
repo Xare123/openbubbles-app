@@ -10,6 +10,8 @@ import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_operation_identity.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_attachment_upload_executor.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_attachment_upload_journal.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_historical_archive_journal.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_historical_protected_source_binding.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_send_journal.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_send_source_binding.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_manual_shadow_sampler.dart';
@@ -35,6 +37,7 @@ void main() {
   late _FakeAdmitter admitter;
   late CloudSyncAttachmentUploadExecutor executor;
   late List<String> order;
+  CloudSyncHistoricalArchiveJournal? historicalJournal;
 
   void provisionJournal() {
     authority = ObjectBoxCloudKitWriterAuthority.forTest(
@@ -96,18 +99,22 @@ void main() {
     );
   }
 
-  void buildExecutor() {
+  void buildExecutor({bool historical = false}) {
+    historicalJournal = historical ? CloudSyncHistoricalArchiveJournal(
+      store: store, accountFingerprint: _accountA, protectedStoreIdentity: _storeA,
+      snapshotSha256: _digest('a'), clock: () => _time(20)) : null;
     uploads = CloudSyncAttachmentUploadJournal(
       store: store,
       localSends: localSends,
       scope: _uploadScope,
       checkpointGeneration: 1,
       currentAuth: auth,
+      writerAuthority: authority,
     );
     bridge = _FakeBridge(order: order);
     gate = _FakeGate(order: order);
     staging = _FakeStaging(order: order);
-    admitter = _FakeAdmitter(order: order);
+    admitter = _FakeAdmitter(order: order, historicalJournal: historicalJournal);
     executor = CloudSyncAttachmentUploadExecutor(
       uploads: uploads,
       readLiveAuth: () async => auth,
@@ -116,6 +123,7 @@ void main() {
       staging: staging,
       completedAdmitter: admitter,
       privateStorageDirectory: directory.path,
+      historicalJournal: historicalJournal,
       clock: () => _time(20),
     );
   }
@@ -175,6 +183,111 @@ void main() {
         now: _time(6),
       )
       .id;
+
+  int seedHistoricalPrepared() {
+    final journal = historicalJournal!;
+    final source = CloudSyncHistoricalProtectedSourceBinding(
+      accountFingerprint: _accountA, protectedStoreIdentity: _storeA,
+      snapshotSha256: _digest('a'), messageGuidHash: _digest('b'),
+      sourceSha256: _digest('c'), protectedReference: _ref('H'),
+      leaseReference: _lease('d'), payloadSha256: _digest('e'), payloadLength: 128);
+    final intent = journal.adopt(source);
+    journal.markSourceLeaseCommitted(intentId: intent.id, expectedSource: source);
+    return uploads.adoptHistoricalPlan(historicalIntentId: intent.id,
+      plan: _planA(), now: _time(6), historicalJournal: journal).id;
+  }
+
+  test('historical upload uses its own context and the shared single consume', () async {
+    buildExecutor(historical: true);
+    final id = seedHistoricalPrepared();
+    final result = await executor.execute(_input(id));
+    expect(result.status, CloudAttachmentUploadExecutionStatus.completed);
+    expect(order, ['prepare-historical', 'authorize', 'consume', 'commit', 'admit']);
+    expect(bridge.historicalPrepareCalls, 1);
+    expect(bridge.prepareCalls, 0);
+    expect(bridge.consumeCalls, 1);
+    expect(bridge.disposeCalls, 1);
+    expect(bridge.historicalContext!.source.snapshotSha256, _digest('a'));
+    expect(bridge.historicalContext!.expectedAuth.nativeSessionId, auth.nativeSessionId);
+    final retained = uploads.readHistorical(id, historicalJournal!);
+    expect(retained.state, CloudAttachmentUploadState.adopted);
+    expect(retained.localSendIntentId, 0);
+    expect(retained.ownerKind, cloudSyncAttachmentOwnerKindHistorical);
+    expect(store.box<CloudSyncLocalSendIntentEntity>().count(), 0);
+    gate.reconcileResult = true;
+    expect((await executor.execute(_input(id))).status,
+        CloudAttachmentUploadExecutionStatus.alreadyCompleted);
+    expect(bridge.historicalPrepareCalls, 1);
+    expect(bridge.consumeCalls, 1);
+  });
+
+  test('historical ambiguous upload reopens and recovers without another consume', () async {
+    buildExecutor(historical: true);
+    final id = seedHistoricalPrepared();
+    bridge.consumeDisposition = frb_api.CloudSyncOutboundSaveDisposition.unknownOutcome;
+    expect((await executor.execute(_input(id))).status,
+        CloudAttachmentUploadExecutionStatus.unknownOutcome);
+    final before = uploads.readHistorical(id, historicalJournal!);
+    store.close();
+    store = await openStore(directory: directory.path);
+    provisionJournal();
+    buildExecutor(historical: true);
+    gate.reconcileResult = true;
+    final result = await executor.execute(_input(id));
+    expect(result.status, CloudAttachmentUploadExecutionStatus.recoveredAndCompleted);
+    expect(bridge.historicalPrepareCalls, 0);
+    expect(bridge.prepareCalls, 0);
+    expect(bridge.consumeCalls, 0);
+    expect(bridge.recoverCalls, 0);
+    expect(bridge.historicalRecoverCalls, 1);
+    expect(uploads.readHistorical(id, historicalJournal!).attemptId, before.attemptId);
+    expect(uploads.readHistorical(id, historicalJournal!).plan.protectedEnvelopeReference,
+        before.plan.protectedEnvelopeReference);
+  });
+
+  test('historical missing receipt stays unresolved even with retained inventory', () async {
+    buildExecutor(historical: true);
+    final id = seedHistoricalPrepared();
+    uploads.beginHistoricalAttempt(id: id, attemptId: _attemptA, now: _time(7),
+      historicalJournal: historicalJournal!);
+    final input = _input(id, retainedKeys: {_planA().logicalEntityKeyHash});
+    expect((await executor.execute(input)).status, CloudAttachmentUploadExecutionStatus.awaitingReceipt);
+    gate.reconcileResult = true;
+    bridge.recoverReturnsNull = true;
+    expect((await executor.execute(input)).status, CloudAttachmentUploadExecutionStatus.awaitingReceipt);
+    expect(bridge.historicalPrepareCalls, 0);
+    expect(bridge.consumeCalls, 0);
+    expect(uploads.readHistorical(id, historicalJournal!).state, CloudAttachmentUploadState.started);
+    expect(admitter.admits, isEmpty);
+  });
+
+  test('historical prepared plan can resume after authority recovery with exact inventory', () async {
+    buildExecutor(historical: true);
+    final id = seedHistoricalPrepared();
+    final epoch = authority.read(_writerScope)!.epoch;
+    authority.markMutationUnknown(authority.issuePermit(_writerScope,
+      expectedOwner: CloudKitWriterOwner.v2), now: _time(7));
+    authority.reconcileMutationFence(_writerScope, owner: CloudKitWriterOwner.v2,
+      fencedEpoch: epoch, now: _time(8));
+    final result = await executor.execute(_input(id, retainedKeys: {_planA().logicalEntityKeyHash}));
+    expect(result.status, CloudAttachmentUploadExecutionStatus.completed);
+    expect(store.box<CloudAttachmentUploadEntity>().get(id)!.writerEpoch, epoch);
+    expect(store.box<CloudAttachmentUploadEntity>().count(), 1);
+    expect(bridge.consumeCalls, 1);
+  });
+
+  test('historical account drift after prepare never starts or consumes', () async {
+    buildExecutor(historical: true);
+    final id = seedHistoricalPrepared();
+    bridge.onPrepare = () => auth = CloudSyncNativeAuthSnapshot.fromNative(
+      nativeSessionId: auth.nativeSessionId, accountFingerprint: _token('B'),
+      protectedStoreIdentity: auth.protectedStoreIdentity, cloudMessagesClient: auth.cloudMessagesClient);
+    await expectLater(executor.execute(_input(id)), throwsA(isA<StateError>()));
+    expect(bridge.consumeCalls, 0);
+    expect(bridge.disposeCalls, 1);
+    expect(store.box<CloudAttachmentUploadEntity>().get(id)!.state, CloudAttachmentUploadState.prepared.index);
+    expect(store.box<CloudAttachmentUploadEntity>().get(id)!.attemptId, isNull);
+  });
   test('retained first attempt uses original plan after authority recovery and reopen', () async {
     final id = _seedPrepared();
     final original = uploads.read(id);
@@ -778,7 +891,7 @@ final class _FakePreparedUpload implements CloudSyncPreparedUpload {
   }
 }
 
-final class _FakeBridge implements CloudSyncAttachmentUploadBridge {
+final class _FakeBridge implements CloudSyncHistoricalAttachmentUploadBridge {
   _FakeBridge({required this.order});
 
   final List<String> order;
@@ -786,6 +899,9 @@ final class _FakeBridge implements CloudSyncAttachmentUploadBridge {
   int consumeCalls = 0;
   int disposeCalls = 0;
   int recoverCalls = 0;
+  int historicalPrepareCalls = 0;
+  int historicalRecoverCalls = 0;
+  frb_api.CloudSyncHistoricalAttachmentContext? historicalContext;
   bool throwOnPrepare = false;
   Object? throwOnConsume;
   String preparedAttemptId = _attemptA;
@@ -826,6 +942,33 @@ final class _FakeBridge implements CloudSyncAttachmentUploadBridge {
     order.add('recover');
     if (recoverReturnsNull) return null;
     return _frbStage(_resultA());
+  }
+
+  @override
+  Future<CloudSyncPreparedUpload> prepareHistorical({
+    required frb_api.CloudSyncHistoricalAttachmentContext context,
+    required frb_api.CloudSyncAttachmentUploadPlanReference planStage,
+    required String originalAttachmentGuid,
+    required String sourcePath,
+    required BigInt requestTimeoutSeconds,
+  }) async {
+    historicalContext = context;
+    historicalPrepareCalls++;
+    order.add('prepare-historical');
+    expect(planStage.payloadSha256, _planA().payloadSha256);
+    onPrepare?.call();
+    return _FakePreparedUpload(this, preparedAttemptId, preparedBinding);
+  }
+
+  @override
+  Future<frb_api.CloudSyncProtectedOutboundStage?> recoverHistorical({
+    required frb_api.CloudSyncHistoricalAttachmentContext context,
+    required frb_api.CloudSyncAttachmentUploadPlanReference planStage,
+  }) async {
+    historicalContext = context;
+    historicalRecoverCalls++;
+    order.add('recover-historical');
+    return recoverReturnsNull ? null : _frbStage(_resultA());
   }
 }
 
@@ -945,9 +1088,10 @@ final class _FakeStaging implements CloudSyncOutboundStagingTransport {
 }
 
 final class _FakeAdmitter implements CloudSyncCompletedUploadAdmitter {
-  _FakeAdmitter({required this.order});
+  _FakeAdmitter({required this.order, this.historicalJournal});
 
   final List<String> order;
+  final CloudSyncHistoricalArchiveJournal? historicalJournal;
   final List<int> admits = [];
 
   @override
@@ -958,14 +1102,15 @@ final class _FakeAdmitter implements CloudSyncCompletedUploadAdmitter {
   }) {
     order.add('admit');
     admits.add(uploadId);
-    return uploads.adoptRecordCreate(
-      id: uploadId,
-      admit: (tx, result) {
+    CloudOutboxOperation admit(Store tx, CloudSyncProtectedOutboundStageData result) {
         _persistFinalOperation(tx, result);
         return _finalOperation(result);
-      },
-      now: createdAt,
-    );
+      }
+    final historical = historicalJournal;
+    return historical == null
+        ? uploads.adoptRecordCreate(id: uploadId, admit: admit, now: createdAt)
+        : uploads.adoptHistoricalRecordCreate(id: uploadId, admit: admit,
+            now: createdAt, historicalJournal: historical);
   }
 }
 

@@ -18,6 +18,7 @@ import 'cloud_sync_received_archive_journal.dart';
 import 'cloud_sync_received_record_observation.dart';
 import 'cloud_sync_local_mutation_journal.dart';
 import 'cloud_sync_attachment_upload_journal.dart';
+import 'cloud_sync_outbound_staging.dart';
 import 'cloud_sync_chat_identity_evidence.dart';
 import 'cloud_sync_chat_identity_read_set.dart';
 import 'cloud_sync_manual_shadow_sampler.dart';
@@ -64,6 +65,7 @@ class ObjectBoxCloudSyncStore
     CloudSyncReceivedArchiveJournal? receivedArchiveJournal,
     CloudSyncLocalMutationJournal? localMutationJournal,
     CloudSyncAttachmentUploadJournal? attachmentUploadJournal,
+    CloudSyncHistoricalArchiveJournal? historicalAttachmentJournal,
     this._readChatIdentityEvidence,
     this._readHistoricalChatOrigin,
     CloudSyncSemanticDiagnosticRecorder? recordExistingHistoryDiagnostic,
@@ -78,6 +80,9 @@ class ObjectBoxCloudSyncStore
        // Keep the public named parameter stable while the field stays private.
        // ignore: prefer_initializing_formals
        _attachmentUploadJournal = attachmentUploadJournal,
+       // Historical passes opt in explicitly; ordinary IDS dispatch is unchanged.
+       // ignore: prefer_initializing_formals
+       _historicalAttachmentJournal = historicalAttachmentJournal,
        // Keep the public named parameter stable while the field stays private.
        // ignore: prefer_initializing_formals
        _recordExistingHistoryDiagnostic = recordExistingHistoryDiagnostic,
@@ -154,6 +159,7 @@ class ObjectBoxCloudSyncStore
   final CloudSyncReceivedArchiveJournal? _receivedArchiveJournal;
   final CloudSyncLocalMutationJournal? _localMutationJournal;
   final CloudSyncAttachmentUploadJournal? _attachmentUploadJournal;
+  final CloudSyncHistoricalArchiveJournal? _historicalAttachmentJournal;
   final CloudSyncProtector _protector;
   final DateTime Function() _clock;
   final Box<CloudSyncCheckpointEntity> _checkpoints;
@@ -1179,7 +1185,12 @@ class ObjectBoxCloudSyncStore
         if (uploads == null) {
           throw _storageFailure('attachment_upload_journal_required');
         }
-        uploads.requireAdoptedOperation(current);
+        final historical = _historicalAttachmentJournal;
+        if (historical == null) {
+          uploads.requireAdoptedOperation(current);
+        } else {
+          uploads.requireHistoricalAdoptedOperation(current, historical);
+        }
       }
       if (recordVerifiedLocalSendReadback) {
         final journal = _localSendJournal;
@@ -3030,14 +3041,13 @@ class ObjectBoxCloudSyncStore
     required CloudSyncAttachmentUploadJournal uploads,
     required int uploadId,
     required DateTime createdAt,
+    CloudSyncHistoricalArchiveJournal? historicalJournal,
   }) {
     if (!uploads.isBoundTo(_store, scope)) {
       throw _storageFailure('attachment_upload_adoption_store_mismatch');
     }
-    return uploads.adoptRecordCreate(
-      id: uploadId,
-      now: createdAt,
-      admit: (transactionStore, stage) => _admitProtectedOutboundCreate(
+    CloudOutboxOperation admit(Store transactionStore,
+        CloudSyncProtectedOutboundStageData stage) => _admitProtectedOutboundCreate(
         CloudOutboxDraft(
           scope: scope,
           logicalEntityKeyHash: stage.logicalEntityKeyHash,
@@ -3058,8 +3068,11 @@ class ObjectBoxCloudSyncStore
           updatedAt: createdAt,
         ),
         isAttachmentCreate: true,
-      ),
-    );
+      );
+    return historicalJournal == null
+        ? uploads.adoptRecordCreate(id: uploadId, now: createdAt, admit: admit)
+        : uploads.adoptHistoricalRecordCreate(id: uploadId, now: createdAt,
+            admit: admit, historicalJournal: historicalJournal);
   }
 
   CloudOutboxOperation _admitProtectedOutboundCreate(
@@ -4713,10 +4726,21 @@ class ObjectBoxCloudSyncStore
     CloudSyncHistoricalArchiveIntentEntity row,
   ) {
     final source = validateCloudSyncHistoricalArchiveRow(row);
-    return CloudSyncHistoricalArchiveJournal(store: _store,
+    late final CloudSyncHistoricalArchiveJournal journal;
+    journal = CloudSyncHistoricalArchiveJournal(store: _store,
       accountFingerprint: source.accountFingerprint,
       protectedStoreIdentity: source.protectedStoreIdentity,
-      snapshotSha256: source.snapshotSha256, clock: _clock);
+      snapshotSha256: source.snapshotSha256, clock: _clock,
+      attachmentParentReadback: (intentId, proof) {
+        final uploads = _attachmentUploadJournal;
+        if (uploads == null || proof == null) {
+          throw StateError('cloud_sync_attachment_parent_inventory_required');
+        }
+        uploads.requireHistoricalParentReadbackProof(historicalIntentId: intentId,
+          proof: proof, historicalJournal: journal);
+        return proof;
+      });
+    return journal;
   }
 
   /// Reads the retained owner across snapshots, including after process restart.
@@ -4730,6 +4754,23 @@ class ObjectBoxCloudSyncStore
     }
     return _historicalJournalFor(row).readAdoptedSource(
       transactionStore: _store, operation: operation);
+  });
+
+  /// Lookup-only historical child ownership. The upload journal checks the
+  /// original result, checkpoint, retained source and exact outbox identity.
+  CloudOutboxOperation readHistoricalAttachmentOperation(
+    CloudSyncScope scope, String operationId,
+    CloudSyncHistoricalArchiveJournal journal,
+  ) => _store.runInTransaction(TxMode.read, () {
+    final uploads = _attachmentUploadJournal;
+    final row = _findOutboxByOperationIdLocked(operationId);
+    if (uploads == null || !uploads.isBoundTo(_store, scope) ||
+        row == null || row.scopeKey != _scopeKey(scope)) {
+      throw StateError('cloud_sync_attachment_upload_adoption_changed');
+    }
+    final operation = _outboxFromEntity(scope, row);
+    uploads.readHistoricalAdoptedSource(operation, journal);
+    return operation;
   });
 
   CloudOutboxOperation? readHistoricalArchiveOperation(CloudSyncScope scope, String operationId) =>
@@ -6135,7 +6176,12 @@ class ObjectBoxCloudSyncStore
       if (uploads == null || !uploads.isBoundTo(_store, scope)) {
         throw StateError('cloud_sync_attachment_upload_journal_required');
       }
-      uploads.requireAdoptedOperation(operation);
+      final historical = _historicalAttachmentJournal;
+      if (historical == null) {
+        uploads.requireAdoptedOperation(operation);
+      } else {
+        uploads.requireHistoricalAdoptedOperation(operation, historical);
+      }
       _requireMessagesCloudAccountProjectionReadyLocked(
         scope,
         allowRetainedForFreshCreate: true,

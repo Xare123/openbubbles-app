@@ -10,6 +10,7 @@ import 'cloud_protected_page_lease_lifecycle.dart';
 import 'cloud_sync_dev_gate.dart';
 import 'cloud_sync_chat_identity_evidence.dart';
 import 'cloud_sync_historical_parent_origin.dart';
+import 'cloud_sync_attachment_upload_journal.dart';
 import 'cloud_sync_historical_chat_origin.dart';
 import 'cloud_sync_local_send_journal.dart';
 import 'cloud_sync_historical_archive_journal.dart';
@@ -144,6 +145,7 @@ final class CloudSyncHistoricalCreateAdapter {
     required this.readSession,
     required this.validate,
     required this.stillCurrent,
+    this.attachmentUploads,
   });
 
   final Store store;
@@ -154,6 +156,20 @@ final class CloudSyncHistoricalCreateAdapter {
   final CloudSyncWriteChatIdentitySession readSession;
   final Future<void> Function() validate;
   final bool Function() stillCurrent;
+  final CloudSyncAttachmentUploadJournal? attachmentUploads;
+
+  void _requireMediaReadback(CloudSyncHistoricalCreateSource retained) {
+    final proof = retained.attachmentReadbackProof;
+    if (proof == null) return;
+    final uploads = attachmentUploads;
+    if (uploads == null) throw StateError('cloud_sync_attachment_parent_inventory_required');
+    final source = retained.source;
+    final journal = CloudSyncHistoricalArchiveJournal(store: store,
+      accountFingerprint: source.accountFingerprint, protectedStoreIdentity: source.protectedStoreIdentity,
+      snapshotSha256: source.snapshotSha256);
+    uploads.requireHistoricalParentReadbackProof(historicalIntentId: retained.intentId,
+      proof: proof, historicalJournal: journal);
+  }
 
   /// Retained source lookup for both prepare and uncertain-outcome readback.
   /// It does not depend on a mutable visible Chat or the active snapshot scan.
@@ -381,8 +397,9 @@ final class CloudSyncHistoricalCreateAdapter {
   Future<api.CloudSyncHistoricalArchiveCreateProof> _open(
     BigInt token,
     CloudSyncHistoricalProtectedSourceBinding source,
-    CloudSyncHistoricalParentProof parent,
-  ) => api.cloudSyncOpenHistoricalArchiveCreateProof(
+    CloudSyncHistoricalParentProof parent, {
+    String? attachmentReadbackProof,
+  }) => api.cloudSyncOpenHistoricalArchiveCreateProof(
     cloudMessagesClient: _client,
     nativeWriterPauseToken: token,
     storageDirectory: storageDirectory,
@@ -392,6 +409,8 @@ final class CloudSyncHistoricalCreateAdapter {
     chatLogicalEntityKeyHash: parent.logicalEntityKeyHash,
     chatSource: parent.source,
     parentBindingSha256: sha256.convert(utf8.encode(parent.binding)).toString(),
+    attachmentReadbackBindingSha256: attachmentReadbackProof == null ? null :
+        sha256.convert(utf8.encode(attachmentReadbackProof)).toString(),
   );
 
   Future<api.CloudSyncHistoricalArchiveCreateProof?> openProof(
@@ -406,9 +425,11 @@ final class CloudSyncHistoricalCreateAdapter {
     );
     if (operation == null) return null;
     final source = durable.readHistoricalArchiveSource(operation)!;
+    _requireMediaReadback(source);
     final parent = _parent(scope, source.localChatId, source.parentBinding);
     final proof = await readSession.run(
-      (token) => _open(token, source.source, parent),
+      (token) => _open(token, source.source, parent,
+        attachmentReadbackProof: source.attachmentReadbackProof),
     );
     await validate();
     final current = durable.readHistoricalArchiveOperation(scope, operationId);
@@ -419,6 +440,7 @@ final class CloudSyncHistoricalCreateAdapter {
             parent.source) {
       throw StateError('cloud_sync_historical_admitted_operation_changed');
     }
+    _requireMediaReadback(source);
     return proof;
   }
 
@@ -475,8 +497,11 @@ final class CloudSyncHistoricalCreateAdapter {
     final parent = _parent(scope, localChatId, null);
     final checkpoint = await durable.readCheckpoint(scope);
     await validate();
+    final attachmentProof = request.media == null ? null :
+        journal.requireAttachmentReadback(intentId, null);
     return readSession.run((token) async {
-      final proof = await _open(token, intent.source, parent);
+      final proof = await _open(token, intent.source, parent,
+        attachmentReadbackProof: attachmentProof);
       await validate();
       final prepared = await api.cloudSyncDiscoverHistoricalRecordExact(
         cloudMessagesClient: _client,
@@ -524,7 +549,8 @@ final class CloudSyncHistoricalCreateAdapter {
                   logicalEntityKeyHash: stage.logicalEntityKeyHash,
                   serverRecordIdHash: stage.serverRecordIdHash,
                 );
-                if (selected.parentBinding != parent.binding) {
+                if (selected.parentBinding != parent.binding ||
+                    selected.attachmentReadbackProof != attachmentProof) {
                   throw StateError(
                     'cloud_sync_historical_create_parent_changed',
                   );

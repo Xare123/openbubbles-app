@@ -142,6 +142,7 @@ final class CloudSyncHistoricalArchiveJournal {
     required this.accountFingerprint,
     required this.protectedStoreIdentity,
     required this.snapshotSha256,
+    this.attachmentParentReadback,
     DateTime Function()? clock,
     // Keep the public named-store constructor and private backing store.
     // ignore: prefer_initializing_formals
@@ -159,6 +160,18 @@ final class CloudSyncHistoricalArchiveJournal {
   final String accountFingerprint;
   final String protectedStoreIdentity;
   final String snapshotSha256;
+  final String Function(int intentId, String? retainedProof)? attachmentParentReadback;
+
+  String requireAttachmentReadback(int intentId, String? retainedProof) {
+    final readback = attachmentParentReadback;
+    if (readback == null) throw StateError('cloud_sync_attachment_parent_inventory_required');
+    final proof = readback(intentId, retainedProof);
+    if (proof.isEmpty || proof.length > 65536 ||
+        (retainedProof != null && proof != retainedProof)) {
+      throw StateError('cloud_sync_attachment_upload_adoption_changed');
+    }
+    return proof;
+  }
 
   bool isBoundToStore(Store store) => identical(store, _store);
 
@@ -244,6 +257,35 @@ final class CloudSyncHistoricalArchiveJournal {
       return result;
     });
   }
+
+  /// Ownership evidence for byte-upload adoption under one historical intent.
+  /// Requires a committed source; direction (sent/received) stays a property
+  /// of the message request and its trial policy, never of this intent. The
+  /// caller binds the returned source to the exact upload row separately.
+  CloudSyncHistoricalArchiveIntent requireHistoricalAttachmentOrigin({
+    required int intentId,
+    required CloudSyncNativeAuthSnapshot currentAuth,
+  }) => _store.runInTransaction(TxMode.read, () {
+    if (intentId < 1 ||
+        currentAuth.accountFingerprint != accountFingerprint ||
+        currentAuth.protectedStoreIdentity != protectedStoreIdentity) {
+      throw StateError('cloud_sync_historical_create_identity_changed');
+    }
+    final row = _store.box<CloudSyncHistoricalArchiveIntentEntity>().get(intentId);
+    if (row == null) {
+      throw StateError('cloud_sync_historical_journal_record_missing');
+    }
+    final result = _decode(row);
+    if (result.source.accountFingerprint != accountFingerprint ||
+        result.source.protectedStoreIdentity != protectedStoreIdentity ||
+        result.source.snapshotSha256 != snapshotSha256) {
+      throw StateError('cloud_sync_historical_journal_source_conflict');
+    }
+    if (!result.sourceLeaseCommitted) {
+      throw StateError('cloud_sync_historical_create_source_not_ready');
+    }
+    return result;
+  });
 
   /// Atomically owns the source before a producer cursor may advance past it.
   CloudSyncHistoricalArchiveIntent adopt(
@@ -426,6 +468,7 @@ final class CloudSyncHistoricalArchiveJournal {
       parentBinding: parent.binding, generation: generation,
       logicalEntityKeyHash: logicalEntityKeyHash, serverRecordIdHash: serverRecordIdHash,
       createdAtMs: row.createdAtMs,
+      attachmentReadbackProof: request.media == null ? null : requireAttachmentReadback(intentId, null),
       localGuard: CloudSyncHistoricalLocalGuard.capture(
         store: _store, request: request, source: retained.source, localChatId: localChatId),
     );
@@ -469,6 +512,9 @@ final class CloudSyncHistoricalArchiveJournal {
     }
     expected.localGuard.requireUnchanged(
       store: _store, source: expected.source, localChatId: expected.localChatId);
+    if (expected.attachmentReadbackProof case final proof?) {
+      requireAttachmentReadback(expected.intentId, proof);
+    }
     if (!stillCurrent()) {
       throw StateError('cloud_sync_historical_create_admission_changed');
     }
@@ -547,6 +593,9 @@ final class CloudSyncHistoricalArchiveJournal {
       store: _store, source: source.source, localChatId: source.localChatId);
     requireCloudSyncHistoricalParentUnchanged(store: _store, messageScope: operation.scope,
       binding: source.parentBinding, chatId: source.localChatId);
+    if (source.attachmentReadbackProof case final proof?) {
+      requireAttachmentReadback(source.intentId, proof);
+    }
   }
 
   /// Bounded recovery of adopted sources whose native commit may have been

@@ -12,6 +12,8 @@ import 'package:bluebubbles/src/rust/api/api.dart' as frb_api;
 import 'cloud_operation_identity.dart';
 import 'cloud_sync_models.dart';
 import 'cloud_sync_attachment_upload_journal.dart';
+import 'cloud_sync_attachment_upload_origin.dart';
+import 'cloud_sync_historical_archive_journal.dart';
 import 'cloud_sync_production_sampler_adapter.dart';
 import 'cloudkit_operation_interlock.dart';
 import 'cloudkit_writer_authority.dart';
@@ -156,6 +158,18 @@ abstract interface class CloudKitWriterUploadReconciliationBinding
   verifyAttachmentUploadReceipt({
     required Object cloudMessagesClient,
     required frb_api.CloudSyncNativeSendReceiptContext context,
+    required frb_api.CloudSyncAttachmentUploadPlanReference planStage,
+    required String expectedAttemptId,
+  });
+}
+
+/// Historical receipts retain their committed snapshot; no IDS fallback.
+abstract interface class CloudKitWriterHistoricalUploadReconciliationBinding
+    implements CloudKitWriterReconciliationBinding {
+  Future<frb_api.CloudSyncAttachmentUploadReceiptEvidence?>
+  verifyHistoricalAttachmentUploadReceipt({
+    required Object cloudMessagesClient,
+    required frb_api.CloudSyncHistoricalAttachmentContext context,
     required frb_api.CloudSyncAttachmentUploadPlanReference planStage,
     required String expectedAttemptId,
   });
@@ -354,10 +368,12 @@ final class CloudKitWriterMutationGuard
     required Object expectedClient,
     required CloudSyncAttachmentUploadJournal uploads,
     required int uploadId,
+    CloudSyncHistoricalArchiveJournal? historicalJournal,
   }) => _reconcileAttachmentUpload(
     expectedClient: expectedClient,
     uploads: uploads,
     uploadId: uploadId,
+    historicalJournal: historicalJournal,
   );
 
   /// Receipt-only entry before outbox draining. Null means no matching byte
@@ -368,6 +384,7 @@ final class CloudKitWriterMutationGuard
     required Object expectedClient,
     required CloudSyncAttachmentUploadJournal uploads,
     int? onlyIntentId,
+    CloudSyncHistoricalArchiveJournal? historicalJournal,
   }) async {
     CloudKitOperationInterlock.requireActive(CloudKitOperationKind.v2ReadWrite);
     if (!uploads.isBoundTo(_store, uploads.scope) ||
@@ -386,10 +403,14 @@ final class CloudKitWriterMutationGuard
     int? findMatch() {
       int? matched;
       final bindings = <String>{};
-      for (final id in uploads.readAttemptedForReconciliation(
-        onlyIntentId: onlyIntentId,
-      )) {
-        final binding = uploads.reconciliationBindingSha256(id);
+      final ids = historicalJournal == null
+          ? uploads.readAttemptedForReconciliation(onlyIntentId: onlyIntentId)
+          : uploads.readHistoricalAttemptedForReconciliation(
+              historicalIntentId: onlyIntentId, historicalJournal: historicalJournal);
+      for (final id in ids) {
+        final binding = historicalJournal == null
+            ? uploads.reconciliationBindingSha256(id)
+            : uploads.reconciliationHistoricalBindingSha256(id, historicalJournal);
         if (!bindings.add(binding)) {
           throw const CloudKitWriterAuthorityFailure(
             'cloudkit_upload_recovery_identity_changed',
@@ -406,6 +427,7 @@ final class CloudKitWriterMutationGuard
       expectedClient: expectedClient,
       uploads: uploads,
       uploadId: matched,
+      historicalJournal: historicalJournal,
       expectedFenceEncoding: fence.encoded,
       requireDiscovery: () {
         if (findMatch() != matched) {
@@ -421,6 +443,7 @@ final class CloudKitWriterMutationGuard
     required Object expectedClient,
     required CloudSyncAttachmentUploadJournal uploads,
     required int uploadId,
+    CloudSyncHistoricalArchiveJournal? historicalJournal,
     String? expectedFenceEncoding,
     void Function()? requireDiscovery,
   }) async {
@@ -432,9 +455,16 @@ final class CloudKitWriterMutationGuard
         'cloudkit_upload_recovery_owner_mismatch',
       );
     }
-    final upload = uploads.read(uploadId);
-    final bindingSha256 = uploads.reconciliationBindingSha256(uploadId);
-    final source = uploads.readOriginalSource(uploadId);
+    CloudAttachmentUploadSnapshot readUpload() => historicalJournal == null
+        ? uploads.read(uploadId) : uploads.readHistorical(uploadId, historicalJournal);
+    String readBinding() => historicalJournal == null
+        ? uploads.reconciliationBindingSha256(uploadId)
+        : uploads.reconciliationHistoricalBindingSha256(uploadId, historicalJournal);
+    CloudSyncAttachmentUploadOrigin readSource() => CloudSyncAttachmentUploadOrigin.read(
+      uploads: uploads, uploadId: uploadId, historicalJournal: historicalJournal);
+    final upload = readUpload();
+    final bindingSha256 = readBinding();
+    final source = readSource();
     final identity = await _capture(expectedClient);
     void requireIdentity(CloudSyncNativeAuthMetadata value) {
       CloudKitOperationInterlock.requireActive(
@@ -444,7 +474,7 @@ final class CloudKitWriterMutationGuard
           value.accountFingerprint != source.accountFingerprint ||
           value.protectedStoreIdentity != source.protectedStoreIdentity ||
           value.nativeSessionId != identity.nativeSessionId ||
-          uploads.reconciliationBindingSha256(uploadId) != bindingSha256) {
+          readBinding() != bindingSha256 || readSource().encoded != source.encoded) {
         throw const CloudKitWriterAuthorityFailure(
           'cloudkit_upload_recovery_identity_changed',
         );
@@ -502,41 +532,40 @@ final class CloudKitWriterMutationGuard
 
     requireFence(initialFence);
     final binding = _reconciliationBinding;
-    if (binding is! CloudKitWriterUploadReconciliationBinding) {
-      throw const CloudKitWriterAuthorityFailure(
-        'cloudkit_upload_recovery_binding_missing',
-      );
-    }
-    final result = await binding.verifyAttachmentUploadReceipt(
-      cloudMessagesClient: expectedClient,
-      context: frb_api.CloudSyncNativeSendReceiptContext(
-        storageDirectory: _privateStorageDirectory,
-        guidHash: source.messageGuidHash,
-        accountFingerprint: identity.accountFingerprint,
-        protectedStoreIdentity: identity.protectedStoreIdentity,
-        nativeSessionId: identity.nativeSessionId,
-        sourceBinding: frb_api.CloudSyncNativeSendSourceBinding(
-          sourceSha256: source.sourceSha256,
-          protectedReference: source.protectedReference,
-          leaseReference: source.leaseReference,
-          payloadSha256: source.payloadSha256,
-          payloadLength: BigInt.from(source.payloadLength),
-        ),
-      ),
-      planStage: frb_api.CloudSyncAttachmentUploadPlanReference(
+    final nativeAuth = frb_api.CloudSyncNativeAuthMetadata(
+      accountFingerprint: identity.accountFingerprint,
+      protectedStoreIdentity: identity.protectedStoreIdentity,
+      nativeSessionId: identity.nativeSessionId);
+    final planStage = frb_api.CloudSyncAttachmentUploadPlanReference(
         logicalEntityKeyHash: upload.plan.logicalEntityKeyHash,
         protectedPayloadReference: upload.plan.protectedEnvelopeReference,
         payloadSha256: upload.plan.payloadSha256,
         serverRecordIdHash: upload.plan.serverRecordIdHash,
         leaseReference: upload.plan.leaseReference,
-      ),
-      expectedAttemptId: upload.attemptId!,
-    );
+      );
+    final frb_api.CloudSyncAttachmentUploadReceiptEvidence? result;
+    if (source.isHistorical) {
+      if (binding is! CloudKitWriterHistoricalUploadReconciliationBinding) {
+        throw const CloudKitWriterAuthorityFailure('cloudkit_upload_recovery_binding_missing');
+      }
+      result = await binding.verifyHistoricalAttachmentUploadReceipt(
+        cloudMessagesClient: expectedClient,
+        context: source.historicalContext(storageDirectory: _privateStorageDirectory, auth: nativeAuth),
+        planStage: planStage, expectedAttemptId: upload.attemptId!);
+    } else {
+      if (binding is! CloudKitWriterUploadReconciliationBinding) {
+        throw const CloudKitWriterAuthorityFailure('cloudkit_upload_recovery_binding_missing');
+      }
+      result = await binding.verifyAttachmentUploadReceipt(
+        cloudMessagesClient: expectedClient,
+        context: source.localContext(storageDirectory: _privateStorageDirectory, auth: nativeAuth),
+        planStage: planStage, expectedAttemptId: upload.attemptId!);
+    }
     requireIdentity(await _capture(expectedClient));
     final finalFence = persistentFence.readForReconciliation();
     requireFence(finalFence);
     if (result == null) return false;
-    final current = uploads.read(uploadId);
+    final current = readUpload();
     if (result.uploadAttemptId != upload.attemptId ||
         result.planPayloadSha256 != upload.plan.payloadSha256 ||
         result.logicalEntityKeyHash != upload.plan.logicalEntityKeyHash ||
@@ -1153,6 +1182,7 @@ final class CloudKitWriterMutationGuard
     required CloudSyncAttachmentUploadJournal uploads,
     required int uploadId,
     required int expectedEpoch,
+    CloudSyncHistoricalArchiveJournal? historicalJournal,
   }) async {
     final proof = _unknownMutationForScheduling;
     if (proof == null) return false;
@@ -1199,17 +1229,21 @@ final class CloudKitWriterMutationGuard
             authority.transitionIdHash != null) {
           return false;
         }
-        final upload = uploads.read(uploadId);
+        final upload = historicalJournal == null ? uploads.read(uploadId)
+            : uploads.readHistorical(uploadId, historicalJournal);
         if (upload.state != CloudAttachmentUploadState.started &&
             upload.state != CloudAttachmentUploadState.unknown) {
           return false;
         }
-        final source = uploads.readOriginalSource(uploadId);
+        final source = CloudSyncAttachmentUploadOrigin.read(uploads: uploads,
+          uploadId: uploadId, historicalJournal: historicalJournal);
+        final binding = historicalJournal == null
+            ? uploads.reconciliationBindingSha256(uploadId)
+            : uploads.reconciliationHistoricalBindingSha256(uploadId, historicalJournal);
         return source.accountFingerprint == proof.identity.accountFingerprint &&
             source.protectedStoreIdentity ==
                 proof.identity.protectedStoreIdentity &&
-            uploads.reconciliationBindingSha256(uploadId) ==
-                fence.reconciliationBindingSha256;
+            binding == fence.reconciliationBindingSha256;
       }
 
       if (!matches()) return false;

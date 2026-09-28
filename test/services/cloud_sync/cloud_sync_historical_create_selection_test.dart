@@ -2,15 +2,24 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:bluebubbles/database/models.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_operation_identity.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_historical_archive_journal.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_historical_archive_request.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_historical_chat_state.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_historical_create_selection.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_historical_media_source.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_historical_parent_origin.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_historical_protected_source_binding.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_attachment_upload_journal.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_historical_attachment_inventory.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_send_journal.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_manual_shadow_sampler.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_models.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_outbound_staging.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_persistent_keys.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_protector.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_writer_authority.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_writer_ownership.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/objectbox_cloud_sync_store.dart';
 import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -53,6 +62,7 @@ CloudSyncHistoricalArchiveRequest _request({
   required String chatGuid,
   String? sourceSha,
   String? groupCloudGuid,
+  CloudSyncHistoricalMediaSource? media,
 }) {
   final template = Chat(
     guid: chatGuid,
@@ -83,6 +93,7 @@ CloudSyncHistoricalArchiveRequest _request({
       ],
     ),
     parentState: CloudSyncHistoricalChatState.capture(template),
+    media: media,
   );
 }
 
@@ -114,10 +125,13 @@ void main() {
   late Store store;
   late ObjectBoxCloudSyncStore durable;
 
-  ObjectBoxCloudSyncStore _durable() => ObjectBoxCloudSyncStore(
+  ObjectBoxCloudSyncStore _durable({
+    CloudSyncAttachmentUploadJournal? uploads,
+  }) => ObjectBoxCloudSyncStore(
     store: store,
     protector: _SyntheticProtector(),
     clock: () => _now,
+    attachmentUploadJournal: uploads,
   );
 
   Future<void> _pullAll() async {
@@ -226,6 +240,46 @@ void main() {
       stillCurrent: () => true,
     );
   }
+
+  CloudSyncScope _attachmentScope() => _scope('attachmentManateeZone');
+
+  late ObjectBoxCloudKitWriterAuthority _authority;
+
+  void _provisionAuthority() {
+    _authority = ObjectBoxCloudKitWriterAuthority.forTest(
+      store: store,
+      buildDecision: CloudKitWriterOwnership.resolve('v2'),
+    );
+    final scope = CloudKitWriterScope(accountFingerprint: _account);
+    final disabled = _authority.initializeDisabled(scope, now: _now);
+    _authority.provisionInitialOwner(
+      scope,
+      owner: CloudKitWriterOwner.v2,
+      expectedEpoch: disabled.epoch,
+      evidence: const CloudKitWriterTransitionEvidence.forTest(
+        operationsQuiesced: true,
+        activeIdentityRevalidated: true,
+        legacyMutationQueues: LegacyMutationQueueDisposition.empty,
+      ),
+      now: _now,
+    );
+  }
+
+  CloudSyncAttachmentUploadJournal _uploads({int generation = 1}) =>
+      CloudSyncAttachmentUploadJournal(
+        store: store,
+        localSends: CloudSyncLocalSendJournal(
+          store: store,
+          authority: _authority,
+          authoritySnapshot: _authority.read(
+            CloudKitWriterScope(accountFingerprint: _account),
+          )!,
+        ),
+        scope: _attachmentScope(),
+        checkpointGeneration: generation,
+        currentAuth: _auth(),
+        writerAuthority: _authority,
+      );
 
   setUp(() async {
     directory = await Directory.systemTemp.createTemp(
@@ -554,6 +608,382 @@ void main() {
         journal: _journal(store),
         durable: durable,
         auth: _auth(),
+      ),
+      throwsStateError,
+    );
+  });
+
+  CloudSyncHistoricalMediaSource _mediaFor({
+    required String rowGuid,
+    required int rowMessageId,
+    required String partGuid,
+  }) {
+    final attachment = Attachment(
+      id: 21,
+      guid: partGuid,
+      uti: 'public.jpeg',
+      mimeType: 'image/jpeg',
+      isOutgoing: true,
+      transferName: 'photo.jpg',
+      totalBytes: 128,
+    )..message.targetId = rowMessageId;
+    final inventory = CloudSyncHistoricalAttachmentInventory.capture([
+      attachment,
+    ]);
+    final view = CloudSyncHistoricalRowView(
+      guid: rowGuid,
+      text: null,
+      attributedBodies: [
+        AttributedBody(
+          string: ' ',
+          runs: [
+            Run(
+              range: [0, 1],
+              attributes: Attributes(messagePart: 0, attachmentGuid: partGuid),
+            ),
+          ],
+        ),
+      ],
+      hasActualEditOrUnsend: false,
+      dateEditedPresent: false,
+      associationPresent: false,
+      isFromMe: true,
+      senderAddress: 'owner@example.invalid',
+      chat: const CloudSyncHistoricalChatView(
+        id: 1,
+        guid: 'media-chat',
+        style: 45,
+        chatIdentifier: 'peer@example.invalid',
+        isRoutingStub: false,
+        dateDeletedPresent: false,
+        isRpSms: false,
+        participantCount: 1,
+        participantAddress: 'peer@example.invalid',
+        participantService: 'iMessage',
+      ),
+      dateCreatedMs: _now.millisecondsSinceEpoch - 1000,
+      error: 0,
+      isTemp: false,
+      stagingGuid: null,
+      sendingServiceId: null,
+      hasBeenForwarded: false,
+      verificationFailed: false,
+      ckRecordId: null,
+      ckSyncState: false,
+      messageId: rowMessageId,
+      itemType: 0,
+      groupActionType: 0,
+      groupTitle: null,
+      isDeleted: false,
+      dateScheduledPresent: false,
+      threadOriginatorPresent: false,
+      hasAttachments: true,
+      attachmentCount: 1,
+      subjectPresent: false,
+      expressiveSendStyleIdPresent: false,
+      balloonBundleIdPresent: false,
+      payloadDataPresent: false,
+      hasApplePayloadData: false,
+      amkSessionIdPresent: false,
+      rowSnapshotSha256: _snapshot,
+      attachmentInventory: inventory,
+    );
+    return CloudSyncHistoricalMediaSource.capture(view);
+  }
+
+  CloudOutboxOperation _admitChild({
+    required int intentId,
+    required String logical,
+    required CloudSyncAttachmentUploadJournal uploads,
+    required int generation,
+  }) {
+    const attemptId = 'AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA';
+    final plan = CloudSyncProtectedOutboundStageData(
+      logicalEntityKeyHash: logical,
+      protectedEnvelopeReference: 'obcs2.ref.${'P' * 43}',
+      payloadSha256: 'e' * 64,
+      serverRecordIdHash: 'M' * 43,
+      leaseReference: 'obcs2.lease.${'f' * 32}',
+    );
+    final adopted = uploads.adoptHistoricalPlan(
+      historicalIntentId: intentId,
+      plan: plan,
+      now: _now,
+      historicalJournal: _journal(store),
+    );
+    uploads.beginHistoricalAttempt(
+      id: adopted.id,
+      attemptId: attemptId,
+      now: _now,
+      historicalJournal: _journal(store),
+    );
+    uploads.recordHistoricalUploaded(
+      id: adopted.id,
+      attemptId: attemptId,
+      result: plan,
+      now: _now,
+      historicalJournal: _journal(store),
+    );
+    final operationId = CloudOperationIdentity.forInitialCreate(
+      scope: _attachmentScope(),
+      logicalEntityKeyHash: logical,
+      payloadVersion: 1,
+    );
+    store.box<CloudOutboxOperationEntity>().put(
+      CloudOutboxOperationEntity(
+        operationId: operationId,
+        scopeKey: cloudSyncPersistentScopeKey(_attachmentScope()),
+        accountFingerprint: _account,
+        zone: 'attachmentManateeZone',
+        logicalEntityKeyHash: logical,
+        action: CloudOutboxAction.save.index,
+        mutationRevision: 1,
+        checkpointGeneration: generation,
+        encryptedPayloadRef: 'obcs2.ref.${'P' * 43}',
+        payloadSha256: 'e' * 64,
+        protectedLeaseReference: 'obcs2.lease.${'f' * 32}',
+        serverRecordIdHash: 'M' * 43,
+        createdAtMs: _now.millisecondsSinceEpoch,
+        updatedAtMs: _now.millisecondsSinceEpoch,
+      ),
+    );
+    uploads.adoptHistoricalRecordCreate(
+      id: adopted.id,
+      now: _now,
+      historicalJournal: _journal(store),
+      admit: (transactionStore, result) => CloudOutboxOperation(
+        scope: _attachmentScope(),
+        operationId: operationId,
+        logicalEntityKeyHash: logical,
+        action: CloudOutboxAction.save,
+        payloadVersion: 1,
+        mutationRevision: 1,
+        checkpointGeneration: generation,
+        dependencyOperationIds: const {},
+        createdAt: _now,
+        encryptedPayloadReference: 'obcs2.ref.${'P' * 43}',
+        payloadSha256: 'e' * 64,
+        serverRecordIdHash: 'M' * 43,
+        protectedLeaseReference: 'obcs2.lease.${'f' * 32}',
+      ),
+    );
+    return durable.readHistoricalAttachmentOperation(
+      _attachmentScope(),
+      operationId,
+      _journal(store),
+    );
+  }
+
+  test('selection owns admitted historical child attachments', () async {
+    _provisionAuthority();
+    final generation = (await durable.readCheckpoint(
+      _attachmentScope(),
+    )).generation;
+    final uploads = _uploads(generation: generation);
+    durable = _durable(uploads: uploads);
+    final media = _mediaFor(
+      rowGuid: 'synthetic-combined-media',
+      rowMessageId: 11,
+      partGuid: 'synthetic-combined-media_0',
+    );
+    final request = _request(
+      guid: 'synthetic-combined-media',
+      chatGuid: 'AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA',
+      media: media,
+    );
+    final intentId = _adopt(request);
+    final child = _admitChild(
+      intentId: intentId,
+      logical: 'C' * 43,
+      uploads: uploads,
+      generation: generation,
+    );
+    final selection = CloudSyncHistoricalCreateSelection(
+      request: request,
+      intentId: intentId,
+      localChatId: null,
+    );
+    expect(
+      selection.validate(
+        store: store,
+        scope: _messageScope,
+        journal: _journal(store),
+        durable: durable,
+        auth: _auth(),
+        attachmentUploadJournal: uploads,
+      ),
+      isNull,
+    );
+    expect(selection.owns(child), isTrue);
+    expect(selection.canDrain([child]), isTrue);
+  });
+
+  test('reopened selection re-resolves admitted children', () async {
+    _provisionAuthority();
+    final generation = (await durable.readCheckpoint(
+      _attachmentScope(),
+    )).generation;
+    var uploads = _uploads(generation: generation);
+    durable = _durable(uploads: uploads);
+    final media = _mediaFor(
+      rowGuid: 'synthetic-combined-media',
+      rowMessageId: 11,
+      partGuid: 'synthetic-combined-media_0',
+    );
+    final request = _request(
+      guid: 'synthetic-combined-media',
+      chatGuid: 'AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA',
+      media: media,
+    );
+    final intentId = _adopt(request);
+    final child = _admitChild(
+      intentId: intentId,
+      logical: 'C' * 43,
+      uploads: uploads,
+      generation: generation,
+    );
+    var selection = CloudSyncHistoricalCreateSelection(
+      request: request,
+      intentId: intentId,
+      localChatId: null,
+    );
+    selection.validate(
+      store: store,
+      scope: _messageScope,
+      journal: _journal(store),
+      durable: durable,
+      auth: _auth(),
+      attachmentUploadJournal: uploads,
+    );
+    expect(selection.owns(child), isTrue);
+    store.close();
+    store = await openStore(directory: directory.path);
+    _authority = ObjectBoxCloudKitWriterAuthority.forTest(
+      store: store,
+      buildDecision: CloudKitWriterOwnership.resolve('v2'),
+    );
+    uploads = _uploads(generation: generation);
+    durable = _durable(uploads: uploads);
+    selection = CloudSyncHistoricalCreateSelection(
+      request: request,
+      intentId: intentId,
+      localChatId: null,
+    );
+    selection.validate(
+      store: store,
+      scope: _messageScope,
+      journal: _journal(store),
+      durable: durable,
+      auth: _auth(),
+      attachmentUploadJournal: uploads,
+    );
+    expect(selection.owns(child), isTrue);
+    expect(selection.canDrain([child]), isTrue);
+  });
+
+  test('alien child fails closed', () async {
+    _provisionAuthority();
+    final generation = (await durable.readCheckpoint(
+      _attachmentScope(),
+    )).generation;
+    final uploads = _uploads(generation: generation);
+    durable = _durable(uploads: uploads);
+    final media = _mediaFor(
+      rowGuid: 'synthetic-combined-media',
+      rowMessageId: 11,
+      partGuid: 'synthetic-combined-media_0',
+    );
+    final first = _request(
+      guid: 'synthetic-combined-media',
+      chatGuid: 'AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA',
+      media: media,
+    );
+    final firstId = _adopt(first);
+    final selection = CloudSyncHistoricalCreateSelection(
+      request: first,
+      intentId: firstId,
+      localChatId: null,
+    );
+    selection.validate(
+      store: store,
+      scope: _messageScope,
+      journal: _journal(store),
+      durable: durable,
+      auth: _auth(),
+      attachmentUploadJournal: uploads,
+    );
+    final alienMedia = _mediaFor(
+      rowGuid: 'synthetic-alien-media',
+      rowMessageId: 12,
+      partGuid: 'synthetic-alien-media_0',
+    );
+    final second = _request(
+      guid: 'synthetic-alien-media',
+      chatGuid: 'AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA',
+      sourceSha: 'd' * 64,
+      media: alienMedia,
+    );
+    final secondId = _adopt(second);
+    _admitChild(
+      intentId: secondId,
+      logical: 'Q' * 43,
+      uploads: uploads,
+      generation: generation,
+    );
+    expect(
+      () => selection.validate(
+        store: store,
+        scope: _messageScope,
+        journal: _journal(store),
+        durable: durable,
+        auth: _auth(),
+        attachmentUploadJournal: uploads,
+      ),
+      throwsStateError,
+    );
+  });
+
+  test('media-less selection rejects present child rows', () async {
+    _provisionAuthority();
+    final generation = (await durable.readCheckpoint(
+      _attachmentScope(),
+    )).generation;
+    final uploads = _uploads(generation: generation);
+    durable = _durable(uploads: uploads);
+    final media = _mediaFor(
+      rowGuid: 'synthetic-combined-media',
+      rowMessageId: 11,
+      partGuid: 'synthetic-combined-media_0',
+    );
+    final intentId = _adopt(
+      _request(
+        guid: 'synthetic-combined-media',
+        chatGuid: 'AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA',
+        media: media,
+      ),
+    );
+    _admitChild(
+      intentId: intentId,
+      logical: 'C' * 43,
+      uploads: uploads,
+      generation: generation,
+    );
+    final bare = CloudSyncHistoricalCreateSelection(
+      request: _request(
+        guid: 'synthetic-combined-media',
+        chatGuid: 'AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA',
+      ),
+      intentId: intentId,
+      localChatId: null,
+    );
+    expect(
+      () => bare.validate(
+        store: store,
+        scope: _messageScope,
+        journal: _journal(store),
+        durable: durable,
+        auth: _auth(),
+        attachmentUploadJournal: uploads,
       ),
       throwsStateError,
     );

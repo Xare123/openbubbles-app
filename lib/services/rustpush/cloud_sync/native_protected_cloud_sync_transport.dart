@@ -611,6 +611,12 @@ typedef CloudSyncHistoricalChatSourceReader =
     Future<frb_api.CloudSyncNativeHistoricalArchiveSourceBinding?> Function(
       CloudSyncScope scope, String operationId);
 
+/// Resolves one exact adopted historical attachment input under the caller's
+/// existing protected-store exclusion. Null retains ordinary IDS behavior.
+typedef CloudSyncHistoricalAttachmentContextReader =
+    Future<frb_api.CloudSyncHistoricalAttachmentContext?> Function(
+      frb_api.CloudSyncPreparedMessageCreateInput input);
+
 enum _CreatePreflightDisposition { absent, alreadyPresent }
 
 final class _NativeCloudSyncPreparedSubmission
@@ -3766,11 +3772,18 @@ final class FrbNativeProtectedCloudSyncBindings
         NativeProtectedCloudSyncAttachmentWriteBindings,
         NativeProtectedPreparedReleaseBindings,
         CloudKitWriterUploadReconciliationBinding,
+        CloudKitWriterHistoricalUploadReconciliationBinding,
         CloudKitWriterAttachmentReconciliationBinding {
-  FrbNativeProtectedCloudSyncBindings({RustLibApi? api})
+  FrbNativeProtectedCloudSyncBindings({
+    RustLibApi? api,
+    CloudSyncHistoricalAttachmentContextReader? readHistoricalAttachmentContext,
+  })
     // ignore: invalid_use_of_internal_member
     : _api = api ?? RustLib.instance.api,
-      _chat1DiscoveryWriterPauseToken = null;
+      _chat1DiscoveryWriterPauseToken = null,
+      // Keep the opt-in public without exposing the field.
+      // ignore: prefer_initializing_formals
+      _readHistoricalAttachmentContext = readHistoricalAttachmentContext;
 
   @override
   Future<Object> acquireLocalStoreLease({required String storageDirectory}) =>
@@ -3799,7 +3812,8 @@ final class FrbNativeProtectedCloudSyncBindings
   })
     // ignore: invalid_use_of_internal_member
     : _api = api ?? RustLib.instance.api,
-       _chat1DiscoveryWriterPauseToken = nativeWriterPauseToken {
+       _chat1DiscoveryWriterPauseToken = nativeWriterPauseToken,
+       _readHistoricalAttachmentContext = null {
     if (nativeWriterPauseToken <= BigInt.zero ||
         nativeWriterPauseToken.bitLength > 64) {
       throw ArgumentError('native_writer_pause_token_invalid');
@@ -3808,6 +3822,29 @@ final class FrbNativeProtectedCloudSyncBindings
 
   final RustLibApi _api;
   final BigInt? _chat1DiscoveryWriterPauseToken;
+  final CloudSyncHistoricalAttachmentContextReader? _readHistoricalAttachmentContext;
+
+  Future<frb_api.CloudSyncHistoricalAttachmentContext?> _attachmentRecordContext(
+    frb_api.CloudSyncPreparedMessageCreateInput input, {
+    required String storageDirectory,
+    required String accountFingerprint,
+    required String protectedStoreIdentity,
+  }) async {
+    final context = await _readHistoricalAttachmentContext?.call(input);
+    if (context != null &&
+        (context.storageDirectory != storageDirectory ||
+            context.expectedAuth.accountFingerprint != accountFingerprint ||
+            context.expectedAuth.protectedStoreIdentity != protectedStoreIdentity ||
+            context.source.accountFingerprint != accountFingerprint ||
+            context.source.protectedStoreIdentity != protectedStoreIdentity ||
+            input.attachmentParentContext != null ||
+            input.attachmentParentGroupProof != null ||
+            input.receivedArchiveProof != null || input.historicalArchiveProof != null ||
+            input.historicalChatSource != null)) {
+      throw StateError('cloud_sync_attachment_owner_changed');
+    }
+    return context;
+  }
 
   @override
   Future<frb_api.CloudSyncProtectedOutboundStageResult> stageOutboundMessage({
@@ -4078,7 +4115,30 @@ final class FrbNativeProtectedCloudSyncBindings
     required String requestUuid,
     required Duration requestTimeout,
     required List<frb_api.CloudSyncPreparedMessageCreateInput> inputs,
-  }) => _api.crateApiApiCloudSyncPrepareAttachmentCreate(
+  }) async {
+    // Preserve the existing IDS batch contract. Only the explicitly selected
+    // historical journal narrows its pass to one owned record at a time.
+    if (_readHistoricalAttachmentContext == null) {
+      return _api.crateApiApiCloudSyncPrepareAttachmentCreate(
+        cloudMessagesClient: _requireCloudMessagesClient(cloudMessagesClient),
+        storageDirectory: storageDirectory,
+        expectedAccountFingerprint: expectedAccountFingerprint,
+        expectedProtectedStoreIdentity: expectedProtectedStoreIdentity,
+        requestUuid: requestUuid,
+        requestTimeoutSeconds: BigInt.from(requestTimeout.inSeconds),
+        inputs: inputs,
+      );
+    }
+    if (inputs.length != 1) {
+      throw StateError('cloud_sync_attachment_upload_binding_changed');
+    }
+    Future<frb_api.CloudSyncHistoricalAttachmentContext?> readContext() =>
+        _attachmentRecordContext(inputs.single, storageDirectory: storageDirectory,
+          accountFingerprint: expectedAccountFingerprint,
+          protectedStoreIdentity: expectedProtectedStoreIdentity);
+    final context = await readContext();
+    final result = context == null
+        ? await _api.crateApiApiCloudSyncPrepareAttachmentCreate(
     cloudMessagesClient: _requireCloudMessagesClient(cloudMessagesClient),
     storageDirectory: storageDirectory,
     expectedAccountFingerprint: expectedAccountFingerprint,
@@ -4086,7 +4146,25 @@ final class FrbNativeProtectedCloudSyncBindings
     requestUuid: requestUuid,
     requestTimeoutSeconds: BigInt.from(requestTimeout.inSeconds),
     inputs: inputs,
-  );
+  ) : await _api.crateApiApiCloudSyncPrepareHistoricalAttachmentCreate(
+    cloudMessagesClient: _requireCloudMessagesClient(cloudMessagesClient),
+    context: context, requestUuid: requestUuid,
+    requestTimeoutSeconds: BigInt.from(requestTimeout.inSeconds), inputs: inputs);
+    try {
+      if (await readContext() != context) {
+        throw StateError('cloud_sync_attachment_owner_changed');
+      }
+      return result;
+    } catch (_) {
+      // Preparation never sends bytes. Release an unconsumed owner if retained
+      // journal identity changed while native staging was in flight.
+      final handle = result.handle;
+      if (handle != null) {
+        await releasePreparedMessageCreate(handle: handle);
+      }
+      rethrow;
+    }
+  }
 
   @override
   Future<frb_api.CloudSyncOutboundReconcileResult> reconcileAttachmentCreate({
@@ -4096,14 +4174,28 @@ final class FrbNativeProtectedCloudSyncBindings
     required String expectedProtectedStoreIdentity,
     required String requestUuid,
     required frb_api.CloudSyncPreparedMessageCreateInput input,
-  }) => _api.crateApiApiCloudSyncReconcileAttachmentCreate(
+  }) async {
+    Future<frb_api.CloudSyncHistoricalAttachmentContext?> readContext() =>
+        _attachmentRecordContext(input, storageDirectory: storageDirectory,
+          accountFingerprint: expectedAccountFingerprint,
+          protectedStoreIdentity: expectedProtectedStoreIdentity);
+    final context = await readContext();
+    final result = context == null
+        ? await _api.crateApiApiCloudSyncReconcileAttachmentCreate(
     cloudMessagesClient: _requireCloudMessagesClient(cloudMessagesClient),
     storageDirectory: storageDirectory,
     expectedAccountFingerprint: expectedAccountFingerprint,
     expectedProtectedStoreIdentity: expectedProtectedStoreIdentity,
     requestUuid: requestUuid,
     input: input,
-  );
+  ) : await _api.crateApiApiCloudSyncReconcileHistoricalAttachmentCreate(
+    cloudMessagesClient: _requireCloudMessagesClient(cloudMessagesClient),
+    context: context, requestUuid: requestUuid, input: input);
+    if (await readContext() != context) {
+      throw StateError('cloud_sync_attachment_owner_changed');
+    }
+    return result;
+  }
 
   @override
   Future<frb_api.CloudSyncAttachmentUploadReceiptEvidence?>
@@ -4118,6 +4210,17 @@ final class FrbNativeProtectedCloudSyncBindings
     planStage: planStage,
     expectedAttemptId: expectedAttemptId,
   );
+
+  @override
+  Future<frb_api.CloudSyncAttachmentUploadReceiptEvidence?>
+  verifyHistoricalAttachmentUploadReceipt({
+    required Object cloudMessagesClient,
+    required frb_api.CloudSyncHistoricalAttachmentContext context,
+    required frb_api.CloudSyncAttachmentUploadPlanReference planStage,
+    required String expectedAttemptId,
+  }) => _api.crateApiApiCloudSyncVerifyHistoricalAttachmentUploadReceipt(
+    cloudMessagesClient: _requireCloudMessagesClient(cloudMessagesClient),
+    context: context, planStage: planStage, expectedAttemptId: expectedAttemptId);
 
   @override
   Future<NativeProtectedFetchResult> fetchProtectedPage({

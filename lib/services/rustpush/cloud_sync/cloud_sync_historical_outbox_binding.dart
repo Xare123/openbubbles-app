@@ -23,6 +23,7 @@ final class CloudSyncHistoricalCreateSource {
     required this.serverRecordIdHash,
     required this.createdAtMs,
     required this.localGuard,
+    this.attachmentReadbackProof,
   }) {
     if (intentId < 1 ||
         localChatId < 1 ||
@@ -31,7 +32,9 @@ final class CloudSyncHistoricalCreateSource {
         parentBinding.isEmpty ||
         parentBinding.length > 1536 ||
         !_token.hasMatch(logicalEntityKeyHash) ||
-        !_token.hasMatch(serverRecordIdHash)) {
+        !_token.hasMatch(serverRecordIdHash) ||
+        (attachmentReadbackProof != null &&
+          (attachmentReadbackProof!.isEmpty || attachmentReadbackProof!.length > 65536))) {
       throw StateError('cloud_sync_historical_create_source_invalid');
     }
   }
@@ -45,6 +48,7 @@ final class CloudSyncHistoricalCreateSource {
   final String serverRecordIdHash;
   final int createdAtMs;
   final CloudSyncHistoricalLocalGuard localGuard;
+  final String? attachmentReadbackProof;
 
   static final _token = RegExp(r'^[A-Za-z0-9_-]{43}$');
 
@@ -58,6 +62,7 @@ final class CloudSyncHistoricalCreateSource {
     serverRecordIdHash,
     createdAtMs,
     localGuard.encode(),
+    if (attachmentReadbackProof != null) attachmentReadbackProof!,
   ];
 
   bool sameSourceAs(CloudSyncHistoricalCreateSource other) =>
@@ -138,14 +143,14 @@ final class CloudSyncHistoricalOutboxBinding {
   final String operationDigest;
 
   String encode() => jsonEncode(<Object>[
-    1,
+    source.attachmentReadbackProof == null ? 1 : 2,
     'historicalCreateOwnership',
     ...source._fields,
     operationDigest,
   ]);
 
   static CloudSyncHistoricalOutboxBinding decode(String encoded) {
-    if (encoded.length > 8192) {
+    if (encoded.length > 73728) {
       throw StateError('cloud_sync_historical_outbox_binding_invalid');
     }
     final dynamic value;
@@ -155,8 +160,8 @@ final class CloudSyncHistoricalOutboxBinding {
       throw StateError('cloud_sync_historical_outbox_binding_invalid');
     }
     if (value is! List ||
-        value.length != 12 ||
-        value[0] != 1 ||
+        !((value.length == 12 && value[0] == 1) ||
+          (value.length == 13 && value[0] == 2 && value[11] is String)) ||
         value[1] != 'historicalCreateOwnership' ||
         value[2] is! int ||
         value[3] is! String ||
@@ -167,8 +172,8 @@ final class CloudSyncHistoricalOutboxBinding {
         value[8] is! String ||
         value[9] is! int ||
         value[10] is! String ||
-        value[11] is! String ||
-        !RegExp(r'^[a-f0-9]{64}$').hasMatch(value[11] as String)) {
+        value.last is! String ||
+        !RegExp(r'^[a-f0-9]{64}$').hasMatch(value.last as String)) {
       throw StateError('cloud_sync_historical_outbox_binding_invalid');
     }
     final result = CloudSyncHistoricalOutboxBinding._(
@@ -184,8 +189,9 @@ final class CloudSyncHistoricalOutboxBinding {
         serverRecordIdHash: value[8] as String,
         createdAtMs: value[9] as int,
         localGuard: CloudSyncHistoricalLocalGuard.decode(value[10] as String),
+        attachmentReadbackProof: value[0] == 2 ? value[11] as String : null,
       ),
-      value[11] as String,
+      value.last as String,
     );
     if (result.encode() != encoded) {
       throw StateError('cloud_sync_historical_outbox_binding_invalid');
@@ -207,7 +213,8 @@ final class CloudSyncHistoricalOutboxBinding {
       .convert(
         utf8.encode(
           jsonEncode(<Object?>[
-            'historical-create-admission-v1',
+            source.attachmentReadbackProof == null
+                ? 'historical-create-admission-v1' : 'historical-create-admission-v2',
             ...source._fields,
             operation.scope.storageKey,
             operation.operationId,

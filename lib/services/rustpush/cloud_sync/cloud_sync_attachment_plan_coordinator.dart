@@ -14,6 +14,8 @@ library;
 
 import 'package:bluebubbles/database/models.dart';
 import 'cloud_sync_attachment_upload_journal.dart';
+import 'cloud_sync_historical_archive_journal.dart';
+import 'cloud_sync_historical_protected_source_binding.dart';
 import 'cloud_sync_local_send_journal.dart';
 import 'cloud_sync_local_send_source_binding.dart';
 import 'cloud_sync_manual_shadow_sampler.dart';
@@ -102,6 +104,78 @@ final class CloudSyncAttachmentPlanCoordinator {
   final Set<int> _active = <int>{};
 
   static final RegExp _token = RegExp(r'^[A-Za-z0-9_-]{43}$');
+
+  /// Historical origins use the same adopt/commit/reuse mechanics, but never
+  /// pass through IDS eligibility. Native inventory is reopened before plans.
+  Future<List<CloudAttachmentUploadSnapshot>> ensureHistoricalPlans({
+    required int historicalIntentId,
+    required CloudSyncHistoricalArchiveJournal historicalJournal,
+    required Future<List<CloudSyncAttachmentPlanInventoryItem>> Function(
+      CloudSyncHistoricalProtectedSourceBinding, CloudSyncNativeAuthSnapshot) readInventory,
+    required Future<CloudSyncProtectedOutboundStageData> Function(
+      CloudSyncAttachmentPlanInventoryItem, CloudSyncHistoricalProtectedSourceBinding,
+      CloudSyncNativeAuthSnapshot) stagePlan,
+  }) async {
+    if (historicalIntentId <= 0 || !historicalJournal.isBoundToStore(_store)) {
+      throw StateError('cloud_sync_attachment_plan_store_invalid');
+    }
+    if (!_active.add(historicalIntentId)) throw StateError('cloud_sync_attachment_plan_busy');
+    try {
+      final auth = await _liveAuth();
+      final source = historicalJournal.requireHistoricalAttachmentOrigin(
+        intentId: historicalIntentId, currentAuth: auth).source;
+      Future<void> validate() async {
+        final current = await _liveAuth();
+        if (!auth.sameIdentity(current) ||
+            historicalJournal.requireHistoricalAttachmentOrigin(
+              intentId: historicalIntentId, currentAuth: current).source.encode() != source.encode()) {
+          throw StateError('cloud_sync_attachment_plan_origin_changed');
+        }
+      }
+      final inventory = List<CloudSyncAttachmentPlanInventoryItem>.unmodifiable(
+        await readInventory(source, auth));
+      _validateInventory(inventory);
+      await validate();
+      final keys = inventory.map((item) => item.logicalEntityKeyHash).toSet();
+      final existing = <String, CloudAttachmentUploadSnapshot>{};
+      for (final item in inventory) {
+        final found = _uploads.findHistoricalForAttachment(
+          historicalIntentId: historicalIntentId, logicalEntityKeyHash: item.logicalEntityKeyHash,
+          sourceAttachmentKeys: keys, historicalJournal: historicalJournal);
+        if (found != null) existing[item.logicalEntityKeyHash] = found;
+      }
+      for (final item in inventory) {
+        final old = existing[item.logicalEntityKeyHash];
+        if (old != null) {
+          if (old.state == CloudAttachmentUploadState.prepared) {
+            await _staging.commitOutboundLease(old.plan.leaseReference, old.plan.protectedEnvelopeReference);
+            await validate();
+          }
+          continue;
+        }
+        await validate();
+        final staged = await stagePlan(item, source, auth);
+        try {
+          if (staged.logicalEntityKeyHash != item.logicalEntityKeyHash) {
+            throw StateError('cloud_sync_attachment_plan_stage_invalid');
+          }
+          await validate();
+        } catch (_) {
+          await _rollbackBestEffort(staged);
+          rethrow;
+        }
+        // Ambiguous adoption or commit keeps the lease, exactly like IDS plans.
+        final adopted = _uploads.adoptHistoricalPlan(
+          historicalIntentId: historicalIntentId, plan: staged, now: _clock(),
+          historicalJournal: historicalJournal);
+        await _staging.commitOutboundLease(adopted.plan.leaseReference,
+          adopted.plan.protectedEnvelopeReference);
+        await validate();
+        existing[item.logicalEntityKeyHash] = adopted;
+      }
+      return List.unmodifiable(inventory.map((item) => existing[item.logicalEntityKeyHash]!));
+    } finally { _active.remove(historicalIntentId); }
+  }
 
   /// Bounded nonempty control-free identifier. Native guids are authoritative
   /// and may be non-UUID (`<messageGuid>_<part>`), so only length and control

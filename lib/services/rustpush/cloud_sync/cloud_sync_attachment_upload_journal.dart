@@ -4,12 +4,27 @@ import 'package:bluebubbles/database/models.dart';
 import 'package:crypto/crypto.dart';
 
 import 'cloud_operation_identity.dart';
+import 'cloud_sync_historical_archive_journal.dart';
+import 'cloud_sync_historical_protected_source_binding.dart';
 import 'cloud_sync_local_send_journal.dart';
 import 'cloud_sync_local_send_source_binding.dart';
 import 'cloud_sync_manual_shadow_sampler.dart';
 import 'cloud_sync_models.dart';
 import 'cloud_sync_outbound_staging.dart';
 import 'cloud_sync_persistent_keys.dart';
+import 'cloudkit_writer_authority.dart';
+import 'cloudkit_writer_ownership.dart';
+
+/// Durable owner discriminator for byte-upload rows. Stable codes: 0 IDS
+/// local send (default, preserves every existing row), 1 historical archive
+/// intent. A historical row never carries a local-send intent id and is
+/// never resolved through the local-send journal.
+const cloudSyncAttachmentOwnerKindLocalSend = 0;
+const cloudSyncAttachmentOwnerKindHistorical = 1;
+
+/// Fixed redacted code for owner-lane mismatches: a local-send entrypoint
+/// meeting a historical row (or the reverse). Fail closed, never reinterpret.
+const cloudSyncAttachmentOwnerChangedCode = 'cloud_sync_attachment_owner_changed';
 
 /// Byte-upload progress, deliberately not a CloudKit record-save status.
 /// Persisted codes are stable. There is no automatic unknown -> prepared edge.
@@ -26,6 +41,11 @@ final class CloudAttachmentUploadSnapshot {
     : id = row.id,
       uploadKey = row.uploadKey,
       localSendIntentId = row.localSendIntentId,
+      // Durable owner lane. Historical rows carry localSendIntentId 0;
+      // executor routing must read ownerKind/ownerIntentId instead of
+      // pretending a historical owner has a local-send intent id.
+      ownerKind = row.ownerKind,
+      ownerIntentId = row.ownerIntentId,
       state = CloudAttachmentUploadState.values[row.state],
       attemptId = row.attemptId,
       admittedOperationId = row.admittedOperationId,
@@ -35,6 +55,8 @@ final class CloudAttachmentUploadSnapshot {
   final int id;
   final String uploadKey;
   final int localSendIntentId;
+  final int ownerKind;
+  final int ownerIntentId;
   final CloudAttachmentUploadState state;
   final String? attemptId;
   final String? admittedOperationId;
@@ -57,6 +79,11 @@ final class CloudSyncAttachmentUploadJournal {
     required CloudSyncScope scope,
     required int checkpointGeneration,
     required CloudSyncNativeAuthSnapshot currentAuth,
+    // Writer authority for historical-owner paths only, publicly supplyable
+    // under this name. Legacy IDS paths resolve authority through the
+    // local-send journal and ignore this. Historical adoption/source/readback
+    // methods throw when it is absent.
+    this.writerAuthority,
   }) : _store = store,
        _localSends = localSends,
        _scope = scope,
@@ -80,8 +107,29 @@ final class CloudSyncAttachmentUploadJournal {
   final CloudSyncScope _scope;
   final int _generation;
   final CloudSyncNativeAuthSnapshot _auth;
+  final ObjectBoxCloudKitWriterAuthority? writerAuthority;
   Box<CloudAttachmentUploadEntity> get _uploads =>
       _store.box<CloudAttachmentUploadEntity>();
+
+  /// Legacy IDS entrypoints resolve origins exclusively through the
+  /// local-send journal. A historical row here is a caller error, never a
+  /// local-send intent: fail closed instead of reinterpreting its ids.
+  void _requireLocalRow(CloudAttachmentUploadEntity row) {
+    if (row.ownerKind != cloudSyncAttachmentOwnerKindLocalSend) {
+      throw StateError(cloudSyncAttachmentOwnerChangedCode);
+    }
+  }
+
+  /// Owner gate before [_readBound], which itself resolves IDS origins and
+  /// would otherwise fail historical rows with an unrelated intent error.
+  /// Reads only the discriminator without validating the row.
+  void _requireLocalId(int id) {
+    final row = id > 0 ? _uploads.get(id) : null;
+    if (row != null &&
+        row.ownerKind != cloudSyncAttachmentOwnerKindLocalSend) {
+      throw StateError(cloudSyncAttachmentOwnerChangedCode);
+    }
+  }
 
   bool isBoundTo(Store store, CloudSyncScope scope) =>
       identical(_store, store) && _scope == scope;
@@ -104,6 +152,8 @@ final class CloudSyncAttachmentUploadJournal {
                 .equals(_auth.protectedStoreIdentity))
             .and(CloudAttachmentUploadEntity_.checkpointGeneration
                 .equals(_generation))
+            .and(CloudAttachmentUploadEntity_.ownerKind
+                .equals(cloudSyncAttachmentOwnerKindLocalSend))
             .and(CloudAttachmentUploadEntity_.state
                 .notEquals(CloudAttachmentUploadState.uploaded.index))
             .and(CloudAttachmentUploadEntity_.state
@@ -140,7 +190,8 @@ final class CloudSyncAttachmentUploadJournal {
   /// Immutable source evidence for an existing upload, never new-send authority.
   CloudSyncLocalSendSourceBinding readOriginalSource(int id) =>
       _store.runInTransaction(TxMode.read, () {
-        _readBound(id);
+        _requireLocalId(id);
+        _requireLocalRow(_readBound(id));
         return _localSends
             .readConfirmedOriginForExistingUpload(
               transactionStore: _store,
@@ -174,7 +225,9 @@ final class CloudSyncAttachmentUploadJournal {
     if (candidate == null) {
       throw StateError('cloud_sync_attachment_upload_origin_missing');
     }
+    _requireLocalId(candidate.id);
     final row = _readBound(candidate.id);
+    _requireLocalRow(row);
     if (row.state != CloudAttachmentUploadState.adopted.index ||
         row.attachmentKeyHash != operation.logicalEntityKeyHash ||
         row.serverRecordIdHash != operation.serverRecordIdHash ||
@@ -345,6 +398,221 @@ final class CloudSyncAttachmentUploadJournal {
     if (recomputed != proof) {
       throw StateError('cloud_sync_attachment_upload_adoption_changed');
     }
+  }
+
+  /// Historical readback proof, version 2: the same child/readback rules as
+  /// the version-1 IDS proof, keyed by (historical owner, intent id).
+  /// Legacy version-1 proofs never validate historical rows and vice versa.
+  String captureHistoricalParentReadbackProof({
+    required int historicalIntentId,
+    required Iterable<String> sourceAttachmentKeys,
+    required CloudSyncHistoricalArchiveJournal historicalJournal,
+  }) => _store.runInTransaction(
+    TxMode.read,
+    () => _captureHistoricalParentReadbackProofLocked(
+      historicalIntentId: historicalIntentId,
+      sourceAttachmentKeys: sourceAttachmentKeys,
+      historicalJournal: historicalJournal,
+    ),
+  );
+
+  String _captureHistoricalParentReadbackProofLocked({
+    required int historicalIntentId,
+    required Iterable<String> sourceAttachmentKeys,
+    required CloudSyncHistoricalArchiveJournal historicalJournal,
+  }) {
+    final inventory = _requireParentProofInventory(sourceAttachmentKeys);
+    if (historicalIntentId <= 0) {
+      throw StateError('cloud_sync_attachment_upload_binding_changed');
+    }
+    _requireGeneration();
+    final authority = writerAuthority;
+    if (authority == null) throw StateError('cloud_sync_attachment_upload_binding_changed');
+    // Readback evidence must remain available under an uncertain parent save.
+    // Dispatch still obtains its own current mutation permit separately.
+    _readHistoricalEpoch(authority, CloudKitWriterScope(accountFingerprint: _scope.accountFingerprint));
+    final query = _uploads
+        .query(
+          CloudAttachmentUploadEntity_.ownerKind
+              .equals(cloudSyncAttachmentOwnerKindHistorical)
+              .and(
+                CloudAttachmentUploadEntity_.ownerIntentId.equals(
+                  historicalIntentId,
+                ),
+              ),
+        )
+        .build();
+    try {
+      final retained = query.find();
+      if (retained.isEmpty) {
+        throw StateError('cloud_sync_attachment_upload_inventory_changed');
+      }
+      final seen = <String>{};
+      CloudAttachmentUploadEntity? lineage;
+      for (final candidate in retained) {
+        final row = _readHistoricalBound(candidate.id, historicalJournal);
+        if (row.ownerKind != cloudSyncAttachmentOwnerKindHistorical ||
+            row.ownerIntentId != historicalIntentId ||
+            !inventory.contains(row.attachmentKeyHash) ||
+            !seen.add(row.attachmentKeyHash)) {
+          throw StateError('cloud_sync_attachment_upload_inventory_changed');
+        }
+        if (lineage == null) {
+          lineage = row;
+        } else if (lineage.messageGuidHash != row.messageGuidHash ||
+            lineage.sourceSha256 != row.sourceSha256 ||
+            lineage.protectedStoreIdentity != row.protectedStoreIdentity) {
+          throw StateError('cloud_sync_attachment_upload_binding_changed');
+        }
+      }
+      if (seen.length != inventory.length) {
+        throw StateError('cloud_sync_attachment_upload_inventory_changed');
+      }
+      final ordered = retained
+          .map((candidate) => _readHistoricalBound(candidate.id, historicalJournal))
+          .toList()
+        ..sort((a, b) => a.attachmentKeyHash.compareTo(b.attachmentKeyHash));
+      final children = <List<Object>>[];
+      for (final row in ordered) {
+        if (row.state != CloudAttachmentUploadState.adopted.index ||
+            row.admittedOperationId == null) {
+          throw StateError('cloud_sync_attachment_upload_result_missing');
+        }
+        final acknowledged = _requireReadbackAcknowledgedFinalOperation(row);
+        children.add(<Object>[
+          row.id,
+          row.attachmentKeyHash,
+          row.serverRecordIdHash,
+          row.resultPayloadSha256!,
+          acknowledged.operationId,
+          row.writerEpoch,
+        ]);
+      }
+      final origin = lineage!;
+      final body = <Object>[
+        2,
+        _scope.storageKey,
+        _generation,
+        cloudSyncAttachmentOwnerKindHistorical,
+        historicalIntentId,
+        origin.messageGuidHash,
+        origin.sourceSha256,
+        origin.protectedStoreIdentity,
+        origin.writerEpoch,
+        inventory,
+        children,
+      ];
+      final digest = sha256.convert(utf8.encode(jsonEncode(body))).toString();
+      return jsonEncode(<Object>[...body, digest]);
+    } finally {
+      query.close();
+    }
+  }
+
+  /// Revalidates a version-2 historical proof byte-for-byte like the legacy
+  /// version-1 path. Version-1 proofs are rejected here.
+  void requireHistoricalParentReadbackProof({
+    required int historicalIntentId,
+    required String proof,
+    required CloudSyncHistoricalArchiveJournal historicalJournal,
+  }) => _store.runInTransaction(
+    TxMode.read,
+    () => _requireHistoricalParentReadbackProofLocked(
+      historicalIntentId: historicalIntentId,
+      proof: proof,
+      historicalJournal: historicalJournal,
+    ),
+  );
+
+  void _requireHistoricalParentReadbackProofLocked({
+    required int historicalIntentId,
+    required String proof,
+    required CloudSyncHistoricalArchiveJournal historicalJournal,
+  }) {
+    final keys = _parseHistoricalParentProofKeys(proof, historicalIntentId);
+    final recomputed = _captureHistoricalParentReadbackProofLocked(
+      historicalIntentId: historicalIntentId,
+      sourceAttachmentKeys: keys,
+      historicalJournal: historicalJournal,
+    );
+    if (recomputed != proof) {
+      throw StateError('cloud_sync_attachment_upload_adoption_changed');
+    }
+  }
+
+  List<String> _parseHistoricalParentProofKeys(
+    String proof,
+    int historicalIntentId,
+  ) {
+    if (historicalIntentId <= 0 || proof.isEmpty || proof.length > 65536) {
+      throw StateError('cloud_sync_attachment_upload_binding_changed');
+    }
+    final dynamic decoded;
+    try {
+      decoded = jsonDecode(proof);
+    } on FormatException {
+      throw StateError('cloud_sync_attachment_upload_binding_changed');
+    }
+    if (decoded is! List || decoded.length != 12) {
+      throw StateError('cloud_sync_attachment_upload_binding_changed');
+    }
+    bool digest(String? value) => value != null && _digest.hasMatch(value);
+    bool token(String? value) => value != null && _token.hasMatch(value);
+    if (decoded[0] is! int ||
+        decoded[0] as int != 2 ||
+        decoded[1] is! String ||
+        (decoded[1] as String).isEmpty ||
+        decoded[2] is! int ||
+        (decoded[2] as int) <= 0 ||
+        decoded[3] is! int ||
+        (decoded[3] as int) != cloudSyncAttachmentOwnerKindHistorical ||
+        decoded[4] is! int ||
+        (decoded[4] as int) != historicalIntentId ||
+        decoded[5] is! String ||
+        !digest(decoded[5] as String) ||
+        decoded[6] is! String ||
+        !digest(decoded[6] as String) ||
+        decoded[7] is! String ||
+        !_storeIdentity.hasMatch(decoded[7] as String) ||
+        decoded[8] is! int ||
+        (decoded[8] as int) <= 0 ||
+        decoded[9] is! List ||
+        decoded[11] is! String ||
+        !digest(decoded[11] as String)) {
+      throw StateError('cloud_sync_attachment_upload_binding_changed');
+    }
+    final rawKeys = decoded[9] as List;
+    if (rawKeys.isEmpty ||
+        rawKeys.length > 64 ||
+        rawKeys.any((key) => key is! String || !token(key)) ||
+        rawKeys.toSet().length != rawKeys.length) {
+      throw StateError('cloud_sync_attachment_upload_binding_changed');
+    }
+    final keys = rawKeys.cast<String>();
+    final rawChildren = decoded[10];
+    if (rawChildren is! List || rawChildren.length != keys.length) {
+      throw StateError('cloud_sync_attachment_upload_binding_changed');
+    }
+    for (var index = 0; index < keys.length; index++) {
+      final child = rawChildren[index];
+      if (child is! List ||
+          child.length != 6 ||
+          child[0] is! int ||
+          (child[0] as int) <= 0 ||
+          child[1] is! String ||
+          (child[1] as String) != keys[index] ||
+          child[2] is! String ||
+          !token(child[2] as String) ||
+          child[3] is! String ||
+          !digest(child[3] as String) ||
+          child[4] is! String ||
+          !_operationId.hasMatch(child[4] as String) ||
+          child[5] is! int ||
+          (child[5] as int) <= 0) {
+        throw StateError('cloud_sync_attachment_upload_binding_changed');
+      }
+    }
+    return <String>[...keys]..sort();
   }
 
   List<String> _requireParentProofInventory(Iterable<String> keys) {
@@ -576,6 +844,9 @@ final class CloudSyncAttachmentUploadJournal {
     }
     if (existing != null) {
       final row = _readBound(existing.id);
+      if (row.ownerKind != cloudSyncAttachmentOwnerKindLocalSend) {
+        throw StateError(cloudSyncAttachmentOwnerChangedCode);
+      }
       if (row.localSendIntentId != localSendIntentId ||
           !_sameStage(_plan(row), plan)) {
         throw StateError('cloud_sync_attachment_upload_plan_changed');
@@ -588,6 +859,8 @@ final class CloudSyncAttachmentUploadJournal {
       writerEpoch: origin.writerEpoch,
       checkpointGeneration: _generation,
       localSendIntentId: localSendIntentId,
+      ownerKind: cloudSyncAttachmentOwnerKindLocalSend,
+      ownerIntentId: 0,
       messageGuidHash: origin.source.messageGuidHash,
       sourceSha256: origin.source.sourceSha256,
       protectedStoreIdentity: _auth.protectedStoreIdentity,
@@ -601,6 +874,286 @@ final class CloudSyncAttachmentUploadJournal {
     );
     _uploads.put(row);
     return CloudAttachmentUploadSnapshot._(row);
+  });
+
+  /// Adopts one historical attachment plan under a committed immutable
+  /// source. Idempotent for the exact (intent, plan) pair; a same-key row
+  /// from the other lane throws instead of being adopted over.
+  CloudAttachmentUploadSnapshot adoptHistoricalPlan({
+    required int historicalIntentId,
+    required CloudSyncProtectedOutboundStageData plan,
+    required DateTime now,
+    required CloudSyncHistoricalArchiveJournal historicalJournal,
+  }) => _store.runInTransaction(TxMode.write, () {
+    _requireGeneration();
+    _validateStage(plan);
+    if (historicalIntentId <= 0) {
+      throw StateError(cloudSyncAttachmentOwnerChangedCode);
+    }
+    final intent = historicalJournal.requireHistoricalAttachmentOrigin(
+      intentId: historicalIntentId,
+      currentAuth: _auth,
+    );
+    if (!historicalJournal.isBoundToStore(_store) ||
+        historicalJournal.accountFingerprint != _auth.accountFingerprint ||
+        historicalJournal.protectedStoreIdentity !=
+            _auth.protectedStoreIdentity) {
+      throw StateError('cloud_sync_attachment_upload_binding_changed');
+    }
+    final epoch = _requireHistoricalWriterEpoch();
+    final key = _historicalUploadKey(
+      messageGuidHash: intent.source.messageGuidHash,
+      sourceSha256: intent.source.sourceSha256,
+      logicalEntityKeyHash: plan.logicalEntityKeyHash,
+      snapshotSha256: intent.source.snapshotSha256,
+      ownerIntentId: historicalIntentId,
+    );
+    final query = _uploads
+        .query(CloudAttachmentUploadEntity_.uploadKey.equals(key))
+        .build();
+    final CloudAttachmentUploadEntity? existing;
+    try {
+      existing = query.findUnique();
+    } finally {
+      query.close();
+    }
+    if (existing != null) {
+      final row = _readHistoricalBound(existing.id, historicalJournal);
+      if (row.ownerIntentId != historicalIntentId ||
+          !_sameStage(_plan(row), plan)) {
+        throw StateError('cloud_sync_attachment_upload_plan_changed');
+      }
+      return CloudAttachmentUploadSnapshot._(row);
+    }
+    final row = CloudAttachmentUploadEntity(
+      uploadKey: key,
+      accountFingerprint: _scope.accountFingerprint,
+      writerEpoch: epoch,
+      checkpointGeneration: _generation,
+      localSendIntentId: 0,
+      ownerKind: cloudSyncAttachmentOwnerKindHistorical,
+      ownerIntentId: historicalIntentId,
+      messageGuidHash: intent.source.messageGuidHash,
+      sourceSha256: intent.source.sourceSha256,
+      protectedStoreIdentity: _auth.protectedStoreIdentity,
+      attachmentKeyHash: plan.logicalEntityKeyHash,
+      serverRecordIdHash: plan.serverRecordIdHash,
+      planReference: plan.protectedEnvelopeReference,
+      planLeaseReference: plan.leaseReference,
+      planPayloadSha256: plan.payloadSha256,
+      createdAtMs: now.millisecondsSinceEpoch,
+      updatedAtMs: now.millisecondsSinceEpoch,
+    );
+    _uploads.put(row);
+    return CloudAttachmentUploadSnapshot._(row);
+  });
+
+  /// Owner-scoped variant of [findForAttachment] for historical intents.
+  /// Legacy local-send rows never match: the predicate carries the kind.
+  CloudAttachmentUploadSnapshot? findHistoricalForAttachment({
+    required int historicalIntentId,
+    required String logicalEntityKeyHash,
+    required Set<String> sourceAttachmentKeys,
+    required CloudSyncHistoricalArchiveJournal historicalJournal,
+  }) => _store.runInTransaction(TxMode.read, () {
+    _requireGeneration();
+    final inventory = Set<String>.unmodifiable(sourceAttachmentKeys);
+    if (historicalIntentId <= 0 ||
+        inventory.isEmpty ||
+        inventory.length > 64 ||
+        inventory.any((key) => !_token.hasMatch(key)) ||
+        !inventory.contains(logicalEntityKeyHash)) {
+      throw StateError('cloud_sync_attachment_upload_binding_changed');
+    }
+    final query = _uploads
+        .query(
+          CloudAttachmentUploadEntity_.ownerKind
+              .equals(cloudSyncAttachmentOwnerKindHistorical)
+              .and(
+                CloudAttachmentUploadEntity_.ownerIntentId.equals(
+                  historicalIntentId,
+                ),
+              ),
+        )
+        .build();
+    try {
+      CloudAttachmentUploadSnapshot? selected;
+      final seen = <String>{};
+      for (final candidate in query.find()) {
+        final row = _readHistoricalBound(candidate.id, historicalJournal);
+        if (row.ownerKind != cloudSyncAttachmentOwnerKindHistorical ||
+            row.ownerIntentId != historicalIntentId ||
+            !inventory.contains(row.attachmentKeyHash) ||
+            !seen.add(row.attachmentKeyHash)) {
+          throw StateError('cloud_sync_attachment_upload_inventory_changed');
+        }
+        if (row.attachmentKeyHash == logicalEntityKeyHash) {
+          selected = CloudAttachmentUploadSnapshot._(row);
+        }
+      }
+      return selected;
+    } finally {
+      query.close();
+    }
+  });
+
+  /// Committed immutable source for a historical upload row. Never resolves
+  /// through the local-send journal.
+  CloudSyncHistoricalProtectedSourceBinding readHistoricalOriginalSource(
+    int id,
+    CloudSyncHistoricalArchiveJournal historicalJournal,
+  ) => _store.runInTransaction(TxMode.read, () {
+    final row = _readHistoricalBound(id, historicalJournal);
+    return _requireHistoricalRowSource(row, historicalJournal);
+  });
+
+  /// First byte attempt on an exact retained historical prepared upload.
+  CloudAttachmentUploadSnapshot beginHistoricalAttempt({
+    required int id,
+    required String attemptId,
+    required DateTime now,
+    required CloudSyncHistoricalArchiveJournal historicalJournal,
+    Set<String>? retainedSourceAttachmentKeys,
+  }) => _store.runInTransaction(TxMode.write, () {
+    if (!_uuid.hasMatch(attemptId)) {
+      throw StateError('cloud_sync_attachment_upload_attempt_invalid');
+    }
+    final row = _readHistoricalBound(id, historicalJournal);
+    if (row.state != CloudAttachmentUploadState.prepared.index) {
+      throw StateError('cloud_sync_attachment_upload_already_attempted');
+    }
+    final epoch = _requireHistoricalWriterEpoch();
+    if (retainedSourceAttachmentKeys == null && epoch != row.writerEpoch) {
+      throw StateError('cloud_sync_attachment_upload_origin_changed');
+    }
+    if (retainedSourceAttachmentKeys != null) {
+      // Recovery may advance authority, but never rewrites the original plan
+      // epoch. An unattempted plan can proceed only with its complete original
+      // inventory and a fresh current permit. Started/unknown rows never enter.
+      final keys = _requireParentProofInventory(retainedSourceAttachmentKeys).toSet();
+      for (final key in keys) {
+        if (findHistoricalForAttachment(historicalIntentId: row.ownerIntentId,
+            logicalEntityKeyHash: key, sourceAttachmentKeys: keys,
+            historicalJournal: historicalJournal) == null) {
+          throw StateError('cloud_sync_attachment_upload_inventory_changed');
+        }
+      }
+    }
+    row
+      ..state = CloudAttachmentUploadState.started.index
+      ..attemptId = attemptId
+      ..updatedAtMs = now.millisecondsSinceEpoch;
+    _uploads.put(row);
+    return CloudAttachmentUploadSnapshot._(row);
+  });
+
+  /// Historical variant of [recordUploaded]: adopts only the native-validated
+  /// result from this exact attempt on a historical row.
+  CloudAttachmentUploadSnapshot recordHistoricalUploaded({
+    required int id,
+    required String attemptId,
+    required CloudSyncProtectedOutboundStageData result,
+    required DateTime now,
+    required CloudSyncHistoricalArchiveJournal historicalJournal,
+  }) => _store.runInTransaction(TxMode.write, () {
+    final row = _readHistoricalBound(id, historicalJournal);
+    _validateStage(result);
+    if (row.attemptId != attemptId ||
+        result.logicalEntityKeyHash != row.attachmentKeyHash ||
+        result.serverRecordIdHash != row.serverRecordIdHash) {
+      throw StateError('cloud_sync_attachment_upload_result_changed');
+    }
+    if (row.state == CloudAttachmentUploadState.uploaded.index ||
+        row.state == CloudAttachmentUploadState.adopted.index) {
+      if (!_sameStage(_result(row), result)) {
+        throw StateError('cloud_sync_attachment_upload_result_changed');
+      }
+      return CloudAttachmentUploadSnapshot._(row);
+    }
+    if (row.state != CloudAttachmentUploadState.started.index &&
+        row.state != CloudAttachmentUploadState.unknown.index) {
+      throw StateError('cloud_sync_attachment_upload_not_started');
+    }
+    row
+      ..state = CloudAttachmentUploadState.uploaded.index
+      ..resultReference = result.protectedEnvelopeReference
+      ..resultLeaseReference = result.leaseReference
+      ..resultPayloadSha256 = result.payloadSha256
+      ..updatedAtMs = now.millisecondsSinceEpoch;
+    _uploads.put(row);
+    return CloudAttachmentUploadSnapshot._(row);
+  });
+
+  /// Historical variant of [markUnknown] for ambiguous historical attempts.
+  void markHistoricalUnknown({
+    required int id,
+    required String attemptId,
+    required DateTime now,
+    required CloudSyncHistoricalArchiveJournal historicalJournal,
+  }) => _store.runInTransaction(TxMode.write, () {
+    final row = _readHistoricalBound(id, historicalJournal);
+    if (row.attemptId != attemptId) {
+      throw StateError('cloud_sync_attachment_upload_attempt_changed');
+    }
+    if (row.state == CloudAttachmentUploadState.uploaded.index ||
+        row.state == CloudAttachmentUploadState.adopted.index) {
+      return;
+    }
+    if (row.state != CloudAttachmentUploadState.started.index &&
+        row.state != CloudAttachmentUploadState.unknown.index) {
+      throw StateError('cloud_sync_attachment_upload_not_started');
+    }
+    row
+      ..state = CloudAttachmentUploadState.unknown.index
+      ..updatedAtMs = now.millisecondsSinceEpoch;
+    _uploads.put(row);
+  });
+
+  /// Historical variant of [read]: bound historical snapshot by upload id.
+  CloudAttachmentUploadSnapshot readHistorical(
+    int id,
+    CloudSyncHistoricalArchiveJournal historicalJournal,
+  ) => _store.runInTransaction(
+    TxMode.read,
+    () => CloudAttachmentUploadSnapshot._(
+      _readHistoricalBound(id, historicalJournal),
+    ),
+  );
+
+  /// Historical variant of [reconciliationBindingSha256]: identical digest
+  /// material resolved through the historical bound reader.
+  String reconciliationHistoricalBindingSha256(
+    int id,
+    CloudSyncHistoricalArchiveJournal historicalJournal,
+  ) => _store.runInTransaction(TxMode.read, () {
+    final row = _readHistoricalBound(id, historicalJournal);
+    if (row.state == CloudAttachmentUploadState.prepared.index ||
+        row.attemptId == null ||
+        !_uuid.hasMatch(row.attemptId!)) {
+      throw StateError('cloud_sync_attachment_upload_not_started');
+    }
+    return sha256
+        .convert(
+          utf8.encode(
+            jsonEncode([
+              'cloud-sync-attachment-upload-reconciliation-v1',
+              _scope.storageKey,
+              row.writerEpoch,
+              row.checkpointGeneration,
+              row.protectedStoreIdentity,
+              row.messageGuidHash,
+              row.sourceSha256,
+              row.uploadKey,
+              row.attachmentKeyHash,
+              row.serverRecordIdHash,
+              row.planReference,
+              row.planLeaseReference,
+              row.planPayloadSha256,
+              row.attemptId,
+            ]),
+          ),
+        )
+        .toString();
   });
 
   /// First byte attempt on an exact retained prepared upload after writer
@@ -618,10 +1171,12 @@ final class CloudSyncAttachmentUploadJournal {
     if (!_uuid.hasMatch(attemptId)) {
       throw StateError('cloud_sync_attachment_upload_attempt_invalid');
     }
+    _requireLocalId(id);
     final row = _readBound(id);
     if (row.state != CloudAttachmentUploadState.prepared.index) {
       throw StateError('cloud_sync_attachment_upload_already_attempted');
     }
+    _requireLocalRow(row);
     _requireCompleteRetainedInventory(
       row.localSendIntentId,
       sourceAttachmentKeys,
@@ -791,10 +1346,12 @@ final class CloudSyncAttachmentUploadJournal {
     if (!_uuid.hasMatch(attemptId)) {
       throw StateError('cloud_sync_attachment_upload_attempt_invalid');
     }
+    _requireLocalId(id);
     final row = _readBound(id);
     if (row.state != CloudAttachmentUploadState.prepared.index) {
       throw StateError('cloud_sync_attachment_upload_already_attempted');
     }
+    _requireLocalRow(row);
     // Reading retained evidence across a writer recovery never grants a new
     // byte attempt under an old epoch. Preparation remains strictly current.
     final origin = _localSends.requireConfirmedAttachmentUploadOrigin(
@@ -889,6 +1446,7 @@ final class CloudSyncAttachmentUploadJournal {
     admit,
     required DateTime now,
   }) => _store.runInTransaction(TxMode.write, () {
+    _requireLocalId(id);
     final row = _readBound(id);
     if (row.state == CloudAttachmentUploadState.adopted.index) {
       _requireFinalOperation(row, row.admittedOperationId!);
@@ -917,6 +1475,174 @@ final class CloudSyncAttachmentUploadJournal {
       ..updatedAtMs = now.millisecondsSinceEpoch;
     _uploads.put(row);
     return CloudAttachmentUploadSnapshot._(row);
+  });
+
+  /// Historical variant of [adoptRecordCreate]: runs final-envelope outbox
+  /// admission for an uploaded historical row in the same transaction.
+  /// Authority and origin resolve historically; the admit callback performs
+  /// the existing record-map admission supplied by the caller.
+  CloudAttachmentUploadSnapshot adoptHistoricalRecordCreate({
+    required int id,
+    required CloudOutboxOperation Function(
+      Store transactionStore,
+      CloudSyncProtectedOutboundStageData result,
+    )
+    admit,
+    required DateTime now,
+    required CloudSyncHistoricalArchiveJournal historicalJournal,
+  }) => _store.runInTransaction(TxMode.write, () {
+    final row = _readHistoricalBound(id, historicalJournal);
+    if (row.state == CloudAttachmentUploadState.adopted.index) {
+      _requireFinalOperation(row, row.admittedOperationId!);
+      return CloudAttachmentUploadSnapshot._(row);
+    }
+    if (row.state != CloudAttachmentUploadState.uploaded.index) {
+      throw StateError('cloud_sync_attachment_upload_result_missing');
+    }
+    _requireHistoricalWriterEpoch();
+    final operation = admit(_store, _result(row));
+    if (operation.scope != _scope ||
+        operation.action != CloudOutboxAction.save ||
+        operation.payloadVersion != 1 ||
+        operation.checkpointGeneration != _generation ||
+        operation.logicalEntityKeyHash != row.attachmentKeyHash ||
+        operation.serverRecordIdHash != row.serverRecordIdHash ||
+        operation.encryptedPayloadReference != row.resultReference ||
+        operation.protectedLeaseReference != row.resultLeaseReference ||
+        operation.payloadSha256 != row.resultPayloadSha256) {
+      throw StateError('cloud_sync_attachment_upload_adoption_changed');
+    }
+    _requireFinalOperation(row, operation.operationId);
+    row
+      ..state = CloudAttachmentUploadState.adopted.index
+      ..admittedOperationId = operation.operationId
+      ..updatedAtMs = now.millisecondsSinceEpoch;
+    _uploads.put(row);
+    return CloudAttachmentUploadSnapshot._(row);
+  });
+
+  /// Historical variant of [requireAdoptedOperation] for dispatch-time
+  /// revalidation of an adopted historical upload.
+  void requireHistoricalAdoptedOperation(
+    CloudOutboxOperation operation,
+    CloudSyncHistoricalArchiveJournal historicalJournal,
+  ) {
+    _requireHistoricalWriterEpoch();
+    if (operation.scope != _scope ||
+        operation.checkpointGeneration != _generation) {
+      throw StateError('cloud_sync_attachment_upload_binding_changed');
+    }
+    final query = _uploads
+        .query(
+          CloudAttachmentUploadEntity_.admittedOperationId.equals(
+            operation.operationId,
+          ),
+        )
+        .build();
+    final CloudAttachmentUploadEntity? candidate;
+    try {
+      candidate = query.findUnique();
+    } finally {
+      query.close();
+    }
+    if (candidate == null) {
+      throw StateError('cloud_sync_attachment_upload_origin_missing');
+    }
+    final row = _readHistoricalBound(candidate.id, historicalJournal);
+    if (row.state != CloudAttachmentUploadState.adopted.index ||
+        row.attachmentKeyHash != operation.logicalEntityKeyHash ||
+        row.serverRecordIdHash != operation.serverRecordIdHash ||
+        row.resultReference != operation.encryptedPayloadReference ||
+        row.resultPayloadSha256 != operation.payloadSha256) {
+      throw StateError('cloud_sync_attachment_upload_adoption_changed');
+    }
+    _requireFinalOperation(row, operation.operationId);
+  }
+
+  /// Exact retained record origin for preparation and lookup-only recovery.
+  /// Unlike dispatch, this must remain readable while a mutation is uncertain.
+  /// It neither issues a writer permit nor promotes a historical source to IDS.
+  CloudSyncHistoricalProtectedSourceBinding readHistoricalAdoptedSource(
+    CloudOutboxOperation operation,
+    CloudSyncHistoricalArchiveJournal historicalJournal,
+  ) => _store.runInTransaction(TxMode.read, () {
+    if (operation.scope != _scope || operation.checkpointGeneration != _generation) {
+      throw StateError('cloud_sync_attachment_upload_binding_changed');
+    }
+    final query = _uploads.query(CloudAttachmentUploadEntity_.admittedOperationId
+        .equals(operation.operationId)).build();
+    final CloudAttachmentUploadEntity? candidate;
+    try { candidate = query.findUnique(); } finally { query.close(); }
+    if (candidate == null) {
+      throw StateError('cloud_sync_attachment_upload_origin_missing');
+    }
+    final row = _readHistoricalBound(candidate.id, historicalJournal);
+    if (row.state != CloudAttachmentUploadState.adopted.index ||
+        row.attachmentKeyHash != operation.logicalEntityKeyHash ||
+        row.serverRecordIdHash != operation.serverRecordIdHash ||
+        row.resultReference != operation.encryptedPayloadReference ||
+        row.resultPayloadSha256 != operation.payloadSha256) {
+      throw StateError('cloud_sync_attachment_upload_adoption_changed');
+    }
+    _requireFinalOperation(row, operation.operationId);
+    return readHistoricalOriginalSource(row.id, historicalJournal);
+  });
+
+  /// Owner-scoped variant of [readAttemptedForReconciliation]: pending
+  /// historical evidence only, capped like the legacy path.
+  List<int> readHistoricalAttemptedForReconciliation({
+    int? historicalIntentId,
+    required CloudSyncHistoricalArchiveJournal historicalJournal,
+  }) => _store.runInTransaction(TxMode.read, () {
+    if (historicalIntentId != null && historicalIntentId <= 0) {
+      throw StateError('cloud_sync_attachment_upload_binding_changed');
+    }
+    _requireGeneration();
+    var condition = CloudAttachmentUploadEntity_.accountFingerprint
+        .equals(_scope.accountFingerprint)
+        .and(CloudAttachmentUploadEntity_.protectedStoreIdentity
+            .equals(_auth.protectedStoreIdentity))
+        .and(CloudAttachmentUploadEntity_.checkpointGeneration
+            .equals(_generation))
+        .and(CloudAttachmentUploadEntity_.ownerKind
+            .equals(cloudSyncAttachmentOwnerKindHistorical))
+        .and(CloudAttachmentUploadEntity_.state
+            .notEquals(CloudAttachmentUploadState.uploaded.index))
+        .and(CloudAttachmentUploadEntity_.state
+            .notEquals(CloudAttachmentUploadState.adopted.index))
+        .and(CloudAttachmentUploadEntity_.state
+            .notEquals(CloudAttachmentUploadState.prepared.index)
+            .or(CloudAttachmentUploadEntity_.attemptId.notNull()));
+    if (historicalIntentId != null) {
+      condition = condition.and(
+        CloudAttachmentUploadEntity_.ownerIntentId.equals(historicalIntentId),
+      );
+    }
+    final query = _uploads.query(condition).build()..limit = 65;
+    try {
+      final candidates = query.find();
+      if (candidates.length > 64) {
+        throw StateError('cloud_sync_attachment_upload_recovery_bound_exceeded');
+      }
+      final keys = <String>{};
+      final ids = <int>[];
+      for (final candidate in candidates) {
+        final row = _readHistoricalBound(candidate.id, historicalJournal);
+        if (row.ownerKind != cloudSyncAttachmentOwnerKindHistorical ||
+            (historicalIntentId != null &&
+                row.ownerIntentId != historicalIntentId)) {
+          throw StateError(cloudSyncAttachmentOwnerChangedCode);
+        }
+        if (!keys.add(row.uploadKey)) {
+          throw StateError('cloud_sync_attachment_upload_inventory_changed');
+        }
+        reconciliationHistoricalBindingSha256(row.id, historicalJournal);
+        ids.add(row.id);
+      }
+      return List<int>.unmodifiable(ids);
+    } finally {
+      query.close();
+    }
   });
 
   void _requireFinalOperation(
@@ -988,6 +1714,138 @@ final class CloudSyncAttachmentUploadJournal {
     }
   }
 
+  /// Historical-owner helpers. Same durable table and mechanics as the IDS
+  /// paths, keyed by (ownerKind historical, ownerIntentId). Origin authority
+  /// resolves through the caller-supplied historical archive journal against
+  /// a committed immutable source; writer ownership resolves through
+  /// [writerAuthority]. Historical sent/received share the journal;
+  /// direction stays a message-request property enforced at admission, never
+  /// an upload-row claim. Legacy methods reject historical rows instead of
+  /// reinterpreting their ids.
+  int _requireHistoricalWriterEpoch() {
+    final authority = writerAuthority;
+    if (authority == null) {
+      throw StateError('cloud_sync_attachment_upload_binding_changed');
+    }
+    final scope = CloudKitWriterScope(
+      accountFingerprint: _scope.accountFingerprint,
+    );
+    final epoch = _readHistoricalEpoch(authority, scope);
+    authority.issuePermit(scope, expectedOwner: CloudKitWriterOwner.v2);
+    return epoch;
+  }
+
+  /// Read-only writer-epoch check shared by historical evidence reads.
+  /// Reads tolerate a newer authority epoch (recovery evidence), unlike
+  /// mutation attempts, which pin the exact current epoch at their own site.
+  int _readHistoricalEpoch(
+    ObjectBoxCloudKitWriterAuthority authority,
+    CloudKitWriterScope scope,
+  ) {
+    if (!authority.isBoundToStore(_store)) {
+      throw StateError('cloud_sync_attachment_upload_binding_changed');
+    }
+    final current = authority.read(scope);
+    if (current == null ||
+        current.owner != CloudKitWriterOwner.v2 ||
+        current.targetOwner != CloudKitWriterOwner.none ||
+        current.transitionIdHash != null ||
+        (current.state != CloudKitWriterAuthorityState.stable &&
+            current.state != CloudKitWriterAuthorityState.mutationUnknown)) {
+      throw StateError('cloud_sync_attachment_upload_binding_changed');
+    }
+    return current.epoch;
+  }
+
+  /// Kind-tagged upload identity: scope, owner lane, owning snapshot and
+  /// intent, source lineage, and attachment key. Legacy IDS keys keep their
+  /// exact five-slot material; only historical rows carry the lane tag.
+  String _historicalUploadKey({
+    required String messageGuidHash,
+    required String sourceSha256,
+    required String logicalEntityKeyHash,
+    required String snapshotSha256,
+    required int ownerIntentId,
+  }) => sha256
+      .convert(
+        utf8.encode(
+          jsonEncode([
+            'cloud-sync-attachment-upload-v1',
+            _scope.storageKey,
+            cloudSyncAttachmentOwnerKindHistorical,
+            snapshotSha256,
+            ownerIntentId,
+            messageGuidHash,
+            sourceSha256,
+            logicalEntityKeyHash,
+          ]),
+        ),
+      )
+      .toString();
+
+  CloudSyncHistoricalProtectedSourceBinding _requireHistoricalRowSource(
+    CloudAttachmentUploadEntity row,
+    CloudSyncHistoricalArchiveJournal historicalJournal,
+  ) {
+    if (!historicalJournal.isBoundToStore(_store) ||
+        historicalJournal.accountFingerprint != _auth.accountFingerprint ||
+        historicalJournal.protectedStoreIdentity !=
+            _auth.protectedStoreIdentity) {
+      throw StateError('cloud_sync_attachment_upload_binding_changed');
+    }
+    final intent = historicalJournal.requireHistoricalAttachmentOrigin(
+      intentId: row.ownerIntentId,
+      currentAuth: _auth,
+    );
+    if (intent.source.messageGuidHash != row.messageGuidHash ||
+        intent.source.sourceSha256 != row.sourceSha256) {
+      throw StateError(cloudSyncAttachmentOwnerChangedCode);
+    }
+    return intent.source;
+  }
+
+  CloudAttachmentUploadEntity _readHistoricalBound(
+    int id,
+    CloudSyncHistoricalArchiveJournal historicalJournal,
+  ) {
+    _requireGeneration();
+    final row = id > 0 ? _uploads.get(id) : null;
+    if (row == null ||
+        row.accountFingerprint != _scope.accountFingerprint ||
+        row.checkpointGeneration != _generation ||
+        row.protectedStoreIdentity != _auth.protectedStoreIdentity) {
+      throw StateError('cloud_sync_attachment_upload_binding_changed');
+    }
+    validateCloudAttachmentUploadRow(row);
+    if (row.ownerKind != cloudSyncAttachmentOwnerKindHistorical ||
+        row.ownerIntentId <= 0) {
+      throw StateError(cloudSyncAttachmentOwnerChangedCode);
+    }
+    final source = _requireHistoricalRowSource(row, historicalJournal);
+    final authority = writerAuthority;
+    if (authority == null) {
+      throw StateError('cloud_sync_attachment_upload_binding_changed');
+    }
+    final epoch = _readHistoricalEpoch(
+      authority,
+      CloudKitWriterScope(accountFingerprint: _scope.accountFingerprint),
+    );
+    if (epoch < row.writerEpoch) {
+      throw StateError('cloud_sync_attachment_upload_origin_changed');
+    }
+    final expectedKey = _historicalUploadKey(
+      messageGuidHash: row.messageGuidHash,
+      sourceSha256: row.sourceSha256,
+      logicalEntityKeyHash: row.attachmentKeyHash,
+      snapshotSha256: source.snapshotSha256,
+      ownerIntentId: row.ownerIntentId,
+    );
+    if (row.uploadKey != expectedKey) {
+      throw StateError('cloud_sync_attachment_upload_binding_changed');
+    }
+    return row;
+  }
+
   CloudAttachmentUploadEntity _readBound(int id) {
     _requireGeneration();
     final row = id > 0 ? _uploads.get(id) : null;
@@ -998,6 +1856,7 @@ final class CloudSyncAttachmentUploadJournal {
       throw StateError('cloud_sync_attachment_upload_binding_changed');
     }
     validateCloudAttachmentUploadRow(row);
+    _requireLocalRow(row);
     final origin = _localSends.readConfirmedOriginForExistingUpload(
       transactionStore: _store,
       uploadId: row.id,
@@ -1031,9 +1890,17 @@ final class CloudSyncAttachmentUploadJournal {
 /// Used by protected-store recovery even when the account/owner changed.
 /// Malformed metadata blocks cleanup rather than discarding retained keys.
 void validateCloudAttachmentUploadRow(CloudAttachmentUploadEntity row) {
+  final historical =
+      row.ownerKind == cloudSyncAttachmentOwnerKindHistorical;
+  if (row.ownerKind != cloudSyncAttachmentOwnerKindLocalSend &&
+      !historical) {
+    throw StateError('cloud_sync_attachment_upload_row_invalid');
+  }
   if (row.state < 0 ||
       row.state >= CloudAttachmentUploadState.values.length ||
-      row.localSendIntentId <= 0 ||
+      (historical
+          ? row.localSendIntentId != 0 || row.ownerIntentId <= 0
+          : row.localSendIntentId <= 0 || row.ownerIntentId != 0) ||
       row.writerEpoch <= 0 ||
       row.checkpointGeneration <= 0 ||
       !_digest.hasMatch(row.uploadKey) ||

@@ -2637,7 +2637,7 @@
     },
     {
       "id": "34:2734237264100580081",
-      "lastPropertyId": "22:4262532899867805764",
+      "lastPropertyId": "24:245393704776128266",
       "name": "CloudAttachmentUploadEntity",
       "properties": [
         {
@@ -2753,6 +2753,16 @@
         {
           "id": "22:4262532899867805764",
           "name": "updatedAtMs",
+          "type": 6
+        },
+        {
+          "id": "23:6764163081117959814",
+          "name": "ownerKind",
+          "type": 6
+        },
+        {
+          "id": "24:245393704776128266",
+          "name": "ownerIntentId",
           "type": 6
         }
       ],

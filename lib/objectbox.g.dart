@@ -3062,7 +3062,7 @@ final _entities = <obx_int.ModelEntity>[
   obx_int.ModelEntity(
     id: const obx_int.IdUid(34, 2734237264100580081),
     name: 'CloudAttachmentUploadEntity',
-    lastPropertyId: const obx_int.IdUid(22, 4262532899867805764),
+    lastPropertyId: const obx_int.IdUid(24, 245393704776128266),
     flags: 0,
     properties: <obx_int.ModelProperty>[
       obx_int.ModelProperty(
@@ -3196,6 +3196,18 @@ final _entities = <obx_int.ModelEntity>[
       obx_int.ModelProperty(
         id: const obx_int.IdUid(22, 4262532899867805764),
         name: 'updatedAtMs',
+        type: 6,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(23, 6764163081117959814),
+        name: 'ownerKind',
+        type: 6,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(24, 245393704776128266),
+        name: 'ownerIntentId',
         type: 6,
         flags: 0,
       ),
@@ -7707,7 +7719,7 @@ obx_int.ModelDefinition getObjectBoxModel() {
             final admittedOperationIdOffset = object.admittedOperationId == null
                 ? null
                 : fbb.writeString(object.admittedOperationId!);
-            fbb.startTable(23);
+            fbb.startTable(25);
             fbb.addInt64(0, object.id);
             fbb.addOffset(1, uploadKeyOffset);
             fbb.addOffset(2, accountFingerprintOffset);
@@ -7730,6 +7742,8 @@ obx_int.ModelDefinition getObjectBoxModel() {
             fbb.addOffset(19, admittedOperationIdOffset);
             fbb.addInt64(20, object.createdAtMs);
             fbb.addInt64(21, object.updatedAtMs);
+            fbb.addInt64(22, object.ownerKind);
+            fbb.addInt64(23, object.ownerIntentId);
             fbb.finish(fbb.endTable());
             return object.id;
           },
@@ -7764,6 +7778,18 @@ obx_int.ModelDefinition getObjectBoxModel() {
               buffer,
               rootOffset,
               14,
+              0,
+            );
+            final ownerKindParam = const fb.Int64Reader().vTableGet(
+              buffer,
+              rootOffset,
+              48,
+              0,
+            );
+            final ownerIntentIdParam = const fb.Int64Reader().vTableGet(
+              buffer,
+              rootOffset,
+              50,
               0,
             );
             final messageGuidHashParam = const fb.StringReader(
@@ -7830,6 +7856,8 @@ obx_int.ModelDefinition getObjectBoxModel() {
               writerEpoch: writerEpochParam,
               checkpointGeneration: checkpointGenerationParam,
               localSendIntentId: localSendIntentIdParam,
+              ownerKind: ownerKindParam,
+              ownerIntentId: ownerIntentIdParam,
               messageGuidHash: messageGuidHashParam,
               sourceSha256: sourceSha256Param,
               protectedStoreIdentity: protectedStoreIdentityParam,
@@ -10922,6 +10950,18 @@ class CloudAttachmentUploadEntity_ {
   static final updatedAtMs =
       obx.QueryIntegerProperty<CloudAttachmentUploadEntity>(
         _entities[25].properties[21],
+      );
+
+  /// See [CloudAttachmentUploadEntity.ownerKind].
+  static final ownerKind =
+      obx.QueryIntegerProperty<CloudAttachmentUploadEntity>(
+        _entities[25].properties[22],
+      );
+
+  /// See [CloudAttachmentUploadEntity.ownerIntentId].
+  static final ownerIntentId =
+      obx.QueryIntegerProperty<CloudAttachmentUploadEntity>(
+        _entities[25].properties[23],
       );
 }
 

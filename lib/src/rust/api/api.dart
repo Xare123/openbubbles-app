@@ -518,6 +518,18 @@ Future<List<CloudSyncAttachmentSourceEntry>> cloudSyncInspectAttachmentSources({
   context: context,
 );
 
+/// Historical inventory uses the committed snapshot and the same canonical
+/// attachment identities as final records. No IDS receipt or upload is made.
+Future<List<CloudSyncAttachmentSourceEntry>>
+cloudSyncInspectHistoricalAttachmentSources({
+  required ArcCloudMessagesClientDefaultAnisetteProvider cloudMessagesClient,
+  required CloudSyncHistoricalAttachmentContext context,
+}) =>
+    RustLib.instance.api.crateApiApiCloudSyncInspectHistoricalAttachmentSources(
+      cloudMessagesClient: cloudMessagesClient,
+      context: context,
+    );
+
 /// Stages the provided native IDS attachment value without sending anything or
 /// touching Apple. Caller must journal ownership and commit the lease under
 /// the protected-store exclusive lock before passing this binding to send().

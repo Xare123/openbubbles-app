@@ -55,8 +55,8 @@ final class CloudSyncHistoricalLocalGuard {
       if (chat == null ||
           message.chat.targetId != localChatId ||
           message.isFromMe != request.isFromMe ||
-          message.text == null ||
-          historicalTextDigest(message.text!) != request.textSha256 ||
+          (message.text == null && request.media == null) ||
+          historicalTextDigest(message.text ?? '') != request.textSha256 ||
           message.dateCreated?.millisecondsSinceEpoch !=
               request.dateCreatedMs) {
         throw StateError('cloud_sync_historical_local_source_changed');
@@ -68,6 +68,7 @@ final class CloudSyncHistoricalLocalGuard {
           message: message,
           chat: mapHistoricalChat(chat),
           rowSnapshotSha256: source.snapshotSha256,
+          captureAttachmentInventory: request.media != null,
         ),
         request,
       )) {

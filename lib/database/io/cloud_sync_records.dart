@@ -1281,6 +1281,15 @@ class CloudAttachmentUploadEntity {
   int writerEpoch;
   int checkpointGeneration;
   int localSendIntentId;
+  /// Durable owner discriminator. Stable codes: 0 IDS local send (default,
+  /// preserves every existing row), 1 historical archive intent. A kind-1 row
+  /// never reuses local-send identity: [localSendIntentId] stays 0 and
+  /// [ownerIntentId] carries the historical archive intent id. Regenerating
+  /// ObjectBox bindings after adding these fields is a separate step.
+  int ownerKind;
+  /// Owning intent in the lane identified by [ownerKind]. Zero unless kind
+  /// is historical. Never read as a local-send intent id.
+  int ownerIntentId;
   String messageGuidHash;
   String sourceSha256;
   String protectedStoreIdentity;
@@ -1310,6 +1319,8 @@ class CloudAttachmentUploadEntity {
     required this.writerEpoch,
     required this.checkpointGeneration,
     required this.localSendIntentId,
+    this.ownerKind = 0,
+    this.ownerIntentId = 0,
     required this.messageGuidHash,
     required this.sourceSha256,
     required this.protectedStoreIdentity,

@@ -5,6 +5,7 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_historical_l
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_historical_outbox_binding.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_historical_protected_source_binding.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_models.dart';
+import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 /// Pure-Dart coverage for the historical outbox ownership binding.
@@ -53,6 +54,7 @@ CloudSyncHistoricalCreateSource _createSource({
   String? logicalHash,
   String? serverHash,
   int? createdAtMs,
+  String? readbackProof,
 }) => CloudSyncHistoricalCreateSource(
   intentId: 1,
   source: source ?? _source(),
@@ -63,6 +65,7 @@ CloudSyncHistoricalCreateSource _createSource({
   serverRecordIdHash: serverHash ?? _t('S'),
   createdAtMs: createdAtMs ?? 1700000000000,
   localGuard: guard ?? _guard(),
+  attachmentReadbackProof: readbackProof,
 );
 
 CloudOutboxOperation _operation(
@@ -297,4 +300,137 @@ void main() {
       );
     },
   );
+
+  test('v2 readback proof roundtrip binds the operation', () {
+    const proof = 'historical-readback-proof-1';
+    final create = _createSource(readbackProof: proof);
+    expect(create.attachmentReadbackProof, proof);
+    final binding = CloudSyncHistoricalOutboxBinding.adopt(
+      source: create,
+      operation: _operation(create),
+    );
+    final wire = jsonDecode(binding.encode()) as List;
+    expect(wire.length, 13);
+    expect(wire[0], 2);
+    expect(wire[11], proof);
+    final decoded = CloudSyncHistoricalOutboxBinding.decode(binding.encode());
+    expect(decoded.encode(), binding.encode());
+    expect(decoded.source.attachmentReadbackProof, proof);
+    expect(decoded.source.sameSourceAs(create), isTrue);
+    decoded.requireOperation(_operation(decoded.source));
+    expect(decoded.operationDigest, binding.operationDigest);
+  });
+
+  test('legacy v1 encoding stays byte-compatible without proof', () {
+    final plain = _adopted();
+    final source = plain.source;
+    final operation = _operation(source);
+    // Preserve the pre-media v1 layout independently of the current encoder.
+    final oldSourceFields = <Object>[
+      source.intentId,
+      source.source.encode(),
+      source.localChatId,
+      source.parentBinding,
+      source.generation,
+      source.logicalEntityKeyHash,
+      source.serverRecordIdHash,
+      source.createdAtMs,
+      source.localGuard.encode(),
+    ];
+    final oldDigest = sha256
+        .convert(
+          utf8.encode(
+            jsonEncode(<Object?>[
+              'historical-create-admission-v1',
+              ...oldSourceFields,
+              operation.scope.storageKey,
+              operation.operationId,
+              operation.logicalEntityKeyHash,
+              operation.serverRecordIdHash,
+              operation.checkpointGeneration,
+              operation.action.name,
+              operation.payloadVersion,
+              operation.mutationRevision,
+              operation.encryptedPayloadReference,
+              operation.payloadSha256,
+              operation.createdAt.millisecondsSinceEpoch,
+            ]),
+          ),
+        )
+        .toString();
+    final oldWire = jsonEncode(<Object>[
+      1,
+      'historicalCreateOwnership',
+      ...oldSourceFields,
+      oldDigest,
+    ]);
+    expect(plain.operationDigest, oldDigest);
+    expect(plain.encode(), oldWire);
+    final wire = jsonDecode(plain.encode()) as List;
+    expect(wire.length, 12);
+    expect(wire[0], 1);
+    expect(plain.source.attachmentReadbackProof, isNull);
+    final decoded = CloudSyncHistoricalOutboxBinding.decode(oldWire);
+    expect(decoded.encode(), oldWire);
+    expect(decoded.source.attachmentReadbackProof, isNull);
+    expect(decoded.source.sameSourceAs(plain.source), isTrue);
+    decoded.requireOperation(_operation(decoded.source));
+    final withProof = _createSource(readbackProof: 'proof-1');
+    expect(withProof.sameSourceAs(plain.source), isFalse);
+    expect(plain.source.sameSourceAs(withProof), isFalse);
+    expect(
+      CloudSyncHistoricalOutboxBinding.adopt(
+        source: withProof,
+        operation: _operation(withProof),
+      ).operationDigest,
+      isNot(plain.operationDigest),
+    );
+  });
+
+  test('proof tampering absence and oversize are rejected', () {
+    const proof = 'historical-readback-proof-1';
+    final create = _createSource(readbackProof: proof);
+    final binding = CloudSyncHistoricalOutboxBinding.adopt(
+      source: create,
+      operation: _operation(create),
+    );
+    final tampered = List<dynamic>.of(jsonDecode(binding.encode()) as List);
+    tampered[11] = 'historical-readback-proof-2';
+    final decodedTampered = CloudSyncHistoricalOutboxBinding.decode(
+      jsonEncode(tampered),
+    );
+    expect(
+      decodedTampered.source.attachmentReadbackProof,
+      'historical-readback-proof-2',
+    );
+    expect(
+      () =>
+          decodedTampered.requireOperation(_operation(decodedTampered.source)),
+      throwsStateError,
+    );
+    final truncated = List<dynamic>.of(jsonDecode(binding.encode()) as List)
+      ..removeAt(11);
+    expect(
+      () => CloudSyncHistoricalOutboxBinding.decode(jsonEncode(truncated)),
+      throwsStateError,
+    );
+    final downgraded = List<dynamic>.of(jsonDecode(binding.encode()) as List);
+    downgraded[0] = 1;
+    expect(
+      () => CloudSyncHistoricalOutboxBinding.decode(jsonEncode(downgraded)),
+      throwsStateError,
+    );
+    final upgraded = List<dynamic>.of(jsonDecode(_adopted().encode()) as List)
+      ..add('proof-1');
+    expect(
+      () => CloudSyncHistoricalOutboxBinding.decode(jsonEncode(upgraded)),
+      throwsStateError,
+    );
+    expect(() => _createSource(readbackProof: ''), throwsStateError);
+    expect(() => _createSource(readbackProof: 'x' * 65537), throwsStateError);
+    expect(
+      () => CloudSyncHistoricalOutboxBinding.decode('x' * 73729),
+      throwsStateError,
+    );
+  });
 }

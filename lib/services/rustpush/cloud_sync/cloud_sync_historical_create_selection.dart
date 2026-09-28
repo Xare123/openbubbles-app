@@ -3,6 +3,7 @@ import 'package:bluebubbles/database/models.dart';
 import 'cloud_sync_historical_archive_journal.dart';
 import 'cloud_sync_historical_archive_request.dart';
 import 'cloud_sync_historical_chat_origin.dart';
+import 'cloud_sync_attachment_upload_journal.dart';
 import 'cloud_sync_local_send_journal.dart';
 import 'cloud_sync_manual_shadow_sampler.dart';
 import 'cloud_sync_models.dart';
@@ -33,6 +34,7 @@ final class CloudSyncHistoricalCreateSelection {
   Store? _boundStore;
   String? _sourceBinding;
   final Map<String, String> _inertAuditRows = {};
+  final Set<String> _childOperationIds = {};
 
   bool matches(CloudSyncHistoricalCreateSelection other) =>
       intentId == other.intentId &&
@@ -60,6 +62,7 @@ final class CloudSyncHistoricalCreateSelection {
     required ObjectBoxCloudSyncStore durable,
     required CloudSyncNativeAuthSnapshot auth,
     CloudSyncLocalSendJournal? localSendJournal,
+    CloudSyncAttachmentUploadJournal? attachmentUploadJournal,
   }) => store.runInTransaction(TxMode.read, () {
     if ((_boundStore != null && !identical(_boundStore, store)) ||
         !journal.isBoundToStore(store) ||
@@ -122,9 +125,40 @@ final class CloudSyncHistoricalCreateSelection {
     // before lease, submission and recovery transactions can change anything.
     // Retained pre-proof sends remain untouched, never promoted or reconciled.
     final inert = <String, String>{};
+    final children = <String>{};
+    final attachmentScope = CloudSyncScope(accountFingerprint: scope.accountFingerprint,
+      container: scope.container, database: scope.database, zone: 'attachmentManateeZone',
+      streamKind: scope.streamKind, schemaVersion: scope.schemaVersion,
+      persistenceLane: scope.persistenceLane);
+    final childQuery = store.box<CloudAttachmentUploadEntity>().query(
+      CloudAttachmentUploadEntity_.ownerKind.equals(cloudSyncAttachmentOwnerKindHistorical)
+        .and(CloudAttachmentUploadEntity_.ownerIntentId.equals(intentId))).build()..limit = 65;
+    final List<CloudAttachmentUploadEntity> childRows;
+    try { childRows = childQuery.find(); } finally { childQuery.close(); }
+    if (childRows.length > 64 || (request.media == null && childRows.isNotEmpty)) {
+      throw StateError('cloud_sync_historical_selection_changed');
+    }
+    for (final child in childRows) {
+      final uploads = attachmentUploadJournal;
+      if (uploads == null || !uploads.isBoundTo(store, attachmentScope) ||
+          uploads.readHistoricalOriginalSource(child.id, journal).encode() != sourceBinding) {
+        throw StateError('cloud_sync_historical_selection_changed');
+      }
+      final id = child.admittedOperationId;
+      if (id != null) {
+        final operation = durable.readHistoricalAttachmentOperation(attachmentScope, id, journal);
+        if (!children.add(operation.operationId)) {
+          throw StateError('cloud_sync_historical_selection_changed');
+        }
+      }
+    }
+    if (!children.containsAll(_childOperationIds)) {
+      throw StateError('cloud_sync_historical_selection_changed');
+    }
     CloudOutboxOperation? chatOperation;
     for (final row in store.box<CloudOutboxOperationEntity>().getAll()) {
       if (row.operationId == operationId) continue;
+      if (children.contains(row.operationId)) continue;
       final encoded = row.localChatOrigin;
       if (encoded != null && isCloudSyncHistoricalChatOrigin(encoded)) {
         final parent = CloudSyncHistoricalChatOrigin.decode(encoded);
@@ -174,6 +208,7 @@ final class CloudSyncHistoricalCreateSelection {
     _operationId = operationId;
     _chatOperationId = chatOperation?.operationId;
     _chatOperation = chatOperation;
+    _childOperationIds..clear()..addAll(children);
     return operation;
   });
 
@@ -181,7 +216,9 @@ final class CloudSyncHistoricalCreateSelection {
       ((operation.scope.zone == 'messageManateeZone' && _operationId != null &&
         operation.operationId == _operationId) ||
        (operation.scope.zone == 'chatManateeZone' && _chatOperationId != null &&
-        operation.operationId == _chatOperationId)) &&
+        operation.operationId == _chatOperationId) ||
+       (operation.scope.zone == 'attachmentManateeZone' &&
+        _childOperationIds.contains(operation.operationId))) &&
       operation.scope.accountFingerprint == request.accountFingerprint &&
       operation.scope.container == 'com.apple.messages.cloud' &&
       operation.scope.database == 'private' &&
