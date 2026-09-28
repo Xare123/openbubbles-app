@@ -460,9 +460,17 @@ pub async fn cloud_sync_capture_received_identity(
     let client = state.icloud_services.as_ref()
         .and_then(|s| s.cloud_messages_client.as_ref())
         .ok_or_else(|| anyhow!("cloud_sync_received_archive_identity_unavailable"))?;
+    cloud_sync_capture_cached_identity(client, state.conf_dir.clone()).await
+}
+
+#[frb(ignore)]
+async fn cloud_sync_capture_cached_identity(
+    client: &Arc<CloudMessagesClient<DefaultAnisetteProvider>>,
+    storage_directory: String,
+) -> anyhow::Result<CloudSyncNativeAuthMetadata> {
     let (account, _) = client.validated_persisted_native_account_identifiers().await
         .map_err(|_| anyhow!("cloud_sync_received_archive_identity_unavailable"))?;
-    cloud_sync_metadata_for_account(client, state.conf_dir.clone(), &account)
+    cloud_sync_metadata_for_account(client, storage_directory, &account)
 }
 
 /// Metadata ownership for a qualified historical source. Unlike live-send and
@@ -511,7 +519,45 @@ pub async fn cloud_sync_stage_historical_archive_source(
     expected_source_sha256: String,
     source_bytes: Vec<u8>,
 ) -> anyhow::Result<CloudSyncNativeHistoricalArchiveSourceBinding> {
-    let before = cloud_sync_capture_received_identity(state)
+    cloud_sync_stage_historical_archive_source_bound(
+        &state.conf_dir, expected_auth, snapshot_sha256, expected_source_sha256,
+        source_bytes, || cloud_sync_capture_received_identity(state),
+    ).await
+}
+
+/// CloudKit-only equivalent for an isolated Windows history importer. Does not
+/// restore SharedPushState, register IDS, refresh account credentials or upload.
+/// The caller supplies an already configured client and retains the same local
+/// lifecycle exclusion, source ownership and adoption obligations as above.
+pub async fn cloud_sync_stage_historical_archive_source_for_client(
+    cloud_messages_client: &Arc<CloudMessagesClient<DefaultAnisetteProvider>>,
+    storage_directory: String,
+    expected_auth: CloudSyncNativeAuthMetadata,
+    snapshot_sha256: String,
+    expected_source_sha256: String,
+    source_bytes: Vec<u8>,
+) -> anyhow::Result<CloudSyncNativeHistoricalArchiveSourceBinding> {
+    cloud_sync_stage_historical_archive_source_bound(
+        &storage_directory, expected_auth, snapshot_sha256, expected_source_sha256,
+        source_bytes,
+        || cloud_sync_capture_cached_identity(cloud_messages_client, storage_directory.clone()),
+    ).await
+}
+
+#[frb(ignore)]
+async fn cloud_sync_stage_historical_archive_source_bound<F, Fut>(
+    storage_directory: &str,
+    expected_auth: CloudSyncNativeAuthMetadata,
+    snapshot_sha256: String,
+    expected_source_sha256: String,
+    source_bytes: Vec<u8>,
+    mut capture_identity: F,
+) -> anyhow::Result<CloudSyncNativeHistoricalArchiveSourceBinding>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = anyhow::Result<CloudSyncNativeAuthMetadata>>,
+{
+    let before = capture_identity()
         .await
         .map_err(|_| anyhow!("cloud_sync_historical_archive_identity_unavailable"))?;
     cloud_sync_require_historical_auth(&expected_auth, &before)?;
@@ -521,9 +567,9 @@ pub async fn cloud_sync_stage_historical_archive_source(
         protected_store_identity: &before.protected_store_identity,
     };
     let staged = crate::cloud_sync_historical_source_stage::stage_historical_archive_source(
-        PathBuf::from(&state.conf_dir), &binding, &expected_source_sha256, &source_bytes,
+        PathBuf::from(storage_directory), &binding, &expected_source_sha256, &source_bytes,
     ).map_err(|_| anyhow!("cloud_sync_historical_archive_source_stage_failed"))?;
-    let after = cloud_sync_capture_received_identity(state)
+    let after = capture_identity()
         .await
         .map_err(|_| anyhow!("cloud_sync_historical_archive_identity_unavailable"));
     let validation = after.and_then(|actual|
@@ -532,7 +578,7 @@ pub async fn cloud_sync_stage_historical_archive_source(
         // This fresh descriptor has not crossed the bridge or been adopted.
         // Never apply this rollback path to a journal-owned source on restart.
         let _ = crate::cloud_sync_native_fetch::cloud_sync_rollback_protected_page_lease(
-            PathBuf::from(&state.conf_dir), &staged.lease_reference);
+            PathBuf::from(storage_directory), &staged.lease_reference);
         return Err(error);
     }
     Ok(CloudSyncNativeHistoricalArchiveSourceBinding {
@@ -547,6 +593,10 @@ pub async fn cloud_sync_stage_historical_archive_source(
         payload_length: staged.payload_length,
     })
 }
+
+#[cfg(test)]
+#[path = "cloud_sync_historical_capture_client_tests.rs"]
+mod cloud_sync_historical_capture_client_tests;
 
 #[cfg(test)]
 mod cloud_sync_historical_capture_tests {
