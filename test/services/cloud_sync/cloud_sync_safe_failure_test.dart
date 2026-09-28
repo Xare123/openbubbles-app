@@ -68,6 +68,8 @@ void main() {
     final paths = [
       'lib/services/rustpush/cloud_sync/cloud_sync_attachment_parent_coordinator.dart',
       'lib/services/rustpush/cloud_sync/cloud_sync_attachment_upload_journal.dart',
+      'lib/services/rustpush/cloud_sync/cloud_sync_attachment_upload_executor.dart',
+      'lib/services/rustpush/cloud_sync/cloud_sync_attachment_upload_origin.dart',
       'lib/services/rustpush/cloud_sync/cloud_sync_local_send_journal.dart',
       'lib/services/rustpush/cloud_sync/cloud_sync_production_sampler_adapter.dart',
       'lib/services/rustpush/cloud_sync/cloud_sync_attachment_plan_coordinator.dart',

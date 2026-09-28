@@ -553,6 +553,7 @@ const _cloudSyncV2SafeFailureCodes = <String>{
   'cloud_sync_unknown_failure',
   'protected_outbound_lease_missing',
   // Fixed attachment admission/recovery predicates, never exception content.
+  'cloud_sync_attachment_owner_changed',
   'cloud_sync_attachment_parent_group_changed',
   'cloud_sync_attachment_parent_inventory_required',
   'cloud_sync_attachment_parent_readback_invalid',
@@ -573,12 +574,16 @@ const _cloudSyncV2SafeFailureCodes = <String>{
   'cloud_sync_attachment_upload_already_attempted',
   'cloud_sync_attachment_upload_attempt_changed',
   'cloud_sync_attachment_upload_attempt_invalid',
+  'cloud_sync_attachment_upload_auth_changed',
   'cloud_sync_attachment_upload_binding_changed',
+  'cloud_sync_attachment_upload_executor_busy',
   'cloud_sync_attachment_upload_generation_changed',
+  'cloud_sync_attachment_upload_input_invalid',
   'cloud_sync_attachment_upload_inventory_changed',
   'cloud_sync_attachment_upload_not_started',
   'cloud_sync_attachment_upload_origin_changed',
   'cloud_sync_attachment_upload_origin_missing',
+  'cloud_sync_attachment_upload_outcome_unknown',
   'cloud_sync_attachment_upload_plan_changed',
   'cloud_sync_attachment_upload_readback_not_ready',
   'cloud_sync_attachment_upload_recovery_bound_exceeded',
@@ -587,6 +592,7 @@ const _cloudSyncV2SafeFailureCodes = <String>{
   'cloud_sync_attachment_upload_row_invalid',
   'cloud_sync_attachment_upload_scope_invalid',
   'cloud_sync_attachment_upload_stage_invalid',
+  'cloud_sync_attachment_upload_storage_changed',
   // Exact attachment preparation boundaries. These diagnose before-upload
   // failures without forwarding FRB exception text or changing retry policy.
   'cloud_sync_attachment_plan_inventory_failed',
