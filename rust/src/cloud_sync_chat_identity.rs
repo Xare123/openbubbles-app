@@ -4,7 +4,9 @@
 
 use std::collections::BTreeSet;
 
-use rustpush::cloud_messages::{validate_direct_chat_create, CloudChat};
+use rustpush::cloud_messages::{
+    validate_direct_chat_create, validate_group_chat_create, CloudChat,
+};
 
 use crate::{
     cloud_sync_canonical_converter::{
@@ -86,8 +88,17 @@ pub(crate) fn participant(value: &str) -> Option<String> {
 }
 
 pub(crate) fn validate_chat_identity_candidate(candidate: &CloudChat) -> Result<(), ()> {
-    validate_direct_chat_create(candidate).map_err(|_| ())?;
-    participant(&candidate.chat_identifier).ok_or(())?;
+    match candidate.style {
+        45 => {
+            validate_direct_chat_create(candidate).map_err(|_| ())?;
+            participant(&candidate.chat_identifier).ok_or(())?;
+        }
+        43 => {
+            validate_group_chat_create(candidate).map_err(|_| ())?;
+            participant(&candidate.last_addressed_handle).ok_or(())?;
+        }
+        _ => return Err(()),
+    }
     for value in [
         &candidate.guid,
         &candidate.chat_identifier,
@@ -125,7 +136,7 @@ pub(crate) fn observe_chat_identity(
     hasher: &CloudSemanticIdentifierHasher,
 ) -> Result<CloudChatIdentityObservation, ()> {
     validate_chat_identity_candidate(candidate)?;
-    let recipient = participant(&candidate.chat_identifier).ok_or(())?;
+    let group = candidate.style == 43;
     let candidate_values = [
         candidate.guid.as_str(),
         candidate.chat_identifier.as_str(),
@@ -140,9 +151,25 @@ pub(crate) fn observe_chat_identity(
             candidate_binding_hash: candidate_binding_hash.clone(),
         })
     };
-    let mut target = BTreeSet::from([recipient]);
+    let mut target = BTreeSet::new();
+    if !group {
+        target.insert(participant(&candidate.chat_identifier).ok_or(())?);
+    }
     for value in &candidate_values[..4] {
-        target.insert(identifier(value).ok_or(())?);
+        if group {
+            target.extend(normalized_chat_identity_variants(value).ok_or(())?);
+        } else {
+            target.insert(identifier(value).ok_or(())?);
+        }
+    }
+    if group {
+        if let Some(properties) = candidate.properties.as_ref() {
+            // Either side may retain an older group route after a migration.
+            // Ignoring the candidate's lineage could falsely prove disjointness.
+            for value in &properties.legacy_group_identifiers {
+                target.extend(normalized_chat_identity_variants(value).ok_or(())?);
+            }
+        }
     }
     // Last-addressed handle is normally our own account. It binds the candidate
     // above, but must not make every conversation on our account overlap.
@@ -186,18 +213,31 @@ pub(crate) fn observe_chat_identity(
         }
         _ => return observed(CloudChatIdentityComparison::Incomplete),
     }
-    let Some(mut source_identities) = values
-        .into_iter()
-        .map(identifier)
-        .collect::<Option<BTreeSet<_>>>()
-    else {
-        return observed(CloudChatIdentityComparison::Incomplete);
-    };
+    let mut source_identities = BTreeSet::new();
+    for value in values {
+        if group {
+            let Some(variants) = normalized_chat_identity_variants(value) else {
+                return observed(CloudChatIdentityComparison::Incomplete);
+            };
+            source_identities.extend(variants);
+        } else {
+            let Some(identity) = identifier(value) else {
+                return observed(CloudChatIdentityComparison::Incomplete);
+            };
+            source_identities.insert(identity);
+        }
+    }
     for entry in &source.participants {
         let Some(value) = participant(&entry.uri) else {
             return observed(CloudChatIdentityComparison::Incomplete);
         };
-        source_identities.insert(value);
+        // Two independent group conversations may have the same members and
+        // title. Only retained group identities/lineage establish overlap.
+        // Still validate every source member: malformed data remains unknown.
+        // Keep the existing conservative peer-overlap rule for direct chats.
+        if !group {
+            source_identities.insert(value);
+        }
     }
     observed(if target.is_disjoint(&source_identities) {
         CloudChatIdentityComparison::Disjoint
@@ -415,5 +455,186 @@ mod tests {
         assert!(!format!("{a:?}").contains(&a.candidate_binding_hash));
         other.participants.clear();
         assert!(observe_chat_identity(&other, &source(), &presence(None, false), &key).is_err());
+    }
+
+    fn group_candidate() -> CloudChat {
+        CloudChat {
+            style: 43,
+            guid: "iMessage;+;chat12345".into(),
+            chat_identifier: "chat12345".into(),
+            display_name: Some("Saved group".into()),
+            participants: vec![
+                CloudParticipant {
+                    uri: "+15555550101".into(),
+                },
+                CloudParticipant {
+                    uri: "friend@example.invalid".into(),
+                },
+            ],
+            ..candidate()
+        }
+    }
+
+    fn distinct_group() -> CloudChat {
+        CloudChat {
+            guid: "iMessage;+;chat67890".into(),
+            chat_identifier: "chat67890".into(),
+            group_id: "BBBBBBBB-BBBB-4BBB-8BBB-BBBBBBBBBBBB".into(),
+            original_group_id: "CCCCCCCC-CCCC-4CCC-8CCC-CCCCCCCCCCCC".into(),
+            ..group_candidate()
+        }
+    }
+
+    fn compare_group(
+        source: &CloudChat,
+        fields: &CloudRawRecordPresence,
+    ) -> CloudChatIdentityComparison {
+        observe_chat_identity(
+            &group_candidate(),
+            source,
+            fields,
+            &CloudSemanticIdentifierHasher::new(b"test-key").unwrap(),
+        )
+        .unwrap()
+        .comparison
+    }
+
+    #[test]
+    fn group_identity_does_not_merge_same_members_title_or_own_alias() {
+        assert_eq!(
+            compare_group(&distinct_group(), &presence(None, false)),
+            CloudChatIdentityComparison::Disjoint
+        );
+        let direct_with_shared_peer = candidate();
+        assert_eq!(
+            compare_group(
+                &CloudChat {
+                    group_id: distinct_group().group_id,
+                    original_group_id: distinct_group().original_group_id,
+                    ..direct_with_shared_peer
+                },
+                &presence(None, false)
+            ),
+            CloudChatIdentityComparison::Disjoint
+        );
+    }
+
+    #[test]
+    fn group_identity_detects_each_original_route_without_service_filtering() {
+        for service in ["iMessage", "SMS", "MMS", "RCS", "iMessageLite"] {
+            for field in ["guid", "cid", "gid", "ogid"] {
+                let mut source = distinct_group();
+                source.service_name = service.into();
+                match field {
+                    "guid" => source.guid = group_candidate().guid,
+                    "cid" => source.chat_identifier = group_candidate().chat_identifier,
+                    "gid" => source.group_id = group_candidate().group_id.to_lowercase(),
+                    _ => {
+                        source.original_group_id =
+                            format!("iMessage;+;{}", group_candidate().group_id)
+                    }
+                }
+                assert_eq!(
+                    compare_group(&source, &presence(None, false)),
+                    CloudChatIdentityComparison::Overlaps,
+                    "{service}/{field}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn group_identity_requires_complete_raw_identity_and_valid_members() {
+        for field in ["guid", "cid", "gid", "ogid", "svc", "stl", "ptcpts"] {
+            assert_eq!(
+                compare_group(&distinct_group(), &presence(Some(field), false)),
+                CloudChatIdentityComparison::Incomplete,
+                "{field}"
+            );
+        }
+        let mut source = distinct_group();
+        source.participants[0].uri = "future:opaque".into();
+        assert_eq!(
+            compare_group(&source, &presence(None, false)),
+            CloudChatIdentityComparison::Incomplete
+        );
+    }
+
+    #[test]
+    fn group_identity_checks_authenticated_legacy_lineage() {
+        let source = CloudChat {
+            properties: Some(CloudProp {
+                legacy_group_identifiers: vec![format!(
+                    "iMessage;+;{}",
+                    group_candidate().group_id
+                )],
+                ..Default::default()
+            }),
+            ..distinct_group()
+        };
+        let mut fields = presence(None, true);
+        assert_eq!(
+            compare_group(&source, &fields),
+            CloudChatIdentityComparison::Incomplete
+        );
+        let mut bytes = vec![];
+        plist::to_writer_binary(&mut bytes, source.properties.as_ref().unwrap()).unwrap();
+        fields
+            .capture_decrypted_plist_dictionary("prop", &bytes)
+            .unwrap();
+        assert_eq!(
+            compare_group(&source, &fields),
+            CloudChatIdentityComparison::Overlaps
+        );
+    }
+
+    #[test]
+    fn group_candidate_lineage_also_prevents_false_disjointness() {
+        let key = CloudSemanticIdentifierHasher::new(b"test-key").unwrap();
+        let remote = distinct_group();
+        let mut candidate = group_candidate();
+        candidate
+            .properties
+            .as_mut()
+            .unwrap()
+            .legacy_group_identifiers = vec![format!(
+            "iMessage;+;{}",
+            remote.original_group_id.to_lowercase()
+        )];
+        assert_eq!(
+            observe_chat_identity(&candidate, &remote, &presence(None, false), &key)
+                .unwrap()
+                .comparison,
+            CloudChatIdentityComparison::Overlaps
+        );
+    }
+
+    #[test]
+    fn group_identity_binding_preserves_full_candidate_and_install_identity() {
+        let key = CloudSemanticIdentifierHasher::new(b"test-key").unwrap();
+        let base = group_candidate();
+        let binding = chat_identity_candidate_binding(&base, &key).unwrap();
+        let mut changed = base.clone();
+        changed.participants[0].uri = "+15555550303".into();
+        assert_ne!(
+            binding,
+            chat_identity_candidate_binding(&changed, &key).unwrap()
+        );
+        changed = base.clone();
+        changed.last_addressed_handle = "different-owner@example.invalid".into();
+        assert_ne!(
+            binding,
+            chat_identity_candidate_binding(&changed, &key).unwrap()
+        );
+        assert_ne!(
+            binding,
+            chat_identity_candidate_binding(
+                &base,
+                &CloudSemanticIdentifierHasher::new(b"different-key").unwrap()
+            )
+            .unwrap()
+        );
+        changed.guid = "iMessage;-;chat12345".into();
+        assert!(chat_identity_candidate_binding(&changed, &key).is_err());
     }
 }

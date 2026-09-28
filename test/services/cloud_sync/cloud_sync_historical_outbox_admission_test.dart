@@ -307,74 +307,148 @@ void main() {
     expect(store.box<CloudOutboxOperationEntity>().count(), 1);
   });
 
-  test('historical group adoption reopens without live-send provenance', () async {
-    final peerQuery = store.box<Handle>()
-        .query(Handle_.address.equals('peer@example.invalid')
-            .and(Handle_.service.equals('iMessage'))).build();
-    final Handle peer;
-    try {
-      peer = peerQuery.findFirst()!;
-    } finally {
-      peerQuery.close();
-    }
-    final peers = [
-      peer,
-      Handle(address: 'second@example.invalid', service: 'iMessage'),
-    ];
-    store.box<Handle>().putMany(peers);
-    chat = Chat(guid: 'iMessage;+;historical-group',
-      chatIdentifier: 'historical-group', style: 43,
-      usingHandle: 'mailto:owner@example.invalid')
-      ..cloudGuid = 'original-cloud-group'
-      ..groupVersion = 9;
-    chat.handles.addAll(peers);
-    store.box<Chat>().put(chat);
-    final database = durable();
-    final applied = await seedSyntheticRestoredChatAppliedSource(
-      objectBox: store, store: database, chatScope: _scope('chatManateeZone'),
-      now: _now, recordIdHash: 'G' * 43);
-    await seedSyntheticRestoredChatProof(objectBox: store, store: database,
-      chatScope: _scope('chatManateeZone'), chat: chat,
-      appliedSource: applied, now: _now);
-    final message = localMessage()..guid = 'historical-group-original';
-    final messageId = store.box<Message>().put(message);
-    final assessment = assessHistoricalArchiveRow(mapHistoricalRow(
-      message: message, chat: mapHistoricalChat(chat), rowSnapshotSha256: 'a' * 64),
-      CloudSyncHistoricalSourceManifest(snapshotSha256: 'a' * 64,
-        accountFingerprint: _account, accountHandles: [sender.address],
-        messageCount: 1, capturedAtMs: _now.millisecondsSinceEpoch),
-      CloudSyncHistoricalAccountBinding(accountFingerprint: _account,
-        protectedStoreIdentity: _protectedStore), nowMs: _now.millisecondsSinceEpoch);
-    expect(assessment, isA<CloudSyncHistoricalArchiveEligible>());
-    request = (assessment as CloudSyncHistoricalArchiveEligible).request;
-    canonicalBytes = utf8.encode(jsonEncode(stagedHistoricalPayload(
-      request: request, text: message.text!)));
-    source = CloudSyncHistoricalProtectedSourceBinding(
-      accountFingerprint: _account, protectedStoreIdentity: _protectedStore,
-      snapshotSha256: request.snapshotSha256, messageGuidHash: request.guidHash,
-      sourceSha256: request.sourceSha256, protectedReference: 'obcs2.ref.${'T' * 43}',
-      leaseReference: 'obcs2.lease.${'c' * 32}',
-      payloadSha256: historicalBytesSha256(canonicalBytes), payloadLength: canonicalBytes.length);
-    intentId = journal().adopt(source).id;
-    journal().markSourceLeaseCommitted(intentId: intentId, expectedSource: source);
-    final selected = selection();
-    expect(jsonDecode(selected.parentBinding)[0], 3);
-    final operation = admit(selected);
-    expect(store.box<CloudSyncLocalSendIntentEntity>().count(), 0);
-    expect(store.box<CloudSyncReceivedArchiveIntentEntity>().count(), 0);
-    store.close();
-    store = await openStore(directory: directory.path);
-    final reopened = durable().readHistoricalArchiveOperation(_messageScope, operation.operationId)!;
-    expect(durable().readHistoricalArchiveSource(reopened)!.sameSourceAs(selected), isTrue);
-    journal().requireAdoptedDispatch(transactionStore: store, operation: reopened);
-    final retained = store.box<Message>().get(messageId)!;
-    expect(retained.text, message.text);
-    store.box<Chat>().put(store.box<Chat>().get(chat.id!)!..cloudGuid = 'changed-group');
-    expect(() => journal().requireAdoptedDispatch(transactionStore: store,
-      operation: reopened), throwsA(anyOf(isA<StateError>(), isA<CloudSyncFailure>())));
-    expect(store.box<Message>().get(messageId)!.text, message.text);
-    expect(row().admittedOperationId, operation.operationId);
-  });
+  test(
+    'historical group adoption reopens without live-send provenance',
+    () async {
+      final peerQuery = store
+          .box<Handle>()
+          .query(
+            Handle_.address
+                .equals('peer@example.invalid')
+                .and(Handle_.service.equals('iMessage')),
+          )
+          .build();
+      final Handle peer;
+      try {
+        peer = peerQuery.findFirst()!;
+      } finally {
+        peerQuery.close();
+      }
+      final peers = [
+        peer,
+        Handle(address: 'second@example.invalid', service: 'iMessage'),
+      ];
+      store.box<Handle>().putMany(peers);
+      chat =
+          Chat(
+              guid: 'iMessage;+;historical-group',
+              chatIdentifier: 'historical-group',
+              style: 43,
+              usingHandle: 'mailto:owner@example.invalid',
+            )
+            ..cloudGuid = 'original-cloud-group'
+            ..groupVersion = 9;
+      chat.handles.addAll(peers);
+      store.box<Chat>().put(chat);
+      final database = durable();
+      expect(
+        await database.readActiveCoordinatorLeaseExpiry(
+          _scope('chatManateeZone'),
+          now: _now,
+        ),
+        isNull,
+      );
+      final applied = await seedSyntheticRestoredChatAppliedSource(
+        objectBox: store,
+        store: database,
+        chatScope: _scope('chatManateeZone'),
+        now: _now,
+        recordIdHash: 'G' * 43,
+      );
+      expect(
+        await database.readActiveCoordinatorLeaseExpiry(
+          _scope('chatManateeZone'),
+          now: _now,
+        ),
+        isNull,
+      );
+      await seedSyntheticRestoredChatProof(
+        objectBox: store,
+        store: database,
+        chatScope: _scope('chatManateeZone'),
+        chat: chat,
+        appliedSource: applied,
+        now: _now,
+      );
+      final message = localMessage()..guid = 'historical-group-original';
+      final messageId = store.box<Message>().put(message);
+      final assessment = assessHistoricalArchiveRow(
+        mapHistoricalRow(
+          message: message,
+          chat: mapHistoricalChat(chat),
+          rowSnapshotSha256: 'a' * 64,
+        ),
+        CloudSyncHistoricalSourceManifest(
+          snapshotSha256: 'a' * 64,
+          accountFingerprint: _account,
+          accountHandles: [sender.address],
+          messageCount: 1,
+          capturedAtMs: _now.millisecondsSinceEpoch,
+        ),
+        CloudSyncHistoricalAccountBinding(
+          accountFingerprint: _account,
+          protectedStoreIdentity: _protectedStore,
+        ),
+        nowMs: _now.millisecondsSinceEpoch,
+      );
+      expect(assessment, isA<CloudSyncHistoricalArchiveEligible>());
+      request = (assessment as CloudSyncHistoricalArchiveEligible).request;
+      canonicalBytes = utf8.encode(
+        jsonEncode(
+          stagedHistoricalPayload(request: request, text: message.text!),
+        ),
+      );
+      source = CloudSyncHistoricalProtectedSourceBinding(
+        accountFingerprint: _account,
+        protectedStoreIdentity: _protectedStore,
+        snapshotSha256: request.snapshotSha256,
+        messageGuidHash: request.guidHash,
+        sourceSha256: request.sourceSha256,
+        protectedReference: 'obcs2.ref.${'T' * 43}',
+        leaseReference: 'obcs2.lease.${'c' * 32}',
+        payloadSha256: historicalBytesSha256(canonicalBytes),
+        payloadLength: canonicalBytes.length,
+      );
+      intentId = journal().adopt(source).id;
+      journal().markSourceLeaseCommitted(
+        intentId: intentId,
+        expectedSource: source,
+      );
+      final selected = selection();
+      expect(jsonDecode(selected.parentBinding)[0], 3);
+      final operation = admit(selected);
+      expect(store.box<CloudSyncLocalSendIntentEntity>().count(), 0);
+      expect(store.box<CloudSyncReceivedArchiveIntentEntity>().count(), 0);
+      store.close();
+      store = await openStore(directory: directory.path);
+      final reopened = durable().readHistoricalArchiveOperation(
+        _messageScope,
+        operation.operationId,
+      )!;
+      expect(
+        durable().readHistoricalArchiveSource(reopened)!.sameSourceAs(selected),
+        isTrue,
+      );
+      journal().requireAdoptedDispatch(
+        transactionStore: store,
+        operation: reopened,
+      );
+      final retained = store.box<Message>().get(messageId)!;
+      expect(retained.text, message.text);
+      store.box<Chat>().put(
+        store.box<Chat>().get(chat.id!)!..cloudGuid = 'changed-group',
+      );
+      expect(
+        () => journal().requireAdoptedDispatch(
+          transactionStore: store,
+          operation: reopened,
+        ),
+        throwsA(anyOf(isA<StateError>(), isA<CloudSyncFailure>())),
+      );
+      expect(store.box<Message>().get(messageId)!.text, message.text);
+      expect(row().admittedOperationId, operation.operationId);
+    },
+  );
 
   test(
     'native stage is committed only after durable historical adoption',

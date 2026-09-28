@@ -45,54 +45,63 @@ Future<CloudInboxChangeEntity> seedSyntheticRestoredChatAppliedSource({
   String? recordIdHash,
 }) async {
   final checkpoint = await store.readCheckpoint(chatScope);
-  final fence = (await store.tryAcquireCoordinatorLease(
+  final fence = await store.tryAcquireCoordinatorLease(
     chatScope,
     ownerId: 'synthetic-restored-chat-source',
     now: now,
     leaseDuration: const Duration(hours: 1),
-  ))!;
-  final sequence = checkpoint.fetchedSequence + 1;
-  final change = CloudFetchedChange(
-    changeId: _nativeSemanticHash(
-      domain: 'OpenBubbles Cloud Sync V2 synthetic change identity\u0000',
-      value: '$sequence',
-    ),
-    recordIdHash: recordIdHash ?? syntheticRestoredChatServerRecordIdHash,
-    etagHash: syntheticRestoredChatEtagHash,
-    type: CloudChangeType.save,
-    encryptedServerRecordId: 'obcs2.ref.${'R' * 43}',
-    protectedSystemFieldsReference: 'obcs2.ref.${'F' * 43}',
-    encryptedPayloadReference: 'obcs2.ref.${'P' * 43}',
-    payloadSha256: 'e' * 64,
-    isTombstone: false,
   );
-  await store.journalFetchedBatch(
-    CloudFetchBatch(
-      scope: chatScope,
-      changes: [change],
-      batchId: 'synthetic-restored-chat-batch-$sequence',
-      generation: checkpoint.generation,
-      nextToken: 'synthetic-restored-chat-token-$sequence',
-      hasMore: false,
-    ),
-    now: now,
-    leaseFence: fence,
-    expectedGeneration: checkpoint.generation,
-    expectedFetchedToken: checkpoint.fetchedToken,
-  );
-  await store.markInboxApplied(
-    chatScope,
-    sequence: sequence,
-    now: now,
-    leaseFence: fence,
-  );
-  await store.recordPullSuccess(chatScope, now: now);
-  return objectBox.box<CloudInboxChangeEntity>().getAll().singleWhere(
-    (row) =>
-        row.scopeKey == cloudSyncPersistentScopeKey(chatScope) &&
-        row.generation == checkpoint.generation &&
-        row.fetchSequence == sequence,
-  );
+  if (fence == null) {
+    throw StateError('synthetic_restored_chat_source_lease_busy');
+  }
+  try {
+    final sequence = checkpoint.fetchedSequence + 1;
+    final change = CloudFetchedChange(
+      changeId: _nativeSemanticHash(
+        domain: 'OpenBubbles Cloud Sync V2 synthetic change identity\u0000',
+        value: '$sequence',
+      ),
+      recordIdHash: recordIdHash ?? syntheticRestoredChatServerRecordIdHash,
+      etagHash: syntheticRestoredChatEtagHash,
+      type: CloudChangeType.save,
+      encryptedServerRecordId: 'obcs2.ref.${'R' * 43}',
+      protectedSystemFieldsReference: 'obcs2.ref.${'F' * 43}',
+      encryptedPayloadReference: 'obcs2.ref.${'P' * 43}',
+      payloadSha256: 'e' * 64,
+      isTombstone: false,
+    );
+    await store.journalFetchedBatch(
+      CloudFetchBatch(
+        scope: chatScope,
+        changes: [change],
+        batchId: 'synthetic-restored-chat-batch-$sequence',
+        generation: checkpoint.generation,
+        nextToken: 'synthetic-restored-chat-token-$sequence',
+        hasMore: false,
+      ),
+      now: now,
+      leaseFence: fence,
+      expectedGeneration: checkpoint.generation,
+      expectedFetchedToken: checkpoint.fetchedToken,
+    );
+    await store.markInboxApplied(
+      chatScope,
+      sequence: sequence,
+      now: now,
+      leaseFence: fence,
+    );
+    await store.recordPullSuccess(chatScope, now: now);
+    return objectBox.box<CloudInboxChangeEntity>().getAll().singleWhere(
+      (row) =>
+          row.scopeKey == cloudSyncPersistentScopeKey(chatScope) &&
+          row.generation == checkpoint.generation &&
+          row.fetchSequence == sequence,
+    );
+  } finally {
+    // The helper owns only this synthetic read. Preserve the generation fence,
+    // but allow another restored record or real coordinator to acquire a lease.
+    await store.releaseCoordinatorLease(chatScope, leaseFence: fence);
+  }
 }
 
 Future<void> seedSyntheticRestoredChatProof({
