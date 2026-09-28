@@ -10,10 +10,10 @@ import 'cloud_sync_dev_gate.dart';
 import 'cloud_sync_historical_archive_journal.dart';
 import 'cloud_sync_historical_archive_request.dart';
 import 'cloud_sync_historical_outbox_binding.dart';
+import 'cloud_sync_historical_parent_binding.dart';
 import 'cloud_sync_historical_protected_source_binding.dart';
 import 'cloud_sync_manual_shadow_sampler.dart';
 import 'cloud_sync_models.dart';
-import 'cloud_sync_outbound_chat_binding.dart';
 import 'cloud_sync_transport.dart';
 import 'cloud_sync_write_chat_identity_session.dart';
 import 'cloudkit_operation_interlock.dart';
@@ -172,15 +172,16 @@ final class CloudSyncHistoricalCreateAdapter {
     payloadLength: source.payloadLength,
   );
 
-  CloudSyncRestoredDirectChatProof _parent(
+  CloudSyncHistoricalParentProof _parent(
     CloudSyncScope scope,
     int localChatId,
     String? expectedBinding,
   ) {
-    final parent = requireCloudSyncRestoredDirectChatProofForId(
+    final parent = requireCloudSyncHistoricalParentProof(
       store: store,
       messageScope: scope,
       chatId: localChatId,
+      expectedBinding: expectedBinding,
     );
     if (expectedBinding != null && parent.binding != expectedBinding) {
       throw StateError('cloud_sync_historical_create_parent_changed');
@@ -191,7 +192,7 @@ final class CloudSyncHistoricalCreateAdapter {
   Future<api.CloudSyncHistoricalArchiveCreateProof> _open(
     BigInt token,
     CloudSyncHistoricalProtectedSourceBinding source,
-    CloudSyncRestoredDirectChatProof parent,
+    CloudSyncHistoricalParentProof parent,
   ) => api.cloudSyncOpenHistoricalArchiveCreateProof(
     cloudMessagesClient: _client,
     nativeWriterPauseToken: token,

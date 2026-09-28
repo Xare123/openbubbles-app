@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_outbound_group_binding.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_historical_parent_binding.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_outbound_message_dependency.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/objectbox_cloud_sync_store.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -40,6 +41,33 @@ void main() {
     );
     expect(jsonDecode(binding)[0], 3);
     expect(binding, fixture.capture());
+  });
+
+  test('historical parent uses exact group proof after message deletion/restart', () async {
+    final initial = requireCloudSyncHistoricalParentProof(
+      store: fixture.db, messageScope: fixture.messageScope, chatId: fixture.chatId);
+    final group = fixture.proof();
+    expect(initial.binding, group.binding);
+    expect(initial.logicalEntityKeyHash, jsonDecode(group.binding)[6]);
+    expect(initial.source, group.source);
+    fixture.db.box<Message>().remove(fixture.messageId);
+    await fixture.reopen();
+    final resumed = requireCloudSyncHistoricalParentProof(
+      store: fixture.db, messageScope: fixture.messageScope, chatId: fixture.chatId,
+      expectedBinding: initial.binding);
+    expect(resumed, initial);
+    final changedBinding = jsonDecode(initial.binding) as List;
+    changedBinding[7] = 'Z' * 43;
+    expect(() => requireCloudSyncHistoricalParentProof(
+      store: fixture.db, messageScope: fixture.messageScope, chatId: fixture.chatId,
+      expectedBinding: jsonEncode(changedBinding)), _blocked);
+    expect(() => requireCloudSyncHistoricalParentUnchanged(
+      store: fixture.db, messageScope: fixture.messageScope,
+      chatId: fixture.chatId, binding: initial.binding), returnsNormally);
+    fixture.db.box<Chat>().put(fixture.chat..cloudGuid = 'different-group');
+    expect(() => requireCloudSyncHistoricalParentUnchanged(
+      store: fixture.db, messageScope: fixture.messageScope,
+      chatId: fixture.chatId, binding: initial.binding), _blocked);
   });
 
   test('same-version member drift invalidates an adopted dependency', () {
@@ -107,6 +135,7 @@ void main() {
     final decoded = jsonDecode(binding) as List;
     expect(proof.binding, binding);
     expect(proof.generation, decoded[2]);
+    expect(proof.logicalEntityKeyHash, decoded[6]);
     expect(proof.routingMetadataDigest, decoded[10]);
     expect(proof.routingMetadataDigest, fixture.expectedDigest);
     final inbox = fixture.inbox;

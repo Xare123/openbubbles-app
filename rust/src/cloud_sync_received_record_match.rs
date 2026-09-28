@@ -140,7 +140,11 @@ fn proto4_group_unsupported(nested: Option<&MessageProto4>, chat_id: &str) -> bo
 /// 1, error 0, canonical direct route, redundant-or-absent groupId, known
 /// flags) with received identities and positive time. Anything else is not
 /// provable here, even when both sides match it exactly.
-fn expected_shape_supported(expected: &CloudMessage, historical_unknown_endpoint: bool) -> bool {
+fn expected_shape_supported(
+    expected: &CloudMessage,
+    historical_unknown_endpoint: bool,
+    historical_group: bool,
+) -> bool {
     if expected.service != "iMessage"
         || expected.r#type != 1
         || expected.error != 0
@@ -149,12 +153,17 @@ fn expected_shape_supported(expected: &CloudMessage, historical_unknown_endpoint
         || expected.chat_id.is_empty()
         || (expected.flags.contains(MessageFlags::IS_FROM_ME) != expected.sender.is_empty())
         || (!historical_unknown_endpoint && expected.destination_caller_id.is_empty())
-        || !expected.chat_id.starts_with("iMessage;-;")
-        || expected.chat_id == "iMessage;-;"
+        || (!historical_group
+            && (!expected.chat_id.starts_with("iMessage;-;") || expected.chat_id == "iMessage;-;"))
     {
         return false;
     }
-    if proto4_group_unsupported(proto4_of(expected), &expected.chat_id) {
+    if historical_group {
+        let group = proto4_of(expected).and_then(|value| value.group_id.as_deref());
+        if !group.is_some_and(|value| value.starts_with("iMessage;+;") && value != "iMessage;+;") {
+            return false;
+        }
+    } else if proto4_group_unsupported(proto4_of(expected), &expected.chat_id) {
         return false;
     }
     let known = status_flags()
@@ -193,7 +202,7 @@ pub fn compare_received_record(
     expected: &CloudMessage,
     found: &CloudMessage,
 ) -> ReceivedRecordMatchVerdict {
-    compare_record(expected, found, false)
+    compare_record(expected, found, false, false)
 }
 
 /// Historical-only candidate: the original local endpoint was not persisted.
@@ -211,19 +220,35 @@ pub(crate) fn compare_historical_record_unknown_endpoint(
     {
         return ReceivedRecordMatchVerdict::NeedsProjectionOrUnsupported;
     }
-    compare_record(expected, found, true)
+    compare_record(expected, found, true, false)
+}
+
+/// Historical group readback only. The caller already bound the expectation to
+/// an exact protected group parent. Both outer group ID and canonical proto4
+/// route must match; no member-based alias inference is performed here. This
+/// does not broaden the public direct/live-received comparator.
+pub(crate) fn compare_historical_group_record(
+    expected: &CloudMessage,
+    found: &CloudMessage,
+) -> ReceivedRecordMatchVerdict {
+    let sent = expected.flags.contains(MessageFlags::IS_FROM_ME);
+    if sent == expected.destination_caller_id.is_empty() {
+        return ReceivedRecordMatchVerdict::NeedsProjectionOrUnsupported;
+    }
+    compare_record(expected, found, !sent, true)
 }
 
 fn compare_record(
     expected: &CloudMessage,
     found: &CloudMessage,
     historical_unknown_endpoint: bool,
+    historical_group: bool,
 ) -> ReceivedRecordMatchVerdict {
     use ReceivedRecordMatchVerdict as Verdict;
 
     // Validate the expectation first: unsupported expected shapes project even
     // when both sides carry the identical shape.
-    if !expected_shape_supported(expected, historical_unknown_endpoint) {
+    if !expected_shape_supported(expected, historical_unknown_endpoint, historical_group) {
         return Verdict::NeedsProjectionOrUnsupported;
     }
     // Core identity: exact, no normalization, no alias guessing, no UUID folding.
@@ -313,7 +338,13 @@ fn compare_record(
     {
         return Verdict::NeedsProjectionOrUnsupported;
     }
-    if proto4_group_unsupported(expected_nested, &expected.chat_id)
+    if historical_group {
+        if expected_nested.and_then(|proto| proto.group_id.as_deref())
+            != found_nested.and_then(|proto| proto.group_id.as_deref())
+        {
+            return Verdict::ConflictingCoreIdentity;
+        }
+    } else if proto4_group_unsupported(expected_nested, &expected.chat_id)
         || proto4_group_unsupported(found_nested, &found.chat_id)
     {
         return Verdict::NeedsProjectionOrUnsupported;

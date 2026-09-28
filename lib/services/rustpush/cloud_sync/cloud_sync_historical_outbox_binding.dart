@@ -29,7 +29,7 @@ final class CloudSyncHistoricalCreateSource {
         generation < 1 ||
         createdAtMs < 1 ||
         parentBinding.isEmpty ||
-        parentBinding.length > 1024 ||
+        parentBinding.length > 1536 ||
         !_token.hasMatch(logicalEntityKeyHash) ||
         !_token.hasMatch(serverRecordIdHash)) {
       throw StateError('cloud_sync_historical_create_source_invalid');

@@ -4,7 +4,7 @@ use crate::cloud_sync_archive_discovery_source::ArchiveDiscoverySource;
 use crate::cloud_sync_canonical_dto::CloudCanonicalChatStyle;
 use crate::cloud_sync_historical_projection::tests::chat;
 use crate::cloud_sync_historical_source::{
-    HistoricalArchiveSource, HistoricalBinding, HistoricalRow,
+    HistoricalArchiveSource, HistoricalBinding, HistoricalGroupMetadata, HistoricalRow,
 };
 use crate::cloud_sync_historical_source_stage::stage_historical_archive_source;
 use crate::cloud_sync_native_fetch::{
@@ -19,6 +19,14 @@ const CONTAINER: &str = "synthetic-container-user";
 fn proof_fixture(
     directory: &std::path::Path,
     commit_source: bool,
+) -> CloudSyncHistoricalArchiveCreateProof {
+    proof_fixture_with_group(directory, commit_source, false)
+}
+
+fn proof_fixture_with_group(
+    directory: &std::path::Path,
+    commit_source: bool,
+    group: bool,
 ) -> CloudSyncHistoricalArchiveCreateProof {
     let storage = directory.to_string_lossy().into_owned();
     let auth = CloudSyncNativeAuthMetadata {
@@ -35,19 +43,37 @@ fn proof_fixture(
         account_fingerprint: &auth.account_fingerprint,
         protected_store_identity: &auth.protected_store_identity,
     };
-    let source = HistoricalArchiveSource::capture(
-        &HistoricalRow {
-            guid: "historical-api-fixture-guid",
-            text: "Historical API fixture only 😀",
-            sender: "mailto:original@example.invalid",
-            peer: "peer@example.invalid",
-            chat_guid: "iMessage;-;peer@example.invalid",
-            date_created_ms: 1_700_000_000_123,
-            is_from_me: true,
-        },
-        &binding,
-        true,
-    )
+    let route = if group {
+        crate::cloud_sync_outbound::attachment_parent_test_support::group()
+    } else {
+        chat("peer@example.invalid", CloudCanonicalChatStyle::Direct)
+    };
+    let row = HistoricalRow {
+        guid: "historical-api-fixture-guid",
+        text: "Historical API fixture only 😀",
+        sender: "mailto:original@example.invalid",
+        peer: "peer@example.invalid",
+        chat_guid: route.guid(),
+        date_created_ms: 1_700_000_000_123,
+        is_from_me: true,
+    };
+    let source = if group {
+        HistoricalArchiveSource::capture_group(
+            &row,
+            &binding,
+            true,
+            HistoricalGroupMetadata(
+                1,
+                Some(route.group_id().into()),
+                vec![
+                    ("peer@example.invalid".into(), "iMessage".into()),
+                    ("+15555550100".into(), "iMessage".into()),
+                ],
+            ),
+        )
+    } else {
+        HistoricalArchiveSource::capture(&row, &binding, true)
+    }
     .unwrap();
     let source = stage_historical_archive_source(
         directory.to_path_buf(),
@@ -127,7 +153,7 @@ fn proof_fixture(
         chat_generation: 7,
         chat_source,
         request,
-        route: chat("peer@example.invalid", CloudCanonicalChatStyle::Direct),
+        route,
         parent_binding_sha256: "b".repeat(64),
         expires_at: std::time::Instant::now() + Duration::from_secs(300),
     }
@@ -417,6 +443,57 @@ fn historical_api_message_open_and_raw_readback_keep_origin_and_digest() {
         open(&input).is_err(),
         "historical envelope must not become ordinary send proof"
     );
+}
+
+#[test]
+fn historical_group_api_reopens_protected_source_and_requires_both_route_ids_on_readback() {
+    let directory = tempfile::tempdir().unwrap();
+    let proof = proof_fixture_with_group(directory.path(), true, true);
+    let prepared = input(&proof, true);
+    let opened = cloud_sync_open_message_create_bound(
+        &proof.storage_directory,
+        &proof.auth,
+        CONTAINER,
+        &prepared,
+    )
+    .unwrap();
+    assert_eq!(opened.message().chat_id, proof.route.group_id());
+    assert_eq!(
+        opened
+            .message()
+            .msg_proto_4
+            .as_ref()
+            .unwrap()
+            .0
+            .group_id
+            .as_deref(),
+        Some(proof.route.guid())
+    );
+    assert!(opened
+        .verify_raw_readback(
+            &inspection(opened.message().clone()),
+            &prepared.payload_sha256
+        )
+        .is_ok());
+    for field in 0..3 {
+        let mut changed = opened.message().clone();
+        match field {
+            0 => changed.chat_id = "different-group".into(),
+            1 => changed.msg_proto_4.as_mut().unwrap().0.group_id = Some("different-route".into()),
+            _ => changed.msg_proto.0.text = Some("newer-body".into()),
+        }
+        assert!(opened
+            .verify_raw_readback(&inspection(changed), &prepared.payload_sha256)
+            .is_err());
+    }
+    let mut foreign_parent = proof.clone();
+    foreign_parent.route = chat("peer@example.invalid", CloudCanonicalChatStyle::Direct);
+    assert!(cloud_sync_validate_historical_create_proof(
+        &proof.storage_directory,
+        &proof.auth,
+        &foreign_parent
+    )
+    .is_err());
 }
 
 #[test]

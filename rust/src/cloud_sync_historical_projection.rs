@@ -19,27 +19,46 @@ pub(crate) fn project_historical_plain_text(
     source: &HistoricalArchiveSource,
     chat: &CloudCanonicalChatPayload,
 ) -> Result<CloudMessage, Failure> {
-    if chat.service() != CloudCanonicalService::IMessage
-        || chat.style() != CloudCanonicalChatStyle::Direct
-    {
+    if chat.service() != CloudCanonicalService::IMessage {
         return Err(Failure::UnsupportedMessage);
     }
     let peer = bare(source.peer());
     let sender = bare(source.sender());
     let sent = source.origin() == HistoricalArchiveOrigin::HistoricalSent;
-    let route = format!("iMessage;-;{peer}");
-    if peer.is_empty()
-        || sender.is_empty()
-        || (sent && peer == sender)
-        || (!sent && peer != sender)
-        || source.chat_guid() != route
-        || chat.guid() != route
-        || chat.chat_identifier() != peer
-        || chat.participant_handles().is_empty()
-        || chat.participant_handles().iter().any(|v| bare(v) != peer)
-    {
+    if peer.is_empty() || sender.is_empty() {
         return Err(Failure::BindingMismatch);
     }
+    let (chat_id, route) = if let Some(group) = source.group_metadata() {
+        // Link an old message to the exact decoded CloudKit parent. The stored
+        // member list may be newer than this message, so it is not a historical
+        // membership claim and must not be substituted for the parent identity.
+        let aliases = [chat.guid(), chat.group_id(), chat.original_group_id()];
+        if chat.style() != CloudCanonicalChatStyle::Group
+            || chat.guid() != format!("iMessage;+;{}", chat.chat_identifier())
+            || !aliases.contains(&source.chat_guid())
+            || group
+                .1
+                .as_deref()
+                .is_some_and(|id| id != chat.group_id() && id != chat.original_group_id())
+        {
+            return Err(Failure::BindingMismatch);
+        }
+        (chat.group_id().to_owned(), chat.guid().to_owned())
+    } else {
+        let route = format!("iMessage;-;{peer}");
+        if chat.style() != CloudCanonicalChatStyle::Direct
+            || (sent && peer == sender)
+            || (!sent && peer != sender)
+            || source.chat_guid() != route
+            || chat.guid() != route
+            || chat.chat_identifier() != peer
+            || chat.participant_handles().is_empty()
+            || chat.participant_handles().iter().any(|v| bare(v) != peer)
+        {
+            return Err(Failure::BindingMismatch);
+        }
+        (route.clone(), route)
+    };
     let time = i64::try_from(source.sent_timestamp())
         .ok()
         .and_then(|v| v.checked_sub(978_307_200_000))
@@ -50,7 +69,7 @@ pub(crate) fn project_historical_plain_text(
         utm: None,
         r#type: 1,
         error: 0,
-        chat_id: route.clone(),
+        chat_id,
         sender: if sent {
             String::new()
         } else {
@@ -111,7 +130,94 @@ fn bare(handle: &str) -> &str {
 pub(crate) mod tests {
     use super::*;
     use crate::cloud_sync_canonical_dto::CloudCanonicalField;
-    use crate::cloud_sync_historical_source::{HistoricalBinding, HistoricalRow};
+    use crate::cloud_sync_historical_source::{
+        HistoricalBinding, HistoricalGroupMetadata, HistoricalRow,
+    };
+
+    pub(crate) fn group_source(
+        sent: bool,
+        local_guid: &str,
+        cloud_guid: Option<&str>,
+    ) -> HistoricalArchiveSource {
+        HistoricalArchiveSource::capture_group(
+            &HistoricalRow {
+                guid: "historical-group-message",
+                text: "Preserved group text",
+                sender: if sent {
+                    "mailto:original@example.invalid"
+                } else {
+                    "mailto:departed@example.invalid"
+                },
+                peer: "peer@example.invalid",
+                chat_guid: local_guid,
+                date_created_ms: 1_700_000_000_123,
+                is_from_me: sent,
+            },
+            &HistoricalBinding {
+                snapshot_sha256: &"a".repeat(64),
+                account_fingerprint: "synthetic-account",
+                protected_store_identity: "synthetic-store",
+            },
+            sent,
+            HistoricalGroupMetadata(
+                1,
+                cloud_guid.map(str::to_owned),
+                vec![
+                    ("peer@example.invalid".into(), "iMessage".into()),
+                    ("+15555550100".into(), "iMessage".into()),
+                ],
+            ),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn group_history_uses_verified_parent_ids_not_first_member_or_current_alias() {
+        let parent = crate::cloud_sync_outbound::attachment_parent_test_support::group();
+        for sent in [false, true] {
+            for alias in [parent.guid(), parent.group_id(), parent.original_group_id()] {
+                let source = group_source(sent, alias, Some(parent.group_id()));
+                let value = project_historical_plain_text(&source, &parent).unwrap();
+                assert_eq!(value.chat_id, parent.group_id());
+                assert_eq!(
+                    value.msg_proto_4.unwrap().0.group_id.as_deref(),
+                    Some(parent.guid())
+                );
+                assert_eq!(value.guid, source.guid());
+                assert_eq!(value.msg_proto.0.text.as_deref(), Some(source.text()));
+                assert_eq!(
+                    value.destination_caller_id,
+                    if sent { "original@example.invalid" } else { "" }
+                );
+                assert_eq!(
+                    value.sender,
+                    if sent { "" } else { "departed@example.invalid" }
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn group_history_requires_matching_ids_and_cannot_become_direct_history() {
+        let parent = crate::cloud_sync_outbound::attachment_parent_test_support::group();
+        let original = group_source(true, parent.original_group_id(), None);
+        assert!(project_historical_plain_text(&original, &parent).is_ok());
+        for wrong in [
+            group_source(true, "unrelated-local-group", Some(parent.group_id())),
+            group_source(true, parent.guid(), Some("unrelated-cloud-group")),
+        ] {
+            assert!(project_historical_plain_text(&wrong, &parent).is_err());
+        }
+        assert!(project_historical_plain_text(
+            &original,
+            &chat("peer@example.invalid", CloudCanonicalChatStyle::Direct)
+        )
+        .is_err());
+        assert!(
+            project_historical_plain_text(&source(true, "Plain", &"a".repeat(64)), &parent)
+                .is_err()
+        );
+    }
 
     pub(crate) fn source(sent: bool, text: &str, snapshot: &str) -> HistoricalArchiveSource {
         HistoricalArchiveSource::capture(

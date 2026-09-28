@@ -108,6 +108,105 @@ CloudSyncHistoricalAccountBinding _account() =>
     );
 
 void main() {
+  Chat groupChat({String? cloudGuid = 'original-apple-group'}) {
+    final handles = [
+      Handle(address: 'z@example.com', service: 'iMessage'),
+      Handle(address: 'peer@example.com', service: 'iMessage'),
+      Handle(address: 'a@example.com', service: 'iMessage'),
+    ];
+    return Chat(id: 11, guid: 'iMessage;+;local-group', style: 43,
+      chatIdentifier: 'chat123', participants: handles,
+    )..cloudGuid = cloudGuid
+     ..handles.addAll(handles);
+  }
+
+  test('group snapshot preserves every member and stored cloud identity', () {
+    final captured = mapHistoricalChat(groupChat());
+    final encoded = encodeHistoricalSnapshotRow(_row(chat: captured));
+    final decoded = decodeHistoricalSnapshotRow(encoded, snapshotSha256: _snapshot);
+    expect(decoded.chat.guid, 'iMessage;+;local-group');
+    expect(decoded.chat.chatIdentifier, 'chat123');
+    expect(decoded.chat.groupMetadata!.cloudGuid, 'original-apple-group');
+    expect(decoded.chat.groupMetadata!.participants.map((p) => p.address),
+      ['a@example.com', 'peer@example.com', 'z@example.com']);
+    expect(decoded.chat.groupMetadata!.participants.every((p) => p.service == 'iMessage'), isTrue);
+    expect(encodeHistoricalSnapshotRow(decoded), encoded);
+    final assessment = assessHistoricalArchiveRow(decoded, _manifest(), _account(), nowMs: _nowMs);
+    expect(assessment, isA<CloudSyncHistoricalArchiveIneligible>().having(
+      (value) => value.reason, 'still deferred', CloudSyncHistoricalArchiveReasons.group,
+    ));
+  });
+
+  test('legacy direct and group rows remain exact without invented metadata', () {
+    for (final view in [_row(), _row(chat: _chat(style: 43, participantCount: 3))]) {
+      final encoded = encodeHistoricalSnapshotRow(view);
+      final fields = jsonDecode(encoded) as List;
+      expect(fields[10], hasLength(10));
+      final restored = decodeHistoricalSnapshotRow(encoded, snapshotSha256: _snapshot);
+      expect(restored.chat.groupMetadata, isNull);
+      expect(encodeHistoricalSnapshotRow(restored), encoded);
+    }
+    final direct = Chat(id: 11, guid: 'iMessage;-;peer@example.com',
+      chatIdentifier: 'peer@example.com', style: 45,
+    )..handles.add(Handle(address: 'peer@example.com', service: 'iMessage'));
+    expect(mapHistoricalChat(direct).groupMetadata, isNull);
+  });
+
+  test('captured group metadata is detached from the mutable local chat', () {
+    final chat = groupChat();
+    final captured = mapHistoricalChat(chat);
+    final before = encodeHistoricalSnapshotRow(_row(chat: captured));
+    chat.handles.first.address = 'changed@example.com';
+    chat.handles.clear();
+    chat.cloudGuid = 'changed-group';
+    expect(encodeHistoricalSnapshotRow(_row(chat: captured)), before);
+    expect(() => captured.groupMetadata!.participants.clear(), throwsUnsupportedError);
+  });
+
+  test('unknown group identity and duplicate members are preserved not guessed', () {
+    final chat = groupChat(cloudGuid: null);
+    chat.handles.add(Handle(address: 'peer@example.com', service: 'iMessage'));
+    final encoded = encodeHistoricalSnapshotRow(_row(chat: mapHistoricalChat(chat)));
+    final restored = decodeHistoricalSnapshotRow(encoded, snapshotSha256: _snapshot);
+    expect(restored.chat.groupMetadata!.cloudGuid, isNull);
+    expect(restored.chat.groupMetadata!.participants, hasLength(4));
+    expect(restored.chat.participantCount, 4);
+    expect(restored.chat.groupMetadata!.participants.where((p) => p.address == 'peer@example.com'), hasLength(2));
+  });
+
+  test('group source changes alter the frozen row bytes', () {
+    final chat = groupChat();
+    final original = encodeHistoricalSnapshotRow(_row(chat: mapHistoricalChat(chat)));
+    chat.handles.last.service = 'SMS';
+    expect(encodeHistoricalSnapshotRow(_row(chat: mapHistoricalChat(chat))), isNot(original));
+    chat.handles.last.service = 'iMessage';
+    chat.cloudGuid = 'other-apple-group';
+    expect(encodeHistoricalSnapshotRow(_row(chat: mapHistoricalChat(chat))), isNot(original));
+  });
+
+  test('malformed group extension never echoes member values', () {
+    final original = encodeHistoricalSnapshotRow(_row(chat: mapHistoricalChat(groupChat())));
+    for (final extension in <Object?>[
+      null, 'private-member', [2, null, []], [1, null, 'private-member'],
+      [1, null, [['private-member']]], [1, null, [[1, 'iMessage']]],
+      [1, null, [['private-member', 'iMessage', 'extra']]],
+    ]) {
+      final fields = jsonDecode(original) as List;
+      (fields[10] as List)[10] = extension;
+      expect(() => decodeHistoricalSnapshotRow(jsonEncode(fields), snapshotSha256: _snapshot),
+        throwsA(isA<StateError>().having((error) => error.message, 'reason',
+          'cloud_sync_historical_snapshot_row_invalid')));
+    }
+  });
+
+  test('noncanonical member ordering is rejected without silently changing a snapshot', () {
+    final original = encodeHistoricalSnapshotRow(_row(chat: mapHistoricalChat(groupChat())));
+    final fields = jsonDecode(original) as List;
+    final extension = (fields[10] as List)[10] as List;
+    extension[2] = (extension[2] as List).reversed.toList();
+    expect(() => decodeHistoricalSnapshotRow(jsonEncode(fields), snapshotSha256: _snapshot), throwsStateError);
+  });
+
   test('eligible row roundtrips with identical eligibility', () {
     final view = _row();
     final encoded = encodeHistoricalSnapshotRow(view);

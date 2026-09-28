@@ -26,7 +26,9 @@ import 'objectbox_cloud_sync_store.dart';
 // Bump after a reviewed change expands historical eligibility/projection. This
 // replays the same retained snapshot, not its exact already-owned operations.
 // Old progress, pending writes and confirmations remain intact in their journals.
-const _historicalArchivePolicyRevision = 1;
+// Revision 2 was the direct received-endpoint trial. Revision 3 includes groups
+// whose full stored context and exact restored parent are available.
+const _historicalArchivePolicyRevision = 3;
 
 /// Production composition for one explicit historical import. Preparing only
 /// reopens/captures a private encrypted snapshot, never calls archive or sends an

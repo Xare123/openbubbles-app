@@ -145,10 +145,19 @@ final class CloudSyncHistoricalArchiveCoordinator {
       }
       return source.localChatId;
     }
-    // Exact canonical GUID only. Matching a contact/recipient is not enough to
-    // create a parent or select a different conversation in the destination.
+    // Direct routes require the exact canonical GUID. A historical group may
+    // retain its original group ID while the destination uses a canonical GUID.
+    // Match only that exact saved group identifier, never members or a title.
+    // The native parent proof subsequently verifies both IDs against the
+    // decrypted record. Ambiguous candidates are not resolved by preference.
+    var predicate = Chat_.guid.equals(request.chatGuid);
+    if (request.groupMetadata case final group?) {
+      predicate = predicate.or(
+        Chat_.cloudGuid.equals(group.cloudGuid ?? request.chatGuid),
+      );
+    }
     final query =
-        store.box<Chat>().query(Chat_.guid.equals(request.chatGuid)).build()
+        store.box<Chat>().query(predicate).build()
           ..limit = 2;
     try {
       final chats = query.find();

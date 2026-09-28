@@ -9,7 +9,8 @@ use crate::cloud_sync_historical_projection::project_historical_plain_text;
 use crate::cloud_sync_historical_source::HistoricalArchiveSource;
 use crate::cloud_sync_native_fetch::cloud_sync_open_protected_outbound_message;
 use crate::cloud_sync_received_raw_match::{
-    compare_historical_raw_unknown_endpoint, compare_received_raw, ReceivedRawProtos,
+    compare_historical_group_raw, compare_historical_raw_unknown_endpoint, compare_received_raw,
+    ReceivedRawProtos,
 };
 use crate::cloud_sync_received_record_match::ReceivedRecordMatchVerdict;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
@@ -195,7 +196,15 @@ pub(crate) fn verify_historical_readback(
         msg_proto_3: actual.msg_proto_3.as_deref(),
         msg_proto_4: actual.msg_proto_4.as_deref(),
     };
-    let comparison = if opened.message.destination_caller_id.is_empty() {
+    let is_group = opened
+        .message
+        .msg_proto_4
+        .as_ref()
+        .and_then(|proto| proto.0.group_id.as_deref())
+        .is_some_and(|route| route.starts_with("iMessage;+;"));
+    let comparison = if is_group {
+        compare_historical_group_raw(&opened.message, &actual.message, &raw)
+    } else if opened.message.destination_caller_id.is_empty() {
         compare_historical_raw_unknown_endpoint(&opened.message, &actual.message, &raw)
     } else {
         compare_received_raw(&opened.message, &actual.message, &raw)
@@ -242,6 +251,61 @@ mod tests {
             opened.message().msg_proto.0.text.as_deref(),
             Some("Original history")
         );
+    }
+
+    #[test]
+    fn historical_group_readback_checks_raw_fields_without_relaxing_direct_comparison() {
+        let parent = crate::cloud_sync_outbound::attachment_parent_test_support::group();
+        for sent in [false, true] {
+            let source = crate::cloud_sync_historical_projection::tests::group_source(
+                sent,
+                parent.guid(),
+                Some(parent.group_id()),
+            );
+            let bytes = encode(&source, &parent, &"b".repeat(64), "record").unwrap();
+            let opened = decode(&bytes, &source, &parent, &"b".repeat(64)).unwrap();
+            let actual = inspection(opened.message().clone());
+            assert!(verify_historical_readback(&opened, &actual, &opened.payload_sha256).is_ok());
+            assert_ne!(
+                crate::cloud_sync_received_record_match::compare_received_record(
+                    opened.message(),
+                    &actual.message
+                ),
+                ReceivedRecordMatchVerdict::EquivalentSupportedPlainText
+            );
+            let mut status = opened.message().clone();
+            status.flags |= MessageFlags::IS_READ;
+            status.msg_proto.0.date_read = Some(99);
+            assert!(verify_historical_readback(
+                &opened,
+                &inspection(status),
+                &opened.payload_sha256
+            )
+            .is_ok());
+            for field in 0..5 {
+                let mut changed = inspection(opened.message().clone());
+                match field {
+                    0 => changed.msg_proto.extend([0xf8, 0x07, 0x01]),
+                    1 => changed
+                        .msg_proto_4
+                        .as_mut()
+                        .unwrap()
+                        .extend([0xf8, 0x07, 0x01]),
+                    // Existing service field with the wrong wire type.
+                    2 => changed.msg_proto_4.as_mut().unwrap().extend([0x20, 0x00]),
+                    // Same service value duplicated with its correct wire type.
+                    3 => changed
+                        .msg_proto_4
+                        .as_mut()
+                        .unwrap()
+                        .extend(b"\x22\x08iMessage"),
+                    _ => changed.message.chat_id = "different-group".into(),
+                }
+                assert!(
+                    verify_historical_readback(&opened, &changed, &opened.payload_sha256).is_err()
+                );
+            }
+        }
     }
 
     #[test]

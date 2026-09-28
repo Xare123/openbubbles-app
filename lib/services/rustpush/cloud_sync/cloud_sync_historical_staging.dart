@@ -102,7 +102,9 @@ Map<String, Object?> stagedHistoricalPayload({
   required CloudSyncHistoricalArchiveRequest request,
   required String text,
 }) => <String, Object?>{
-  'format': 'cloud-sync-historical-source-v1',
+  'format': request.groupMetadata == null
+      ? 'cloud-sync-historical-source-v1'
+      : 'cloud-sync-historical-source-v2',
   'guid': request.guid,
   'text': text,
   'origin': request.origin.name,
@@ -114,6 +116,7 @@ Map<String, Object?> stagedHistoricalPayload({
   'snapshotSha256': request.snapshotSha256,
   'accountFingerprint': request.accountFingerprint,
   'protectedStoreIdentity': request.protectedStoreIdentity,
+  if (request.groupMetadata case final group?) 'groupMetadata': group.toWire(),
 };
 
 /// Pure reassessment plus canonical encoding for one assessed request and
@@ -151,6 +154,8 @@ EncodedHistoricalSource encodeHistoricalSource({
       fresh.senderAddress != request.senderAddress ||
       fresh.peerAddress != request.peerAddress ||
       fresh.chatGuid != request.chatGuid ||
+      jsonEncode(fresh.groupMetadata?.toWire()) !=
+          jsonEncode(request.groupMetadata?.toWire()) ||
       fresh.dateCreatedMs != request.dateCreatedMs ||
       fresh.origin != request.origin ||
       fresh.isFromMe != request.isFromMe) {

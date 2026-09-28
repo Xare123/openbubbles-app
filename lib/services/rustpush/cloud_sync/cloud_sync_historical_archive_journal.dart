@@ -9,7 +9,7 @@ import 'cloud_sync_historical_local_guard.dart';
 import 'cloud_sync_historical_outbox_binding.dart';
 import 'cloud_sync_manual_shadow_sampler.dart';
 import 'cloud_sync_models.dart';
-import 'cloud_sync_outbound_chat_binding.dart';
+import 'cloud_sync_historical_parent_binding.dart';
 
 /// Validate a retained row using its own scope, not the current signed-in user.
 /// GC and interrupted lease recovery must retain old accounts and snapshots.
@@ -419,7 +419,7 @@ final class CloudSyncHistoricalArchiveJournal {
       throw StateError('cloud_sync_historical_create_source_not_ready');
     }
     final retained = _decode(row);
-    final parent = requireCloudSyncRestoredDirectChatProofForId(
+    final parent = requireCloudSyncHistoricalParentProof(
       store: _store, messageScope: scope, chatId: localChatId);
     return CloudSyncHistoricalCreateSource(
       intentId: intentId, source: retained.source, localChatId: localChatId,
@@ -461,8 +461,9 @@ final class CloudSyncHistoricalArchiveJournal {
     final retained = _decode(row);
     if (retained.source.encode() != expected.source.encode() ||
         row.createdAtMs != expected.createdAtMs ||
-        requireCloudSyncRestoredDirectChatProofForId(
-          store: _store, messageScope: scope, chatId: expected.localChatId).binding !=
+        requireCloudSyncHistoricalParentProof(
+          store: _store, messageScope: scope, chatId: expected.localChatId,
+          expectedBinding: expected.parentBinding).binding !=
             expected.parentBinding) {
       throw StateError('cloud_sync_historical_create_admission_changed');
     }
@@ -544,8 +545,8 @@ final class CloudSyncHistoricalArchiveJournal {
     if (source == null) throw StateError('cloud_sync_historical_admitted_operation_changed');
     source.localGuard.requireUnchanged(
       store: _store, source: source.source, localChatId: source.localChatId);
-    requireCloudSyncAdoptedChatDependency(store: _store, messageScope: operation.scope,
-      binding: source.parentBinding, expectedChatId: source.localChatId);
+    requireCloudSyncHistoricalParentUnchanged(store: _store, messageScope: operation.scope,
+      binding: source.parentBinding, chatId: source.localChatId);
   }
 
   /// Bounded recovery of adopted sources whose native commit may have been

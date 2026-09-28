@@ -1,0 +1,8 @@
+[
+  {
+    "name": "group-sent",
+    "canonicalPayload": "{\"format\":\"cloud-sync-historical-source-v2\",\"guid\":\"A1B2C3D4-E5F6-4A7B-8C9D-E0F1A2B3C4D5\",\"text\":\"hello from before the upgrade\",\"origin\":\"historicalSent\",\"isFromMe\":true,\"senderAddress\":\"me@example.com\",\"peerAddress\":\"friend@example.com\",\"chatGuid\":\"iMessage;+;historical-group\",\"dateCreatedMs\":1699000000000,\"snapshotSha256\":\"ab12cd34ab12cd34ab12cd34ab12cd34ab12cd34ab12cd34ab12cd34ab12cd34\",\"accountFingerprint\":\"account-fp-xyz789\",\"protectedStoreIdentity\":\"store-1\",\"groupMetadata\":[1,\"opaque-group-id\",[[\"friend@example.com\",\"iMessage\"],[\"other@example.com\",\"iMessage\"]]]}",
+    "guidHash": "7031df14081df0fc966a842743d83289f1671c9e2130b1481f07dc7f33f41246",
+    "sourceSha256": "f69970958065aadb3dcae611bd254e62871cc5cce8ce0167d6cb82b68b4d9392"
+  }
+]

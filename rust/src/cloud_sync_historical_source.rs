@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 const FORMAT: &str = "cloud-sync-historical-source-v1";
+const GROUP_FORMAT: &str = "cloud-sync-historical-source-v2";
 const MAX_BYTES: usize = 1024 * 1024;
 const MAX_TEXT_BYTES: usize = 256 * 1024;
 const MAX_IDENTIFIER_BYTES: usize = 4096;
@@ -58,6 +59,15 @@ pub(crate) struct HistoricalRow<'a> {
     pub(crate) is_from_me: bool,
 }
 
+/// Exact stored group context, not membership at the historical send time.
+/// Tuple order matches the optional Dart snapshot/source extension.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct HistoricalGroupMetadata(
+    pub(crate) u8,
+    pub(crate) Option<String>,
+    pub(crate) Vec<(String, String)>,
+);
+
 /// Exact Dart stagedHistoricalPayload wire shape, in fixed field order:
 /// format, guid, text, origin, isFromMe, senderAddress, peerAddress,
 /// chatGuid, dateCreatedMs, snapshotSha256, accountFingerprint,
@@ -86,6 +96,12 @@ struct Source {
     account_fingerprint: String,
     #[serde(rename = "protectedStoreIdentity")]
     protected_store_identity: String,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        rename = "groupMetadata"
+    )]
+    group_metadata: Option<HistoricalGroupMetadata>,
 }
 
 pub(crate) struct HistoricalArchiveSource(Source);
@@ -99,6 +115,24 @@ impl HistoricalArchiveSource {
         binding: &HistoricalBinding,
         sender_is_local: bool,
     ) -> Result<Self, Failure> {
+        Self::capture_with_group(row, binding, sender_is_local, None)
+    }
+
+    pub(crate) fn capture_group(
+        row: &HistoricalRow,
+        binding: &HistoricalBinding,
+        sender_is_local: bool,
+        group: HistoricalGroupMetadata,
+    ) -> Result<Self, Failure> {
+        Self::capture_with_group(row, binding, sender_is_local, Some(group))
+    }
+
+    fn capture_with_group(
+        row: &HistoricalRow,
+        binding: &HistoricalBinding,
+        sender_is_local: bool,
+        group_metadata: Option<HistoricalGroupMetadata>,
+    ) -> Result<Self, Failure> {
         identifier(row.guid)?;
         if row.guid.starts_with("temp") || row.guid.starts_with("error") {
             return Err(Failure::UnsupportedMessage);
@@ -106,6 +140,25 @@ impl HistoricalArchiveSource {
         identifier(row.sender)?;
         identifier(row.peer)?;
         identifier(row.chat_guid)?;
+        if let Some(group) = &group_metadata {
+            if group.0 != 1 || group.2.is_empty() {
+                return Err(Failure::MalformedMessage);
+            }
+            if let Some(cloud_guid) = &group.1 {
+                identifier(cloud_guid)?;
+            }
+            let mut members = std::collections::HashSet::new();
+            for (address, service) in &group.2 {
+                identifier(address)?;
+                identifier(bare(address))?;
+                if service != "iMessage" || !members.insert(bare(address)) {
+                    return Err(Failure::MalformedMessage);
+                }
+            }
+            if !members.contains(bare(row.peer)) {
+                return Err(Failure::BindingMismatch);
+            }
+        }
         if row.text.is_empty()
             || row.text.trim_matches(dart_whitespace).is_empty()
             || row.text.contains('\0')
@@ -125,7 +178,12 @@ impl HistoricalArchiveSource {
             _ => return Err(Failure::BindingMismatch),
         };
         let source = Source {
-            format: FORMAT.into(),
+            format: if group_metadata.is_some() {
+                GROUP_FORMAT
+            } else {
+                FORMAT
+            }
+            .into(),
             guid: row.guid.into(),
             text: row.text.into(),
             origin,
@@ -137,6 +195,7 @@ impl HistoricalArchiveSource {
             snapshot_sha256: binding.snapshot_sha256.into(),
             account_fingerprint: binding.account_fingerprint.into(),
             protected_store_identity: binding.protected_store_identity.into(),
+            group_metadata,
         };
         let staged = Self(source);
         staged.encode()?;
@@ -166,7 +225,12 @@ impl HistoricalArchiveSource {
         snapshot_hex(expected_source_sha256)?;
         let source: Source =
             serde_json::from_slice(bytes).map_err(|_| Failure::MalformedMessage)?;
-        if source.format != FORMAT {
+        let expected_format = if source.group_metadata.is_some() {
+            GROUP_FORMAT
+        } else {
+            FORMAT
+        };
+        if source.format != expected_format {
             return Err(Failure::UnsupportedMessage);
         }
         if source.snapshot_sha256 != binding.snapshot_sha256
@@ -185,7 +249,12 @@ impl HistoricalArchiveSource {
             date_created_ms: source.sent_timestamp,
             is_from_me: source.is_from_me,
         };
-        let canonical = Self::capture(&row, binding, sender_is_local)?;
+        let canonical = Self::capture_with_group(
+            &row,
+            binding,
+            sender_is_local,
+            source.group_metadata.clone(),
+        )?;
         if canonical.0 != source
             || canonical.encode()? != bytes
             || canonical.source_sha256()? != expected_source_sha256
@@ -216,6 +285,9 @@ impl HistoricalArchiveSource {
     pub(crate) fn chat_guid(&self) -> &str {
         &self.0.chat_guid
     }
+    pub(crate) fn group_metadata(&self) -> Option<&HistoricalGroupMetadata> {
+        self.0.group_metadata.as_ref()
+    }
     pub(crate) fn require_account_store(&self, account: &str, store: &str) -> Result<(), Failure> {
         if self.0.account_fingerprint != account || self.0.protected_store_identity != store {
             return Err(Failure::BindingMismatch);
@@ -232,21 +304,42 @@ impl HistoricalArchiveSource {
     /// Lane-local source digest over the full validated binding.
     pub(crate) fn source_sha256(&self) -> Result<String, Failure> {
         let s = &self.0;
-        digest(&serde_json::json!([
-            "cloud-sync-historical-archive-source-v1",
-            s.guid,
-            s.text,
-            s.sender,
-            s.peer,
-            s.chat_guid,
-            s.sent_timestamp,
-            s.origin.label(),
-            s.is_from_me,
-            s.snapshot_sha256,
-            s.account_fingerprint,
-            s.protected_store_identity
-        ]))
+        let mut fields = vec![serde_json::json!(if s.group_metadata.is_some() {
+            "cloud-sync-historical-archive-source-v2"
+        } else {
+            "cloud-sync-historical-archive-source-v1"
+        })];
+        fields.extend(
+            serde_json::json!([
+                s.guid,
+                s.text,
+                s.sender,
+                s.peer,
+                s.chat_guid,
+                s.sent_timestamp,
+                s.origin.label(),
+                s.is_from_me,
+                s.snapshot_sha256,
+                s.account_fingerprint,
+                s.protected_store_identity
+            ])
+            .as_array()
+            .ok_or(Failure::MalformedMessage)?
+            .iter()
+            .cloned(),
+        );
+        if let Some(group) = &s.group_metadata {
+            fields.push(serde_json::to_value(group).map_err(|_| Failure::MalformedMessage)?);
+        }
+        digest(&serde_json::Value::Array(fields))
     }
+}
+
+fn bare(value: &str) -> &str {
+    value
+        .strip_prefix("mailto:")
+        .or_else(|| value.strip_prefix("tel:"))
+        .unwrap_or(value)
 }
 
 fn dart_whitespace(c: char) -> bool {
@@ -488,12 +581,17 @@ mod tests {
 
     #[test]
     fn shared_dart_wire_vectors_match_exact_bytes_and_digests() {
-        let vectors: serde_json::Value = serde_json::from_str(include_str!(
+        let mut vectors: Vec<serde_json::Value> = serde_json::from_str(include_str!(
             "../../test/fixtures/cloud_sync/historical_source_v1.json"
         ))
         .unwrap();
-        let vectors = vectors.as_array().unwrap();
-        assert_eq!(vectors.len(), 3);
+        vectors.extend(
+            serde_json::from_str::<Vec<serde_json::Value>>(include_str!(
+                "../../test/fixtures/cloud_sync/historical_source_v2.json"
+            ))
+            .unwrap(),
+        );
+        assert_eq!(vectors.len(), 4);
         for vector in vectors {
             let bytes = vector["canonicalPayload"].as_str().unwrap().as_bytes();
             let source: Source = serde_json::from_slice(bytes).unwrap();
@@ -514,5 +612,78 @@ mod tests {
                 vector["guidHash"].as_str().unwrap()
             );
         }
+    }
+
+    #[test]
+    fn group_extension_cannot_be_relabelled_omitted_or_changed() {
+        let group = HistoricalGroupMetadata(
+            1,
+            Some("stored-group".into()),
+            vec![
+                ("friend@example.com".into(), "iMessage".into()),
+                ("other@example.com".into(), "iMessage".into()),
+            ],
+        );
+        let source = HistoricalArchiveSource::capture_group(
+            &HistoricalRow {
+                chat_guid: "iMessage;+;historical-group",
+                ..row()
+            },
+            &binding(),
+            false,
+            group.clone(),
+        )
+        .unwrap();
+        let original = source.encode().unwrap();
+        let expected = source.source_sha256().unwrap();
+        assert!(HistoricalArchiveSource::decode(&original, &binding(), &expected).is_ok());
+        for field in ["groupMetadata", "format"] {
+            let mut changed: serde_json::Value = serde_json::from_slice(&original).unwrap();
+            changed.as_object_mut().unwrap().remove(field);
+            assert!(HistoricalArchiveSource::decode(
+                &serde_json::to_vec(&changed).unwrap(),
+                &binding(),
+                &expected
+            )
+            .is_err());
+        }
+        for changed in [
+            HistoricalGroupMetadata(2, group.1.clone(), group.2.clone()),
+            HistoricalGroupMetadata(1, Some(" ".into()), group.2.clone()),
+            HistoricalGroupMetadata(1, group.1.clone(), vec![]),
+            HistoricalGroupMetadata(
+                1,
+                group.1.clone(),
+                vec![("friend@example.com".into(), "SMS".into())],
+            ),
+            HistoricalGroupMetadata(
+                1,
+                group.1.clone(),
+                vec![
+                    ("friend@example.com".into(), "iMessage".into()),
+                    ("mailto:friend@example.com".into(), "iMessage".into()),
+                ],
+            ),
+        ] {
+            assert!(
+                HistoricalArchiveSource::capture_group(&row(), &binding(), false, changed).is_err()
+            );
+        }
+        let mut changed = group;
+        changed.1 = Some("another-group".into());
+        let changed = HistoricalArchiveSource::capture_group(
+            &HistoricalRow {
+                chat_guid: "iMessage;+;historical-group",
+                ..row()
+            },
+            &binding(),
+            false,
+            changed,
+        )
+        .unwrap();
+        assert!(
+            HistoricalArchiveSource::decode(&changed.encode().unwrap(), &binding(), &expected)
+                .is_err()
+        );
     }
 }

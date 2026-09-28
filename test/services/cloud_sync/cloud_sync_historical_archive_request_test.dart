@@ -42,6 +42,7 @@ CloudSyncHistoricalChatView _chat({
   int participantCount = 1,
   String participantAddress = 'friend@example.com',
   String participantService = 'iMessage',
+  CloudSyncHistoricalGroupMetadata? groupMetadata,
 }) {
   return CloudSyncHistoricalChatView(
     id: id,
@@ -54,6 +55,7 @@ CloudSyncHistoricalChatView _chat({
     participantCount: participantCount,
     participantAddress: participantAddress,
     participantService: participantService,
+    groupMetadata: groupMetadata,
   );
 }
 
@@ -173,26 +175,37 @@ String _reason(
 }
 
 void main() {
-  final vectors =
-      (jsonDecode(
-                File(
-                  'test/fixtures/cloud_sync/historical_source_v1.json',
-                ).readAsStringSync(),
-              )
-              as List)
-          .cast<Map<String, dynamic>>();
+  final vectors = [
+    for (final version in [1, 2])
+      ...(jsonDecode(File(
+        'test/fixtures/cloud_sync/historical_source_v$version.json',
+      ).readAsStringSync()) as List).cast<Map<String, dynamic>>(),
+  ];
   for (final vector in vectors) {
     test('native shared wire vector ${vector['name']}', () {
       final payload =
           jsonDecode(vector['canonicalPayload'] as String)
               as Map<String, dynamic>;
       final text = payload['text'] as String;
+      final group = payload['groupMetadata'] as List?;
       final request = _eligible(
         _row(
           guid: payload['guid'] as String,
           text: text,
           senderAddress: payload['senderAddress'] as String,
           isFromMe: payload['isFromMe'] as bool,
+          chat: group == null ? null : _chat(
+            guid: payload['chatGuid'] as String,
+            style: 43,
+            chatIdentifier: 'historical-group',
+            participantCount: (group[2] as List).length,
+            groupMetadata: CloudSyncHistoricalGroupMetadata(
+              cloudGuid: group[1] as String?,
+              participants: (group[2] as List).map((member) =>
+                CloudSyncHistoricalParticipantView(
+                  address: member[0] as String, service: member[1] as String)),
+            ),
+          ),
         ),
       );
       expect(request.guidHash, vector['guidHash']);
@@ -203,6 +216,59 @@ void main() {
       );
     });
   }
+
+  CloudSyncHistoricalGroupMetadata groupMetadata({
+    String? cloudGuid = 'opaque-group-id',
+    String second = 'other@example.com',
+    String service = 'iMessage',
+  }) => CloudSyncHistoricalGroupMetadata(
+    cloudGuid: cloudGuid,
+    participants: [
+      const CloudSyncHistoricalParticipantView(address: 'friend@example.com', service: 'iMessage'),
+      CloudSyncHistoricalParticipantView(address: second, service: service),
+    ],
+  );
+  CloudSyncHistoricalChatView groupChat(CloudSyncHistoricalGroupMetadata? group) => _chat(
+    guid: 'iMessage;+;historical-group', style: 43,
+    chatIdentifier: 'historical-group', participantCount: 2, groupMetadata: group,
+  );
+
+  test('group context is preserved without claiming historical membership', () {
+    final request = _eligible(_row(
+      chat: groupChat(groupMetadata()), senderAddress: 'departed@example.com'));
+    expect(request.origin, CloudSyncHistoricalArchiveOrigin.historicalReceived);
+    expect(request.senderAddress, 'departed@example.com');
+    expect(request.groupMetadata!.participants, hasLength(2));
+    expect(stagedHistoricalPayload(request: request, text: _text)['format'],
+        'cloud-sync-historical-source-v2');
+  });
+
+  test('old or contradictory group metadata remains ineligible', () {
+    for (final group in [null, groupMetadata(second: 'friend@example.com'),
+      groupMetadata(service: 'SMS'), groupMetadata(cloudGuid: ' ')]) {
+      expect(_reason(_row(chat: groupChat(group))), CloudSyncHistoricalArchiveReasons.group);
+    }
+  });
+
+  test('all captured group members and optional ID are bound to source', () {
+    final original = _eligible(_row(chat: groupChat(groupMetadata())));
+    for (final group in [groupMetadata(second: 'changed@example.com'),
+      groupMetadata(cloudGuid: 'changed'), groupMetadata(cloudGuid: null)]) {
+      final changed = _eligible(_row(chat: groupChat(group)));
+      expect(changed.sourceSha256, isNot(original.sourceSha256));
+      expect(() => encodeHistoricalSource(request: original,
+        currentRow: _row(chat: groupChat(group)), manifest: _manifest(),
+        account: _accountBinding(), nowMs: _nowMs), throwsStateError);
+    }
+  });
+
+  test('stored original group UUID is preserved for exact parent lookup', () {
+    final request = _eligible(_row(chat: _chat(
+      guid: _guid, style: null, chatIdentifier: null, participantCount: 2,
+      groupMetadata: groupMetadata(cloudGuid: null))));
+    expect(request.chatGuid, _guid);
+    expect(request.groupMetadata!.cloudGuid, isNull);
+  });
 
   test('NUL body is ineligible before native staging', () {
     expect(

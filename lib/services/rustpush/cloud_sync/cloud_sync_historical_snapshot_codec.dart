@@ -4,7 +4,9 @@ import 'package:bluebubbles/database/models.dart';
 
 import 'cloud_sync_historical_archive_request.dart';
 
-/// Canonical v1 snapshot codec for one [CloudSyncHistoricalRowView].
+/// Canonical v1 snapshot codec with an optional group-metadata extension.
+/// Existing ten-field chat rows, including old groups, re-encode byte-exactly.
+/// The extension records metadata only; it does not enable group uploads.
 ///
 /// The encoder preserves every row/chat field the eligibility check reads,
 /// including unsupported markers (unknown direction, attachments, edits,
@@ -128,6 +130,7 @@ List<Object?> _chatFields(CloudSyncHistoricalChatView chat) => <Object?>[
   chat.participantCount,
   chat.participantAddress,
   chat.participantService,
+  if (chat.groupMetadata case final group?) group.toWire(),
 ];
 
 CloudSyncHistoricalRowView _rowView(Object? value, String snapshotSha256) {
@@ -176,7 +179,8 @@ CloudSyncHistoricalRowView _rowView(Object? value, String snapshotSha256) {
 }
 
 CloudSyncHistoricalChatView _chat(Object? value) {
-  if (value is! List || value.length != _chatFieldCount) {
+  if (value is! List ||
+      (value.length != _chatFieldCount && value.length != _chatFieldCount + 1)) {
     throw StateError(_invalid);
   }
   return CloudSyncHistoricalChatView(
@@ -190,6 +194,25 @@ CloudSyncHistoricalChatView _chat(Object? value) {
     participantCount: _integer(value[7]),
     participantAddress: _string(value[8]),
     participantService: _string(value[9]),
+    groupMetadata: value.length == _chatFieldCount
+        ? null
+        : _groupMetadata(value[10]),
+  );
+}
+
+CloudSyncHistoricalGroupMetadata _groupMetadata(Object? value) {
+  if (value is! List || value.length != 3 || value[0] != 1 || value[2] is! List) {
+    throw StateError(_invalid);
+  }
+  return CloudSyncHistoricalGroupMetadata(
+    cloudGuid: _optionalString(value[1]),
+    participants: (value[2] as List).map((member) {
+      if (member is! List || member.length != 2) throw StateError(_invalid);
+      return CloudSyncHistoricalParticipantView(
+        address: _string(member[0]),
+        service: _string(member[1]),
+      );
+    }),
   );
 }
 

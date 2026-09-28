@@ -98,6 +98,45 @@ class CloudSyncHistoricalSourceManifest {
       capturedAtMs <= nowMs + _futureSkewMs;
 }
 
+/// Exact persisted member metadata. Capture never substitutes a current account
+/// alias or treats the stored member list as membership at message creation.
+final class CloudSyncHistoricalParticipantView {
+  const CloudSyncHistoricalParticipantView({
+    required this.address,
+    required this.service,
+  });
+
+  final String address;
+  final String service;
+}
+
+/// Optional additive group metadata. Old sealed snapshots lack these details;
+/// they must remain unknown, not be filled from a later mutable chat.
+final class CloudSyncHistoricalGroupMetadata {
+  CloudSyncHistoricalGroupMetadata({
+    required this.cloudGuid,
+    required Iterable<CloudSyncHistoricalParticipantView> participants,
+  }) : participants = List.unmodifiable(
+         participants.toList()..sort((a, b) {
+           final address = a.address.compareTo(b.address);
+           return address != 0 ? address : a.service.compareTo(b.service);
+         }),
+       );
+
+  final String? cloudGuid;
+  final List<CloudSyncHistoricalParticipantView> participants;
+
+  /// Exact optional extension shared by the snapshot and native source codec.
+  List<Object?> toWire() => <Object?>[
+    1,
+    cloudGuid,
+    participants.map((member) => <Object?>[
+      member.address,
+      member.service,
+    ]).toList(),
+  ];
+}
+
 /// Plain view of the owning chat. Built by mapHistoricalChat; never read
 /// from a database here.
 class CloudSyncHistoricalChatView {
@@ -112,6 +151,7 @@ class CloudSyncHistoricalChatView {
     required this.participantCount,
     required this.participantAddress,
     required this.participantService,
+    this.groupMetadata,
   });
 
   final int id;
@@ -124,6 +164,7 @@ class CloudSyncHistoricalChatView {
   final int participantCount;
   final String participantAddress;
   final String participantService;
+  final CloudSyncHistoricalGroupMetadata? groupMetadata;
 }
 
 /// Plain view of one stored row. Built by mapHistoricalRow; never read
@@ -242,6 +283,7 @@ class CloudSyncHistoricalArchiveRequest {
     required this.textSha256,
     required this.senderAddress,
     required this.peerAddress,
+    this.groupMetadata,
   });
 
   final String guid;
@@ -257,6 +299,7 @@ class CloudSyncHistoricalArchiveRequest {
   final String textSha256;
   final String senderAddress;
   final String peerAddress;
+  final CloudSyncHistoricalGroupMetadata? groupMetadata;
 }
 
 /// Fixed reason codes. None carries content, GUIDs, handles, or times.
@@ -482,14 +525,16 @@ CloudSyncHistoricalArchiveAssessment _assessHistoricalBoundRow(
       CloudSyncHistoricalArchiveReasons.route,
     );
   }
-  if (chat.participantCount > 1 ||
+  final isGroup = chat.participantCount > 1 ||
       chat.style == 43 ||
-      chat.guid.startsWith('iMessage;+;')) {
+      chat.guid.startsWith('iMessage;+;');
+  final group = isGroup ? chat.groupMetadata : null;
+  if (isGroup && !_validGroupMetadata(chat, group)) {
     return const CloudSyncHistoricalArchiveIneligible(
       CloudSyncHistoricalArchiveReasons.group,
     );
   }
-  if (chat.participantCount != 1 ||
+  if ((!isGroup && chat.participantCount != 1) ||
       chat.participantService != 'iMessage' ||
       !_boundedIdentifier(chat.participantAddress) ||
       !_boundedIdentifier(chat.guid)) {
@@ -510,12 +555,13 @@ CloudSyncHistoricalArchiveAssessment _assessHistoricalBoundRow(
       chat.style == null &&
       identifier == null &&
       !chat.isRoutingStub;
-  if (!canonicalDirect && !provisionalDirect) {
+  if (!isGroup && (!canonicalDirect && !provisionalDirect)) {
     return const CloudSyncHistoricalArchiveIneligible(
       CloudSyncHistoricalArchiveReasons.route,
     );
   }
-  if (origin == CloudSyncHistoricalArchiveOrigin.historicalReceived &&
+  if (!isGroup &&
+      origin == CloudSyncHistoricalArchiveOrigin.historicalReceived &&
       _bare(sender) != chat.participantAddress) {
     return const CloudSyncHistoricalArchiveIneligible(
       CloudSyncHistoricalArchiveReasons.counterparts,
@@ -544,7 +590,9 @@ CloudSyncHistoricalArchiveAssessment _assessHistoricalBoundRow(
       guid: guid,
       guidHash: _digest(['cloud-sync-historical-archive-guid-v1', guid]),
       sourceSha256: _digest([
-        'cloud-sync-historical-archive-source-v1',
+        group == null
+            ? 'cloud-sync-historical-archive-source-v1'
+            : 'cloud-sync-historical-archive-source-v2',
         guid,
         text,
         sender,
@@ -556,6 +604,7 @@ CloudSyncHistoricalArchiveAssessment _assessHistoricalBoundRow(
         snapshotSha256,
         accountFingerprint,
         protectedStoreIdentity,
+        if (group != null) group.toWire(),
       ]),
       origin: origin,
       textSha256: historicalTextDigest(text),
@@ -567,8 +616,39 @@ CloudSyncHistoricalArchiveAssessment _assessHistoricalBoundRow(
       snapshotSha256: snapshotSha256,
       accountFingerprint: accountFingerprint,
       protectedStoreIdentity: protectedStoreIdentity,
+      groupMetadata: group,
     ),
   );
+}
+
+/// This establishes a coherent stored group route, not membership at the time
+/// of the message and not the existence of its CloudKit parent. Native creation
+/// still requires an independently restored exact parent record.
+bool _validGroupMetadata(
+  CloudSyncHistoricalChatView chat,
+  CloudSyncHistoricalGroupMetadata? group,
+) {
+  if (group == null || chat.isRoutingStub ||
+      group.participants.isEmpty ||
+      group.participants.length != chat.participantCount ||
+      (group.cloudGuid != null && !_boundedIdentifier(group.cloudGuid!))) {
+    return false;
+  }
+  final identifier = chat.chatIdentifier;
+  final canonical = chat.style == 43 && identifier != null &&
+      _boundedIdentifier(identifier) && chat.guid == 'iMessage;+;$identifier';
+  final provisional = _uuid.hasMatch(chat.guid) &&
+      (chat.style == null || chat.style == 43) && identifier == null;
+  if (!canonical && !provisional) return false;
+  final members = <String>{};
+  for (final member in group.participants) {
+    if (member.service != 'iMessage' || !_boundedIdentifier(member.address) ||
+        !_boundedIdentifier(_bare(member.address)) ||
+        !members.add(_bare(member.address))) {
+      return false;
+    }
+  }
+  return members.contains(_bare(chat.participantAddress));
 }
 
 /// Ownership decision for one exact GUID against registries the caller
@@ -596,6 +676,8 @@ CloudSyncHistoricalDedupeVerdict resolveHistoricalDedupe({
 CloudSyncHistoricalChatView mapHistoricalChat(Chat chat) {
   final handles = chat.handles.toList(growable: false);
   final first = handles.isEmpty ? null : handles.first;
+  final group = handles.length > 1 ||
+      chat.style == 43 || chat.guid.startsWith('iMessage;+;');
   return CloudSyncHistoricalChatView(
     id: chat.id ?? -1,
     guid: chat.guid,
@@ -607,6 +689,15 @@ CloudSyncHistoricalChatView mapHistoricalChat(Chat chat) {
     participantCount: handles.length,
     participantAddress: first?.address ?? '',
     participantService: first?.service ?? '',
+    groupMetadata: group
+        ? CloudSyncHistoricalGroupMetadata(
+            cloudGuid: chat.cloudGuid,
+            participants: handles.map((handle) => CloudSyncHistoricalParticipantView(
+              address: handle.address,
+              service: handle.service,
+            )),
+          )
+        : null,
   );
 }
 

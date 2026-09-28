@@ -41,7 +41,8 @@
 #![cfg_attr(not(test), allow(dead_code))]
 
 use crate::cloud_sync_received_record_match::{
-    compare_historical_record_unknown_endpoint, compare_received_record, ReceivedRecordMatchVerdict,
+    compare_historical_group_record, compare_historical_record_unknown_endpoint,
+    compare_received_record, ReceivedRecordMatchVerdict,
 };
 use rustpush::cloud_messages::{
     cloudmessagesp::{MessageProto, MessageProto2, MessageProto3, MessageProto4},
@@ -92,6 +93,17 @@ pub(crate) fn compare_historical_raw_unknown_endpoint(
 ) -> Result<ReceivedRecordMatchVerdict, ReceivedRawMatchFailure> {
     verify_raw_fields(found, raw)?;
     Ok(compare_historical_record_unknown_endpoint(expected, found))
+}
+
+/// Same strict raw-field checks for historical group readback. No unknown or
+/// duplicate protobuf field is discarded to obtain group equivalence.
+pub(crate) fn compare_historical_group_raw(
+    expected: &CloudMessage,
+    found: &CloudMessage,
+    raw: &ReceivedRawProtos<'_>,
+) -> Result<ReceivedRecordMatchVerdict, ReceivedRawMatchFailure> {
+    verify_raw_fields(found, raw)?;
+    Ok(compare_historical_group_record(expected, found))
 }
 
 fn verify_raw_fields(

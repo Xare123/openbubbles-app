@@ -43,7 +43,8 @@ final class CloudSyncHistoricalReceivedEndpointTrial {
     if (assessment is! CloudSyncHistoricalArchiveEligible ||
         assessment.request.origin !=
             CloudSyncHistoricalArchiveOrigin.historicalReceived ||
-        assessment.request.isFromMe) {
+        assessment.request.isFromMe ||
+        assessment.request.groupMetadata != null) {
       throw StateError('cloud_sync_historical_trial_invalid');
     }
     return CloudSyncHistoricalReceivedEndpointTrial._(

@@ -54,6 +54,7 @@ final class CloudSyncRestoredGroupChatProof {
   const CloudSyncRestoredGroupChatProof({
     required this.binding,
     required this.generation,
+    required this.logicalEntityKeyHash,
     required this.routingMetadataDigest,
     required this.source,
   });
@@ -63,6 +64,7 @@ final class CloudSyncRestoredGroupChatProof {
 
   /// Pinned checkpoint generation of the validated proof.
   final int generation;
+  final String logicalEntityKeyHash;
 
   /// Pinned group-routing digest of the validated proof.
   final String routingMetadataDigest;
@@ -83,17 +85,27 @@ CloudSyncRestoredGroupChatProof requireCloudSyncRestoredGroupChatProof({
   required Store store,
   required CloudSyncScope messageScope,
   required Message message,
+}) => requireCloudSyncRestoredGroupChatProofForId(
+  store: store, messageScope: messageScope, chatId: message.chat.targetId);
+
+/// Historical recovery can outlive a Message row, but not the exact restored
+/// parent. Reuse the same group proof without fabricating a Message relation.
+CloudSyncRestoredGroupChatProof requireCloudSyncRestoredGroupChatProofForId({
+  required Store store,
+  required CloudSyncScope messageScope,
+  required int chatId,
 }) => store.runInTransaction(
   TxMode.read,
   () {
     final captured = _captureRestoredGroupChat(
       store: store,
       messageScope: messageScope,
-      chatId: message.chat.targetId,
+      chatId: chatId,
     );
     return _proofFromLatest(
       binding: captured.binding,
       generation: captured.generation,
+      logicalEntityKeyHash: captured.logicalEntityKeyHash,
       routingMetadataDigest: captured.routingMetadataDigest,
       latest: captured.latest,
     );
@@ -131,6 +143,7 @@ CloudSyncRestoredGroupChatProof requireCloudSyncAdoptedGroupChatProof({
     return _proofFromLatest(
       binding: captured.binding,
       generation: captured.generation,
+      logicalEntityKeyHash: captured.logicalEntityKeyHash,
       routingMetadataDigest: captured.routingMetadataDigest,
       latest: captured.latest,
     );
@@ -181,6 +194,7 @@ Never _rejectGroupChatNotReady() => throw CloudSyncFailure(
 CloudSyncRestoredGroupChatProof _proofFromLatest({
   required String binding,
   required int generation,
+  required String logicalEntityKeyHash,
   required String routingMetadataDigest,
   required CloudInboxChangeEntity latest,
 }) {
@@ -193,6 +207,7 @@ CloudSyncRestoredGroupChatProof _proofFromLatest({
   return CloudSyncRestoredGroupChatProof(
     binding: binding,
     generation: generation,
+    logicalEntityKeyHash: logicalEntityKeyHash,
     routingMetadataDigest: routingMetadataDigest,
     source: CloudSyncChatIdentitySourceInput(
       changeIdHash: latest.changeIdHash,
@@ -226,6 +241,7 @@ String _requireRestoredGroupChatById({
 ({
   String binding,
   int generation,
+  String logicalEntityKeyHash,
   String routingMetadataDigest,
   CloudInboxChangeEntity latest,
 }) _captureRestoredGroupChat({
@@ -423,6 +439,7 @@ String _requireRestoredGroupChatById({
   return (
     binding: binding,
     generation: generation,
+    logicalEntityKeyHash: snapshot.logicalEntityKeyHash,
     routingMetadataDigest: snapshot.groupMetadataDigest!,
     latest: latest,
   );
