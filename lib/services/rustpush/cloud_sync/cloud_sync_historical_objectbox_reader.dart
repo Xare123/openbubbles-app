@@ -89,7 +89,15 @@ class CloudSyncHistoricalObjectBoxReader implements HistoricalRowReader {
   Future<HistoricalRowPage> readPage({
     String? cursor,
     required int limit,
-  }) async {
+  }) async => readPageInTransaction(cursor: cursor, limit: limit);
+
+  /// Synchronous entry for a caller holding one outer read transaction across
+  /// an entire bounded export. No await may split that consistent DB view.
+  /// Ordinary paging still requires an already-qualified immutable source.
+  HistoricalRowPage readPageInTransaction({
+    String? cursor,
+    required int limit,
+  }) {
     if (limit < 1 ||
         limit > maxPageLimit ||
         maxPageLimit > absoluteMaxPageLimit ||

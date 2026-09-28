@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_historical_archive_request.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_historical_objectbox_reader.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_historical_snapshot.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 const _snapshot =
@@ -560,5 +561,60 @@ void main() {
     store.box<Message>().put(message);
     final page = await reader().readPage(limit: 10);
     expect(page.views.single.isFromMe, isNull);
+  });
+
+  CloudSyncHistoricalSnapshot capture({bool Function()? current, int rows = 100000, int bytes = 32 * 1024 * 1024}) => CloudSyncHistoricalSnapshot.capture(
+    store: store,
+    account: const CloudSyncHistoricalAccountBinding(accountFingerprint: _account, protectedStoreIdentity: _storeIdentity),
+    accountHandles: ['me@example.com'], capturedAtMs: 1700000000000,
+    stillCurrent: current ?? () => true, rowLimit: rows, byteLimit: bytes,
+  );
+
+  test('consistent export survives in-place edits, deletion and database restart', () async {
+    final message = putMessage(guid: 'stable', text: 'before', isFromMe: true, sender: me, owner: chat);
+    final snapshot = capture();
+    message.text = 'after';
+    message.attributedBody = [AttributedBody.raw('after')];
+    store.box<Message>().put(message);
+    final changed = capture();
+    expect(changed.manifest.snapshotSha256, isNot(snapshot.manifest.snapshotSha256));
+    store.box<Message>().remove(message.id!);
+    store.close();
+    store = await openStore(directory: directory.path);
+    final original = (await snapshot.readExact('stable'))!;
+    expect(original.text, 'before');
+    expect(original.attributedBodies.single.string, 'before');
+    expect(original.senderAddress, me.address);
+    expect((await snapshot.readPage(limit: 10)).views.single.guid, 'stable');
+    expect(store.box<Message>().count(), 0);
+  });
+
+  test('consistent export exceeds a page and never depends on mutable relations', () async {
+    for (var i = 0; i < 205; i++) {
+      putMessage(guid: 'stable-$i', text: 'before-$i', isFromMe: false, sender: friend, owner: chat);
+    }
+    final snapshot = capture();
+    friend.address = 'changed@example.com';
+    store.box<Handle>().put(friend);
+    final first = await snapshot.readPage(limit: 200);
+    final rest = await snapshot.readPage(cursor: first.nextCursor, limit: 200);
+    expect(first.views, hasLength(200));
+    expect(rest.views, hasLength(5));
+    expect(rest.nextCursor, isNull);
+    expect(rest.views.every((row) => row.senderAddress == 'friend@example.com'), isTrue);
+    expect(store.box<Message>().count(), 205);
+  });
+
+  test('consistent export fails bounds and identity without modifying the source', () {
+    putMessage(guid: 'a', text: 'before', isFromMe: false, sender: friend, owner: chat);
+    putMessage(guid: 'b', text: 'before', isFromMe: false, sender: friend, owner: chat);
+    expect(() => capture(rows: 1), throwsStateError);
+    expect(() => capture(bytes: 1), throwsStateError);
+    expect(() => capture(current: () => false), throwsStateError);
+    var checks = 0;
+    expect(() => capture(current: () => ++checks < 3), throwsStateError);
+    expect(store.isClosed(), isFalse);
+    expect(store.box<Message>().count(), 2);
+    expect(store.box<Message>().getAll().every((row) => row.text == 'before'), isTrue);
   });
 }
