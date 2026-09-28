@@ -1504,7 +1504,7 @@ final class CloudSyncProductionLocalSendAdapter {
             journal: historicalJournal!, durable: durable, auth: auth,
             localSendJournal: journal) != null;
           if (!alreadyAdmitted && historicalCreates.confirmedParentId(scope, historical.request) == null) {
-            if (historical.request.groupMetadata == null || historical.request.parentState == null) {
+            if (historical.request.parentState == null) {
               throw StateError('cloud_sync_historical_create_parent_not_ready');
             }
             if (historical.chatOperation == null) {

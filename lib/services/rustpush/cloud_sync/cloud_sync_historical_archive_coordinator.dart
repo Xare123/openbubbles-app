@@ -149,15 +149,15 @@ final class CloudSyncHistoricalArchiveCoordinator {
       }
       return source.localChatId;
     }
-    // Direct routes require the exact canonical GUID. A historical group may
-    // retain its original group ID while the destination uses a canonical GUID.
-    // Match only that exact saved group identifier, never members or a title.
+    // A historical parent may retain its original lineage while the destination
+    // uses a canonical GUID, including a provisional one-to-one chat. Match only
+    // that exact captured identifier, never members or a title.
     // The native parent proof subsequently verifies both IDs against the
     // decrypted record. Ambiguous candidates are not resolved by preference.
     var predicate = Chat_.guid.equals(request.chatGuid);
-    if (request.groupMetadata case final group?) {
+    if (request.groupMetadata != null || request.parentState != null) {
       predicate = predicate.or(
-        Chat_.cloudGuid.equals(group.cloudGuid ?? request.chatGuid),
+        Chat_.cloudGuid.equals(request.groupMetadata?.cloudGuid ?? request.parentState?.cloudGuid ?? request.chatGuid),
       );
     }
     final query =
@@ -165,7 +165,7 @@ final class CloudSyncHistoricalArchiveCoordinator {
           ..limit = 2;
     try {
       final chats = query.find();
-      if (chats.isEmpty && request.groupMetadata != null && request.parentState != null) {
+      if (chats.isEmpty && request.parentState != null) {
         return null; // Historical parent path, never a fabricated local Chat.
       }
       if (chats.length != 1 || chats.single.id == null) {

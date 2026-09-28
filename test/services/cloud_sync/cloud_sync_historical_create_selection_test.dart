@@ -355,6 +355,23 @@ void main() {
       appliedSource: applied,
       now: _now,
     );
+    // The generic proof fixture retains an existing write mapping's protected
+    // identity. Model the ordinary semantic reader's authenticated replacement
+    // here, including any mirrored Chat-member mapping. This is fixture setup,
+    // not permission for production to replace an unverified record reference.
+    final projectedMaps = store.box<CloudRecordMapEntity>().getAll().where(
+      (row) => row.scopeKey == applied.scopeKey &&
+          row.generation == applied.generation &&
+          row.logicalEntityKeyHash == parent.logicalEntityKeyHash &&
+          row.serverRecordIdHash == applied.serverRecordIdHash,
+    ).toList();
+    expect(projectedMaps, isNotEmpty);
+    for (final mapping in projectedMaps) {
+      expect(mapping.etagHash, applied.etagHash);
+      expect(mapping.encryptedRawRecordRef, applied.encryptedPayloadRef);
+      mapping.encryptedServerRecordId = applied.encryptedServerRecordId!;
+    }
+    store.box<CloudRecordMapEntity>().putMany(projectedMaps);
     final messageGeneration = (await durable.readCheckpoint(
       _messageScope,
     )).generation;

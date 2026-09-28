@@ -252,7 +252,7 @@ Chat? _resolveHistoricalOrigin({
   }
   String guidHash(String value) => sha256.convert(utf8.encode(value)).toString();
   if (payload.service != CloudSemanticService.iMessage ||
-      payload.style != CloudSemanticChatStyle.group ||
+      !{CloudSemanticChatStyle.direct, CloudSemanticChatStyle.group}.contains(payload.style) ||
       ![payload.canonicalGuid, payload.groupId, payload.originalGroupId]
           .whereType<String>().any((id) => guidHash(id) == origin.sourceChatGuidSha256) ||
       !{CloudOutboxStatus.leased.index, CloudOutboxStatus.unknownOutcome.index,

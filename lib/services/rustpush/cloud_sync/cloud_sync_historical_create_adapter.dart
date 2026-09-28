@@ -208,8 +208,9 @@ final class CloudSyncHistoricalCreateAdapter {
   /// or title. Only a canonical, protected reader mapping permits a message.
   int? confirmedParentId(CloudSyncScope messageScope, CloudSyncHistoricalArchiveRequest request) {
     var predicate = Chat_.guid.equals(request.chatGuid);
-    if (request.groupMetadata case final group?) {
-      predicate = predicate.or(Chat_.cloudGuid.equals(group.cloudGuid ?? request.chatGuid));
+    if (request.groupMetadata != null || request.parentState != null) {
+      predicate = predicate.or(Chat_.cloudGuid.equals(
+        request.groupMetadata?.cloudGuid ?? request.parentState?.cloudGuid ?? request.chatGuid));
     }
     final query = store.box<Chat>().query(predicate).build()..limit = 2;
     try {

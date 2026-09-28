@@ -43,22 +43,21 @@ fn open_identity_candidate(
     stage: &CloudSyncProtectedOutboundStage,
 ) -> Result<CloudChat, CloudSyncOutboundSafeCode> {
     let binding = source_binding(source, auth)?;
-    let (candidate, _) =
-        crate::cloud_sync_historical_chat::open_historical_group_parent_for_identity(
-            PathBuf::from(storage),
-            &binding,
-            &source_stage(source),
-            &NativeProtectedOutboundStage {
-                logical_entity_key_hash: stage.logical_entity_key_hash.clone(),
-                protected_payload_reference: stage.protected_payload_reference.clone(),
-                payload_sha256: stage.payload_sha256.clone(),
-                payload_length: stage.payload_length,
-                protected_server_record_reference: stage.protected_server_record_reference.clone(),
-                server_record_id_hash: stage.server_record_id_hash.clone(),
-                lease_reference: stage.lease_reference.clone(),
-            },
-        )
-        .map_err(map_cloud_sync_outbound_failure)?;
+    let (candidate, _) = crate::cloud_sync_historical_chat::open_historical_parent_for_identity(
+        PathBuf::from(storage),
+        &binding,
+        &source_stage(source),
+        &NativeProtectedOutboundStage {
+            logical_entity_key_hash: stage.logical_entity_key_hash.clone(),
+            protected_payload_reference: stage.protected_payload_reference.clone(),
+            payload_sha256: stage.payload_sha256.clone(),
+            payload_length: stage.payload_length,
+            protected_server_record_reference: stage.protected_server_record_reference.clone(),
+            server_record_id_hash: stage.server_record_id_hash.clone(),
+            lease_reference: stage.lease_reference.clone(),
+        },
+    )
+    .map_err(map_cloud_sync_outbound_failure)?;
     Ok(candidate)
 }
 
@@ -143,7 +142,7 @@ pub(super) async fn stage_parent(
         cloud_sync_require_historical_auth(&expected_auth, &before)
             .map_err(|_| CloudSyncOutboundSafeCode::InvalidScope)?;
         let binding = source_binding(&source, &before)?;
-        let stage = crate::cloud_sync_historical_chat::stage_historical_group_parent(
+        let stage = crate::cloud_sync_historical_chat::stage_historical_parent(
             PathBuf::from(&storage),
             &binding,
             &source_stage(&source),
@@ -198,7 +197,12 @@ pub(super) fn open_chat_create_bound(
         std::slice::from_ref(&input.protected_payload_reference),
     )
     .map_err(|_| CloudSyncOutboundSafeCode::ProtectedStorage)?;
-    let opened = crate::cloud_sync_outbound_chat::open_staged_outbound_chat(
+    let opener = if input.historical_chat_source.is_some() {
+        crate::cloud_sync_outbound_chat::open_staged_historical_chat
+    } else {
+        crate::cloud_sync_outbound_chat::open_staged_outbound_chat
+    };
+    let opened = opener(
         PathBuf::from(storage),
         auth.account_fingerprint.clone(),
         &input.protected_payload_reference,
@@ -222,7 +226,7 @@ pub(super) fn open_chat_create_bound(
         let (_, payload_length) =
             crate::cloud_sync_outbound_chat::outbound_chat_payload_identity(&opened.0, &opened.1)
                 .map_err(map_cloud_sync_outbound_failure)?;
-        crate::cloud_sync_historical_chat::open_historical_group_parent(
+        crate::cloud_sync_historical_chat::open_historical_parent(
             PathBuf::from(storage),
             &binding,
             &source_stage(source),
@@ -310,6 +314,17 @@ mod tests {
         CloudSyncNativeAuthMetadata,
         CloudSyncPreparedMessageCreateInput,
     ) {
+        fixture_kind(storage, committed, false)
+    }
+
+    fn fixture_kind(
+        storage: &str,
+        committed: bool,
+        direct: bool,
+    ) -> (
+        CloudSyncNativeAuthMetadata,
+        CloudSyncPreparedMessageCreateInput,
+    ) {
         let auth = CloudSyncNativeAuthMetadata {
             account_fingerprint: "A".repeat(43),
             native_session_id: "N".repeat(43),
@@ -324,7 +339,14 @@ mod tests {
             account_fingerprint: &auth.account_fingerprint,
             protected_store_identity: &auth.protected_store_identity,
         };
-        let original = source(&binding, parent(), "stable-group", false);
+        let original = if direct {
+            let route = "AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA";
+            let mut state = parent();
+            state.1 = Some(route.into());
+            crate::cloud_sync_historical_chat::tests::direct_source(&binding, state, route, true)
+        } else {
+            source(&binding, parent(), "stable-group", false)
+        };
         let source = crate::cloud_sync_historical_source_stage::stage_historical_archive_source(
             PathBuf::from(storage),
             &binding,
@@ -338,7 +360,7 @@ mod tests {
             std::slice::from_ref(&source.protected_reference),
         )
         .unwrap();
-        let stage = crate::cloud_sync_historical_chat::stage_historical_group_parent(
+        let stage = crate::cloud_sync_historical_chat::stage_historical_parent(
             PathBuf::from(storage),
             &binding,
             &source,
@@ -436,6 +458,48 @@ mod tests {
         assert!(matches!(
             cloud_sync_open_message_create_bound(storage, &auth, "synthetic", &message),
             Err(CloudSyncOutboundSafeCode::InvalidRequest)
+        ));
+    }
+
+    #[test]
+    fn direct_historical_api_reopens_exact_parent_but_never_without_committed_source() {
+        let directory = tempfile::tempdir().unwrap();
+        let storage = directory.path().to_str().unwrap();
+        let (auth, mut input) = fixture_kind(storage, false, true);
+        assert!(open_chat_create_bound(storage, &auth, &input).is_err());
+        cloud_sync_commit_protected_page_lease(
+            PathBuf::from(storage),
+            &input.protected_lease_reference,
+            std::slice::from_ref(&input.protected_payload_reference),
+        )
+        .unwrap();
+        let (first, record) = open_chat_create_bound(storage, &auth, &input).unwrap();
+        let (second, second_record) = open_chat_create_bound(storage, &auth, &input).unwrap();
+        assert_eq!(record, second_record);
+        assert_eq!(first.guid, second.guid);
+        assert_eq!(first.style, 45);
+        assert_eq!(first.group_id, "AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA");
+        assert_eq!(
+            crate::cloud_sync_outbound_chat::verify_chat_readback(
+                &second,
+                &second_record,
+                &record,
+                &input.payload_sha256
+            )
+            .unwrap(),
+            input.payload_sha256
+        );
+        let mut changed = input.clone();
+        changed
+            .historical_chat_source
+            .as_mut()
+            .unwrap()
+            .source_sha256 = "f".repeat(64);
+        assert!(open_chat_create_bound(storage, &auth, &changed).is_err());
+        input.historical_chat_source = None;
+        assert!(matches!(
+            open_chat_create_bound(storage, &auth, &input),
+            Err(CloudSyncOutboundSafeCode::ProtectedStorage)
         ));
     }
 

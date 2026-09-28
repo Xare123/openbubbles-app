@@ -46,10 +46,21 @@ pub(crate) fn project_historical_plain_text(
         (chat.group_id().to_owned(), chat.guid().to_owned())
     } else {
         let route = format!("iMessage;-;{peer}");
+        // A captured provisional direct GUID becomes the confirmed parent's
+        // gid. Only that exact lineage proves its new canonical route; matching
+        // the peer alone does not authorize moving a historical message.
+        let captured_lineage = source.parent_state().is_some_and(|state| {
+            uuid::Uuid::parse_str(source.chat_guid()).is_ok()
+                && [chat.group_id(), chat.original_group_id()].contains(&source.chat_guid())
+                && state
+                    .1
+                    .as_deref()
+                    .is_none_or(|id| id == chat.group_id() || id == chat.original_group_id())
+        });
         if chat.style() != CloudCanonicalChatStyle::Direct
             || (sent && peer == sender)
             || (!sent && peer != sender)
-            || source.chat_guid() != route
+            || (source.chat_guid() != route && !captured_lineage)
             || chat.guid() != route
             || chat.chat_identifier() != peer
             || chat.participant_handles().is_empty()
@@ -314,5 +325,57 @@ pub(crate) mod tests {
         ] {
             assert!(project_historical_plain_text(&source, &parent).is_err());
         }
+    }
+
+    #[test]
+    fn provisional_direct_history_requires_captured_lineage_not_peer_similarity() {
+        let route = "AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA";
+        let binding = HistoricalBinding {
+            snapshot_sha256: &"a".repeat(64),
+            account_fingerprint: "synthetic-account",
+            protected_store_identity: "synthetic-store",
+        };
+        let mut state = crate::cloud_sync_historical_chat::tests::parent();
+        state.1 = Some(route.into());
+        let parent = CloudCanonicalChatPayload::new(
+            "iMessage;-;peer@example.invalid".into(),
+            "peer@example.invalid".into(),
+            route.into(),
+            route.into(),
+            CloudCanonicalService::IMessage,
+            CloudCanonicalChatStyle::Direct,
+            vec!["mailto:peer@example.invalid".into()],
+            CloudCanonicalField::Absent,
+            CloudCanonicalField::Absent,
+            CloudCanonicalField::Absent,
+            CloudCanonicalField::Absent,
+            CloudCanonicalField::Absent,
+        )
+        .unwrap();
+        for sent in [false, true] {
+            let source = crate::cloud_sync_historical_chat::tests::direct_source(
+                &binding,
+                state.clone(),
+                route,
+                sent,
+            );
+            let message = project_historical_plain_text(&source, &parent).unwrap();
+            assert_eq!(message.chat_id, parent.guid());
+            assert_eq!(message.guid, source.guid());
+            assert_eq!(
+                message.destination_caller_id,
+                if sent { "self@example.invalid" } else { "" }
+            );
+            // Same canonical route and peer, but unrelated gid/ogid.
+            assert!(project_historical_plain_text(
+                &source,
+                &chat("peer@example.invalid", CloudCanonicalChatStyle::Direct)
+            )
+            .is_err());
+        }
+        state.1 = Some("unrelated-lineage".into());
+        let source =
+            crate::cloud_sync_historical_chat::tests::direct_source(&binding, state, route, true);
+        assert!(project_historical_plain_text(&source, &parent).is_err());
     }
 }

@@ -8,7 +8,8 @@ use std::{io::Cursor, path::PathBuf};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use prost::Message;
 use rustpush::cloud_messages::{
-    validate_direct_chat_create, validate_group_chat_create, CloudChat,
+    validate_direct_chat_create, validate_group_chat_create,
+    validate_historical_direct_chat_create, CloudChat,
 };
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
@@ -16,7 +17,9 @@ use uuid::Uuid;
 use crate::{
     cloud_sync_canonical_dto::CloudCanonicalEntityKind,
     cloud_sync_native_fetch::{
-        cloud_sync_open_protected_outbound_chat, cloud_sync_stage_protected_outbound_chat_envelope,
+        cloud_sync_open_protected_historical_direct_chat, cloud_sync_open_protected_outbound_chat,
+        cloud_sync_stage_protected_historical_direct_chat_envelope,
+        cloud_sync_stage_protected_outbound_chat_envelope,
     },
     cloud_sync_outbound::{CloudSyncOutboundFailure as Failure, NativeProtectedOutboundStage},
 };
@@ -77,7 +80,7 @@ pub(crate) fn stage_outbound_chat(
     // Preserve the shipped direct-only staging entry point. A group must use
     // its explicit origin/admission path, never masquerade as a direct send.
     validate_direct_chat_create(&chat).map_err(|_| Failure::UnsupportedMessage)?;
-    stage_validated_outbound_chat(storage_directory, account_fingerprint, chat)
+    stage_validated_outbound_chat(storage_directory, account_fingerprint, chat, false)
 }
 
 /// Historical group-parent component only. This freezes the entire candidate
@@ -90,13 +93,25 @@ pub(crate) fn stage_outbound_historical_group_chat(
     chat: CloudChat,
 ) -> Result<NativeProtectedOutboundStage, Failure> {
     validate_group_chat_create(&chat).map_err(|_| Failure::UnsupportedMessage)?;
-    stage_validated_outbound_chat(storage_directory, account_fingerprint, chat)
+    stage_validated_outbound_chat(storage_directory, account_fingerprint, chat, false)
+}
+
+/// A separate protected purpose prevents a lost historical source from falling
+/// through to the ordinary direct-send opener, even for identical wire fields.
+pub(crate) fn stage_outbound_historical_direct_chat(
+    storage_directory: PathBuf,
+    account_fingerprint: String,
+    chat: CloudChat,
+) -> Result<NativeProtectedOutboundStage, Failure> {
+    validate_historical_direct_chat_create(&chat).map_err(|_| Failure::UnsupportedMessage)?;
+    stage_validated_outbound_chat(storage_directory, account_fingerprint, chat, true)
 }
 
 fn stage_validated_outbound_chat(
     storage_directory: PathBuf,
     account_fingerprint: String,
     chat: CloudChat,
+    historical_direct: bool,
 ) -> Result<NativeProtectedOutboundStage, Failure> {
     let record_name = Uuid::new_v4().to_string().to_uppercase();
     let encoded = encode_chat(&chat, &record_name)?;
@@ -109,7 +124,12 @@ fn stage_validated_outbound_chat(
         .map_err(|_| Failure::MalformedMessage)?
         .value()
         .to_owned();
-    let stage = cloud_sync_stage_protected_outbound_chat_envelope(
+    let stage_fn = if historical_direct {
+        cloud_sync_stage_protected_historical_direct_chat_envelope
+    } else {
+        cloud_sync_stage_protected_outbound_chat_envelope
+    };
+    let stage = stage_fn(
         storage_directory,
         account_fingerprint,
         URL_SAFE_NO_PAD.encode(&encoded),
@@ -142,6 +162,55 @@ pub(crate) fn open_staged_outbound_chat(
         protected_reference,
     )
     .map_err(|_| Failure::ProtectedStorage)?;
+    decode_opened_chat(
+        storage_directory,
+        value,
+        expected_payload_sha256,
+        expected_record_id_hash,
+    )
+}
+
+/// Historical direct values require their own protected purpose. Previously
+/// admitted groups keep the existing purpose and are accepted only as groups.
+pub(crate) fn open_staged_historical_chat(
+    storage_directory: PathBuf,
+    account_fingerprint: String,
+    protected_reference: &str,
+    expected_payload_sha256: &str,
+    expected_record_id_hash: &str,
+) -> Result<(CloudChat, String), Failure> {
+    if let Ok(value) = cloud_sync_open_protected_historical_direct_chat(
+        storage_directory.clone(),
+        account_fingerprint.clone(),
+        protected_reference,
+    ) {
+        let opened = decode_opened_chat(
+            storage_directory,
+            value,
+            expected_payload_sha256,
+            expected_record_id_hash,
+        )?;
+        validate_historical_direct_chat_create(&opened.0)
+            .map_err(|_| Failure::UnsupportedMessage)?;
+        return Ok(opened);
+    }
+    let opened = open_staged_outbound_chat(
+        storage_directory,
+        account_fingerprint,
+        protected_reference,
+        expected_payload_sha256,
+        expected_record_id_hash,
+    )?;
+    validate_group_chat_create(&opened.0).map_err(|_| Failure::UnsupportedMessage)?;
+    Ok(opened)
+}
+
+fn decode_opened_chat(
+    storage_directory: PathBuf,
+    value: String,
+    expected_payload_sha256: &str,
+    expected_record_id_hash: &str,
+) -> Result<(CloudChat, String), Failure> {
     if value.len() > MAX_CHAT_ENVELOPE_BYTES.div_ceil(3) * 4 {
         return Err(Failure::OversizedMessage);
     }
@@ -198,7 +267,8 @@ pub(crate) fn verify_chat_readback(
 
 fn validate(chat: &CloudChat, record_name: &str) -> Result<(), Failure> {
     match chat.style {
-        45 => validate_direct_chat_create(chat),
+        45 => validate_direct_chat_create(chat)
+            .or_else(|_| validate_historical_direct_chat_create(chat)),
         43 => validate_group_chat_create(chat),
         _ => return Err(Failure::UnsupportedMessage),
     }
@@ -306,6 +376,61 @@ mod tests {
             outbound_chat_payload_sha256(&restored, &record).unwrap(),
             digest(&encoded)
         );
+    }
+
+    #[test]
+    fn historical_direct_purpose_cannot_fall_back_to_ordinary_send_even_with_identical_fields() {
+        let directory = tempfile::tempdir().unwrap();
+        let storage = directory.path().to_path_buf();
+        let account = "A".repeat(43);
+        let history =
+            stage_outbound_historical_direct_chat(storage.clone(), account.clone(), fixture())
+                .unwrap();
+        let normal = stage_outbound_chat(storage.clone(), account.clone(), fixture()).unwrap();
+        assert!(open_staged_outbound_chat(
+            storage.clone(),
+            account.clone(),
+            &history.protected_payload_reference,
+            &history.payload_sha256,
+            &history.server_record_id_hash
+        )
+        .is_err());
+        assert!(open_staged_historical_chat(
+            storage.clone(),
+            account.clone(),
+            &normal.protected_payload_reference,
+            &normal.payload_sha256,
+            &normal.server_record_id_hash
+        )
+        .is_err());
+        let (chat, record) = open_staged_historical_chat(
+            storage.clone(),
+            account.clone(),
+            &history.protected_payload_reference,
+            &history.payload_sha256,
+            &history.server_record_id_hash,
+        )
+        .unwrap();
+        assert_eq!(
+            verify_chat_readback(&chat, &record, &record, &history.payload_sha256).unwrap(),
+            history.payload_sha256
+        );
+        assert!(open_staged_historical_chat(
+            storage.clone(),
+            "B".repeat(43),
+            &history.protected_payload_reference,
+            &history.payload_sha256,
+            &history.server_record_id_hash
+        )
+        .is_err());
+        assert!(open_staged_historical_chat(
+            storage,
+            account,
+            &history.protected_payload_reference,
+            &"b".repeat(64),
+            &history.server_record_id_hash
+        )
+        .is_err());
     }
 
     #[test]

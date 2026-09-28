@@ -98,6 +98,14 @@ fn verify_staged_candidate(
         &stage.payload_sha256,
         &stage.record_id_hash,
     )
+    .or_else(|_| {
+        // Observation is read-only. Historical dispatch still separately
+        // requires its committed source at prepare, consume and readback.
+        crate::cloud_sync_outbound_chat::open_staged_historical_chat(
+            PathBuf::from(storage_directory), account_fingerprint.to_owned(),
+            &stage.protected_payload_reference, &stage.payload_sha256, &stage.record_id_hash,
+        )
+    })
     .map_err(|_| ())?;
     let hasher = cloud_sync_protector::semantic_identifier_hasher(storage_directory.to_owned())
         .map_err(|_| ())?;

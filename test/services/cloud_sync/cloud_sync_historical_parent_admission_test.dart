@@ -397,6 +397,257 @@ void main() {
       },
     );
   }
+
+  // Direct parents retain the same journal, receipt and projection gates.
+  // These are synthetic database checks, not native or Apple-client proof.
+  CloudSyncHistoricalArchiveRequest directRequest({
+    required String guid,
+    required String chatGuid,
+  }) {
+    final template = Chat(
+      guid: chatGuid,
+      style: 45,
+      usingHandle: 'owner@example.invalid',
+    )..cloudGuid = chatGuid;
+    return CloudSyncHistoricalArchiveRequest(
+      guid: guid,
+      guidHash: 'd' * 64,
+      sourceSha256: 'e' * 64,
+      origin: CloudSyncHistoricalArchiveOrigin.historicalSent,
+      isFromMe: true,
+      chatGuid: chatGuid,
+      dateCreatedMs: _now.millisecondsSinceEpoch - 1000,
+      snapshotSha256: 'a' * 64,
+      accountFingerprint: _account,
+      protectedStoreIdentity: _storeIdentity,
+      textSha256: 'f' * 64,
+      senderAddress: 'owner@example.invalid',
+      peerAddress: 'peer@example.invalid',
+      parentState: CloudSyncHistoricalChatState.capture(template),
+    );
+  }
+
+  int directIntent(CloudSyncHistoricalArchiveRequest req) {
+    final src = CloudSyncHistoricalProtectedSourceBinding(
+      accountFingerprint: _account,
+      protectedStoreIdentity: _storeIdentity,
+      snapshotSha256: req.snapshotSha256,
+      messageGuidHash: req.guidHash,
+      sourceSha256: req.sourceSha256,
+      protectedReference: 'obcs2.ref.${'J' * 43}',
+      leaseReference: 'obcs2.lease.${'b' * 32}',
+      payloadSha256: 'c' * 64,
+      payloadLength: 128,
+    );
+    final id = journal.adopt(src).id;
+    journal.markSourceLeaseCommitted(intentId: id, expectedSource: src);
+    return id;
+  }
+
+  CloudSyncHistoricalParentOrigin directOrigin({
+    required CloudSyncHistoricalArchiveRequest req,
+    required int directId,
+    int? chatId,
+  }) => CloudSyncHistoricalParentOrigin.capture(
+    store: store,
+    journal: journal,
+    scope: _chatScope,
+    generation: 1,
+    request: req,
+    intentId: directId,
+    localChatId: chatId,
+    parentPayloadLength: 1024,
+  );
+
+  test(
+    'direct parent admission owns one exact envelope without group metadata',
+    () async {
+      final req = directRequest(
+        guid: 'synthetic-original-direct',
+        chatGuid: 'iMessage;-;peer@example.invalid',
+      );
+      final directId = directIntent(req);
+      final operation = admit(directOrigin(req: req, directId: directId));
+      final encoded = durable.readHistoricalChatSource(operation)!.encode();
+      expect(
+        durable.readHistoricalChatCreate(_chatScope, directOrigin(req: req, directId: directId).durable)!.operationId,
+        operation.operationId,
+      );
+      expect(store.box<CloudOutboxOperationEntity>().count(), 1);
+      expect(store.box<Chat>().count(), 0);
+      expect(store.box<Message>().count(), 0);
+      expect(store.box<CloudSyncLocalSendIntentEntity>().count(), 0);
+      expect(encoded, isNotEmpty);
+      store.close();
+      store = await openStore(directory: directory.path);
+      durable = ObjectBoxCloudSyncStore(
+        store: store,
+        protector: _SyntheticProtector(),
+      );
+      final retained = (await durable.readOutboxEntries(_chatScope)).single;
+      expect(durable.readHistoricalChatSource(retained)!.encode(), encoded);
+      expect(retained.operationId, operation.operationId);
+    },
+  );
+
+  test('direct parent admission with existing destination chat', () async {
+    final req = directRequest(
+      guid: 'synthetic-original-direct',
+      chatGuid: 'iMessage;-;peer@example.invalid',
+    );
+    final directId = directIntent(req);
+    final chat = Chat(guid: req.chatGuid, style: 45);
+    store.box<Chat>().put(chat);
+    final selected = directOrigin(req: req, directId: directId, chatId: chat.id);
+    final operation = admit(selected);
+    expect(
+      durable.readHistoricalChatSource(operation)!.source.encode(),
+      journal
+          .read(
+            messageGuidHash: req.guidHash,
+            sourceSha256: req.sourceSha256,
+          )!
+          .source
+          .encode(),
+    );
+    store.box<Chat>().remove(chat.id!);
+    expect(() => selected.requireUnchanged(store), throwsStateError);
+    expect(
+      durable
+          .readHistoricalChatCreate(_chatScope, selected.durable)!
+          .operationId,
+      operation.operationId,
+    );
+  });
+
+  test('direct parent with wrong source cannot be adopted', () {
+    final req = directRequest(
+      guid: 'synthetic-original-direct',
+      chatGuid: 'iMessage;-;peer@example.invalid',
+    );
+    final directId = directIntent(req);
+    final selected = directOrigin(req: req, directId: directId);
+    final rows = store.box<CloudSyncHistoricalArchiveIntentEntity>();
+    final row = rows.get(directId)!..state = 0;
+    rows.put(row);
+    expect(() => admit(selected), throwsA(anything));
+    expect(store.box<CloudOutboxOperationEntity>().count(), 0);
+  });
+
+  test(
+    'direct destination creation after capture invalidates absence',
+    () {
+      final req = directRequest(
+        guid: 'synthetic-original-direct',
+        chatGuid: 'iMessage;-;peer@example.invalid',
+      );
+      final directId = directIntent(req);
+      final selected = directOrigin(req: req, directId: directId);
+      store.box<Chat>().put(Chat(guid: req.chatGuid, style: 45));
+      expect(() => admit(selected), throwsStateError);
+      expect(store.box<Chat>().count(), 1);
+      expect(store.box<CloudOutboxOperationEntity>().count(), 0);
+    },
+  );
+
+  test('direct ambiguous duplicate destinations fail closed', () {
+    final req = directRequest(
+      guid: 'synthetic-original-direct',
+      chatGuid: 'iMessage;-;peer@example.invalid',
+    );
+    final directId = directIntent(req);
+    store.box<Chat>().put(Chat(guid: req.chatGuid, style: 45));
+    store.box<Chat>().put(Chat(guid: req.chatGuid, style: 45));
+    expect(
+      () => directOrigin(req: req, directId: directId, chatId: 1),
+      throwsA(anything),
+    );
+    expect(store.box<CloudOutboxOperationEntity>().count(), 0);
+  });
+
+  test('direct wrong-destination chatId fails closed', () {
+    final req = directRequest(
+      guid: 'synthetic-original-direct',
+      chatGuid: 'iMessage;-;peer@example.invalid',
+    );
+    final directId = directIntent(req);
+    final other = Chat(guid: 'iMessage;-;other@example.invalid', style: 45);
+    store.box<Chat>().put(other);
+    expect(
+      () => directOrigin(req: req, directId: directId, chatId: other.id),
+      throwsA(anything),
+    );
+    expect(store.box<CloudOutboxOperationEntity>().count(), 0);
+  });
+
+  for (final hasDestination in [false, true]) {
+    test(
+      'provisional UUID source projects to canonical direct route existing=$hasDestination',
+      () {
+        const uuid = 'AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA';
+        const canonical = 'iMessage;-;peer@example.invalid';
+        final req = directRequest(
+          guid: 'synthetic-uuid-direct',
+          chatGuid: uuid,
+        );
+        final directId = directIntent(req);
+        Chat? local;
+        if (hasDestination) {
+          local = Chat(guid: canonical, style: 45)..cloudGuid = uuid;
+          store.box<Chat>().put(local);
+        }
+        admit(directOrigin(req: req, directId: directId, chatId: local?.id));
+        final payload = CloudChatEntityPayload(
+          logicalEntityKeyHash: 'L' * 43,
+          canonicalGuid: canonical,
+          chatIdentifier: 'peer@example.invalid',
+          displayName: null,
+          participantHandles: const ['mailto:peer@example.invalid'],
+          groupId: uuid,
+          originalGroupId: uuid,
+          service: CloudSemanticService.iMessage,
+          style: CloudSemanticChatStyle.direct,
+        );
+        final snapshot = CloudSemanticSnapshot(
+          kind: CloudEntityKind.chat,
+          logicalEntityKeyHash: 'L' * 43,
+          immutableContentDigest: 'I' * 43,
+          etagHash: 'E' * 43,
+          encryptedRawRecordReference: 'obcs2.ref.${'W' * 43}',
+        );
+        Chat? resolve() => resolveCloudSyncOutboundChatOrigin(
+          store: store,
+          scope: _chatScope,
+          generation: 1,
+          payload: payload,
+          snapshot: snapshot,
+          canonicalChat: null,
+        );
+        expect(resolve, throwsA(anything)); // Merely staged is not a receipt.
+        final row = store.box<CloudOutboxOperationEntity>().getAll().single
+          ..state = CloudOutboxStatus.confirmed.index
+          ..confirmedAtMs = _now.millisecondsSinceEpoch
+          ..appleRequestUuid = '11111111-2222-4333-8444-555555555555'
+          ..appleOperationUuid = 'AAAAAAAA-BBBB-4CCC-8DDD-EEEEEEEEEEEE';
+        store.box<CloudOutboxOperationEntity>().put(row);
+        expect(resolve, throwsA(anything)); // No authenticated raw record mapping.
+        final mapping = store.box<CloudRecordMapEntity>().getAll().single
+          ..etagHash = snapshot.etagHash
+          ..encryptedRawRecordRef = snapshot.encryptedRawRecordReference
+          ..rawRecordGeneration = 1;
+        store.box<CloudRecordMapEntity>().put(mapping);
+        // Lineage preserves the original provisional gid while the canonical
+        // direct route is returned; a missing destination goes to the ordinary
+        // canonical inserter, never inserted as a placeholder here.
+        expect(resolve()?.id, local?.id);
+        expect(store.box<Chat>().count(), hasDestination ? 1 : 0);
+        expect(store.box<Message>().count(), 0);
+        mapping.etagHash = 'Z' * 43;
+        store.box<CloudRecordMapEntity>().put(mapping);
+        expect(resolve, throwsA(anything));
+      },
+    );
+  }
 }
 
 class _SyntheticProtector implements CloudSyncProtector {

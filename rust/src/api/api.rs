@@ -5613,7 +5613,12 @@ pub async fn cloud_sync_prepare_chat_create(
                 return cloud_sync_prepare_failure(CloudSyncOutboundSafeCode::NativePrepareFailed)
             }
         };
-    let prepared_result = if input.historical_chat_source.is_some() {
+    let prepared_result = if input.historical_chat_source.is_some() && chat_input.chat.style == 45 {
+        native_writer_permit.run(cloud_messages_client.prepare_historical_direct_chat_save_submission(
+            &writer_binding, chat_input, request_identity,
+            Duration::from_secs(request_timeout_seconds),
+        )).await
+    } else if input.historical_chat_source.is_some() {
         native_writer_permit.run(cloud_messages_client.prepare_historical_group_chat_save_submission(
             &writer_binding, chat_input, request_identity,
             Duration::from_secs(request_timeout_seconds),

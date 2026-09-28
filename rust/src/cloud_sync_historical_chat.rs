@@ -1,4 +1,4 @@
-//! Historical group-parent conversion from the committed source, not a live
+//! Historical parent conversion from the committed source, not a live
 //! send, remote absence proof or upload permission. This is the native half of
 //! the parent dependency: source -> immutable chat envelope -> exact reopen.
 //! The app must still durably admit that envelope and prove its remote identity.
@@ -8,32 +8,42 @@ use std::{io::Cursor, path::PathBuf};
 
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use rustpush::cloud_messages::{
-    cloudmessagesp::ChatProto, validate_group_chat_create, CloudChat, CloudParticipant, CloudProp,
-    GZipWrapper,
+    cloudmessagesp::ChatProto, validate_group_chat_create, validate_historical_direct_chat_create,
+    CloudChat, CloudParticipant, CloudProp, GZipWrapper,
 };
 
 use crate::{
-    cloud_sync_historical_source::{HistoricalArchiveSource, HistoricalBinding},
+    cloud_sync_historical_source::{
+        HistoricalArchiveSource, HistoricalBinding, HistoricalParentState,
+    },
     cloud_sync_historical_source_stage::{
         open_historical_archive_source, NativeHistoricalArchiveStage,
     },
     cloud_sync_native_fetch::cloud_sync_verify_committed_lease_exact,
     cloud_sync_outbound::{CloudSyncOutboundFailure as Failure, NativeProtectedOutboundStage},
     cloud_sync_outbound_chat::{
-        open_staged_outbound_chat, outbound_chat_payload_identity,
-        stage_outbound_historical_group_chat,
+        open_staged_historical_chat, outbound_chat_payload_identity,
+        stage_outbound_historical_direct_chat, stage_outbound_historical_group_chat,
     },
 };
 
 /// Used only before first durable admission. The caller must first look for an
 /// already owned parent operation. An ambiguous adoption result is not a reason
-/// to call this again: recovery uses open_historical_group_parent below.
-pub(crate) fn stage_historical_group_parent(
+/// to call this again: recovery uses open_historical_parent below.
+pub(crate) fn stage_historical_parent(
     storage: PathBuf,
     binding: &HistoricalBinding,
     source_stage: &NativeHistoricalArchiveStage,
 ) -> Result<NativeProtectedOutboundStage, Failure> {
     let source = open_historical_archive_source(storage.clone(), binding, source_stage)?;
+    if source.group_metadata().is_none() {
+        let candidate = project_historical_direct_parent(&source)?;
+        return stage_outbound_historical_direct_chat(
+            storage,
+            binding.account_fingerprint.to_owned(),
+            candidate,
+        );
+    }
     // Legacy uses a chat-prefixed unsigned 64-bit value for a new group route.
     // Allocate once, then retain it in the same protected envelope as the record
     // name. A saved route always wins and is never reminted.
@@ -47,7 +57,7 @@ pub(crate) fn stage_historical_group_parent(
 /// restart. The app origin binding must pin the originally selected source:
 /// equivalent metadata from another message is not proof of that ownership.
 /// The source must remain retained until its parent has settled.
-pub(crate) fn open_historical_group_parent(
+pub(crate) fn open_historical_parent(
     storage: PathBuf,
     binding: &HistoricalBinding,
     source_stage: &NativeHistoricalArchiveStage,
@@ -59,14 +69,14 @@ pub(crate) fn open_historical_group_parent(
         std::slice::from_ref(&parent_stage.protected_payload_reference),
     )
     .map_err(|_| Failure::ProtectedStorage)?;
-    open_historical_group_parent_for_identity(storage, binding, source_stage, parent_stage)
+    open_historical_parent_for_identity(storage, binding, source_stage, parent_stage)
 }
 
 /// Read-only comparison before admission also needs the original, uncommitted
 /// candidate. This reopens the committed source and verifies every parent byte,
 /// but grants no submission authority. Write/recovery callers must use the
 /// committed-parent opener above, never this identity-only entry point.
-pub(crate) fn open_historical_group_parent_for_identity(
+pub(crate) fn open_historical_parent_for_identity(
     storage: PathBuf,
     binding: &HistoricalBinding,
     source_stage: &NativeHistoricalArchiveStage,
@@ -76,14 +86,18 @@ pub(crate) fn open_historical_group_parent_for_identity(
     if parent_stage.protected_server_record_reference != parent_stage.protected_payload_reference {
         return Err(Failure::BindingMismatch);
     }
-    let (candidate, record_name) = open_staged_outbound_chat(
+    let (candidate, record_name) = open_staged_historical_chat(
         storage.clone(),
         binding.account_fingerprint.to_owned(),
         &parent_stage.protected_payload_reference,
         &parent_stage.payload_sha256,
         &parent_stage.server_record_id_hash,
     )?;
-    let expected = project_historical_group_parent(&source, &candidate.chat_identifier)?;
+    let expected = if source.group_metadata().is_some() {
+        project_historical_group_parent(&source, &candidate.chat_identifier)?
+    } else {
+        project_historical_direct_parent(&source)?
+    };
     let (hash, length) = outbound_chat_payload_identity(&expected, &record_name)?;
     if hash != parent_stage.payload_sha256 || length != parent_stage.payload_length {
         return Err(Failure::BindingMismatch);
@@ -128,23 +142,7 @@ fn project_historical_group_parent(
     {
         return Err(Failure::BindingMismatch);
     }
-    let mut candidate = if let Some(encoded) = &state.11 {
-        let bytes = STANDARD
-            .decode(encoded)
-            .map_err(|_| Failure::MalformedMessage)?;
-        let saved: CloudChat =
-            plist::from_reader(Cursor::new(&bytes)).map_err(|_| Failure::MalformedMessage)?;
-        // Unknown saved metadata must not disappear through serde's default
-        // unknown-field handling. Preserve or explicitly reject, never remint.
-        let original: plist::Value =
-            plist::from_reader(Cursor::new(&bytes)).map_err(|_| Failure::MalformedMessage)?;
-        let mut roundtrip = Vec::new();
-        plist::to_writer_binary(&mut roundtrip, &saved).map_err(|_| Failure::MalformedMessage)?;
-        let restored: plist::Value =
-            plist::from_reader(Cursor::new(roundtrip)).map_err(|_| Failure::MalformedMessage)?;
-        if original != restored {
-            return Err(Failure::UnsupportedMessage);
-        }
+    let mut candidate = if let Some(saved) = saved_parent(state)? {
         validate_group_chat_create(&saved).map_err(|_| Failure::UnsupportedMessage)?;
         saved
     } else {
@@ -209,6 +207,104 @@ fn project_historical_group_parent(
         .iter()
         .map(|(uri, _)| CloudParticipant { uri: uri.clone() })
         .collect();
+    apply_captured_metadata(&mut candidate, state)?;
+    validate_group_chat_create(&candidate).map_err(|_| Failure::UnsupportedMessage)?;
+    Ok(candidate)
+}
+
+/// Direct history keeps the original lineage too. It is not a new local send:
+/// no fresh gid, current self alias, timestamp or synthetic Message is invented.
+fn project_historical_direct_parent(
+    source: &HistoricalArchiveSource,
+) -> Result<CloudChat, Failure> {
+    if source.group_metadata().is_some() {
+        return Err(Failure::UnsupportedMessage);
+    }
+    let state = source.parent_state().ok_or(Failure::UnsupportedMessage)?;
+    if state.8 || state.7.is_some() {
+        return Err(Failure::UnsupportedMessage);
+    }
+    let mut candidate = if let Some(saved) = saved_parent(state)? {
+        validate_historical_direct_chat_create(&saved).map_err(|_| Failure::UnsupportedMessage)?;
+        saved
+    } else {
+        // Capture accepts either a canonical direct GUID or a provisional UUID.
+        // The latter remains the stable gid when the ordinary reader projects
+        // the canonical direct route after confirmed parent readback.
+        if source.chat_guid() != format!("iMessage;-;{}", source.peer())
+            && uuid::Uuid::parse_str(source.chat_guid()).is_err()
+        {
+            return Err(Failure::BindingMismatch);
+        }
+        let group_id = state.1.as_deref().unwrap_or(source.chat_guid());
+        CloudChat {
+            style: 45,
+            is_filtered: 0,
+            successful_query: 1,
+            state: 3,
+            chat_identifier: source.peer().to_owned(),
+            guid: format!("iMessage;-;{}", source.peer()),
+            group_id: group_id.to_owned(),
+            original_group_id: group_id.to_owned(),
+            service_name: "iMessage".into(),
+            participants: vec![CloudParticipant {
+                uri: source.peer().to_owned(),
+            }],
+            properties: Some(CloudProp {
+                number_of_times_respondedto_thread: Some(3),
+                should_force_to_sms: Some(false),
+                message_handshake_state: Some(1),
+                ..Default::default()
+            }),
+            proto001: Some(GZipWrapper(ChatProto { unk1: Some(0) })),
+            ..Default::default()
+        }
+    };
+    if candidate.chat_identifier != source.peer()
+        || ![
+            candidate.guid.as_str(),
+            candidate.group_id.as_str(),
+            candidate.original_group_id.as_str(),
+        ]
+        .contains(&source.chat_guid())
+        || state
+            .1
+            .as_deref()
+            .is_some_and(|id| id != candidate.group_id && id != candidate.original_group_id)
+    {
+        return Err(Failure::BindingMismatch);
+    }
+    apply_captured_metadata(&mut candidate, state)?;
+    validate_historical_direct_chat_create(&candidate).map_err(|_| Failure::UnsupportedMessage)?;
+    Ok(candidate)
+}
+
+fn saved_parent(state: &HistoricalParentState) -> Result<Option<CloudChat>, Failure> {
+    let Some(encoded) = &state.11 else {
+        return Ok(None);
+    };
+    let bytes = STANDARD
+        .decode(encoded)
+        .map_err(|_| Failure::MalformedMessage)?;
+    let saved: CloudChat =
+        plist::from_reader(Cursor::new(&bytes)).map_err(|_| Failure::MalformedMessage)?;
+    // Do not silently discard fields that this version cannot preserve.
+    let original: plist::Value =
+        plist::from_reader(Cursor::new(&bytes)).map_err(|_| Failure::MalformedMessage)?;
+    let mut roundtrip = Vec::new();
+    plist::to_writer_binary(&mut roundtrip, &saved).map_err(|_| Failure::MalformedMessage)?;
+    let restored: plist::Value =
+        plist::from_reader(Cursor::new(roundtrip)).map_err(|_| Failure::MalformedMessage)?;
+    if original != restored {
+        return Err(Failure::UnsupportedMessage);
+    }
+    Ok(Some(saved))
+}
+
+fn apply_captured_metadata(
+    candidate: &mut CloudChat,
+    state: &HistoricalParentState,
+) -> Result<(), Failure> {
     candidate.display_name = state.3.clone();
     let handle = state.2.as_deref().ok_or(Failure::UnsupportedMessage)?;
     candidate.last_addressed_handle = handle
@@ -236,8 +332,7 @@ fn project_historical_group_parent(
             properties.legacy_group_identifiers.push(alias.clone());
         }
     }
-    validate_group_chat_create(&candidate).map_err(|_| Failure::UnsupportedMessage)?;
-    Ok(candidate)
+    Ok(())
 }
 
 #[cfg(test)]
@@ -308,6 +403,128 @@ pub(crate) mod tests {
             account_fingerprint: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
             protected_store_identity: identity,
         }
+    }
+
+    pub(crate) fn direct_source(
+        binding: &HistoricalBinding,
+        parent: HistoricalParentState,
+        route: &str,
+        sent: bool,
+    ) -> HistoricalArchiveSource {
+        HistoricalArchiveSource::capture_with_parent(
+            &HistoricalRow {
+                guid: "historical-direct-message",
+                text: "Synthetic direct history",
+                sender: if sent {
+                    "self@example.invalid"
+                } else {
+                    "peer@example.invalid"
+                },
+                peer: "peer@example.invalid",
+                chat_guid: route,
+                date_created_ms: 1_700_000_000_000,
+                is_from_me: sent,
+            },
+            binding,
+            sent,
+            None,
+            Some(parent),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn direct_history_preserves_canonical_and_provisional_lineage_for_both_origins() {
+        let binding = binding("synthetic-store");
+        for route in [
+            "iMessage;-;peer@example.invalid",
+            "AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA",
+        ] {
+            for sent in [false, true] {
+                let mut state = parent();
+                state.1 = Some(route.into());
+                let source = direct_source(&binding, state, route, sent);
+                let source_hash = source.source_sha256().unwrap();
+                let projected = project_historical_direct_parent(&source).unwrap();
+                assert_eq!(projected.style, 45);
+                assert_eq!(projected.guid, "iMessage;-;peer@example.invalid");
+                assert_eq!(projected.group_id, route);
+                assert_eq!(projected.original_group_id, route);
+                assert_eq!(projected.display_name.as_deref(), Some("Saved title"));
+                assert_eq!(projected.last_addressed_handle, "self@example.invalid");
+                assert_eq!(projected.properties.as_ref().unwrap().pv, Some(7));
+                assert_eq!(
+                    projected.last_read_message_timestamp,
+                    721_692_800_000_000_000
+                );
+                assert_eq!(source.source_sha256().unwrap(), source_hash);
+                assert!(project_historical_group_parent(&source, "chat1").is_err());
+            }
+        }
+    }
+
+    #[test]
+    fn direct_history_keeps_saved_proto_lineage_and_known_null_metadata() {
+        let binding = binding("synthetic-store");
+        let route = "AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA";
+        let mut state = parent();
+        state.1 = Some(route.into());
+        let mut saved =
+            project_historical_direct_parent(&direct_source(&binding, state.clone(), route, true))
+                .unwrap();
+        saved.original_group_id = "original-direct-lineage".into();
+        saved.proto001.as_mut().unwrap().unk1 = Some(8);
+        saved.properties.as_mut().unwrap().gpufc = Some(5);
+        let mut bytes = vec![];
+        plist::to_writer_binary(&mut bytes, &saved).unwrap();
+        state.11 = Some(STANDARD.encode(bytes));
+        state.3 = None;
+        state.5 = None;
+        let reopened =
+            project_historical_direct_parent(&direct_source(&binding, state, route, true)).unwrap();
+        assert_eq!(reopened.original_group_id, saved.original_group_id);
+        assert_eq!(reopened.proto001.unwrap().unk1, Some(8));
+        assert_eq!(reopened.properties.as_ref().unwrap().gpufc, Some(5));
+        assert_eq!(reopened.properties.unwrap().last_seen_message_guid, None);
+        assert_eq!(reopened.display_name, None);
+    }
+
+    #[test]
+    fn direct_history_rejects_missing_alias_malformed_saved_data_and_asset_loss() {
+        let binding = binding("synthetic-store");
+        let route = "iMessage;-;peer@example.invalid";
+        let mut initial = parent();
+        initial.1 = Some(route.into());
+        for change in [
+            |s: &mut HistoricalParentState| s.2 = None,
+            |s: &mut HistoricalParentState| s.7 = Some("photo".into()),
+            |s: &mut HistoricalParentState| s.8 = true,
+            |s: &mut HistoricalParentState| s.11 = Some(STANDARD.encode(b"not a plist")),
+        ] {
+            let mut state = initial.clone();
+            change(&mut state);
+            assert!(
+                project_historical_direct_parent(&direct_source(&binding, state, route, true))
+                    .is_err()
+            );
+        }
+        let mut saved = project_historical_direct_parent(&direct_source(
+            &binding,
+            initial.clone(),
+            route,
+            true,
+        ))
+        .unwrap();
+        saved.chat_identifier = "other@example.invalid".into();
+        saved.guid = "iMessage;-;other@example.invalid".into();
+        saved.participants[0].uri = "other@example.invalid".into();
+        let mut bytes = vec![];
+        plist::to_writer_binary(&mut bytes, &saved).unwrap();
+        initial.11 = Some(STANDARD.encode(bytes));
+        assert!(
+            project_historical_direct_parent(&direct_source(&binding, initial, route, true))
+                .is_err()
+        );
     }
 
     fn saved_parent(chat: &CloudChat) -> HistoricalParentState {
@@ -465,7 +682,7 @@ pub(crate) mod tests {
             &original.encode().unwrap(),
         )
         .unwrap();
-        assert!(stage_historical_group_parent(storage.clone(), &binding, &source_stage).is_err());
+        assert!(stage_historical_parent(storage.clone(), &binding, &source_stage).is_err());
         cloud_sync_commit_protected_page_lease(
             storage.clone(),
             &source_stage.lease_reference,
@@ -473,14 +690,11 @@ pub(crate) mod tests {
         )
         .unwrap();
         let mut parent_stage =
-            stage_historical_group_parent(storage.clone(), &binding, &source_stage).unwrap();
-        assert!(open_historical_group_parent(
-            storage.clone(),
-            &binding,
-            &source_stage,
-            &parent_stage
-        )
-        .is_err());
+            stage_historical_parent(storage.clone(), &binding, &source_stage).unwrap();
+        assert!(
+            open_historical_parent(storage.clone(), &binding, &source_stage, &parent_stage)
+                .is_err()
+        );
         cloud_sync_commit_protected_page_lease(
             storage.clone(),
             &parent_stage.lease_reference,
@@ -488,10 +702,10 @@ pub(crate) mod tests {
         )
         .unwrap();
         let (first, record) =
-            open_historical_group_parent(storage.clone(), &binding, &source_stage, &parent_stage)
+            open_historical_parent(storage.clone(), &binding, &source_stage, &parent_stage)
                 .unwrap();
         let (reopened, same_record) =
-            open_historical_group_parent(storage.clone(), &binding, &source_stage, &parent_stage)
+            open_historical_parent(storage.clone(), &binding, &source_stage, &parent_stage)
                 .unwrap();
         assert_eq!(record, same_record);
         assert_eq!(first.chat_identifier, reopened.chat_identifier);
@@ -506,23 +720,17 @@ pub(crate) mod tests {
             parent_stage.payload_sha256
         );
         parent_stage.payload_length += 1;
-        assert!(open_historical_group_parent(
-            storage.clone(),
-            &binding,
-            &source_stage,
-            &parent_stage
-        )
-        .is_err());
+        assert!(
+            open_historical_parent(storage.clone(), &binding, &source_stage, &parent_stage)
+                .is_err()
+        );
         parent_stage.payload_length -= 1;
         let logical = parent_stage.logical_entity_key_hash.clone();
         parent_stage.logical_entity_key_hash = "L".repeat(43);
-        assert!(open_historical_group_parent(
-            storage.clone(),
-            &binding,
-            &source_stage,
-            &parent_stage
-        )
-        .is_err());
+        assert!(
+            open_historical_parent(storage.clone(), &binding, &source_stage, &parent_stage)
+                .is_err()
+        );
         parent_stage.logical_entity_key_hash = logical;
         let mut altered_parent = parent();
         altered_parent.3 = Some("different source title".into());
@@ -540,25 +748,19 @@ pub(crate) mod tests {
             std::slice::from_ref(&altered_stage.protected_reference),
         )
         .unwrap();
-        assert!(open_historical_group_parent(
-            storage.clone(),
-            &binding,
-            &altered_stage,
-            &parent_stage
-        )
-        .is_err());
+        assert!(
+            open_historical_parent(storage.clone(), &binding, &altered_stage, &parent_stage)
+                .is_err()
+        );
         let mut changed = source_stage.clone();
         changed.source_sha256 = "f".repeat(64);
         assert!(
-            open_historical_group_parent(storage.clone(), &binding, &changed, &parent_stage)
-                .is_err()
+            open_historical_parent(storage.clone(), &binding, &changed, &parent_stage).is_err()
         );
         let wrong = HistoricalBinding {
             snapshot_sha256: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
             ..binding
         };
-        assert!(
-            open_historical_group_parent(storage, &wrong, &source_stage, &parent_stage).is_err()
-        );
+        assert!(open_historical_parent(storage, &wrong, &source_stage, &parent_stage).is_err());
     }
 }

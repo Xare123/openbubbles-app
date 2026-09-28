@@ -108,7 +108,6 @@ final class CloudSyncHistoricalParentOrigin
         scope.streamKind != CloudSyncStreamKind.messages ||
         scope.schemaVersion != 2 ||
         scope.persistenceLane != CloudSyncPersistenceLane.semantic ||
-        request.groupMetadata == null ||
         request.parentState == null ||
         durable.sourceChatGuidSha256 != _chatDigest(request.chatGuid)) {
       throw StateError('cloud_sync_historical_chat_source_changed');
@@ -139,7 +138,7 @@ final class CloudSyncHistoricalParentOrigin
                   .equals(request.chatGuid)
                   .or(
                     Chat_.cloudGuid.equals(
-                      request.groupMetadata!.cloudGuid ?? request.chatGuid,
+                      request.groupMetadata?.cloudGuid ?? request.parentState?.cloudGuid ?? request.chatGuid,
                     ),
                   ),
             )

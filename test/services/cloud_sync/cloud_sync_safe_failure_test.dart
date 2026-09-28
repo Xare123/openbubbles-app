@@ -124,6 +124,29 @@ void main() {
       );
     }
   });
+  test('historical Chat diagnostics remain exact and content-free', () {
+    final paths = [
+      'lib/services/rustpush/cloud_sync/cloud_sync_historical_chat_origin.dart',
+      'lib/services/rustpush/cloud_sync/cloud_sync_historical_parent_origin.dart',
+      'lib/services/rustpush/cloud_sync/cloud_sync_historical_create_adapter.dart',
+      'lib/services/rustpush/cloud_sync/cloud_sync_outbound_chat_origin.dart',
+      'lib/services/rustpush/cloud_sync/native_protected_cloud_sync_transport.dart',
+      'lib/services/rustpush/cloud_sync/objectbox_cloud_sync_store.dart',
+    ];
+    final codes = paths.expand((path) => RegExp(
+      r"'(cloud_sync_historical_chat_[a-z_]+)'",
+    ).allMatches(File(path).readAsStringSync()).map((m) => m[1]!)).toSet();
+    expect(codes, hasLength(16));
+    for (final code in codes) {
+      expect(cloudSyncV2SafeFailureCode(StateError(code)), code);
+      expect(cloudSyncV2SafeFailureCode(CloudSyncFailure(
+        category: CloudFailureCategory.localStorage, safeCode: code)), code);
+      expect(cloudSyncV2SafeFailureCode(StateError('$code private body')),
+          'cloud_sync_unknown_failure');
+      expect(cloudSyncV2SafeFailureCodeForCandidate('${code}_unreviewed'),
+          'cloud_sync_unknown_failure');
+    }
+  });
   test('local-send blockers are specific without exposing exception text', () {
     for (final code in [
       'cloud_sync_local_send_owner_required',

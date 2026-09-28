@@ -1073,6 +1073,30 @@ void main() {
     settleParentReader: settleParentReader,
   );
 
+  test('missing direct parent reaches source-bound admission without a placeholder', () async {
+    expect(request.groupMetadata, isNull);
+    expect(request.parentState, isNotNull);
+    store.box<Chat>().remove(chat.id!);
+    var consumes = 0;
+    final coordinator = archiveCoordinator(
+      discover: (_) async => false,
+      consume: (selected) async {
+        consumes++;
+        expect(selected.intentId, intentId);
+        expect(selected.localChatId, isNull);
+        expect(selected.request.sourceSha256, request.sourceSha256);
+        return const CloudSyncLocalSendConsumerResult(outboxBlocked: true);
+      },
+    );
+    await expectLater(coordinator.call(request, canonicalBytes),
+      throwsA(isA<StateError>().having((error) => error.message, 'code',
+        'cloud_sync_historical_archive_confirmation_pending')));
+    expect(consumes, 1);
+    expect(store.box<Chat>().count(), 0);
+    expect(store.box<CloudOutboxOperationEntity>().count(), 0);
+    expect(row().state, 1);
+  });
+
   test('confirmed parent hands off to reader once before same historical message resumes', () async {
     final events = <String>[];
     var consumes = 0;
