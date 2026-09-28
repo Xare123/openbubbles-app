@@ -3,6 +3,7 @@ import 'dart:typed_data';
 
 import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_historical_archive_request.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_historical_attachment_inventory.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_historical_snapshot_codec.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -41,6 +42,7 @@ CloudSyncHistoricalRowView _row({
   CloudSyncHistoricalChatView? chat,
   bool hasAttachments = false,
   int attachmentCount = 0,
+  CloudSyncHistoricalAttachmentInventory? attachmentInventory,
   bool hasActualEditOrUnsend = false,
   bool dateEditedPresent = false,
   bool associationPresent = false,
@@ -83,6 +85,7 @@ CloudSyncHistoricalRowView _row({
     threadOriginatorPresent: threadOriginatorPresent,
     hasAttachments: hasAttachments,
     attachmentCount: attachmentCount,
+    attachmentInventory: attachmentInventory,
     subjectPresent: subjectPresent,
     expressiveSendStyleIdPresent: expressiveSendStyleIdPresent,
     balloonBundleIdPresent: balloonBundleIdPresent,
@@ -109,6 +112,130 @@ CloudSyncHistoricalAccountBinding _account() =>
     );
 
 void main() {
+  test('old attachment-count snapshots stay byte-exact without inventing inventory', () {
+    final encoded = encodeHistoricalSnapshotRow(
+      _row(hasAttachments: true, attachmentCount: 2),
+    );
+    expect(jsonDecode(encoded), hasLength(35));
+    final restored = decodeHistoricalSnapshotRow(
+      encoded,
+      snapshotSha256: _snapshot,
+    );
+    expect(restored.attachmentInventory, isNull);
+    expect(encodeHistoricalSnapshotRow(restored), encoded);
+  });
+
+  test('stored attachment inventory roundtrips without transient cache state', () {
+    final stored = Attachment(
+      id: 8,
+      guid: 'original-attachment',
+      transferName: 'original-photo.heic',
+      mimeType: 'image/heic',
+      totalBytes: 1048576,
+      sourcePath: 'not-captured-cache-path',
+      metadata: {
+        'rustpush': '<plist>original descriptor, not generated</plist>',
+        'nested': {'original': true},
+      },
+    )..message.targetId = 42;
+    final inventory = CloudSyncHistoricalAttachmentInventory.capture([stored]);
+    final view = _row(
+      hasAttachments: true,
+      attachmentCount: 1,
+      attachmentInventory: inventory,
+    );
+    final encoded = encodeHistoricalSnapshotRow(view);
+    stored.transferName = 'changed.jpg';
+    (stored.metadata!['nested'] as Map)['original'] = false;
+    expect(encodeHistoricalSnapshotRow(view), encoded);
+    expect(jsonDecode(encoded), hasLength(36));
+    expect(encoded, isNot(contains('not-captured-cache-path')));
+    final restored = decodeHistoricalSnapshotRow(
+      encoded,
+      snapshotSha256: _snapshot,
+    );
+    final attachment = restored.attachmentInventory!.attachments.single;
+    expect(attachment.guid, 'original-attachment');
+    expect(attachment.messageId, 42);
+    expect(attachment.transferName, 'original-photo.heic');
+    expect(attachment.totalBytes, 1048576);
+    expect(attachment.metadataJson, contains('original descriptor'));
+    expect(encodeHistoricalSnapshotRow(restored), encoded);
+  });
+
+  test('captured inventory cannot be flattened through false media flags', () {
+    final row = _row(
+      attachmentInventory: CloudSyncHistoricalAttachmentInventory.capture([
+        Attachment(guid: 'stored-attachment'),
+      ]),
+    );
+    final assessment = assessHistoricalArchiveRow(
+      row,
+      _manifest(),
+      _account(),
+      nowMs: _nowMs,
+    );
+    expect(assessment, isA<CloudSyncHistoricalArchiveIneligible>());
+    expect(
+      (assessment as CloudSyncHistoricalArchiveIneligible).reason,
+      CloudSyncHistoricalArchiveReasons.media,
+    );
+  });
+
+  test('only snapshot capture freezes stored backlinks, never display-cache replacements', () {
+    final stored = Attachment(
+      id: 8,
+      guid: 'stored-original',
+      metadata: {'rustpush': 'original descriptor'},
+    )..message.targetId = 42;
+    final message = Message(id: 42, guid: 'parent')
+      ..dbAttachments.add(stored)
+      ..attachments = [Attachment(guid: 'transient-display-replacement')];
+    final guardView = mapHistoricalRow(
+      message: message,
+      chat: _chat(),
+      rowSnapshotSha256: _snapshot,
+    );
+    expect(guardView.attachmentInventory, isNull);
+    expect(guardView.attachmentCount, 1);
+    final snapshotView = mapHistoricalRow(
+      message: message,
+      chat: _chat(),
+      rowSnapshotSha256: _snapshot,
+      captureAttachmentInventory: true,
+    );
+    final frozen = snapshotView.attachmentInventory!.attachments.single;
+    expect(frozen.guid, 'stored-original');
+    expect(frozen.messageId, 42);
+    stored.metadata!['rustpush'] = 'changed later';
+    expect(frozen.metadataJson, '{"rustpush":"original descriptor"}');
+  });
+
+  test('malformed optional inventory is rejected with the row error only', () {
+    final original = jsonDecode(encodeHistoricalSnapshotRow(_row())) as List;
+    for (final invalid in <Object?>[
+      null,
+      'private descriptor',
+      [2, []],
+      [1, {}],
+      [1, [[]]],
+    ]) {
+      expect(
+        () => decodeHistoricalSnapshotRow(
+          jsonEncode([...original, invalid]),
+          snapshotSha256: _snapshot,
+        ),
+        throwsA(
+          isA<StateError>().having(
+            (error) => error.message,
+            'redacted reason',
+            'cloud_sync_historical_snapshot_row_invalid',
+          ),
+        ),
+      );
+    }
+  });
+
   Chat groupChat({String? cloudGuid = 'original-apple-group'}) {
     final handles = [
       Handle(address: 'z@example.com', service: 'iMessage'),

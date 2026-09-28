@@ -4,8 +4,9 @@ import 'package:bluebubbles/database/models.dart';
 
 import 'cloud_sync_historical_archive_request.dart';
 import 'cloud_sync_historical_chat_state.dart';
+import 'cloud_sync_historical_attachment_inventory.dart';
 
-/// Canonical v1 snapshot codec with additive group and parent-state fields.
+/// Canonical v1 snapshot codec with additive group, parent and attachment fields.
 /// Existing ten/eleven-field chat rows re-encode byte-exactly; missing metadata
 /// is never reconstructed from current state. These fields grant no upload.
 ///
@@ -29,7 +30,8 @@ const int _maxRowBytes = 1024 * 1024;
 const String _tag = 'historicalSnapshotRow';
 
 /// 2 envelope slots plus 33 row slots (chat nested); rowSnapshotSha256 is
-/// deliberately not among them.
+/// deliberately not among them. A final optional inventory preserves stored
+/// attachment metadata. Old 35-field rows retain their exact representation.
 const int _fieldCount = 35;
 const int _chatFieldCount = 10;
 
@@ -118,6 +120,7 @@ List<Object?> _rowFields(CloudSyncHistoricalRowView view) => <Object?>[
   view.payloadDataPresent,
   view.hasApplePayloadData,
   view.amkSessionIdPresent,
+  if (view.attachmentInventory case final inventory?) inventory.toWire(),
 ];
 
 List<Object?> _chatFields(CloudSyncHistoricalChatView chat) => <Object?>[
@@ -138,7 +141,7 @@ List<Object?> _chatFields(CloudSyncHistoricalChatView chat) => <Object?>[
 
 CloudSyncHistoricalRowView _rowView(Object? value, String snapshotSha256) {
   if (value is! List ||
-      value.length != _fieldCount ||
+      (value.length != _fieldCount && value.length != _fieldCount + 1) ||
       value[0] != 1 ||
       value[1] != _tag) {
     throw StateError(_invalid);
@@ -178,6 +181,9 @@ CloudSyncHistoricalRowView _rowView(Object? value, String snapshotSha256) {
     hasApplePayloadData: _boolean(value[33]),
     amkSessionIdPresent: _boolean(value[34]),
     rowSnapshotSha256: snapshotSha256,
+    attachmentInventory: value.length == _fieldCount + 1
+        ? CloudSyncHistoricalAttachmentInventory.fromWire(value[35])
+        : null,
   );
 }
 

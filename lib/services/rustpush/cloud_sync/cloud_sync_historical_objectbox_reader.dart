@@ -169,6 +169,7 @@ class CloudSyncHistoricalObjectBoxReader implements HistoricalRowReader {
       message: message,
       chat: mapHistoricalChat(resolvedChat),
       rowSnapshotSha256: rowSnapshotSha256,
+      captureAttachmentInventory: true,
     );
   }
 

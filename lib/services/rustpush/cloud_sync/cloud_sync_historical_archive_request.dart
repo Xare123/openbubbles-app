@@ -6,6 +6,7 @@ import 'package:bluebubbles/database/models.dart';
 import 'package:crypto/crypto.dart';
 
 import 'cloud_sync_historical_chat_state.dart';
+import 'cloud_sync_historical_attachment_inventory.dart';
 
 /// Pure eligibility for one stored on-device message row as a historical
 /// archive candidate (v2: supervisor review corrections applied).
@@ -208,6 +209,7 @@ class CloudSyncHistoricalRowView {
     required this.hasApplePayloadData,
     required this.amkSessionIdPresent,
     required this.rowSnapshotSha256,
+    this.attachmentInventory,
   });
 
   final String guid;
@@ -246,6 +248,10 @@ class CloudSyncHistoricalRowView {
   final bool hasApplePayloadData;
   final bool amkSessionIdPresent;
   final String rowSnapshotSha256;
+
+  /// Null for old snapshots or when no stored attachment relation was captured.
+  /// This preserves source metadata only; it never grants upload authority.
+  final CloudSyncHistoricalAttachmentInventory? attachmentInventory;
 }
 
 /// Result of one pure historical eligibility check.
@@ -511,7 +517,9 @@ CloudSyncHistoricalArchiveAssessment _assessHistoricalBoundRow(
       CloudSyncHistoricalArchiveReasons.reaction,
     );
   }
-  if (row.hasAttachments || row.attachmentCount > 0) {
+  if (row.hasAttachments ||
+      row.attachmentCount > 0 ||
+      (row.attachmentInventory?.attachments.isNotEmpty ?? false)) {
     return const CloudSyncHistoricalArchiveIneligible(
       CloudSyncHistoricalArchiveReasons.media,
     );
@@ -732,14 +740,17 @@ CloudSyncHistoricalChatView mapHistoricalChat(Chat chat) {
 
 /// Builds the plain row view from persisted entities. The caller supplies
 /// the snapshot hash the row was read from; it is rechecked at assessment.
+/// Only snapshot capture requests the detached attachment inventory. Current-row
+/// vetoes keep their existing lightweight markers and never serialize media.
 CloudSyncHistoricalRowView mapHistoricalRow({
   required Message message,
   required CloudSyncHistoricalChatView chat,
   required String rowSnapshotSha256,
+  bool captureAttachmentInventory = false,
 }) {
   // The transient display cache can be empty even when ObjectBox retains an
   // attachment backlink. Never classify that stored message as plain text.
-  final storedAttachments = message.dbAttachments.length;
+  final storedAttachments = List<Attachment>.of(message.dbAttachments);
   return CloudSyncHistoricalRowView(
     guid: message.guid ?? '',
     text: message.text,
@@ -778,9 +789,12 @@ CloudSyncHistoricalRowView mapHistoricalRow({
         message.threadOriginatorGuid != null ||
         message.threadOriginatorPart != null,
     hasAttachments: message.hasAttachments,
-    attachmentCount: storedAttachments > message.attachments.length
-        ? storedAttachments
+    attachmentCount: storedAttachments.length > message.attachments.length
+        ? storedAttachments.length
         : message.attachments.length,
+    attachmentInventory: !captureAttachmentInventory || storedAttachments.isEmpty
+        ? null
+        : CloudSyncHistoricalAttachmentInventory.capture(storedAttachments),
     subjectPresent: message.subject?.isNotEmpty ?? false,
     expressiveSendStyleIdPresent: message.expressiveSendStyleId != null,
     balloonBundleIdPresent: message.balloonBundleId != null,

@@ -131,6 +131,44 @@ void main() {
     if (directory.existsSync()) await directory.delete(recursive: true);
   });
 
+  test('stored backlinks preserve attachment metadata after database reopen', () async {
+    final message = putMessage(
+      guid: 'attachment-parent',
+      text: 'caption',
+      isFromMe: false,
+      sender: friend,
+      owner: chat,
+    );
+    final attachment = Attachment(
+      guid: 'stored-photo',
+      transferName: 'original.heic',
+      mimeType: 'image/heic',
+      totalBytes: 1048576,
+      metadata: {'rustpush': '<plist>exact original descriptor</plist>'},
+    )..message.target = message;
+    store.box<Attachment>().put(attachment);
+    final attachmentId = attachment.id;
+    final messageId = message.id;
+    store.close();
+    store = await openStore(directory: directory.path);
+    expect(store.box<Message>().get(messageId!)!.attachments, isEmpty);
+    final view = (await reader().readPage(limit: 10)).views.single;
+    final captured = view.attachmentInventory!.attachments.single;
+    expect(view.attachmentCount, 1);
+    expect(captured.id, attachmentId);
+    expect(captured.messageId, messageId);
+    expect(captured.guid, 'stored-photo');
+    expect(captured.transferName, 'original.heic');
+    expect(captured.totalBytes, 1048576);
+    expect(captured.metadataJson, contains('exact original descriptor'));
+    final changed = store.box<Attachment>().get(attachmentId!)!
+      ..transferName = 'later.jpg'
+      ..metadata = {'rustpush': 'later descriptor'};
+    store.box<Attachment>().put(changed);
+    expect(captured.transferName, 'original.heic');
+    expect(captured.metadataJson, contains('exact original descriptor'));
+  });
+
   test('pages across boundaries and exhausts exactly once', () async {
     for (var i = 0; i < 5; i++) {
       putMessage(
