@@ -30,6 +30,8 @@ void main() {
   CloudSyncHistoricalCursorFile cursorFile({
     String? snapshot,
     CloudProtectedPageLeaseTransport? selected,
+    CloudSyncHistoricalCursorMode mode =
+        CloudSyncHistoricalCursorMode.stageOnly,
   }) => CloudSyncHistoricalCursorFile(
     privateStorageDirectory: directory.path,
     manifest: _manifest(snapshot: snapshot),
@@ -39,6 +41,7 @@ void main() {
     ),
     transport: selected ?? transport,
     stillCurrent: () => current,
+    mode: mode,
   );
 
   HistoricalProducerCursor progress(
@@ -54,7 +57,7 @@ void main() {
     path.join(
       directory.path,
       CloudSyncHistoricalCursorFile.directoryName,
-      '${store.scope}.json',
+      '${store.scope}${store.mode == CloudSyncHistoricalCursorMode.archive ? '.archive' : ''}.json',
     ),
   );
 
@@ -131,6 +134,51 @@ void main() {
     expect((await cursorFile().load())?.lastId, progress(first, 5).lastId);
     expect(await target(first).parent.list().toList(), hasLength(2));
   });
+
+  test('completed staging scan cannot shortcut an archive cursor', () async {
+    final staged = cursorFile();
+    await staged.load();
+    await staged.save(progress(staged, null));
+    final archive = cursorFile(mode: CloudSyncHistoricalCursorMode.archive);
+    expect(await archive.load(), isNull);
+    await archive.save(progress(archive, 5));
+    expect((await cursorFile().load())?.done, isTrue);
+    final reopened = cursorFile(mode: CloudSyncHistoricalCursorMode.archive);
+    expect((await reopened.load())?.lastId, progress(archive, 5).lastId);
+    await reopened.save(progress(reopened, null));
+    expect(
+      (await cursorFile(
+        mode: CloudSyncHistoricalCursorMode.archive,
+      ).load())?.done,
+      isTrue,
+    );
+    expect(await target(archive).parent.list().toList(), hasLength(2));
+  });
+
+  for (final archiveTarget in [false, true]) {
+    test(
+      'cross-purpose progress is rejected (archive target $archiveTarget)',
+      () async {
+        final source = cursorFile(
+          mode: archiveTarget
+              ? CloudSyncHistoricalCursorMode.stageOnly
+              : CloudSyncHistoricalCursorMode.archive,
+        );
+        final wrong = cursorFile(
+          mode: archiveTarget
+              ? CloudSyncHistoricalCursorMode.archive
+              : CloudSyncHistoricalCursorMode.stageOnly,
+        );
+        await source.load();
+        await source.save(progress(source, null));
+        final encoded = await target(source).readAsBytes();
+        await target(wrong).writeAsBytes(encoded);
+        await expectLater(wrong.load(), throwsStateError);
+        expect(await target(wrong).readAsBytes(), encoded);
+        expect((await source.load())?.done, isTrue);
+      },
+    );
+  }
 
   test('foreign snapshot metadata is retained and rejected', () async {
     final first = cursorFile();

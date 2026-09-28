@@ -72,9 +72,16 @@ void main() {
       expect(
         adapter,
         contains(
-          '(selection == null && !CloudSyncDevGate.localSendRuntimeEnabled)',
+          '(selection == null && historical == null && !CloudSyncDevGate.localSendRuntimeEnabled)',
         ),
       );
+      expect(adapter, contains(
+        '(historical != null && !CloudSyncDevGate.manualSemanticPullEnabled)',
+      ));
+      expect(adapter, contains('validateOutboxDispatch: historical == null ? null : () => validateHistoricalSelection()'));
+      expect(adapter, contains('return rows.where(historical.owns).toList(growable: false)'));
+      expect(adapter, contains('expectedOperation: historicalOperation'));
+      expect(adapter, contains('validateContinuation: historical == null ? null : validateSelection'));
       expect(adapter, contains('owner.owner != CloudKitWriterOwner.v2'));
       // Composition guard only: behavior across epochs is covered by the
       // real ObjectBox retained-upload tests, not by these source assertions.
@@ -101,13 +108,13 @@ void main() {
       expect(
         adapter,
         contains(
-          'reconcile: (op) async {\n            if (selection != null) await validateSelection();',
+          'reconcile: (op) async {\n            if (selection != null || historical != null) await validateSelection();',
         ),
       );
       expect(
         adapter,
         contains(
-          'flush: (target) async {\n          if (selection != null) await validateSelection();',
+          'flush: (target) async {\n          if (selection != null || historical != null) await validateSelection();',
         ),
       );
       expect(adapter, contains('intentId: source.intentId, currentAuth: auth'));

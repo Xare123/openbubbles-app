@@ -26,6 +26,8 @@ import 'cloud_sync_local_send_journal.dart';
 import 'cloud_sync_received_archive_journal.dart';
 import 'cloud_sync_received_create_adapter.dart';
 import 'cloud_sync_historical_create_adapter.dart';
+import 'cloud_sync_historical_create_selection.dart';
+import 'cloud_sync_historical_archive_journal.dart';
 import 'cloud_sync_safe_failure.dart';
 import 'cloud_sync_attachment_upload_journal.dart';
 import 'cloud_sync_attachment_plan_coordinator.dart';
@@ -720,9 +722,10 @@ final class CloudSyncProductionLocalSendAdapter {
   Future<CloudSyncLocalSendConsumerResult>? _running;
   CloudSyncNativeAuthSnapshot? _boundAuth;
   CloudSyncLocalSendExactSelection? _exactSelection;
+  CloudSyncHistoricalCreateSelection? _historicalSelection;
 
   Future<CloudSyncLocalSendConsumerResult> runOnce() {
-    if (_exactSelection != null) {
+    if (_exactSelection != null || _historicalSelection != null) {
       throw StateError('cloud_sync_local_send_selection_changed');
     }
     return _running ??= _run().whenComplete(() => _running = null);
@@ -736,7 +739,7 @@ final class CloudSyncProductionLocalSendAdapter {
     required String expectedRecipient,
     required String expectedSourceSha256,
   }) {
-    if (_running != null) {
+    if (_running != null || _historicalSelection != null) {
       throw StateError('cloud_sync_local_send_consumer_busy');
     }
     final selection = _exactSelection;
@@ -762,7 +765,7 @@ final class CloudSyncProductionLocalSendAdapter {
     required String expectedSender,
     required String expectedSourceSha256,
   }) {
-    if (_running != null) {
+    if (_running != null || _historicalSelection != null) {
       throw StateError('cloud_sync_local_send_consumer_busy');
     }
     final selection = _exactSelection;
@@ -782,12 +785,29 @@ final class CloudSyncProductionLocalSendAdapter {
         .whenComplete(() => _running = null);
   }
 
+  /// Explicit historical-source admission and readback using the same queue.
+  /// Does not run the ordinary-send consumer or enable any automatic uploads.
+  /// A caller must qualify/stage the source before constructing this selection.
+  Future<CloudSyncLocalSendConsumerResult> runHistoricalRequest(
+    CloudSyncHistoricalCreateSelection selection,
+  ) {
+    if (_running != null || _exactSelection != null ||
+        (_historicalSelection != null && !_historicalSelection!.matches(selection))) {
+      throw StateError('cloud_sync_historical_selection_changed');
+    }
+    _historicalSelection ??= selection;
+    return _running = _run(historical: _historicalSelection)
+        .whenComplete(() => _running = null);
+  }
+
   Future<CloudSyncLocalSendConsumerResult> _run({
     CloudSyncLocalSendExactSelection? selection,
+    CloudSyncHistoricalCreateSelection? historical,
   }) async {
     if (!CloudKitWriterOwnership.v2MutationsEnabled ||
         !CloudSyncDevGate.manualOutboundCanaryEnabled ||
-        (selection == null && !CloudSyncDevGate.localSendRuntimeEnabled) ||
+        (historical != null && !CloudSyncDevGate.manualSemanticPullEnabled) ||
+        (selection == null && historical == null && !CloudSyncDevGate.localSendRuntimeEnabled) ||
         !_stillCurrent()) {
       throw StateError('cloud_sync_local_send_consumer_disabled');
     }
@@ -869,6 +889,7 @@ final class CloudSyncProductionLocalSendAdapter {
     // Ephemeral per pass. Admission changes the read-set revision; refresh
     // against the ORIGINAL staged operation before lease, including restart.
     final chatEvidence = <String, CloudSyncChatIdentityEvidence>{};
+    late final void Function() validateHistoricalSelection;
     final durable = ObjectBoxCloudSyncStore(
       store: objectBox,
       protector: protector,
@@ -877,6 +898,7 @@ final class CloudSyncProductionLocalSendAdapter {
       attachmentUploadJournal: uploads,
       readChatIdentityEvidence: (operation) => chatEvidence[operation.operationId],
       recordExistingHistoryDiagnostic: existingHistoryDiagnostics.record,
+      validateOutboxDispatch: historical == null ? null : () => validateHistoricalSelection(),
     );
     final interlock = CloudKitOperationInterlock(
       privateStorageDirectory: _privateStorageDirectory, fenceStore: durable,
@@ -949,8 +971,23 @@ final class CloudSyncProductionLocalSendAdapter {
       zone: 'chatManateeZone', streamKind: scope.streamKind,
       schemaVersion: scope.schemaVersion, persistenceLane: scope.persistenceLane,
     );
+    final historicalJournal = historical == null ? null : CloudSyncHistoricalArchiveJournal(
+      store: objectBox, accountFingerprint: auth.accountFingerprint,
+      protectedStoreIdentity: auth.protectedStoreIdentity,
+      snapshotSha256: historical.request.snapshotSha256,
+    );
+    validateHistoricalSelection = () {
+      fence.requireCurrentBinding(auth);
+      historical!.validate(store: objectBox, scope: scope,
+        journal: historicalJournal!, durable: durable, auth: auth,
+        localSendJournal: journal);
+    };
     Future<void> validateSelection() async {
       await fence.run(() {}, accountFingerprint: scope.accountFingerprint);
+      if (historical != null) {
+        validateHistoricalSelection();
+        return;
+      }
       await durable.recoverExpiredOutboxLeases(chatScope, now: DateTime.now().toUtc());
       await fence.run(() {
         // Commit local disposition independently before an invalid diagnostic
@@ -1136,12 +1173,28 @@ final class CloudSyncProductionLocalSendAdapter {
 
     Future<bool> drainExisting() async {
       await fence.run(() {}, accountFingerprint: scope.accountFingerprint);
-      await _recoverPendingMessageCreateReadbacks(
+      CloudOutboxOperation? historicalOperation;
+      if (historical != null) {
+        historicalOperation = historical.validate(store: objectBox, scope: scope,
+          journal: historicalJournal!, durable: durable, auth: auth,
+          localSendJournal: journal);
+        final all = <CloudOutboxOperation>[];
+        for (final target in [chatScope, attachmentScope, scope]) {
+          all.addAll(await durable.readOutboxEntries(target));
+          await validateSelection();
+        }
+        if (!historical.canDrain(all)) return false;
+      }
+      if (historical == null || historicalOperation != null) {
+        await _recoverPendingMessageCreateReadbacks(
         scope: scope,
         durableStore: durable,
         transport: transport,
+        expectedOperation: historicalOperation,
+        validateContinuation: historical == null ? null : validateSelection,
       );
-      if (!await recoverCloudSyncLocalSendUploadFence(
+      }
+      if (historical == null && !await recoverCloudSyncLocalSendUploadFence(
         recoverProtectedStore: recoverProtectedStore,
         reconcileUpload: () => transport.runProtectedStoreExclusive(() =>
             guard.reconcilePendingAttachmentUpload(
@@ -1153,13 +1206,17 @@ final class CloudSyncProductionLocalSendAdapter {
         return false;
       }
       final settled = await drainCloudSyncCreateQueues(
-        scopes: [chatScope, attachmentScope, scope],
+        scopes: historical == null ? [chatScope, attachmentScope, scope] : [scope],
         isRetiredUnsubmittedChatCreate: (operation) async =>
             durable.isRetiredUnsubmittedChatCreate(operation),
         isRetainedPreproofPendingCreate: (operation) async =>
             durable.isRetainedPreproofPendingCreate(operation),
         readOutbox: (target) async {
           final rows = await durable.readOutboxEntries(target);
+          if (historical != null) {
+            await validateSelection();
+            return rows.where(historical.owns).toList(growable: false);
+          }
           if (selection == null) return rows;
           await validateSelection();
           return rows.where((row) =>
@@ -1169,7 +1226,7 @@ final class CloudSyncProductionLocalSendAdapter {
         recoverExpired: (target) => durable.recoverExpiredOutboxLeases(
           target, now: DateTime.now().toUtc()),
         reconcileUnknown: (operation) async {
-        if (selection != null) await validateSelection();
+        if (selection != null || historical != null) await validateSelection();
         final target = operation.scope;
         await guard.requireReconciliationAllowed(
           owner: CloudKitWriterOwner.v2,
@@ -1188,7 +1245,7 @@ final class CloudSyncProductionLocalSendAdapter {
               durable.commitOutboxCreateReceipt(target, leaseId: leaseId,
                 receipt: receipt, retainProtectedLeaseReference: true, now: now),
           reconcile: (op) async {
-            if (selection != null) await validateSelection();
+            if (selection != null || historical != null) await validateSelection();
             return transport.runProtectedStoreExclusive(() => guard.reconcileUnknownOutcome(
               owner: CloudKitWriterOwner.v2,
               expectedClient: auth.cloudMessagesClient, operation: op));
@@ -1198,7 +1255,7 @@ final class CloudSyncProductionLocalSendAdapter {
         await recovery.reconcileUnknownOutcome(operation: operation);
         },
         flush: (target) async {
-          if (selection != null) await validateSelection();
+          if (selection != null || historical != null) await validateSelection();
           guard.requireClear();
           try {
             await refreshQueuedChatEvidence(target);
@@ -1209,14 +1266,14 @@ final class CloudSyncProductionLocalSendAdapter {
           }
         },
         acknowledgeConfirmed: (target, operation) async {
-        if (selection != null) await validateSelection();
+        if (selection != null || historical != null) await validateSelection();
         guard.requireClear();
         final proof = target.zone == 'chatManateeZone'
             ? await transport.verifyConfirmedChatCreateNoSave(target, operation: operation)
             : target.zone == 'attachmentManateeZone'
             ? await transport.verifyConfirmedAttachmentCreateNoSave(target, operation: operation)
             : await transport.verifyConfirmedMessageCreateNoSave(target, operation: operation);
-        if (selection != null) await validateSelection();
+        if (selection != null || historical != null) await validateSelection();
         if (target.zone == 'messageManateeZone') {
           await transport.releaseConfirmedMessageReplayReceipt(
             target,
@@ -1257,6 +1314,7 @@ final class CloudSyncProductionLocalSendAdapter {
         return false;
       }
       await fence.run(() {
+        if (historical != null) return;
         if (selection != null) {
           final source = selection.validate(
             store: objectBox, journal: journal, durable: durable, scope: scope,
@@ -1414,6 +1472,24 @@ final class CloudSyncProductionLocalSendAdapter {
         return true;
       },
       action: () async {
+      if (historical != null) {
+        return interlock.runExclusive(kind: CloudKitOperationKind.v2ReadWrite, action: () async {
+          await validateSelection();
+          if (!await drainExisting()) {
+            return const CloudSyncLocalSendConsumerResult(outboxBlocked: true);
+          }
+          final alreadyAdmitted = historical.validate(store: objectBox, scope: scope,
+            journal: historicalJournal!, durable: durable, auth: auth,
+            localSendJournal: journal) != null;
+          await historicalCreates.admit(scope: scope, journal: historicalJournal,
+            request: historical.request, intentId: historical.intentId,
+            localChatId: historical.localChatId);
+          await validateSelection();
+          final settled = await drainExisting();
+          return CloudSyncLocalSendConsumerResult(
+            admitted: alreadyAdmitted ? 0 : 1, outboxBlocked: !settled);
+        });
+      }
       final consumer = CloudSyncLocalSendConsumer(
         scope: scope, journal: journal, authFence: fence, exclusion: interlock,
         admit: (id) async {

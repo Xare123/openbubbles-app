@@ -9,6 +9,8 @@ import 'cloud_sync_historical_archive_request.dart';
 import 'cloud_sync_historical_producer.dart';
 import 'cloud_sync_transport.dart';
 
+enum CloudSyncHistoricalCursorMode { stageOnly, archive }
+
 /// Durable scan progress, not an upload receipt or authority to write CloudKit.
 ///
 /// One small file belongs to one qualified snapshot/account/protected store.
@@ -24,6 +26,7 @@ final class CloudSyncHistoricalCursorFile implements HistoricalCursorStore {
     required CloudSyncHistoricalAccountBinding account,
     required this.transport,
     required this.stillCurrent,
+    this.mode = CloudSyncHistoricalCursorMode.stageOnly,
   }) : _root = Directory(privateStorageDirectory).absolute,
        _storeIdentity = account.protectedStoreIdentity,
        scope = historicalArchiveScope(manifest, account) {
@@ -47,6 +50,7 @@ final class CloudSyncHistoricalCursorFile implements HistoricalCursorStore {
   final String scope;
   final CloudProtectedPageLeaseTransport transport;
   final bool Function() stillCurrent;
+  final CloudSyncHistoricalCursorMode mode;
   bool _loaded = false;
   String? _expectedEncoded;
 
@@ -92,7 +96,10 @@ final class CloudSyncHistoricalCursorFile implements HistoricalCursorStore {
     if (!path.isWithin(rootPath, directoryPath)) {
       throw StateError('cloud_sync_historical_cursor_storage_untrusted');
     }
-    final target = File(path.join(directoryPath, '$scope.json'));
+    // A finished staging scan is not a finished upload. Keep independent
+    // cursors so old staging-only progress can never bypass archival work.
+    final suffix = mode == CloudSyncHistoricalCursorMode.archive ? '.archive' : '';
+    final target = File(path.join(directoryPath, '$scope$suffix.json'));
     final type = await FileSystemEntity.type(target.path, followLinks: false);
     if (type != FileSystemEntityType.notFound &&
         type != FileSystemEntityType.file) {
@@ -116,7 +123,9 @@ final class CloudSyncHistoricalCursorFile implements HistoricalCursorStore {
 
   String _encode(HistoricalProducerCursor cursor) {
     _validate(cursor);
-    final body = <Object?>[1, scope, cursor.lastId, cursor.done];
+    final body = mode == CloudSyncHistoricalCursorMode.stageOnly
+        ? <Object?>[1, scope, cursor.lastId, cursor.done]
+        : <Object?>[2, scope, cursor.lastId, cursor.done, 'archive'];
     final checksum = sha256.convert(utf8.encode(jsonEncode(body))).toString();
     return jsonEncode([...body, checksum]);
   }
@@ -124,14 +133,17 @@ final class CloudSyncHistoricalCursorFile implements HistoricalCursorStore {
   HistoricalProducerCursor _decode(String encoded) {
     try {
       final fields = jsonDecode(encoded);
+      final archive = mode == CloudSyncHistoricalCursorMode.archive;
+      final checksumIndex = archive ? 5 : 4;
       if (fields is! List ||
-          fields.length != 5 ||
-          fields[0] != 1 ||
+          fields.length != (archive ? 6 : 5) ||
+          fields[0] != (archive ? 2 : 1) ||
+          (archive && fields[4] != 'archive') ||
           fields[1] is! String ||
           (fields[2] != null && fields[2] is! String) ||
           fields[3] is! bool ||
-          fields[4] is! String ||
-          !_digest.hasMatch(fields[4] as String)) {
+          fields[checksumIndex] is! String ||
+          !_digest.hasMatch(fields[checksumIndex] as String)) {
         throw const FormatException();
       }
       final cursor = HistoricalProducerCursor(

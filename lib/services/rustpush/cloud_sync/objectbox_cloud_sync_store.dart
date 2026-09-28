@@ -107,6 +107,8 @@ class ObjectBoxCloudSyncStore
     return ObjectBoxCloudSyncStore(store: Database.store, protector: protector);
   }
 
+  bool isBoundToStore(Store store) => identical(_store, store);
+
   @override
   Future<bool> hasQuarantinedInboxBarrier(CloudSyncScope scope) async =>
       _store.runInTransaction(TxMode.read, () {
@@ -3576,6 +3578,7 @@ class ObjectBoxCloudSyncStore
     final nowMs = now.millisecondsSinceEpoch;
     final leaseIdHash = _digest('outbox-lease\u001f$leaseId');
     return _store.runInTransaction(TxMode.write, () {
+      _validateOutboxDispatch?.call();
       final checkpoint = _checkpointLocked(scope, nowMs: nowMs);
       _fenceStaleOutboxLocked(scope, checkpoint: checkpoint, nowMs: nowMs);
       final eligible =
@@ -3822,6 +3825,7 @@ class ObjectBoxCloudSyncStore
   }) async {
     final nowMs = now.millisecondsSinceEpoch;
     return _store.runInTransaction(TxMode.write, () {
+      _validateOutboxDispatch?.call();
       final checkpoint = _checkpointLocked(scope, nowMs: nowMs);
       _fenceStaleOutboxLocked(scope, checkpoint: checkpoint, nowMs: nowMs);
       return _recoverExpiredOutboxLeasesLocked(scope, nowMs);

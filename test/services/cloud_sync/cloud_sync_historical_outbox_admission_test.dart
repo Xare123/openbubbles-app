@@ -5,12 +5,18 @@ import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/src/rust/api/api.dart' as api;
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_protected_page_lease_lifecycle.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_historical_create_adapter.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_historical_create_selection.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_historical_archive_journal.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_historical_archive_coordinator.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_historical_archive_request.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_historical_outbox_binding.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_historical_protected_source_binding.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_manual_shadow_sampler.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_models.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_persistent_keys.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_historical_producer.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_historical_staging.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_send_consumer.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_protector.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_transport.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/objectbox_cloud_sync_store.dart';
@@ -41,6 +47,8 @@ void main() {
   late Handle sender;
   late CloudSyncHistoricalProtectedSourceBinding source;
   late CloudSyncHistoricalArchiveRequest request;
+  late List<int> canonicalBytes;
+  late CloudSyncHistoricalRowView sourceView;
   late int intentId;
   late int generation;
 
@@ -50,11 +58,13 @@ void main() {
     protectedStoreIdentity: _protectedStore,
     cloudMessagesClient: Object(),
   );
-  ObjectBoxCloudSyncStore durable() => ObjectBoxCloudSyncStore(
-    store: store,
-    protector: _SyntheticProtector(),
-    clock: () => _now,
-  );
+  ObjectBoxCloudSyncStore durable({void Function()? validate}) =>
+      ObjectBoxCloudSyncStore(
+        store: store,
+        protector: _SyntheticProtector(),
+        clock: () => _now,
+        validateOutboxDispatch: validate,
+      );
   CloudSyncHistoricalArchiveJournal journal() =>
       CloudSyncHistoricalArchiveJournal(
         store: store,
@@ -197,12 +207,13 @@ void main() {
     // remove only this synthetic fixture row so the target models Alpha import.
     final fixture = localMessage();
     final fixtureId = store.box<Message>().put(fixture);
+    sourceView = mapHistoricalRow(
+      message: fixture,
+      chat: mapHistoricalChat(chat),
+      rowSnapshotSha256: 'a' * 64,
+    );
     final assessed = assessHistoricalArchiveRow(
-      mapHistoricalRow(
-        message: fixture,
-        chat: mapHistoricalChat(chat),
-        rowSnapshotSha256: 'a' * 64,
-      ),
+      sourceView,
       CloudSyncHistoricalSourceManifest(
         snapshotSha256: 'a' * 64,
         accountFingerprint: _account,
@@ -224,6 +235,14 @@ void main() {
           : null,
     );
     request = (assessed as CloudSyncHistoricalArchiveEligible).request;
+    canonicalBytes = utf8.encode(
+      jsonEncode(
+        stagedHistoricalPayload(
+          request: request,
+          text: 'synthetic original text',
+        ),
+      ),
+    );
     store.box<Message>().remove(fixtureId);
     source = CloudSyncHistoricalProtectedSourceBinding(
       accountFingerprint: _account,
@@ -233,8 +252,8 @@ void main() {
       sourceSha256: request.sourceSha256,
       protectedReference: 'obcs2.ref.${'R' * 43}',
       leaseReference: 'obcs2.lease.${'b' * 32}',
-      payloadSha256: 'c' * 64,
-      payloadLength: 128,
+      payloadSha256: historicalBytesSha256(canonicalBytes),
+      payloadLength: canonicalBytes.length,
     );
     intentId = journal().adopt(source).id;
     journal().markSourceLeaseCommitted(
@@ -615,6 +634,523 @@ void main() {
     expect(store.box<CloudOutboxOperationEntity>().count(), 0);
   });
 
+  CloudSyncHistoricalCreateSelection exactSelection() =>
+      CloudSyncHistoricalCreateSelection(
+        request: request,
+        intentId: intentId,
+        localChatId: chat.id!,
+      );
+  CloudOutboxOperation? validateExact(
+    CloudSyncHistoricalCreateSelection exact,
+  ) => exact.validate(
+    store: store,
+    scope: _messageScope,
+    journal: journal(),
+    durable: durable(),
+    auth: auth,
+  );
+  CloudOutboxOperation otherOperation(
+    CloudOutboxStatus status, {
+    bool lease = false,
+  }) => CloudOutboxOperation(
+    scope: _messageScope,
+    operationId: 'unrelated',
+    logicalEntityKeyHash: 'unrelated',
+    action: CloudOutboxAction.save,
+    payloadVersion: 1,
+    mutationRevision: 1,
+    checkpointGeneration: generation,
+    dependencyOperationIds: {},
+    createdAt: _now,
+    encryptedPayloadReference: 'obcs2.ref.${'Z' * 43}',
+    payloadSha256: 'a' * 64,
+    status: status,
+    protectedLeaseReference: lease ? 'obcs2.lease.${'a' * 32}' : null,
+  );
+  CloudOutboxOperationEntity otherRow({
+    CloudOutboxStatus status = CloudOutboxStatus.confirmed,
+    CloudSyncScope? scope,
+    bool lease = false,
+  }) {
+    final target = scope ?? _messageScope;
+    final entity = CloudOutboxOperationEntity(
+      operationId: 'unrelated',
+      scopeKey: cloudSyncPersistentScopeKey(target),
+      accountFingerprint: target.accountFingerprint,
+      zone: target.zone,
+      logicalEntityKeyHash: 'Z' * 43,
+      action: CloudOutboxAction.save.index,
+      payloadVersion: cloudSyncOutboundPayloadVersion,
+      mutationRevision: 1,
+      checkpointGeneration: generation,
+      encryptedPayloadRef: 'obcs2.ref.${'Z' * 43}',
+      payloadSha256: 'a' * 64,
+      serverRecordIdHash: 'Z' * 43,
+      state: status.index,
+      protectedLeaseReference: lease ? 'obcs2.lease.${'a' * 32}' : null,
+      confirmedAtMs: status == CloudOutboxStatus.confirmed
+          ? _now.millisecondsSinceEpoch
+          : 0,
+      createdAtMs: _now.millisecondsSinceEpoch,
+      updatedAtMs: _now.millisecondsSinceEpoch,
+    );
+    store.box<CloudOutboxOperationEntity>().put(entity);
+    return entity;
+  }
+
+  for (final status in CloudOutboxStatus.values.where(
+    (status) => status != CloudOutboxStatus.confirmed,
+  )) {
+    test('historical selection cannot drain unrelated ${status.name}', () {
+      final exact = exactSelection();
+      expect(validateExact(exact), isNull);
+      final own = admit(selection());
+      expect(validateExact(exact)?.operationId, own.operationId);
+      expect(exact.canDrain([own]), isTrue);
+      expect(exact.canDrain([own, otherOperation(status)]), isFalse);
+      expect(exact.owns(otherOperation(status)), isFalse);
+      expect(store.box<CloudOutboxOperationEntity>().count(), 1);
+      otherRow(status: status);
+      expect(() => validateExact(exact), throwsStateError);
+      expect(store.box<CloudOutboxOperationEntity>().count(), 2);
+    });
+  }
+
+  test('historical selection leaves other confirmation work alone', () {
+    final exact = exactSelection();
+    final own = admit(selection());
+    validateExact(exact);
+    expect(
+      exact.canDrain([own, otherOperation(CloudOutboxStatus.confirmed)]),
+      isFalse,
+    );
+    expect(
+      exact.canDrain([
+        own,
+        otherOperation(CloudOutboxStatus.confirmed, lease: true),
+      ]),
+      isFalse,
+    );
+  });
+
+  test(
+    'historical selection pins existing settled evidence without draining it',
+    () async {
+      final own = admit(selection());
+      final other = otherRow();
+      final exact = exactSelection();
+      validateExact(exact);
+      final before = await durable().readOutboxEntries(_messageScope);
+      expect(exact.canDrain(before), isTrue);
+      expect(before.where(exact.owns).map((item) => item.operationId), [
+        own.operationId,
+      ]);
+      expect(
+        exact.owns(
+          before.singleWhere((item) => item.operationId == other.operationId),
+        ),
+        isFalse,
+      );
+      validateExact(exact);
+      final after = await durable().readOutboxEntries(_messageScope);
+      for (final item in before) {
+        expect(
+          item.sameDurableSnapshotAs(
+            after.singleWhere((row) => row.operationId == item.operationId),
+          ),
+          isTrue,
+        );
+      }
+    },
+  );
+
+  for (final change in ['changed', 'removed', 'new']) {
+    test('historical selection rejects $change settled audit evidence', () {
+      admit(selection());
+      final other = change == 'new' ? null : otherRow();
+      final exact = exactSelection();
+      validateExact(exact);
+      if (change == 'removed') {
+        store.box<CloudOutboxOperationEntity>().remove(other!.id);
+      } else if (change == 'changed') {
+        other!.attemptCount += 1;
+        store.box<CloudOutboxOperationEntity>().put(other);
+      } else {
+        otherRow();
+      }
+      expect(() => validateExact(exact), throwsStateError);
+      expect(row().state, 3);
+    });
+  }
+
+  test('historical selection checks unrelated account queues too', () {
+    admit(selection());
+    otherRow(
+      status: CloudOutboxStatus.unknownOutcome,
+      scope: CloudSyncScope(
+        accountFingerprint: 'B' * 43,
+        container: _messageScope.container,
+        database: _messageScope.database,
+        zone: 'attachmentManateeZone',
+        persistenceLane: CloudSyncPersistenceLane.semantic,
+      ),
+    );
+    expect(() => validateExact(exactSelection()), throwsStateError);
+    expect(store.box<CloudOutboxOperationEntity>().count(), 2);
+  });
+
+  test(
+    'historical selection refuses a different database after reopen',
+    () async {
+      admit(selection());
+      final exact = exactSelection();
+      validateExact(exact);
+      store.close();
+      store = await openStore(directory: directory.path);
+      expect(() => validateExact(exact), throwsStateError);
+      expect(validateExact(exactSelection()), isNotNull);
+    },
+  );
+
+  for (final boundary in ['lease', 'unknown', 'expired']) {
+    test(
+      'historical $boundary boundary rejects newly arrived unrelated work atomically',
+      () async {
+        final own = admit(selection());
+        final exact = exactSelection();
+        validateExact(exact);
+        final guarded = durable(
+          validate: () {
+            validateExact(exact);
+          },
+        );
+        otherRow(status: CloudOutboxStatus.pending);
+        final before = await durable().readOutboxEntries(_messageScope);
+        final Future<Object?> result;
+        if (boundary == 'lease') {
+          result = guarded.leaseEligibleOutbox(
+            _messageScope,
+            now: _now,
+            limit: 1,
+            leaseId: 'selected-lease',
+            leaseDuration: const Duration(minutes: 1),
+            allowedActions: {CloudOutboxAction.save},
+          );
+        } else if (boundary == 'unknown') {
+          result = guarded.leaseUnknownOutcomes(
+            _messageScope,
+            now: _now,
+            limit: 1,
+            leaseId: 'selected-lease',
+            leaseDuration: const Duration(minutes: 1),
+          );
+        } else {
+          result = guarded.recoverExpiredOutboxLeases(_messageScope, now: _now);
+        }
+        await expectLater(result, throwsStateError);
+        final after = await durable().readOutboxEntries(_messageScope);
+        for (final item in before) {
+          expect(
+            item.sameDurableSnapshotAs(
+              after.singleWhere((row) => row.operationId == item.operationId),
+            ),
+            isTrue,
+          );
+        }
+        expect(row().admittedOperationId, own.operationId);
+        expect(
+          store.box<CloudOutboxOperationEntity>().getAll().every(
+            (row) => row.leaseIdHash == null,
+          ),
+          isTrue,
+        );
+      },
+    );
+  }
+
+  test(
+    'historical selection reopens exact ownership without the visible row',
+    () async {
+      final messageId = store.box<Message>().put(localMessage());
+      final own = admit(selection());
+      store.box<Message>().remove(messageId);
+      store.close();
+      store = await openStore(directory: directory.path);
+      final exact = exactSelection();
+      expect(validateExact(exact)?.operationId, own.operationId);
+      expect(exact.owns(own), isTrue);
+      expect(exact.matches(exactSelection()), isTrue);
+      expect(
+        exact.matches(
+          CloudSyncHistoricalCreateSelection(
+            request: request,
+            intentId: intentId,
+            localChatId: chat.id! + 1,
+          ),
+        ),
+        isFalse,
+      );
+    },
+  );
+
+  test('historical selection never retargets another local chat', () {
+    admit(selection());
+    final wrong = CloudSyncHistoricalCreateSelection(
+      request: request,
+      intentId: intentId,
+      localChatId: chat.id! + 1,
+    );
+    expect(() => validateExact(wrong), throwsStateError);
+    expect(row().state, 3);
+  });
+
+  CloudSyncHistoricalArchiveCoordinator archiveCoordinator({
+    required Future<bool> Function(CloudSyncHistoricalArchiveIntent) discover,
+    required Future<CloudSyncLocalSendConsumerResult> Function(
+      CloudSyncHistoricalCreateSelection,
+    )
+    consume,
+    Future<void> Function()? validate,
+    void Function(CloudSyncHistoricalArchiveDisposition)? onDisposition,
+  }) => CloudSyncHistoricalArchiveCoordinator(
+    store: store,
+    journal: journal(),
+    durable: durable(),
+    validate: validate ?? () async {},
+    discover: discover,
+    consume: consume,
+    stage: (request, bytes) async => StagedHistoricalSource(
+      key: request.sourceSha256,
+      guid: request.guid,
+      sha256: source.payloadSha256,
+      byteLength: source.payloadLength,
+    ),
+    onDisposition: onDisposition,
+  );
+
+  test(
+    'archive orchestration does not label a successful callback as a receipt',
+    () async {
+      final dispositions = <CloudSyncHistoricalArchiveDisposition>[];
+      final coordinator = archiveCoordinator(
+        discover: (_) async => false,
+        consume: (_) async =>
+            const CloudSyncLocalSendConsumerResult(admitted: 1),
+        onDisposition: dispositions.add,
+      );
+      await expectLater(
+        coordinator.call(request, canonicalBytes),
+        throwsStateError,
+      );
+      expect(dispositions, isEmpty);
+      expect(row().state, 1);
+      expect(store.box<CloudOutboxOperationEntity>().count(), 0);
+    },
+  );
+
+  test(
+    'archive restart reopens an uncertain operation without rediscovery or another create',
+    () async {
+      var discoveries = 0;
+      var admissions = 0;
+      final dispositions = <CloudSyncHistoricalArchiveDisposition>[];
+      CloudSyncHistoricalArchiveCoordinator coordinator() => archiveCoordinator(
+        discover: (_) async {
+          discoveries++;
+          return false;
+        },
+        consume: (exact) async {
+          validateExact(exact);
+          if (row().admittedOperationId == null) {
+            admit(selection());
+            admissions++;
+          }
+          final entity = store.box<CloudOutboxOperationEntity>().getAll().single
+            ..state = CloudOutboxStatus.unknownOutcome.index;
+          store.box<CloudOutboxOperationEntity>().put(entity);
+          return const CloudSyncLocalSendConsumerResult(outboxBlocked: true);
+        },
+        onDisposition: dispositions.add,
+      );
+      await expectLater(
+        coordinator().call(request, canonicalBytes),
+        throwsStateError,
+      );
+      final originalId = row().admittedOperationId;
+      store.close();
+      store = await openStore(directory: directory.path);
+      await expectLater(
+        coordinator().call(request, canonicalBytes),
+        throwsStateError,
+      );
+      expect(discoveries, 1);
+      expect(admissions, 1);
+      expect(row().admittedOperationId, originalId);
+      expect(store.box<CloudOutboxOperationEntity>().count(), 1);
+      expect(dispositions, isEmpty);
+    },
+  );
+
+  test(
+    'archive requires durable reader ownership before accepting found',
+    () async {
+      var consumes = 0;
+      final coordinator = archiveCoordinator(
+        discover: (_) async => true,
+        consume: (_) async {
+          consumes++;
+          return const CloudSyncLocalSendConsumerResult();
+        },
+      );
+      await expectLater(
+        coordinator.call(request, canonicalBytes),
+        throwsStateError,
+      );
+      expect(consumes, 0);
+      expect(row().state, 1);
+    },
+  );
+
+  test(
+    'archive control flow reuses a synthetic confirmed receipt without another consume',
+    () async {
+      var consumes = 0;
+      var discoveries = 0;
+      final dispositions = <CloudSyncHistoricalArchiveDisposition>[];
+      CloudSyncHistoricalArchiveCoordinator coordinator() => archiveCoordinator(
+        discover: (_) async {
+          discoveries++;
+          return false;
+        },
+        consume: (exact) async {
+          consumes++;
+          admit(selection());
+          // Synthetic receipt state for orchestration only, not native or Apple proof.
+          final entity = store.box<CloudOutboxOperationEntity>().getAll().single
+            ..state = CloudOutboxStatus.confirmed.index
+            ..confirmedAtMs = _now.millisecondsSinceEpoch
+            ..protectedLeaseReference = null;
+          store.box<CloudOutboxOperationEntity>().put(entity);
+          return const CloudSyncLocalSendConsumerResult(admitted: 1);
+        },
+        onDisposition: dispositions.add,
+      );
+      expect(
+        (await coordinator().call(request, canonicalBytes)).sha256,
+        source.payloadSha256,
+      );
+      store.close();
+      store = await openStore(directory: directory.path);
+      expect(
+        (await coordinator().call(request, canonicalBytes)).sha256,
+        source.payloadSha256,
+      );
+      expect(consumes, 1);
+      expect(discoveries, 1);
+      expect(dispositions, [
+        CloudSyncHistoricalArchiveDisposition.confirmedCreate,
+        CloudSyncHistoricalArchiveDisposition.confirmedCreate,
+      ]);
+      expect(store.box<CloudOutboxOperationEntity>().count(), 1);
+    },
+  );
+
+  test('archive stops after identity changes at discovery', () async {
+    var current = true;
+    var consumes = 0;
+    final coordinator = archiveCoordinator(
+      validate: () async {
+        if (!current) throw StateError('identity_changed');
+      },
+      discover: (_) async {
+        current = false;
+        return false;
+      },
+      consume: (_) async {
+        consumes++;
+        return const CloudSyncLocalSendConsumerResult();
+      },
+    );
+    await expectLater(
+      coordinator.call(request, canonicalBytes),
+      throwsStateError,
+    );
+    expect(consumes, 0);
+    expect(row().state, 1);
+  });
+
+  test('archive never guesses another chat from the recipient alone', () async {
+    chat.guid = 'different-conversation';
+    store.box<Chat>().put(chat);
+    var consumes = 0;
+    final coordinator = archiveCoordinator(
+      discover: (_) async => false,
+      consume: (_) async {
+        consumes++;
+        return const CloudSyncLocalSendConsumerResult();
+      },
+    );
+    await expectLater(
+      coordinator.call(request, canonicalBytes),
+      throwsStateError,
+    );
+    expect(consumes, 0);
+    expect(row().state, 1);
+  });
+
+  test(
+    'producer advances archive progress only after durable confirmation',
+    () async {
+      final cursor = MemoryHistoricalCursorStore();
+      var consumes = 0;
+      var discoveries = 0;
+      CloudSyncHistoricalProducer producer() => CloudSyncHistoricalProducer(
+        reader: _OneHistoricalRow(sourceView),
+        registry: _NoHistoricalOwners(),
+        cursors: cursor,
+        manifest: CloudSyncHistoricalSourceManifest(
+          snapshotSha256: request.snapshotSha256,
+          accountFingerprint: _account,
+          accountHandles: [sender.address],
+          messageCount: 1,
+          capturedAtMs: _now.millisecondsSinceEpoch,
+        ),
+        account: CloudSyncHistoricalAccountBinding(
+          accountFingerprint: _account,
+          protectedStoreIdentity: _protectedStore,
+        ),
+        readCurrentRow: (_) async => sourceView,
+        stageAndAdopt: archiveCoordinator(
+          discover: (_) async {
+            discoveries++;
+            return false;
+          },
+          consume: (_) async {
+            consumes++;
+            admit(selection());
+            return const CloudSyncLocalSendConsumerResult(outboxBlocked: true);
+          },
+        ).call,
+        nowMs: _now.millisecondsSinceEpoch,
+      );
+      await expectLater(producer().run(), throwsStateError);
+      expect(await cursor.load(), isNull);
+      final operationId = row().admittedOperationId;
+      final entity = store.box<CloudOutboxOperationEntity>().getAll().single
+        ..state = CloudOutboxStatus.confirmed.index
+        ..confirmedAtMs = _now.millisecondsSinceEpoch
+        ..protectedLeaseReference = null;
+      store.box<CloudOutboxOperationEntity>().put(entity);
+      final result = await producer().run();
+      expect(result.summary.completed, isTrue);
+      expect((await cursor.load())?.done, isTrue);
+      expect(row().admittedOperationId, operationId);
+      expect(consumes, 1);
+      expect(discoveries, 1);
+      expect(store.box<CloudOutboxOperationEntity>().count(), 1);
+    },
+  );
+
   test(
     'confirmed cleanup does not erase historical source or change its owner',
     () {
@@ -633,6 +1169,23 @@ void main() {
       expect(row().admittedOperationId, operation.operationId);
     },
   );
+}
+
+class _OneHistoricalRow implements HistoricalRowReader {
+  _OneHistoricalRow(this.view);
+  final CloudSyncHistoricalRowView view;
+  @override
+  Future<HistoricalRowPage> readPage({
+    String? cursor,
+    required int limit,
+  }) async => HistoricalRowPage(views: [view], nextCursor: null);
+}
+
+class _NoHistoricalOwners implements HistoricalOwnershipRegistry {
+  @override
+  Set<String> get ownedGuids => const {};
+  @override
+  Set<String> get conflictGuids => const {};
 }
 
 class _StageTransport implements CloudProtectedPageLeaseTransport {
