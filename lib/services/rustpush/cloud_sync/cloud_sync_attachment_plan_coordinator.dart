@@ -16,6 +16,7 @@ import 'package:bluebubbles/database/models.dart';
 import 'cloud_sync_attachment_upload_journal.dart';
 import 'cloud_sync_historical_archive_journal.dart';
 import 'cloud_sync_historical_protected_source_binding.dart';
+import 'cloud_sync_historical_attachment_source.dart';
 import 'cloud_sync_local_send_journal.dart';
 import 'cloud_sync_local_send_source_binding.dart';
 import 'cloud_sync_manual_shadow_sampler.dart';
@@ -104,6 +105,108 @@ final class CloudSyncAttachmentPlanCoordinator {
   final Set<int> _active = <int>{};
 
   static final RegExp _token = RegExp(r'^[A-Za-z0-9_-]{43}$');
+
+  /// Check the complete historical inventory before creating any new plan or
+  /// Chat. Existing attempts are recovered first, including uploaded results
+  /// not yet adopted into the record queue. Missing files never waive that
+  /// readback obligation. A false result retains the WHOLE message for retry;
+  /// it does not remove inventory parts or authorize a partial parent.
+  Future<bool> historicalSourcesAvailable({
+    required int historicalIntentId,
+    required CloudSyncHistoricalArchiveJournal historicalJournal,
+    required Future<List<CloudSyncAttachmentPlanInventoryItem>> Function(
+      CloudSyncHistoricalProtectedSourceBinding, CloudSyncNativeAuthSnapshot) readInventory,
+    required Future<String?> Function(CloudSyncAttachmentPlanInventoryItem) resolveSource,
+    required Future<void> Function(CloudAttachmentUploadSnapshot, Set<String>) recoverExisting,
+    required Future<bool> Function() drainExisting,
+    Future<bool> Function(String)? probeSource,
+  }) async {
+    if (historicalIntentId <= 0 || !historicalJournal.isBoundToStore(_store)) {
+      throw StateError('cloud_sync_attachment_plan_store_invalid');
+    }
+    if (!_active.add(historicalIntentId)) throw StateError('cloud_sync_attachment_plan_busy');
+    try {
+      final auth = await _liveAuth();
+      final source = historicalJournal.requireHistoricalAttachmentOrigin(
+        intentId: historicalIntentId, currentAuth: auth).source;
+      Future<void> validate() async {
+        final current = await _liveAuth();
+        if (!auth.sameIdentity(current) ||
+            historicalJournal.requireHistoricalAttachmentOrigin(
+              intentId: historicalIntentId, currentAuth: current).source.encode() != source.encode()) {
+          throw StateError('cloud_sync_attachment_plan_origin_changed');
+        }
+      }
+      late final List<CloudSyncAttachmentPlanInventoryItem> inventory;
+      late final Set<String> keys;
+      CloudAttachmentUploadSnapshot? read(CloudSyncAttachmentPlanInventoryItem item) =>
+        _uploads.findHistoricalForAttachment(historicalIntentId: historicalIntentId,
+          logicalEntityKeyHash: item.logicalEntityKeyHash, sourceAttachmentKeys: keys,
+          historicalJournal: historicalJournal);
+      await _staging.runOutboundAdmissionExclusive(() async {
+        inventory = List<CloudSyncAttachmentPlanInventoryItem>.unmodifiable(
+          await readInventory(source, auth));
+        _validateInventory(inventory);
+        await validate();
+        keys = Set<String>.unmodifiable(inventory.map((item) => item.logicalEntityKeyHash));
+        for (final item in inventory) {
+          final old = read(item);
+          if (old == null) continue;
+          if (old.state == CloudAttachmentUploadState.prepared) {
+            // Adoption can survive a failed commit. Reestablish the exact native
+            // lease before treating this retained plan as clean, unattempted work.
+            await _staging.commitOutboundLease(old.plan.leaseReference,
+              old.plan.protectedEnvelopeReference);
+          } else {
+            await recoverExisting(old, keys);
+          }
+          await validate();
+        }
+      });
+      // Record-save timeout recovery quiesces native work. It must not wait on
+      // the preparation exclusion held by this same operation.
+      if (!await drainExisting()) {
+        throw StateError('cloud_sync_attachment_parent_upload_unresolved');
+      }
+      await validate();
+      final pinned = <String, CloudAttachmentUploadSnapshot?>{};
+      final needsSource = <String>{};
+      for (final item in inventory) {
+        final old = read(item);
+        pinned[item.logicalEntityKeyHash] = old;
+        if (old == null || _uploads.historicalUploadNeedsLocalSource(old.id, historicalJournal)) {
+          needsSource.add(item.logicalEntityKeyHash);
+        }
+      }
+      var available = true;
+      for (final item in inventory) {
+        if (!needsSource.contains(item.logicalEntityKeyHash)) continue;
+        final path = await resolveSource(item);
+        await validate();
+        // Do not short-circuit on the first missing part: a later ambiguous
+        // source is a real error, not permission to skip the whole message.
+        if (path == null || !await (probeSource ?? cloudSyncHistoricalAttachmentSourceAvailable)(path)) {
+          available = false;
+        }
+        await validate();
+      }
+      for (final item in inventory) {
+        final before = pinned[item.logicalEntityKeyHash];
+        final after = read(item);
+        if (before?.id != after?.id || before?.state != after?.state ||
+            before?.attemptId != after?.attemptId ||
+            before?.plan.leaseReference != after?.plan.leaseReference ||
+            before?.plan.protectedEnvelopeReference != after?.plan.protectedEnvelopeReference) {
+          throw StateError('cloud_sync_attachment_upload_inventory_changed');
+        }
+        if (after != null) _uploads.historicalUploadNeedsLocalSource(after.id, historicalJournal);
+      }
+      await validate();
+      return available;
+    } finally {
+      _active.remove(historicalIntentId);
+    }
+  }
 
   /// Historical origins use the same adopt/commit/reuse mechanics, but never
   /// pass through IDS eligibility. Native inventory is reopened before plans.

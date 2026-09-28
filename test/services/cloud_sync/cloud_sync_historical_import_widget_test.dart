@@ -289,4 +289,57 @@ void main() {
     expect(calls, 0);
     await tester.pumpWidget(const SizedBox.shrink());
   });
+
+  testWidgets('missing-attachment deferral names kept messages without retry', (
+    tester,
+  ) async {
+    controller.phase = CloudSyncHistoricalImportPhase.scanComplete;
+    controller.sourceRows = 3;
+    controller.assessed = 3;
+    controller.confirmedCreates = 1;
+    controller.deferredMissingAttachments = 2;
+    await tester.pumpWidget(host());
+    await tester.pumpAndSettle();
+    expect(
+      find.textContaining('2 messages were kept because an original attachment file is missing'),
+      findsOneWidget,
+    );
+    expect(find.textContaining('Missing files have not been backed up'), findsOneWidget);
+    expect(find.textContaining('their protected copies remain saved'), findsNothing);
+    expect(find.textContaining('Retry'), findsNothing);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('retry confirmation names recheck without reupload claim', (
+    tester,
+  ) async {
+    final original = plan;
+    plan = CloudSyncHistoricalImportPlan(
+      snapshot: original.snapshot,
+      accountLabel: original.accountLabel,
+      archiveCursors: original.archiveCursors,
+      registry: original.registry,
+      stillCurrent: original.stillCurrent,
+      validateIdentity: original.validateIdentity,
+      archive: original.archive,
+      retryingMissingAttachments: true,
+    );
+    await tester.pumpWidget(host());
+    await review(tester);
+    expect(
+      find.text('Recheck messages with missing attachments?'),
+      findsOneWidget,
+    );
+    expect(
+      find.textContaining('Confirmed messages are not uploaded again'),
+      findsOneWidget,
+    );
+    expect(find.text('Recheck attachments'), findsOneWidget);
+    expect(find.text('Upload messages'), findsNothing);
+    await tester.tap(find.text('Cancel'));
+    await tester.pumpAndSettle();
+    expect(calls, 0);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
 }

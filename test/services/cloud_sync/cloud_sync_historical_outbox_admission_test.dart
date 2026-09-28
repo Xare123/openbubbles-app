@@ -4,6 +4,9 @@ import 'dart:io';
 import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/src/rust/api/api.dart' as api;
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_protected_page_lease_lifecycle.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_operation_identity.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_attachment_upload_journal.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_historical_chat_origin.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_historical_create_adapter.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_historical_create_selection.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_historical_archive_journal.dart';
@@ -1097,6 +1100,108 @@ void main() {
     expect(row().state, 1);
   });
 
+  test('text cannot be falsely deferred as an unavailable attachment', () async {
+    final dispositions = <CloudSyncHistoricalArchiveDisposition>[];
+    final coordinator = archiveCoordinator(discover: (_) async => false,
+      consume: (_) async => const CloudSyncLocalSendConsumerResult(
+        historicalAttachmentsUnavailable: true), onDisposition: dispositions.add);
+    await expectLater(coordinator.call(request, canonicalBytes), throwsA(
+      isA<StateError>().having((e) => e.message, 'code',
+        'cloud_sync_historical_archive_confirmation_pending')));
+    expect(dispositions, isEmpty);
+    expect(row().admittedOperationId, isNull);
+    expect(store.box<CloudOutboxOperationEntity>().count(), 0);
+  });
+
+  group('whole-message missing-file retention', () {
+    setUp(() {
+      final fixture = localMessage()
+        ..guid = 'historical-synthetic-media'
+        ..text = null
+        ..hasAttachments = true
+        ..attributedBody = [AttributedBody(string: ' ', runs: [Run(
+          range: [0, 1],
+          attributes: Attributes(messagePart: 0,
+            attachmentGuid: 'historical-synthetic-media_0'))])];
+      store.box<Message>().put(fixture);
+      final attachment = Attachment(guid: 'historical-synthetic-media_0',
+        uti: 'public.jpeg', mimeType: 'image/jpeg', isOutgoing: true,
+        transferName: 'photo.jpg', totalBytes: 128)..message.target = fixture;
+      store.box<Attachment>().put(attachment);
+      final persisted = store.box<Message>().get(fixture.id!)!;
+      sourceView = mapHistoricalRow(message: persisted, chat: mapHistoricalChat(chat),
+        rowSnapshotSha256: 'a' * 64, captureAttachmentInventory: true);
+      final assessed = assessHistoricalArchiveRow(sourceView,
+        CloudSyncHistoricalSourceManifest(snapshotSha256: 'a' * 64,
+          accountFingerprint: _account, accountHandles: [sender.address],
+          messageCount: 1, capturedAtMs: _now.millisecondsSinceEpoch),
+        CloudSyncHistoricalAccountBinding(accountFingerprint: _account,
+          protectedStoreIdentity: _protectedStore),
+        nowMs: _now.millisecondsSinceEpoch, includeMediaSource: true);
+      expect(assessed, isA<CloudSyncHistoricalArchiveEligible>(),
+        reason: assessed is CloudSyncHistoricalArchiveIneligible ? assessed.reason : null);
+      request = (assessed as CloudSyncHistoricalArchiveEligible).request;
+      canonicalBytes = encodeHistoricalSource(request: request, currentRow: sourceView,
+        manifest: CloudSyncHistoricalSourceManifest(snapshotSha256: 'a' * 64,
+          accountFingerprint: _account, accountHandles: [sender.address],
+          messageCount: 1, capturedAtMs: _now.millisecondsSinceEpoch),
+        account: CloudSyncHistoricalAccountBinding(accountFingerprint: _account,
+          protectedStoreIdentity: _protectedStore), nowMs: _now.millisecondsSinceEpoch).canonicalBytes;
+      source = CloudSyncHistoricalProtectedSourceBinding(accountFingerprint: _account,
+        protectedStoreIdentity: _protectedStore, snapshotSha256: request.snapshotSha256,
+        messageGuidHash: request.guidHash, sourceSha256: request.sourceSha256,
+        protectedReference: 'obcs2.ref.${'W' * 43}',
+        leaseReference: 'obcs2.lease.${'d' * 32}',
+        payloadSha256: historicalBytesSha256(canonicalBytes), payloadLength: canonicalBytes.length);
+      intentId = journal().adopt(source).id;
+      journal().markSourceLeaseCommitted(intentId: intentId, expectedSource: source);
+    });
+
+    test('missing file retains the whole source without parent admission across reopen', () async {
+      final dispositions = <CloudSyncHistoricalArchiveDisposition>[];
+      CloudSyncHistoricalArchiveCoordinator coordinator() => archiveCoordinator(
+        discover: (_) async => false,
+        consume: (_) async => const CloudSyncLocalSendConsumerResult(
+          historicalAttachmentsUnavailable: true), onDisposition: dispositions.add);
+      final before = row().protectedSourceBinding;
+      final sealed = await coordinator().call(request, canonicalBytes);
+      expect(sealed.sha256, source.payloadSha256);
+      expect(row().admittedOperationId, isNull);
+      expect(row().protectedSourceBinding, before);
+      expect(store.box<CloudOutboxOperationEntity>().count(), 0);
+      expect(store.box<Attachment>().count(), 1);
+      store.close();
+      store = await openStore(directory: directory.path);
+      await coordinator().call(request, canonicalBytes);
+      expect(row().protectedSourceBinding, before);
+      expect(dispositions, [CloudSyncHistoricalArchiveDisposition.retainedMissingAttachments,
+        CloudSyncHistoricalArchiveDisposition.retainedMissingAttachments]);
+      expect(store.box<CloudOutboxOperationEntity>().count(), 0);
+    });
+
+    for (final result in [
+      const CloudSyncLocalSendConsumerResult(historicalAttachmentsUnavailable: true,
+        outboxBlocked: true),
+      const CloudSyncLocalSendConsumerResult(historicalAttachmentsUnavailable: true,
+        chatReadbackPending: true),
+      const CloudSyncLocalSendConsumerResult(historicalAttachmentsUnavailable: true,
+        admitted: 1),
+    ]) {
+      test('missing-file disposition rejects active work '
+          '${result.outboxBlocked}/${result.chatReadbackPending}/${result.admitted}', () async {
+        final dispositions = <CloudSyncHistoricalArchiveDisposition>[];
+        final coordinator = archiveCoordinator(discover: (_) async => false,
+          consume: (_) async => result, onDisposition: dispositions.add);
+        await expectLater(coordinator.call(request, canonicalBytes), throwsA(
+          isA<StateError>().having((error) => error.message, 'code',
+            'cloud_sync_historical_archive_confirmation_pending')));
+        expect(dispositions, isEmpty);
+        expect(row().protectedSourceBinding, source.encode());
+        expect(row().admittedOperationId, isNull);
+      });
+    }
+  });
+
   test('confirmed parent hands off to reader once before same historical message resumes', () async {
     final events = <String>[];
     var consumes = 0;
@@ -1555,6 +1660,99 @@ void main() {
         expect(receivedRow().admittedOperationId, isNull);
       },
     );
+
+    for (final state in [CloudAttachmentUploadState.prepared,
+      CloudAttachmentUploadState.unknown, CloudAttachmentUploadState.adopted]) {
+      test('metadata deferral cannot hide a retained ${state.name} byte obligation', () async {
+        // Persist an obstruction in the real DB. This does not assert a valid
+        // upload receipt; even damaged prior work must not be silently skipped.
+        final obligation = CloudAttachmentUploadEntity(uploadKey: 'synthetic-byte-obligation',
+          accountFingerprint: _account, writerEpoch: 1, checkpointGeneration: generation,
+          localSendIntentId: 0, ownerKind: cloudSyncAttachmentOwnerKindHistorical,
+          ownerIntentId: receivedIntentId, messageGuidHash: receivedSource.messageGuidHash,
+          sourceSha256: receivedSource.sourceSha256, protectedStoreIdentity: _protectedStore,
+          attachmentKeyHash: 'L' * 43, serverRecordIdHash: 'M' * 43,
+          planReference: 'obcs2.ref.${'P' * 43}', planLeaseReference: 'obcs2.lease.${'e' * 32}',
+          planPayloadSha256: 'e' * 64, state: state.index,
+          createdAtMs: _now.millisecondsSinceEpoch, updatedAtMs: _now.millisecondsSinceEpoch);
+        final obligationId = store.box<CloudAttachmentUploadEntity>().put(obligation);
+        final dispositions = <CloudSyncHistoricalArchiveDisposition>[];
+        final coordinator = receivedCoordinator(discover: (_) async => false,
+          consume: (_) async => throw StateError('must_not_consume'),
+          onDisposition: dispositions.add);
+        await expectLater(coordinator.call(receivedRequest, receivedBytes), throwsA(
+          isA<StateError>().having((error) => error.message, 'code',
+            'cloud_sync_historical_archive_confirmation_pending')));
+        expect(dispositions, isEmpty);
+        expect(store.box<CloudAttachmentUploadEntity>().get(obligationId)?.state, state.index);
+        expect(receivedRow().protectedSourceBinding, receivedSource.encode());
+      });
+    }
+
+    for (final status in [CloudOutboxStatus.pending, CloudOutboxStatus.unknownOutcome,
+      CloudOutboxStatus.confirmed]) {
+      test('metadata deferral respects ${status.name} historical Chat work', () async {
+        final scope = _scope('chatManateeZone');
+        final origin = CloudSyncHistoricalChatOrigin(generation: generation,
+          intentId: receivedIntentId, localChatId: chat.id,
+          sourceChatGuidSha256: historicalBytesSha256(utf8.encode(receivedRequest.chatGuid)),
+          source: receivedSource, parentPayloadLength: 128);
+        final operation = CloudOutboxOperationEntity(
+          operationId: CloudOperationIdentity.forInitialCreate(scope: scope,
+            logicalEntityKeyHash: 'P' * 43, payloadVersion: cloudSyncOutboundChatPayloadVersion),
+          scopeKey: cloudSyncPersistentScopeKey(scope), accountFingerprint: _account,
+          zone: scope.zone, logicalEntityKeyHash: 'P' * 43, action: CloudOutboxAction.save.index,
+          payloadVersion: cloudSyncOutboundChatPayloadVersion, mutationRevision: 1,
+          checkpointGeneration: generation, encryptedPayloadRef: 'obcs2.ref.${'T' * 43}',
+          payloadSha256: 'f' * 64, serverRecordIdHash: 'R' * 43,
+          protectedLeaseReference: status == CloudOutboxStatus.confirmed
+            ? null : 'obcs2.lease.${'f' * 32}',
+          localChatOrigin: origin.encode(), state: status.index,
+          confirmedAtMs: status == CloudOutboxStatus.confirmed ? _now.millisecondsSinceEpoch : 0,
+          createdAtMs: _now.millisecondsSinceEpoch, updatedAtMs: _now.millisecondsSinceEpoch);
+        store.box<CloudOutboxOperationEntity>().put(operation);
+        // Verify the fixture is exact durable ownership, not an unrelated or
+        // undecodable row whose corruption happens to throw first.
+        expect(durable().readHistoricalChatCreate(scope, origin)?.operationId, operation.operationId);
+        final dispositions = <CloudSyncHistoricalArchiveDisposition>[];
+        final coordinator = receivedCoordinator(discover: (_) async => false,
+          consume: (_) async => throw StateError('must_not_consume'), onDisposition: dispositions.add);
+        if (status == CloudOutboxStatus.confirmed) {
+          await coordinator.call(receivedRequest, receivedBytes);
+          expect(dispositions, [CloudSyncHistoricalArchiveDisposition.retainedMissingMetadata]);
+        } else {
+          await expectLater(coordinator.call(receivedRequest, receivedBytes), throwsA(
+            isA<StateError>().having((error) => error.message, 'code',
+              'cloud_sync_historical_archive_confirmation_pending')));
+          expect(dispositions, isEmpty);
+        }
+        expect(store.box<CloudOutboxOperationEntity>().get(operation.id)?.state, status.index);
+        expect(receivedRow().protectedSourceBinding, receivedSource.encode());
+        // The same intent with a different retained source is corruption, not
+        // unrelated work that permits deferral, even after confirmed readback.
+        final changedSource = CloudSyncHistoricalProtectedSourceBinding(
+          accountFingerprint: receivedSource.accountFingerprint,
+          protectedStoreIdentity: receivedSource.protectedStoreIdentity,
+          snapshotSha256: receivedSource.snapshotSha256,
+          messageGuidHash: receivedSource.messageGuidHash,
+          sourceSha256: receivedSource.sourceSha256,
+          protectedReference: 'obcs2.ref.${'X' * 43}',
+          leaseReference: receivedSource.leaseReference,
+          payloadSha256: receivedSource.payloadSha256,
+          payloadLength: receivedSource.payloadLength);
+        operation.localChatOrigin = CloudSyncHistoricalChatOrigin(
+          generation: generation, intentId: receivedIntentId, localChatId: chat.id,
+          sourceChatGuidSha256: origin.sourceChatGuidSha256,
+          source: changedSource, parentPayloadLength: 128).encode();
+        store.box<CloudOutboxOperationEntity>().put(operation);
+        dispositions.clear();
+        await expectLater(coordinator.call(receivedRequest, receivedBytes), throwsA(
+          isA<StateError>().having((error) => error.message, 'code',
+            'cloud_sync_historical_archive_confirmation_pending')));
+        expect(dispositions, isEmpty);
+        expect(store.box<CloudOutboxOperationEntity>().count(), 1);
+      });
+    }
 
     test('durable found reader ownership is still handed to reader', () async {
       // The remote discovery answer is synthesized as a bare bool; reader

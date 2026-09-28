@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_historical_archive_coordinator.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_historical_archive_request.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_historical_attachment_inventory.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_historical_import_controller.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_historical_producer.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_historical_snapshot.dart';
@@ -40,12 +41,12 @@ CloudSyncHistoricalChatView _chat() => const CloudSyncHistoricalChatView(
   participantService: 'iMessage',
 );
 
-String _row(int id, {bool attachments = false}) {
-  final text = 'import row $id body';
+String _row(int id, {bool attachments = false, bool captureMedia = false}) {
+  final text = captureMedia ? ' ' : 'import row $id body';
   return encodeHistoricalSnapshotRow(
     CloudSyncHistoricalRowView(
       guid: _uuid(id),
-      text: text,
+      text: captureMedia ? null : text,
       attributedBodies: [
         if (attachments)
           AttributedBody(
@@ -87,6 +88,13 @@ String _row(int id, {bool attachments = false}) {
       threadOriginatorPresent: false,
       hasAttachments: attachments,
       attachmentCount: attachments ? 1 : 0,
+      attachmentInventory: captureMedia
+          ? CloudSyncHistoricalAttachmentInventory.capture([
+              Attachment(id: id, guid: 'attach-$id', uti: 'public.jpeg',
+                mimeType: 'image/jpeg', isOutgoing: false, transferName: 'photo.jpg',
+                totalBytes: 128)..message.targetId = id,
+            ])
+          : null,
       subjectPresent: false,
       expressiveSendStyleIdPresent: false,
       balloonBundleIdPresent: false,
@@ -167,7 +175,12 @@ void main() {
   CloudSyncHistoricalSnapshot snapshot([int count = 3]) =>
       _snapshot([for (var i = 1; i <= count; i++) _row(i)]);
 
-  CloudSyncHistoricalImportPlan planFor(CloudSyncHistoricalSnapshot snap) =>
+  CloudSyncHistoricalImportPlan planFor(
+    CloudSyncHistoricalSnapshot snap, {
+    HistoricalRowReader? reader,
+    bool retryingMissingAttachments = false,
+    bool includeMediaSource = false,
+  }) =>
       CloudSyncHistoricalImportPlan(
         snapshot: snap,
         accountLabel: 'Example Account',
@@ -176,6 +189,9 @@ void main() {
         stillCurrent: () => live,
         validateIdentity: () => validateIdentity(),
         archive: archive.call,
+        reader: reader,
+        retryingMissingAttachments: retryingMissingAttachments,
+        includeMediaSource: includeMediaSource,
       );
 
   Future<CloudSyncHistoricalImportConfirmation> prepareFor(
@@ -562,4 +578,107 @@ void main() {
     await controller.confirm(replacement);
     expect(archive.calls, 3);
   });
+
+  test(
+    'missing-attachment deferral counts separately without claiming upload',
+    () async {
+      final controller = CloudSyncHistoricalImportController();
+      archive.dispositionFor = (guid) => guid == _uuid(1)
+          ? CloudSyncHistoricalArchiveDisposition.retainedMissingAttachments
+          : guid == _uuid(2)
+          ? CloudSyncHistoricalArchiveDisposition.retainedMissingMetadata
+          : CloudSyncHistoricalArchiveDisposition.confirmedCreate;
+      await controller.confirm(await prepareFor(controller, snapshot(3)));
+      expect(archive.calls, 3);
+      expect(controller.handled, 3);
+      expect(controller.deferredMissingAttachments, 1);
+      expect(controller.deferredMissingMetadata, 1);
+      expect(controller.confirmedCreates, 1);
+      expect(controller.readerHandoffs, 0);
+      expect(controller.scanComplete, isTrue);
+      expect(controller.phase, CloudSyncHistoricalImportPhase.scanComplete);
+    },
+  );
+
+  test('attachment deferral deduplicates repeats and resets per session', () async {
+    final controller = CloudSyncHistoricalImportController(pageSize: 1);
+    archive.dispositionFor = (_) =>
+        CloudSyncHistoricalArchiveDisposition.retainedMissingAttachments;
+    // One snapshot object: separate captures mint different cursor scopes.
+    final snap = snapshot(2);
+    await controller.confirm(await prepareFor(controller, snap));
+    expect(controller.deferredMissingAttachments, 2);
+    expect(controller.confirmedCreates, 0);
+    expect(controller.scanComplete, isTrue);
+    archive.dispositionFor = (_) =>
+        CloudSyncHistoricalArchiveDisposition.confirmedCreate;
+    // A fresh cursor store starts a new session over the same snapshot.
+    cursors = MemoryHistoricalCursorStore();
+    await controller.confirm(await prepareFor(controller, snap));
+    expect(controller.deferredMissingAttachments, 0);
+    expect(controller.confirmedCreates, 2);
+    expect(controller.deferredMissingMetadata, 0);
+  });
+
+  test('plan defaults to the snapshot reader without retry flags', () async {
+    final controller = CloudSyncHistoricalImportController();
+    final snap = snapshot();
+    final confirmation = await prepareFor(controller, snap);
+    expect(confirmation.retryingMissingAttachments, isFalse);
+    await controller.confirm(confirmation);
+    expect(controller.scanComplete, isTrue);
+    expect(archive.calls, 3);
+  });
+
+  test('filtered reader limits the pass under retry confirmation', () async {
+    final controller = CloudSyncHistoricalImportController();
+    final snap = snapshot(3);
+    final allow = {_uuid(2)};
+    final confirmation = await controller.prepare(
+      () async => planFor(
+        snap,
+        reader: _FilteredReader(snap, allow),
+        retryingMissingAttachments: true,
+      ),
+    );
+    expect(confirmation.retryingMissingAttachments, isTrue);
+    await controller.confirm(confirmation);
+    expect(archive.calls, 1);
+    expect(archive.callsByGuid.keys, allow);
+    expect(controller.handled, 1);
+    expect(controller.confirmedCreates, 1);
+    expect(controller.scanComplete, isTrue);
+  });
+
+  for (final includeMedia in [false, true]) {
+    test('controller forwards complete media assessment option $includeMedia', () async {
+      final controller = CloudSyncHistoricalImportController();
+      final snap = _snapshot([_row(1, attachments: true, captureMedia: true)]);
+      archive.dispositionFor = (_) =>
+          CloudSyncHistoricalArchiveDisposition.retainedMissingAttachments;
+      final confirmation = await controller.prepare(() async =>
+        planFor(snap, includeMediaSource: includeMedia));
+      await controller.confirm(confirmation);
+      expect(controller.phase, CloudSyncHistoricalImportPhase.scanComplete);
+      expect(archive.calls, includeMedia ? 1 : 0);
+      expect(controller.deferredMissingAttachments, includeMedia ? 1 : 0);
+      expect(controller.confirmedCreates, 0);
+      expect(controller.handled, includeMedia ? 1 : 0);
+    });
+  }
+}
+
+final class _FilteredReader implements HistoricalRowReader {
+  _FilteredReader(this.inner, this.allow);
+  final CloudSyncHistoricalSnapshot inner;
+  final Set<String> allow;
+
+  @override
+  Future<HistoricalRowPage> readPage({String? cursor, required int limit}) async {
+    final page = await inner.readPage(cursor: cursor, limit: limit);
+    return HistoricalRowPage(
+      views: page.views.where((view) => allow.contains(view.guid)).toList(),
+      nextCursor: page.nextCursor,
+    );
+  }
 }

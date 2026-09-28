@@ -188,11 +188,17 @@ final class CloudSyncLocalSendConsumerResult {
     this.candidateLimitReached = false,
     this.deferredReasons = const {},
     this.existingHistoryDiagnostics = const {},
+    this.historicalAttachmentsUnavailable = false,
   });
 
   final int admitted;
   final int deferred;
   final bool outboxBlocked;
+
+  /// Exact historical source retained without Message admission. The complete
+  /// inventory was checked after all existing remote outcomes were settled.
+  /// This is never a successful upload or an ordinary-send retry disposition.
+  final bool historicalAttachmentsUnavailable;
 
   /// A full, completely examined batch may leave eligible origins beyond the
   /// selection limit. Continue fair rotation without no-progress backoff.

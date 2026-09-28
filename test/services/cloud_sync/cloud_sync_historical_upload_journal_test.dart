@@ -1082,6 +1082,339 @@ void main() {
       throwsA(isA<StateError>()),
     );
   });
+
+  group('historical sources availability', () {
+    late _AvailabilityStaging staging;
+    late CloudSyncNativeAuthSnapshot live;
+    late List<CloudSyncAttachmentPlanInventoryItem> inventory;
+    late Map<String, String?> paths;
+    late Map<String, bool> probes;
+    var recovered = 0;
+    var drained = 0;
+    var drainResult = true;
+    Object? Function(CloudSyncAttachmentPlanInventoryItem)? resolveError;
+
+    CloudSyncAttachmentPlanInventoryItem item(String key) =>
+        CloudSyncAttachmentPlanInventoryItem(
+          originalAttachmentGuid: 'original-$key',
+          reflectedAttachmentGuid: 'reflected-$key',
+          logicalEntityKeyHash: key * 43,
+        );
+
+    CloudSyncAttachmentPlanCoordinator coordinator() =>
+        CloudSyncAttachmentPlanCoordinator(
+          store: store,
+          localSends: localSends,
+          uploads: uploads,
+          readLiveAuth: () async => live,
+          staging: staging,
+          readInventory: (_, __) =>
+              throw StateError('unexpected_IDS_inventory'),
+          stagePlan: (_, __, ___) => throw StateError('unexpected_IDS_plan'),
+        );
+
+    Future<bool> run() => coordinator().historicalSourcesAvailable(
+      historicalIntentId: historicalIntentId,
+      historicalJournal: historicalJournal,
+      readInventory: (source, auth) async {
+        expect(source.encode(), _source().encode());
+        expect(auth.sameIdentity(live), isTrue);
+        return inventory;
+      },
+      resolveSource: (entry) async {
+        final failure = resolveError?.call(entry);
+        if (failure != null) throw failure;
+        return paths[entry.logicalEntityKeyHash];
+      },
+      recoverExisting: (snapshot, keys) async {
+        recovered++;
+      },
+      drainExisting: () async {
+        drained++;
+        expect(staging.exclusionHeld, isFalse);
+        return drainResult;
+      },
+      probeSource: (path) async => probes[path] ?? false,
+    );
+
+    setUp(() {
+      staging = _AvailabilityStaging();
+      live = _auth();
+      inventory = [item('L'), item('K')];
+      paths = {'L' * 43: '/tmp/f-l', 'K' * 43: '/tmp/f-k'};
+      probes = {'/tmp/f-l': true, '/tmp/f-k': true};
+      recovered = 0;
+      drained = 0;
+      drainResult = true;
+      resolveError = null;
+    });
+
+    test('full inventory available stages nothing', () async {
+      expect(await run(), isTrue);
+      expect(drained, 1);
+      expect(recovered, 0);
+      expect(staging.commits, isEmpty);
+      expect(store.box<CloudAttachmentUploadEntity>().count(), 0);
+    });
+
+    test('missing file returns false without staging', () async {
+      probes['/tmp/f-k'] = false;
+      expect(await run(), isFalse);
+      expect(drained, 1);
+      expect(staging.commits, isEmpty);
+      expect(store.box<CloudAttachmentUploadEntity>().count(), 0);
+    });
+
+    test('prepared lease committed before deferral', () async {
+      final plan = _plan('L' * 43);
+      uploads.adoptHistoricalPlan(
+        historicalIntentId: historicalIntentId,
+        plan: plan,
+        now: _now,
+        historicalJournal: historicalJournal,
+      );
+      probes['/tmp/f-k'] = false;
+      expect(await run(), isFalse);
+      expect(staging.commits, ['obcs2.lease.${'f' * 32}']);
+    });
+
+    test('failed commit propagates instead of deferring', () async {
+      final plan = _plan('L' * 43);
+      uploads.adoptHistoricalPlan(
+        historicalIntentId: historicalIntentId,
+        plan: plan,
+        now: _now,
+        historicalJournal: historicalJournal,
+      );
+      staging.failCommit = true;
+      await expectLater(run(), throwsA(isA<StateError>()));
+      expect(staging.commits, ['obcs2.lease.${'f' * 32}']);
+    });
+
+    test('started and uploaded rows recover then demand readback', () async {
+      const attempt = 'AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA';
+      for (final key in ['L', 'K']) {
+        final plan = uploads.adoptHistoricalPlan(
+          historicalIntentId: historicalIntentId,
+          plan: _plan(key * 43),
+          now: _now,
+          historicalJournal: historicalJournal,
+        );
+        uploads.beginHistoricalAttempt(
+          id: plan.id,
+          attemptId: attempt,
+          now: _now,
+          historicalJournal: historicalJournal,
+        );
+      }
+      final uploaded = uploads.recordHistoricalUploaded(
+        id: uploads
+            .findHistoricalForAttachment(
+              historicalIntentId: historicalIntentId,
+              logicalEntityKeyHash: 'K' * 43,
+              sourceAttachmentKeys: {'L' * 43, 'K' * 43},
+              historicalJournal: historicalJournal,
+            )!
+            .id,
+        attemptId: attempt,
+        result: _plan('K' * 43),
+        now: _now,
+        historicalJournal: historicalJournal,
+      );
+      expect(uploaded.result?.payloadSha256, 'e' * 64);
+      await expectLater(
+        run(),
+        throwsA(
+          isA<StateError>().having(
+            (error) => error.message,
+            'message',
+            'cloud_sync_attachment_parent_upload_unresolved',
+          ),
+        ),
+      );
+      expect(recovered, 2);
+      expect(drained, 1);
+    });
+
+    test('unresolved drain never defers', () async {
+      drainResult = false;
+      await expectLater(
+        run(),
+        throwsA(
+          isA<StateError>().having(
+            (error) => error.message,
+            'message',
+            'cloud_sync_attachment_parent_upload_unresolved',
+          ),
+        ),
+      );
+    });
+
+    test('adopted acknowledged child needs no local file', () async {
+      const attempt = 'AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA';
+      final stage = _plan('L' * 43);
+      final plan = uploads.adoptHistoricalPlan(
+        historicalIntentId: historicalIntentId,
+        plan: stage,
+        now: _now,
+        historicalJournal: historicalJournal,
+      );
+      uploads.beginHistoricalAttempt(
+        id: plan.id,
+        attemptId: attempt,
+        now: _now,
+        historicalJournal: historicalJournal,
+      );
+      uploads.recordHistoricalUploaded(
+        id: plan.id,
+        attemptId: attempt,
+        result: stage,
+        now: _now,
+        historicalJournal: historicalJournal,
+      );
+      final operationId = CloudOperationIdentity.forInitialCreate(
+        scope: _uploadScope(),
+        logicalEntityKeyHash: 'L' * 43,
+        payloadVersion: 1,
+      );
+      final outbox = store.box<CloudOutboxOperationEntity>();
+      final outboxId = outbox.put(
+        CloudOutboxOperationEntity(
+          operationId: operationId,
+          scopeKey: cloudSyncPersistentScopeKey(_uploadScope()),
+          accountFingerprint: _account,
+          zone: 'attachmentManateeZone',
+          logicalEntityKeyHash: 'L' * 43,
+          action: CloudOutboxAction.save.index,
+          mutationRevision: 1,
+          checkpointGeneration: 1,
+          encryptedPayloadRef: stage.protectedEnvelopeReference,
+          payloadSha256: stage.payloadSha256,
+          serverRecordIdHash: stage.serverRecordIdHash,
+          protectedLeaseReference: stage.leaseReference,
+          createdAtMs: _now.millisecondsSinceEpoch,
+          updatedAtMs: _now.millisecondsSinceEpoch,
+        ),
+      );
+      uploads.adoptHistoricalRecordCreate(
+        id: plan.id,
+        now: _now,
+        historicalJournal: historicalJournal,
+        admit: (transactionStore, result) => CloudOutboxOperation(
+          scope: _uploadScope(),
+          operationId: operationId,
+          logicalEntityKeyHash: 'L' * 43,
+          action: CloudOutboxAction.save,
+          payloadVersion: 1,
+          mutationRevision: 1,
+          checkpointGeneration: 1,
+          dependencyOperationIds: const {},
+          createdAt: _now,
+          encryptedPayloadReference: stage.protectedEnvelopeReference,
+          payloadSha256: stage.payloadSha256,
+          serverRecordIdHash: stage.serverRecordIdHash,
+          protectedLeaseReference: stage.leaseReference,
+        ),
+      );
+      outbox.put(
+        outbox.get(outboxId)!
+          ..state = CloudOutboxStatus.confirmed.index
+          ..confirmedAtMs = _now.millisecondsSinceEpoch
+          ..protectedLeaseReference = null
+          ..appleRequestUuid = 'AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA'
+          ..appleOperationUuid = 'BBBBBBBB-BBBB-4BBB-8BBB-BBBBBBBBBBBB',
+      );
+      inventory = [item('L')];
+      paths = {};
+      var probed = 0;
+      var resolved = 0;
+      Future<bool> runSingle() => coordinator().historicalSourcesAvailable(
+        historicalIntentId: historicalIntentId,
+        historicalJournal: historicalJournal,
+        readInventory: (source, auth) async => inventory,
+        resolveSource: (entry) async {
+          resolved++;
+          return null;
+        },
+        recoverExisting: (snapshot, keys) async {
+          recovered++;
+        },
+        drainExisting: () async {
+          drained++;
+          return true;
+        },
+        probeSource: (path) async {
+          probed++;
+          return true;
+        },
+      );
+      expect(await runSingle(), isTrue);
+      expect(recovered, 1);
+      expect(resolved, 0);
+      expect(probed, 0);
+    });
+
+    test('source drift fails closed', () async {
+      await expectLater(
+        coordinator().historicalSourcesAvailable(
+          historicalIntentId: historicalIntentId,
+          historicalJournal: historicalJournal,
+          readInventory: (source, auth) async {
+            store.box<CloudSyncHistoricalArchiveIntentEntity>().remove(
+              historicalIntentId,
+            );
+            return inventory;
+          },
+          resolveSource: (entry) async =>
+              paths[entry.logicalEntityKeyHash],
+          recoverExisting: (snapshot, keys) async {},
+          drainExisting: () async => true,
+          probeSource: (path) async => true,
+        ),
+        throwsA(isA<StateError>()),
+      );
+    });
+
+    test('shrink duplicate and ambiguous sources fail', () async {
+      final plan = _plan('L' * 43);
+      uploads.adoptHistoricalPlan(
+        historicalIntentId: historicalIntentId,
+        plan: plan,
+        now: _now,
+        historicalJournal: historicalJournal,
+      );
+      inventory = [item('L'), item('L')];
+      await expectLater(run(), throwsA(isA<StateError>()));
+      inventory = [item('K')];
+      await expectLater(run(), throwsA(isA<StateError>()));
+      inventory = [item('L'), item('K')];
+      resolveError = (entry) => entry.logicalEntityKeyHash == 'K' * 43
+          ? StateError('synthetic-ambiguous-source')
+          : null;
+      paths = {'L' * 43: null, 'K' * 43: null};
+      probes['/tmp/f-l'] = false;
+      await expectLater(run(), throwsA(isA<StateError>()));
+    });
+
+    test('auth drift mid-run fails closed', () async {
+      var calls = 0;
+      Future<bool> runDrifting() => coordinator().historicalSourcesAvailable(
+        historicalIntentId: historicalIntentId,
+        historicalJournal: historicalJournal,
+        readInventory: (source, auth) async {
+          calls++;
+          live = _auth();
+          return inventory;
+        },
+        resolveSource: (entry) async => paths[entry.logicalEntityKeyHash],
+        recoverExisting: (snapshot, keys) async {},
+        drainExisting: () async => true,
+        probeSource: (path) async => true,
+      );
+      await expectLater(runDrifting(), throwsA(isA<StateError>()));
+      expect(calls, 1);
+    });
+  });
 }
 
 final class _HistoricalReceiptBinding
@@ -1164,4 +1497,42 @@ final class _NoCryptoProtector implements CloudSyncProtector {
   @override
   dynamic noSuchMethod(Invocation invocation) =>
       throw StateError('unexpected_crypto_operation');
+}
+
+/// Staging fake for availability tests: records lease commits and detects
+/// admission-exclusion reentry, which drain paths must never cause.
+final class _AvailabilityStaging implements CloudSyncOutboundStagingTransport {
+  final commits = <String>[];
+  final rollbacks = <String>[];
+  bool failCommit = false;
+  bool exclusionHeld = false;
+
+  @override
+  Future<T> runOutboundAdmissionExclusive<T>(Future<T> Function() action) async {
+    if (exclusionHeld) throw StateError('exclusion_reentered');
+    exclusionHeld = true;
+    try {
+      return await action();
+    } finally {
+      exclusionHeld = false;
+    }
+  }
+
+  @override
+  Future<void> commitOutboundLease(
+    String leaseReference,
+    String protectedEnvelopeReference,
+  ) async {
+    commits.add(leaseReference);
+    if (failCommit) throw StateError('synthetic_commit_interrupted');
+  }
+
+  @override
+  Future<void> rollbackOutboundLease(String leaseReference) async {
+    rollbacks.add(leaseReference);
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) =>
+      throw StateError('unexpected_staging_operation');
 }

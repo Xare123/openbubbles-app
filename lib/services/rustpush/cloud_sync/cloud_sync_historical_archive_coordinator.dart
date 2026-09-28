@@ -2,6 +2,8 @@ import 'package:bluebubbles/database/models.dart';
 
 import 'cloud_sync_historical_archive_journal.dart';
 import 'cloud_sync_historical_archive_request.dart';
+import 'cloud_sync_attachment_upload_journal.dart';
+import 'cloud_sync_historical_chat_origin.dart';
 import 'cloud_sync_historical_create_selection.dart';
 import 'cloud_sync_historical_discovery_adapter.dart';
 import 'cloud_sync_historical_producer.dart';
@@ -21,6 +23,10 @@ enum CloudSyncHistoricalArchiveDisposition {
   /// received rows lack their original receiving endpoint. Future policy can
   /// revisit them; do not guess an address or block later supported rows.
   retainedMissingMetadata,
+
+  /// Whole source retained because an original attachment file is absent.
+  /// Existing attempts have settled; no partial Message was admitted.
+  retainedMissingAttachments,
 }
 
 /// Connects one qualified source to the real exact-discovery/create queue.
@@ -177,12 +183,17 @@ final class CloudSyncHistoricalArchiveCoordinator {
     }
   }
 
-  bool _confirmed(CloudSyncHistoricalArchiveIntent intent) {
+  /// Read-only completion predicate shared with finite retry selection. An
+  /// admitted but uncertain operation must remain selected for exact recovery.
+  bool isConfirmed(CloudSyncHistoricalArchiveIntent intent) {
     final operationId = intent.admittedOperationId;
     final operation = operationId == null
         ? null
         : durable.readHistoricalArchiveOperation(_scope, operationId);
-    return operation != null &&
+    return _fullyConfirmed(operation);
+  }
+
+  static bool _fullyConfirmed(CloudOutboxOperation? operation) => operation != null &&
         operation.status == CloudOutboxStatus.confirmed &&
         operation.confirmedAt != null &&
         operation.protectedLeaseReference == null &&
@@ -190,6 +201,44 @@ final class CloudSyncHistoricalArchiveCoordinator {
         operation.leaseExpiresAt == null &&
         operation.nextEligibleAt == null &&
         operation.lastFailure == null;
+
+  void _requireNoUnresolvedMetadataSideWork(CloudSyncHistoricalArchiveIntent intent) {
+    store.runInTransaction(TxMode.read, () {
+      final query = store.box<CloudAttachmentUploadEntity>().query(
+        CloudAttachmentUploadEntity_.ownerKind.equals(cloudSyncAttachmentOwnerKindHistorical)
+          .and(CloudAttachmentUploadEntity_.ownerIntentId.equals(intent.id))).build()..limit = 1;
+      try {
+        // A previous explicitly allowed trial may have submitted bytes without
+        // admitting its Message. Do not turn loss of that trial permission into
+        // metadata deferral or advance past its retained recovery obligation.
+        if (query.findFirst() != null) {
+          throw StateError('cloud_sync_historical_archive_confirmation_pending');
+        }
+      } finally { query.close(); }
+      final chats = store.box<CloudOutboxOperationEntity>().query(
+        CloudOutboxOperationEntity_.accountFingerprint.equals(journal.accountFingerprint)
+          .and(CloudOutboxOperationEntity_.localChatOrigin.notNull())).build();
+      try {
+        for (final row in chats.find()) {
+          final encoded = row.localChatOrigin!;
+          if (!isCloudSyncHistoricalChatOrigin(encoded)) continue;
+          final origin = CloudSyncHistoricalChatOrigin.decode(encoded);
+          if (origin.intentId != intent.id) continue;
+          // An intent-owned row with changed binding is unresolved work too,
+          // not an unrelated row that permits cursor advancement.
+          if (origin.source.encode() != intent.source.encode()) {
+            throw StateError('cloud_sync_historical_archive_confirmation_pending');
+          }
+          final parent = durable.readHistoricalChatCreate(CloudSyncScope(
+            accountFingerprint: journal.accountFingerprint,
+            container: _scope.container, database: _scope.database,
+            zone: 'chatManateeZone', persistenceLane: _scope.persistenceLane), origin);
+          if (!_fullyConfirmed(parent)) {
+            throw StateError('cloud_sync_historical_archive_confirmation_pending');
+          }
+        }
+      } finally { chats.close(); }
+    });
   }
 
   Future<StagedHistoricalSource> call(
@@ -228,7 +277,7 @@ final class CloudSyncHistoricalArchiveCoordinator {
         );
         return sealed;
       }
-      if (_confirmed(intent)) {
+      if (isConfirmed(intent)) {
         onDisposition?.call(
           CloudSyncHistoricalArchiveDisposition.confirmedCreate,
         );
@@ -244,6 +293,7 @@ final class CloudSyncHistoricalArchiveCoordinator {
         // keeps this default until independent Apple-client proof exists.
         // Preserve the committed source for a later policy, and allow supported
         // rows behind it to proceed. Never skip a submitted/uncertain operation.
+        _requireNoUnresolvedMetadataSideWork(intent);
         onDisposition?.call(
           CloudSyncHistoricalArchiveDisposition.retainedMissingMetadata,
         );
@@ -270,9 +320,18 @@ final class CloudSyncHistoricalArchiveCoordinator {
         await validate();
       }
       final retained = _retained(request, sealed);
+      if (result.historicalAttachmentsUnavailable) {
+        if (request.media == null || retained.admittedOperationId != null ||
+            retained.readerChangeId != null || result.outboxBlocked ||
+            result.chatReadbackPending || result.admitted != 0) {
+          throw StateError('cloud_sync_historical_archive_confirmation_pending');
+        }
+        onDisposition?.call(CloudSyncHistoricalArchiveDisposition.retainedMissingAttachments);
+        return sealed;
+      }
       if (result.outboxBlocked ||
           result.chatReadbackPending ||
-          !_confirmed(retained)) {
+          !isConfirmed(retained)) {
         throw StateError('cloud_sync_historical_archive_confirmation_pending');
       }
       onDisposition?.call(

@@ -84,6 +84,24 @@ void main() {
     expect(transport.entries, 1);
   });
 
+  test('media policy and its trial preserve distinct earlier group cursors', () async {
+    final saved = <int, String>{};
+    for (final revision in [3, 4, 5, 6]) {
+      final selected = cursorFile(mode: CloudSyncHistoricalCursorMode.archive,
+        archiveRevision: revision);
+      expect(await selected.load(), isNull);
+      await selected.save(progress(selected, revision));
+      saved[revision] = await target(selected).readAsString();
+    }
+    for (final revision in [3, 4, 5, 6]) {
+      final selected = cursorFile(mode: CloudSyncHistoricalCursorMode.archive,
+        archiveRevision: revision);
+      expect((await selected.load())?.lastId, progress(selected, revision).lastId);
+      expect(await target(selected).readAsString(), saved[revision]);
+    }
+    expect(await target(cursorFile()).parent.list().toList(), hasLength(4));
+  });
+
   test(
     'reopen resumes pages then completion without retaining temp files',
     () async {

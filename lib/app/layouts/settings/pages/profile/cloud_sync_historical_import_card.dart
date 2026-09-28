@@ -108,7 +108,11 @@ class _HistoricalImportCardState extends State<CloudSyncHistoricalImportCard> {
       final accepted = await showDialog<bool>(
         context: context,
         builder: (context) => AlertDialog(
-          title: const Text('Upload existing messages?'),
+          title: Text(
+            preview.retryingMissingAttachments
+                ? 'Recheck messages with missing attachments?'
+                : 'Upload existing messages?',
+          ),
           scrollable: true,
           content: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -125,13 +129,21 @@ class _HistoricalImportCardState extends State<CloudSyncHistoricalImportCard> {
                 '${MaterialLocalizations.of(context).formatMediumDate(preview.capturedAt)}.',
               ),
               const SizedBox(height: 12),
-              const Text(
-                'Add these messages to this account\'s iCloud history. '
-                'They will not be sent again to anyone. '
-                'Older messages can remain after signing out, so check the account above. '
-                'You can pause and resume. Messages that cannot be uploaded stay on this device. '
-                'This does not turn on automatic uploads.',
-              ),
+              if (preview.retryingMissingAttachments)
+                const Text(
+                  'Recheck attachment messages retained from the same snapshot. '
+                  'Confirmed messages are not uploaded again. '
+                  'Messages whose files are still missing remain pending. '
+                  'This does not recover missing files or turn on automatic uploads.',
+                )
+              else
+                const Text(
+                  'Add these messages to this account\'s iCloud history. '
+                  'They will not be sent again to anyone. '
+                  'Older messages can remain after signing out, so check the account above. '
+                  'You can pause and resume. Messages that cannot be uploaded stay on this device. '
+                  'This does not turn on automatic uploads.',
+                ),
             ],
           ),
           actions: [
@@ -141,7 +153,11 @@ class _HistoricalImportCardState extends State<CloudSyncHistoricalImportCard> {
             ),
             FilledButton(
               onPressed: () => Navigator.pop(context, true),
-              child: const Text('Upload messages'),
+              child: Text(
+                preview.retryingMissingAttachments
+                    ? 'Recheck attachments'
+                    : 'Upload messages',
+              ),
             ),
           ],
         ),
@@ -231,6 +247,11 @@ class _HistoricalImportCardState extends State<CloudSyncHistoricalImportCard> {
                 Text(
                   '${c.deferredMissingMetadata} older messages need additional address information before uploading. '
                   'Their protected copies remain saved; other supported messages can continue.',
+                ),
+              if (c.deferredMissingAttachments > 0)
+                Text(
+                  '${c.deferredMissingAttachments} messages were kept because an original attachment file is missing from this device. '
+                  'The messages remain saved for a later attempt. Missing files have not been backed up.',
                 ),
               if (unsupported > 0 || c.retainedConflicts > 0)
                 Text(

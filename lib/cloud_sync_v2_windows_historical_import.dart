@@ -227,6 +227,8 @@ Future<Map<String, Object?>> runCloudSyncWindowsHistoricalPlan({
       'confirmed_creates_this_session': controller.confirmedCreates,
       'reader_handoffs_this_session': controller.readerHandoffs,
       'deferred_metadata_this_session': controller.deferredMissingMetadata,
+      'deferred_missing_attachments_this_session':
+          controller.deferredMissingAttachments,
       'retained_conflicts_this_session': controller.retainedConflicts,
       'skipped_owned_this_session': controller.skippedOwned,
       'ineligible_this_session': controller.ineligibleByReason,

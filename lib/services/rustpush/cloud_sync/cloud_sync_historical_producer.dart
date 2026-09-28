@@ -138,6 +138,7 @@ class CloudSyncHistoricalProducer {
     this.nowMs,
     this.shouldContinue,
     this.onProgress,
+    this.includeMediaSource = false,
   });
 
   final HistoricalRowReader reader;
@@ -162,6 +163,10 @@ class CloudSyncHistoricalProducer {
   final int pageLimit;
   final int maxPages;
   final int? nowMs;
+
+  /// Opt in only when the shared archive callback handles the complete media
+  /// inventory, exact child readback and whole-message unavailable-file policy.
+  final bool includeMediaSource;
 
   /// Pause at admission boundaries, never cancel an in-flight stage/readback.
   /// An interrupted page keeps its old cursor and replays idempotently later.
@@ -243,6 +248,7 @@ class CloudSyncHistoricalProducer {
           manifest,
           account,
           nowMs: nowMs,
+          includeMediaSource: includeMediaSource,
         );
         if (assessment is! CloudSyncHistoricalArchiveEligible) {
           final reason =

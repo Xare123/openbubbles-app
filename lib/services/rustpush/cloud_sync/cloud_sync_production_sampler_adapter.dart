@@ -1394,6 +1394,81 @@ final class CloudSyncProductionLocalSendAdapter {
     // This runs under the same interlock and protected-store exclusion as
     // ordinary admission. Never scan the attachment table by a guessed GUID.
     int? attemptedUploadId;
+    Future<CloudSyncNativeAuthSnapshot?> historicalLiveAuth() => fence.run(() => auth,
+      accountFingerprint: scope.accountFingerprint);
+    Future<String?> historicalSourcePath(CloudSyncAttachmentPlanInventoryItem item,
+        int? localChatId) => fence.run(() {
+      final selected = historical!;
+      final source = historicalJournal!.requireHistoricalAttachmentOrigin(
+        intentId: selected.intentId, currentAuth: auth).source;
+      final query = objectBox.box<Message>().query(Message_.guid.equals(selected.request.guid))
+          .build()..limit = 2;
+      final List<Message> found;
+      try { found = query.find(); } finally { query.close(); }
+      if (found.length > 1) throw StateError('cloud_sync_historical_local_source_ambiguous');
+      // A separately qualified snapshot does not magically provide its files
+      // in the destination DB. Retain this whole source until they are available.
+      if (found.isEmpty) return null;
+      final message = found.single;
+      CloudSyncHistoricalLocalGuard.capture(store: objectBox,
+        request: selected.request, source: source,
+        localChatId: localChatId ?? message.chat.targetId);
+      final matches = message.dbAttachments.where((attachment) =>
+        attachment.guid == item.originalAttachmentGuid ||
+        attachment.guid == item.reflectedAttachmentGuid).toList(growable: false);
+      if (matches.length > 1) throw StateError('cloud_sync_historical_local_source_ambiguous');
+      return matches.isEmpty ? null : matches.single.path;
+    }, accountFingerprint: scope.accountFingerprint);
+    CloudSyncAttachmentPlanCoordinator historicalPlanCoordinator() =>
+      CloudSyncAttachmentPlanCoordinator(
+        store: objectBox, localSends: journal, uploads: uploads,
+        readLiveAuth: historicalLiveAuth, staging: transport,
+        // Historical entrypoints never use these IDS callbacks.
+        readInventory: (source, current) => attachmentPlans.inspect(source, current),
+        stagePlan: (item, source, current) => throw StateError('cloud_sync_attachment_owner_changed'));
+    CloudSyncAttachmentUploadExecutor historicalExecutor() {
+      final client = auth.cloudMessagesClient;
+      if (client is! frb_lib.ArcCloudMessagesClientDefaultAnisetteProvider) {
+        throw StateError('cloud_sync_attachment_plan_client_invalid');
+      }
+      return CloudSyncAttachmentUploadExecutor(
+        uploads: uploads, historicalJournal: historicalJournal, readLiveAuth: historicalLiveAuth,
+        mutationGate: GuardedCloudSyncAttachmentUploadMutationGate(guard,
+          historicalJournal: historicalJournal),
+        bridge: FrbCloudSyncAttachmentUploadBridge(cloudMessagesClient: client,
+          storageDirectory: _privateStorageDirectory),
+        staging: transport,
+        completedAdmitter: ObjectBoxCloudSyncCompletedUploadAdmitter(durable,
+          historicalJournal: historicalJournal),
+        privateStorageDirectory: _privateStorageDirectory);
+    }
+    Future<bool> historicalSourcesAvailable(int? localChatId) async {
+      final selected = historical!;
+      await recoverProtectedStore();
+      await validateSelection();
+      final executor = historicalExecutor();
+      return historicalPlanCoordinator().historicalSourcesAvailable(
+        historicalIntentId: selected.intentId, historicalJournal: historicalJournal!,
+        readInventory: (retained, current) async {
+          final inventory = await attachmentPlans.inspectHistorical(retained, current);
+          attachmentInventories[selected.intentId] = Set<String>.unmodifiable(
+            inventory.map((item) => item.logicalEntityKeyHash));
+          return inventory;
+        },
+        resolveSource: (item) => historicalSourcePath(item, localChatId),
+        recoverExisting: (plan, keys) async {
+          final result = await executor.execute(CloudSyncAttachmentUploadExecutionInput(
+            uploadId: plan.id, originalAttachmentGuid: '', sourcePath: '',
+            requestTimeoutSeconds: BigInt.from(120), retainedSourceAttachmentKeys: keys));
+          if (result.status != CloudAttachmentUploadExecutionStatus.completed &&
+              result.status != CloudAttachmentUploadExecutionStatus.recoveredAndCompleted &&
+              result.status != CloudAttachmentUploadExecutionStatus.alreadyCompleted) {
+            throw StateError('cloud_sync_attachment_parent_upload_unresolved');
+          }
+          await validateSelection();
+        },
+        drainExisting: drainExisting);
+    }
     Future<void> prepareHistoricalAttachments(int localChatId) async {
       final selected = historical!;
       final history = historicalJournal!;
@@ -1404,25 +1479,11 @@ final class CloudSyncProductionLocalSendAdapter {
           await validateSelection();
           final source = history.requireHistoricalAttachmentOrigin(
             intentId: selected.intentId, currentAuth: auth).source;
-          Future<CloudSyncNativeAuthSnapshot?> liveAuth() => fence.run(() => auth,
-            accountFingerprint: scope.accountFingerprint);
-          Future<String> sourcePath(CloudSyncAttachmentPlanInventoryItem item) => fence.run(() {
-            CloudSyncHistoricalLocalGuard.capture(store: objectBox,
-              request: selected.request, source: source, localChatId: localChatId);
-            final query = objectBox.box<Message>().query(Message_.guid.equals(selected.request.guid))
-                .build()..limit = 2;
-            final List<Message> found;
-            try { found = query.find(); } finally { query.close(); }
-            if (found.length != 1) throw StateError('cloud_sync_attachment_plan_source_unavailable');
-            return cloudSyncAttachmentPlanLocalSource(found.single, item).path;
-          }, accountFingerprint: scope.accountFingerprint);
+          Future<String> sourcePath(CloudSyncAttachmentPlanInventoryItem item) async =>
+            await historicalSourcePath(item, localChatId) ??
+              (throw StateError('cloud_sync_attachment_plan_source_unavailable'));
           final inventory = <CloudSyncAttachmentPlanInventoryItem>[];
-          final coordinator = CloudSyncAttachmentPlanCoordinator(
-            store: objectBox, localSends: journal, uploads: uploads,
-            readLiveAuth: liveAuth, staging: transport,
-            // Historical entrypoints below never use the IDS callbacks.
-            readInventory: (source, current) => attachmentPlans.inspect(source, current),
-            stagePlan: (item, source, current) => throw StateError('cloud_sync_attachment_owner_changed'));
+          final coordinator = historicalPlanCoordinator();
           final plans = await coordinator.ensureHistoricalPlans(
             historicalIntentId: selected.intentId, historicalJournal: history,
             readInventory: (retained, current) async {
@@ -1434,18 +1495,7 @@ final class CloudSyncProductionLocalSendAdapter {
               item, retained, current, sourcePath: await sourcePath(item)));
           final keys = Set<String>.unmodifiable(inventory.map((item) => item.logicalEntityKeyHash));
           attachmentInventories[selected.intentId] = keys;
-          final client = auth.cloudMessagesClient;
-          if (client is! frb_lib.ArcCloudMessagesClientDefaultAnisetteProvider) {
-            throw StateError('cloud_sync_attachment_plan_client_invalid');
-          }
-          final executor = CloudSyncAttachmentUploadExecutor(
-            uploads: uploads, historicalJournal: history, readLiveAuth: liveAuth,
-            mutationGate: GuardedCloudSyncAttachmentUploadMutationGate(guard, historicalJournal: history),
-            bridge: FrbCloudSyncAttachmentUploadBridge(cloudMessagesClient: client,
-              storageDirectory: _privateStorageDirectory),
-            staging: transport,
-            completedAdmitter: ObjectBoxCloudSyncCompletedUploadAdmitter(durable, historicalJournal: history),
-            privateStorageDirectory: _privateStorageDirectory);
+          final executor = historicalExecutor();
           for (final plan in plans) {
             final item = inventory.singleWhere((item) => item.logicalEntityKeyHash == plan.plan.logicalEntityKeyHash);
             final fresh = uploads.readHistorical(plan.id, history).state == CloudAttachmentUploadState.prepared;
@@ -1611,6 +1661,11 @@ final class CloudSyncProductionLocalSendAdapter {
           final alreadyAdmitted = historical.validate(store: objectBox, scope: scope,
             journal: historicalJournal!, durable: durable, auth: auth,
             localSendJournal: journal, attachmentUploadJournal: uploads) != null;
+          if (!alreadyAdmitted && historical.request.media != null &&
+              !await historicalSourcesAvailable(historical.localChatId)) {
+            await validateSelection();
+            return const CloudSyncLocalSendConsumerResult(historicalAttachmentsUnavailable: true);
+          }
           if (!alreadyAdmitted && historicalCreates.confirmedParentId(scope, historical.request) == null) {
             if (historical.request.parentState == null) {
               throw StateError('cloud_sync_historical_create_parent_not_ready');

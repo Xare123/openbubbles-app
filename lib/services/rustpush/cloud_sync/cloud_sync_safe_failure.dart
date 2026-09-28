@@ -598,6 +598,7 @@ const _cloudSyncV2SafeFailureCodes = <String>{
   'cloud_sync_attachment_plan_inventory_failed',
   'cloud_sync_attachment_plan_native_stage_failed',
   'cloud_sync_attachment_plan_source_unavailable',
+  'cloud_sync_attachment_plan_source_unreadable',
   'cloud_sync_attachment_preparation_unavailable',
   'cloud_sync_attachment_source_mismatch',
   'cloud_sync_attachment_source_invalid',

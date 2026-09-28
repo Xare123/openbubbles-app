@@ -6,10 +6,12 @@ import 'cloud_sync_historical_archive_coordinator.dart';
 import 'cloud_sync_historical_archive_journal.dart';
 import 'cloud_sync_historical_archive_request.dart';
 import 'cloud_sync_historical_archive_staging.dart';
+import 'cloud_sync_historical_attachment_retry_reader.dart';
 import 'cloud_sync_historical_cursor_file.dart';
 import 'cloud_sync_historical_import_controller.dart';
 import 'cloud_sync_historical_import_source.dart';
 import 'cloud_sync_historical_ownership.dart';
+import 'cloud_sync_historical_producer.dart';
 import 'cloud_sync_historical_received_trial.dart';
 import 'cloud_sync_historical_protected_source_binding.dart';
 import 'cloud_sync_historical_snapshot.dart';
@@ -27,8 +29,10 @@ import 'objectbox_cloud_sync_store.dart';
 // replays the same retained snapshot, not its exact already-owned operations.
 // Old progress, pending writes and confirmations remain intact in their journals.
 // Revision 2 was the direct received-endpoint trial. Revision 3 includes groups
-// whose full stored context and exact restored parent are available.
-const _historicalArchivePolicyRevision = 3;
+// whose full stored context and exact restored parent are available. Revision4
+// remains the group received-endpoint trial. Revision5 admits whole media with
+// unavailable-file deferral; revision6 is its separately authorized trial.
+const _historicalArchivePolicyRevision = 5;
 
 /// Production composition for one explicit historical import. Preparing only
 /// reopens/captures a private encrypted snapshot, never calls archive or sends an
@@ -277,11 +281,7 @@ Future<CloudSyncHistoricalImportPlan> _prepareHistoricalImport({
     receivedEndpointTrial: receivedEndpointTrial,
     settleParentReader: settleReader,
   );
-  return CloudSyncHistoricalImportPlan(
-    snapshot: snapshot,
-    accountLabel: accountLabel,
-    sourceLabel: source?.label ?? 'Messages on this device',
-    archiveCursors: CloudSyncHistoricalCursorFile(
+  final archiveCursors = CloudSyncHistoricalCursorFile(
       privateStorageDirectory: storageDirectory,
       manifest: snapshot.manifest,
       account: account,
@@ -294,7 +294,32 @@ Future<CloudSyncHistoricalImportPlan> _prepareHistoricalImport({
       archiveRevision: receivedEndpointTrial == null
           ? _historicalArchivePolicyRevision
           : _historicalArchivePolicyRevision + 1,
-    ),
+    );
+  final completedPass = await archiveCursors.load();
+  await validate();
+  final retryAttachments = completedPass?.done == true;
+  return CloudSyncHistoricalImportPlan(
+    snapshot: snapshot,
+    accountLabel: accountLabel,
+    sourceLabel: source?.label ?? 'Messages on this device',
+    includeMediaSource: true,
+    retryingMissingAttachments: retryAttachments,
+    // Explicit Review again after a completed pass rechecks only retained
+    // media. The original completed cursor is never reset or overwritten.
+    // Restart discards this retry cursor, not its durable exact source/receipts;
+    // fresh user confirmation is required before another bounded retry pass.
+    archiveCursors: retryAttachments ? MemoryHistoricalCursorStore() : archiveCursors,
+    reader: retryAttachments ? CloudSyncHistoricalAttachmentRetryReader(
+      source: snapshot, manifest: snapshot.manifest, account: account,
+      validate: validate,
+      needsRetryOrRecovery: (request) {
+        final intent = journal.read(messageGuidHash: request.guidHash,
+          sourceSha256: request.sourceSha256);
+        // A failed retry may have admitted a Message or retained a reader
+        // handoff. Keep either selected until fully confirmed or projected;
+        // admission alone is not permission to skip its uncertain outcome.
+        return intent != null && !coordinator.isConfirmed(intent);
+      }) : snapshot,
     registry: ObjectBoxHistoricalOwnership(store: store, journal: journal),
     stillCurrent: stillCurrent,
     validateIdentity: validate,

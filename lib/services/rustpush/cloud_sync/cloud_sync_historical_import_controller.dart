@@ -43,7 +43,10 @@ final class CloudSyncHistoricalImportPlan {
     required this.stillCurrent,
     required this.validateIdentity,
     required this.archive,
-  }) {
+    HistoricalRowReader? reader,
+    this.includeMediaSource = false,
+    this.retryingMissingAttachments = false,
+  }) : reader = reader ?? snapshot {
     if (accountLabel.trim().isEmpty ||
         accountLabel.length > 512 ||
         sourceLabel.trim().isEmpty ||
@@ -64,6 +67,17 @@ final class CloudSyncHistoricalImportPlan {
   final bool Function() stillCurrent;
   final Future<void> Function() validateIdentity;
   final CloudSyncHistoricalArchiveStep archive;
+  /// Row source for the producer scan. Defaults to the full snapshot; a
+  /// retry pass supplies a bounded pending-media reader over the same
+  /// snapshot without touching durable cursors.
+  final HistoricalRowReader reader;
+  /// Whether complete media rows are in scope for this pass. The runtime
+  /// opts in only with the shared attachment/recovery coordinator installed.
+  final bool includeMediaSource;
+  /// True only for an explicit Review-again pass over retained attachment
+  /// messages from the same snapshot. Runs once per confirmation, never
+  /// automatically or continuously.
+  final bool retryingMissingAttachments;
 
   Future<void> validate() async {
     if (!stillCurrent()) {
@@ -84,6 +98,7 @@ final class CloudSyncHistoricalImportConfirmation {
   final CloudSyncHistoricalImportPlan _plan;
   String get accountLabel => _plan.accountLabel;
   String get sourceLabel => _plan.sourceLabel;
+  bool get retryingMissingAttachments => _plan.retryingMissingAttachments;
   int get messageCount => _plan.snapshot.manifest.messageCount;
   DateTime get capturedAt =>
       DateTime.fromMillisecondsSinceEpoch(_plan.snapshot.manifest.capturedAtMs);
@@ -119,6 +134,11 @@ final class CloudSyncHistoricalImportController extends ChangeNotifier {
   int confirmedCreates = 0;
   int readerHandoffs = 0;
   int deferredMissingMetadata = 0;
+  /// Whole sources retained because an original attachment file is absent.
+  /// Missing files are never uploaded; a finished scan does not mean every
+  /// source was archived. Deduplicated per confirmed session like the
+  /// metadata count. A separate explicit confirmation owns any later retry.
+  int deferredMissingAttachments = 0;
   Map<String, int> ineligibleByReason = const {};
   bool scanComplete = false;
 
@@ -129,6 +149,7 @@ final class CloudSyncHistoricalImportController extends ChangeNotifier {
   final Set<String> _confirmedGuids = {};
   final Set<String> _readerGuids = {};
   final Set<String> _deferredGuids = {};
+  final Set<String> _deferredAttachmentGuids = {};
   bool get active => _pending != null;
 
   Future<T> _owned<T>(Future<T> Function() body) async {
@@ -215,10 +236,12 @@ final class CloudSyncHistoricalImportController extends ChangeNotifier {
     _pauseRequested = false;
     failureCode = null;
     assessed = handled = skippedOwned = retainedConflicts = 0;
-    confirmedCreates = readerHandoffs = deferredMissingMetadata = 0;
+    confirmedCreates = readerHandoffs = deferredMissingMetadata =
+        deferredMissingAttachments = 0;
     _confirmedGuids.clear();
     _readerGuids.clear();
     _deferredGuids.clear();
+    _deferredAttachmentGuids.clear();
     ineligibleByReason = const {};
     scanComplete = false;
     phase = CloudSyncHistoricalImportPhase.running;
@@ -251,11 +274,12 @@ final class CloudSyncHistoricalImportController extends ChangeNotifier {
         }
 
         final output = await CloudSyncHistoricalProducer(
-          reader: plan.snapshot,
+          reader: plan.reader,
           registry: plan.registry,
           cursors: plan.archiveCursors,
           manifest: plan.snapshot.manifest,
           account: plan.snapshot.account,
+          includeMediaSource: plan.includeMediaSource,
           readCurrentRow: (guid) async {
             await plan.validate();
             return plan.snapshot.readExact(guid);
@@ -282,6 +306,10 @@ final class CloudSyncHistoricalImportController extends ChangeNotifier {
                   .retainedMissingMetadata:
                 _deferredGuids.add(request.guid);
                 deferredMissingMetadata = _deferredGuids.length;
+              case CloudSyncHistoricalArchiveDisposition
+                  .retainedMissingAttachments:
+                _deferredAttachmentGuids.add(request.guid);
+                deferredMissingAttachments = _deferredAttachmentGuids.length;
             }
             return result.source;
           },

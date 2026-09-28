@@ -997,6 +997,27 @@ final class CloudSyncAttachmentUploadJournal {
     }
   });
 
+  /// Availability preflight only, not parent admission or retry authority.
+  /// Prepared plans still need original bytes. Every attempted child must have
+  /// exact, fully released readback before a different missing file can defer
+  /// the containing message. The caller separately commits prepared leases.
+  bool historicalUploadNeedsLocalSource(
+    int id,
+    CloudSyncHistoricalArchiveJournal historicalJournal,
+  ) => _store.runInTransaction(TxMode.read, () {
+    final row = _readHistoricalBound(id, historicalJournal);
+    if (row.state == CloudAttachmentUploadState.prepared.index &&
+        row.attemptId == null && row.resultReference == null &&
+        row.admittedOperationId == null) {
+      return true;
+    }
+    if (row.state != CloudAttachmentUploadState.adopted.index) {
+      throw StateError('cloud_sync_attachment_parent_upload_unresolved');
+    }
+    _requireReadbackAcknowledgedFinalOperation(row);
+    return false;
+  });
+
   /// Committed immutable source for a historical upload row. Never resolves
   /// through the local-send journal.
   CloudSyncHistoricalProtectedSourceBinding readHistoricalOriginalSource(
