@@ -293,7 +293,7 @@ void main() {
     expect(objectBox.box<Chat>().count(), 1);
     expect(retained.guid, message.guid);
     expect(retained.text, message.text);
-    expect(retained.dateCreated, clock);
+    expect(retained.dateCreated?.millisecondsSinceEpoch, clock.millisecondsSinceEpoch);
     expect(retained.chat.targetId, chatId);
     expect(retained.ckSyncState, isFalse);
     expect(objectBox.box<Chat>().get(chatId)!.ckSyncState, isFalse);
