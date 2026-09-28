@@ -10,6 +10,8 @@ import 'cloud_sync_v2_windows_historical_source.dart';
 import 'services/rustpush/cloud_sync/cloud_sync_dev_gate.dart';
 import 'services/rustpush/cloud_sync/cloud_sync_historical_archive_request.dart';
 import 'services/rustpush/cloud_sync/cloud_sync_historical_import_controller.dart';
+import 'services/rustpush/cloud_sync/cloud_sync_historical_import_source.dart';
+import 'services/rustpush/cloud_sync/cloud_sync_historical_received_trial.dart';
 import 'services/rustpush/cloud_sync/cloud_sync_historical_import_runtime.dart';
 
 /// Private operator request for one finite import, never an IDS send request.
@@ -30,6 +32,7 @@ final class CloudSyncWindowsHistoricalRequest {
       ),
       capturedAtMs = value['capturedAtMs'] as int,
       execute = value['action'] == 'archive',
+      receivedEndpointTrialGuid = value['receivedEndpointTrialGuid'] as String?,
       snapshotSha256 = value['snapshotSha256'] as String?,
       maximumAssessed = value['maximumAssessed'] as int,
       maximumCreates = value['maximumCreates'] as int;
@@ -53,6 +56,7 @@ final class CloudSyncWindowsHistoricalRequest {
     'snapshotSha256',
     'maximumAssessed',
     'maximumCreates',
+    'receivedEndpointTrialGuid',
   };
 
   final String sourceDirectory;
@@ -63,6 +67,7 @@ final class CloudSyncWindowsHistoricalRequest {
   final List<String> accountHandles;
   final int capturedAtMs;
   final bool execute;
+  final String? receivedEndpointTrialGuid;
   final String? snapshotSha256;
   final int maximumAssessed;
   final int maximumCreates;
@@ -109,6 +114,12 @@ final class CloudSyncWindowsHistoricalRequest {
         value['maximumCreates'] is! int ||
         (value['maximumCreates'] as int) < 1 ||
         (value['maximumCreates'] as int) > 20 ||
+        (value['receivedEndpointTrialGuid'] != null &&
+            (!_text(value['receivedEndpointTrialGuid'], 512) ||
+                (value['receivedEndpointTrialGuid'] as String).trim() !=
+                    value['receivedEndpointTrialGuid'] ||
+                value['maximumCreates'] != 1 ||
+                value['maximumAssessed'] != 1)) ||
         (value['action'] == 'archive'
             ? value['snapshotSha256'] is! String ||
                   !_hex.hasMatch(value['snapshotSha256'] as String)
@@ -168,6 +179,21 @@ Future<Map<String, Object?>> runCloudSyncWindowsHistoricalPlan({
     final confirmation = await controller.prepare(() async {
       plan = await prepare();
       final snapshot = plan.snapshot;
+      if (request.receivedEndpointTrialGuid case final guid?) {
+        final trial = await CloudSyncHistoricalReceivedEndpointTrial.select(
+          source: CloudSyncHistoricalImportSource(
+            snapshot: snapshot,
+            label: plan.sourceLabel,
+          ),
+          guid: guid,
+        );
+        trial.requireSource(
+          CloudSyncHistoricalImportSource(
+            snapshot: snapshot,
+            label: plan.sourceLabel,
+          ),
+        );
+      }
       final handles = List<String>.of(request.accountHandles)..sort();
       if (snapshot.account.accountFingerprint !=
               request.account.accountFingerprint ||
@@ -271,6 +297,13 @@ Future<Map<String, Object?>> runCloudSyncWindowsHistoricalImport({
     stillCurrent: stillCurrent,
   );
   await validate();
+  final trial = request.receivedEndpointTrialGuid == null
+      ? null
+      : await CloudSyncHistoricalReceivedEndpointTrial.select(
+          source: source,
+          guid: request.receivedEndpointTrialGuid!,
+        );
+  await validate();
   return runCloudSyncWindowsHistoricalPlan(
     request: request,
     prepare: () => prepareCloudSyncHistoricalImportPlanForClient(
@@ -278,7 +311,8 @@ Future<Map<String, Object?>> runCloudSyncWindowsHistoricalImport({
       store: store,
       storageDirectory: profile.path,
       accountLabel: request.accountLabel,
-      source: source,
+      source: trial?.source ?? source,
+      receivedEndpointTrial: trial,
       stillCurrent: stillCurrent,
       settleReader: settleReader,
     ),

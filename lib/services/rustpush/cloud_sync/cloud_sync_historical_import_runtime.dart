@@ -10,6 +10,7 @@ import 'cloud_sync_historical_cursor_file.dart';
 import 'cloud_sync_historical_import_controller.dart';
 import 'cloud_sync_historical_import_source.dart';
 import 'cloud_sync_historical_ownership.dart';
+import 'cloud_sync_historical_received_trial.dart';
 import 'cloud_sync_historical_protected_source_binding.dart';
 import 'cloud_sync_historical_snapshot.dart';
 import 'cloud_sync_historical_snapshot_file.dart';
@@ -94,6 +95,7 @@ prepareCloudSyncHistoricalImportPlanForClient({
   required CloudSyncHistoricalImportSource source,
   required bool Function() stillCurrent,
   required Future<void> Function() settleReader,
+  CloudSyncHistoricalReceivedEndpointTrial? receivedEndpointTrial,
 }) => _prepareHistoricalImport(
   client: client,
   store: store,
@@ -102,6 +104,7 @@ prepareCloudSyncHistoricalImportPlanForClient({
   stillCurrent: stillCurrent,
   settleReader: settleReader,
   source: source,
+  receivedEndpointTrial: receivedEndpointTrial,
   captureIdentity: () => api.cloudSyncCaptureAuthSnapshot(
     cloudMessagesClient: client,
     storageDirectory: storageDirectory,
@@ -140,7 +143,9 @@ Future<CloudSyncHistoricalImportPlan> _prepareHistoricalImport({
   )
   captureLocal,
   CloudSyncHistoricalImportSource? source,
+  CloudSyncHistoricalReceivedEndpointTrial? receivedEndpointTrial,
 }) async {
+  receivedEndpointTrial?.requireSource(source);
   if (store.isClosed() || !stillCurrent()) {
     throw StateError('cloud_sync_historical_import_identity_changed');
   }
@@ -267,6 +272,7 @@ Future<CloudSyncHistoricalImportPlan> _prepareHistoricalImport({
     stillCurrent: stillCurrent,
     validate: validate,
     onDisposition: (value) => disposition = value,
+    receivedEndpointTrial: receivedEndpointTrial,
   );
   return CloudSyncHistoricalImportPlan(
     snapshot: snapshot,
@@ -279,7 +285,12 @@ Future<CloudSyncHistoricalImportPlan> _prepareHistoricalImport({
       transport: transport,
       stillCurrent: stillCurrent,
       mode: CloudSyncHistoricalCursorMode.archive,
-      archiveRevision: _historicalArchivePolicyRevision,
+      // The one-row compatibility trial must not inherit a completed cursor
+      // that only recorded a default-policy metadata deferral. Journals and
+      // existing operations remain shared and must still reconcile exactly.
+      archiveRevision: receivedEndpointTrial == null
+          ? _historicalArchivePolicyRevision
+          : _historicalArchivePolicyRevision + 1,
     ),
     registry: ObjectBoxHistoricalOwnership(store: store, journal: journal),
     stillCurrent: stillCurrent,

@@ -80,8 +80,8 @@ void main() {
   );
 
   Future<void> review(WidgetTester tester) async {
-    await tester.ensureVisible(find.text('Review history'));
-    await tester.tap(find.text('Review history'));
+    await tester.ensureVisible(find.text('Upload existing messages'));
+    await tester.tap(find.text('Upload existing messages'));
     await tester.pumpAndSettle();
   }
 
@@ -91,7 +91,12 @@ void main() {
     await tester.pumpWidget(host());
     await review(tester);
     expect(find.text('test-account@example.com'), findsOneWidget);
-    expect(find.text('Messages on this device'), findsOneWidget);
+    expect(find.text('Messages on this device'), findsWidgets);
+    expect(find.text('Upload existing messages?'), findsOneWidget);
+    expect(
+      find.textContaining('They will not be sent again to anyone.'),
+      findsWidgets,
+    );
     expect(find.textContaining('3 local messages captured'), findsOneWidget);
     expect(calls, 0);
     await tester.tap(find.text('Cancel'));
@@ -131,10 +136,11 @@ void main() {
     (tester) async {
       await tester.pumpWidget(host());
       await review(tester);
-      await tester.tap(find.text('Upload history'));
+      await tester.tap(find.text('Upload messages'));
       await tester.pumpAndSettle();
       expect(calls, 3);
-      expect(find.text('History scan finished'), findsOneWidget);
+      expect(find.text('Existing messages checked'), findsOneWidget);
+      expect(find.text('Resume upload'), findsNothing);
       expect(
         find.text('This session: 3 reviewed, 3 confirmed in iCloud.'),
         findsOneWidget,
@@ -153,7 +159,7 @@ void main() {
     await tester.pumpWidget(host());
     await review(tester);
     available = false;
-    await tester.tap(find.text('Upload history'));
+    await tester.tap(find.text('Upload messages'));
     await tester.pumpAndSettle();
     expect(calls, 0);
     expect(controller.phase, CloudSyncHistoricalImportPhase.idle);
@@ -167,7 +173,7 @@ void main() {
     final gate = Completer<void>();
     beforeLoad = () => gate.future;
     await tester.pumpWidget(host());
-    await tester.tap(find.text('Review history'));
+    await tester.tap(find.text('Upload existing messages'));
     await tester.pump();
     await tester.pumpWidget(const SizedBox.shrink());
     gate.complete();
@@ -187,7 +193,7 @@ void main() {
     };
     await tester.pumpWidget(host());
     await review(tester);
-    await tester.tap(find.text('Upload history'));
+    await tester.tap(find.text('Upload messages'));
     await tester.pump();
     expect(calls, 1);
     await tester.pumpWidget(const SizedBox.shrink());
@@ -207,19 +213,19 @@ void main() {
     };
     await tester.pumpWidget(host());
     await review(tester);
-    await tester.tap(find.text('Upload history'));
+    await tester.tap(find.text('Upload messages'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 300));
-    await tester.ensureVisible(find.text('Pause history upload'));
-    await tester.tap(find.text('Pause history upload'));
+    await tester.ensureVisible(find.text('Pause upload'));
+    await tester.tap(find.text('Pause upload'));
     await tester.pump();
     expect(calls, 1);
     expect(controller.phase, CloudSyncHistoricalImportPhase.pausing);
     gate.complete();
     await tester.pumpAndSettle();
     expect(calls, 1);
-    expect(find.text('History upload paused'), findsOneWidget);
-    expect(find.text('Review / resume history'), findsOneWidget);
+    expect(find.text('Upload paused'), findsOneWidget);
+    expect(find.text('Resume upload'), findsOneWidget);
     await tester.pumpWidget(const SizedBox.shrink());
   });
 
@@ -250,7 +256,7 @@ void main() {
     final key = GlobalKey();
     await tester.pumpWidget(host(scale: 1.8, previewKey: key));
     expect(tester.takeException(), isNull);
-    await tester.ensureVisible(find.text('Review / resume history'));
+    await tester.ensureVisible(find.text('Resume upload'));
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
     // Optional synthetic-only review render. CI does not need to write a PNG.

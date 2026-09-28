@@ -5,6 +5,7 @@ import 'cloud_sync_historical_archive_request.dart';
 import 'cloud_sync_historical_create_selection.dart';
 import 'cloud_sync_historical_discovery_adapter.dart';
 import 'cloud_sync_historical_producer.dart';
+import 'cloud_sync_historical_received_trial.dart';
 import 'cloud_sync_historical_stage_adapter.dart';
 import 'cloud_sync_historical_staging.dart';
 import 'cloud_sync_local_send_consumer.dart';
@@ -39,6 +40,7 @@ final class CloudSyncHistoricalArchiveCoordinator {
     required this.discover,
     required this.consume,
     this.onDisposition,
+    this.receivedEndpointTrial,
   });
 
   factory CloudSyncHistoricalArchiveCoordinator.production({
@@ -50,6 +52,7 @@ final class CloudSyncHistoricalArchiveCoordinator {
     required bool Function() stillCurrent,
     required Future<void> Function() validate,
     void Function(CloudSyncHistoricalArchiveDisposition)? onDisposition,
+    CloudSyncHistoricalReceivedEndpointTrial? receivedEndpointTrial,
   }) => CloudSyncHistoricalArchiveCoordinator(
     store: store,
     journal: staging.staging.journal,
@@ -68,6 +71,7 @@ final class CloudSyncHistoricalArchiveCoordinator {
       stillCurrent: stillCurrent,
     ).runHistoricalRequest(selection),
     onDisposition: onDisposition,
+    receivedEndpointTrial: receivedEndpointTrial,
   );
 
   final Store store;
@@ -81,6 +85,7 @@ final class CloudSyncHistoricalArchiveCoordinator {
   )
   consume;
   final void Function(CloudSyncHistoricalArchiveDisposition)? onDisposition;
+  final CloudSyncHistoricalReceivedEndpointTrial? receivedEndpointTrial;
   bool _running = false;
 
   CloudSyncScope get _scope => CloudSyncScope(
@@ -215,9 +220,12 @@ final class CloudSyncHistoricalArchiveCoordinator {
       }
       if (request.origin ==
               CloudSyncHistoricalArchiveOrigin.historicalReceived &&
-          intent.admittedOperationId == null) {
+          intent.admittedOperationId == null &&
+          !(receivedEndpointTrial?.permits(request) ?? false)) {
         // Exact discovery had no reader handoff. This source cannot currently
         // be projected for create because its original endpoint was never saved.
+        // The isolated Windows trial can qualify one exact source; Profile
+        // keeps this default until independent Apple-client proof exists.
         // Preserve the committed source for a later policy, and allow supported
         // rows behind it to proceed. Never skip a submitted/uncertain operation.
         onDisposition?.call(

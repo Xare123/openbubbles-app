@@ -108,7 +108,7 @@ class _HistoricalImportCardState extends State<CloudSyncHistoricalImportCard> {
       final accepted = await showDialog<bool>(
         context: context,
         builder: (context) => AlertDialog(
-          title: const Text('Upload existing history?'),
+          title: const Text('Upload existing messages?'),
           scrollable: true,
           content: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -126,10 +126,11 @@ class _HistoricalImportCardState extends State<CloudSyncHistoricalImportCard> {
               ),
               const SizedBox(height: 12),
               const Text(
-                'Older local messages can remain after signing out. '
-                'Confirm that this history belongs in this account. '
-                'This archives messages without sending them again or enabling automatic uploads. '
-                'Unsupported messages stay on this device.',
+                'Add these messages to this account\'s iCloud history. '
+                'They will not be sent again to anyone. '
+                'Older messages can remain after signing out, so check the account above. '
+                'You can pause and resume. Messages that cannot be uploaded stay on this device. '
+                'This does not turn on automatic uploads.',
               ),
             ],
           ),
@@ -140,7 +141,7 @@ class _HistoricalImportCardState extends State<CloudSyncHistoricalImportCard> {
             ),
             FilledButton(
               onPressed: () => Navigator.pop(context, true),
-              child: const Text('Upload history'),
+              child: const Text('Upload messages'),
             ),
           ],
         ),
@@ -173,16 +174,17 @@ class _HistoricalImportCardState extends State<CloudSyncHistoricalImportCard> {
     builder: (context, _) {
       final c = widget.controller;
       final headline = switch (c.phase) {
-        CloudSyncHistoricalImportPhase.idle => 'Upload existing history',
+        CloudSyncHistoricalImportPhase.idle => 'Messages on this device',
         CloudSyncHistoricalImportPhase.preparing =>
-          'Preparing a private history preview',
+          'Preparing your messages for review',
         CloudSyncHistoricalImportPhase.awaitingConfirmation =>
           'Waiting for your confirmation',
-        CloudSyncHistoricalImportPhase.running => 'Uploading existing history',
+        CloudSyncHistoricalImportPhase.running => 'Uploading existing messages',
         CloudSyncHistoricalImportPhase.pausing =>
           'Finishing the current message before pausing',
-        CloudSyncHistoricalImportPhase.paused => 'History upload paused',
-        CloudSyncHistoricalImportPhase.scanComplete => 'History scan finished',
+        CloudSyncHistoricalImportPhase.paused => 'Upload paused',
+        CloudSyncHistoricalImportPhase.scanComplete =>
+          'Existing messages checked',
         CloudSyncHistoricalImportPhase.needsAttention =>
           'History import needs attention',
       };
@@ -206,8 +208,8 @@ class _HistoricalImportCardState extends State<CloudSyncHistoricalImportCard> {
             ),
             const SizedBox(height: 8),
             const Text(
-              'Add older messages stored on this device to iCloud. '
-              'This is separate from downloading your iCloud history.',
+              'Upload messages already on this device to iCloud. '
+              'They will not be sent again to anyone.',
             ),
             if (c.active) ...[
               const SizedBox(height: 8),
@@ -251,16 +253,16 @@ class _HistoricalImportCardState extends State<CloudSyncHistoricalImportCard> {
                     ? null
                     : c.pause,
                 icon: const Icon(Icons.pause),
-                label: const Text('Pause history upload'),
+                label: const Text('Pause upload'),
               )
-            else
+            else if (c.phase != CloudSyncHistoricalImportPhase.scanComplete)
               OutlinedButton.icon(
                 onPressed: !_requesting && widget.isAvailable() ? _start : null,
                 icon: const Icon(Icons.cloud_upload_outlined),
                 label: Text(
                   c.phase == CloudSyncHistoricalImportPhase.idle
-                      ? 'Review history'
-                      : 'Review / resume history',
+                      ? 'Upload existing messages'
+                      : 'Resume upload',
                 ),
               ),
             if (!c.active && !_requesting && !widget.isAvailable())

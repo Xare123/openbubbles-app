@@ -4,6 +4,8 @@ import 'dart:io';
 import 'package:bluebubbles/cloud_sync_v2_windows_historical_import.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_historical_archive_coordinator.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_historical_import_controller.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_historical_import_source.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_historical_received_trial.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_historical_producer.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_historical_staging.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -129,6 +131,93 @@ void main() {
       expect(result['source_rows'], 3);
       expect(result['confirmed_creates_this_session'], 0);
       expect(result['scan_complete'], isFalse);
+    },
+  );
+
+  test(
+    'received endpoint trial requires one row and separate snapshot consent',
+    () async {
+      final guid = (await snapshot.readPage(limit: 3)).views[1].guid;
+      final base = {
+        ...input(),
+        'receivedEndpointTrialGuid': guid,
+        'maximumAssessed': 1,
+      };
+      for (final delta in <Map<String, dynamic>>[
+        {'maximumAssessed': 2},
+        {'maximumCreates': 2},
+        {'receivedEndpointTrialGuid': ''},
+        {'receivedEndpointTrialGuid': ' bad '},
+      ]) {
+        expect(
+          () => CloudSyncWindowsHistoricalRequest.parse({...base, ...delta}),
+          throwsStateError,
+        );
+      }
+      final preview = CloudSyncWindowsHistoricalRequest.parse(base);
+      await expectLater(
+        runCloudSyncWindowsHistoricalPlan(
+          request: preview,
+          prepare: () async => plan(),
+        ),
+        throwsStateError,
+      );
+      expect(calls, isEmpty);
+      final trial = await CloudSyncHistoricalReceivedEndpointTrial.select(
+        source: CloudSyncHistoricalImportSource(
+          snapshot: snapshot,
+          label: 'Alpha history',
+        ),
+        guid: guid,
+      );
+      CloudSyncHistoricalImportPlan selectedPlan() {
+        final original = plan();
+        return CloudSyncHistoricalImportPlan(
+          snapshot: trial.source.snapshot,
+          sourceLabel: original.sourceLabel,
+          accountLabel: original.accountLabel,
+          archiveCursors: cursors,
+          registry: original.registry,
+          stillCurrent: original.stillCurrent,
+          validateIdentity: original.validateIdentity,
+          archive: original.archive,
+        );
+      }
+
+      final report = await runCloudSyncWindowsHistoricalPlan(
+        request: preview,
+        prepare: () async => selectedPlan(),
+      );
+      expect(report['source_rows'], 1);
+      expect(calls, isEmpty);
+      final wrongConsent = CloudSyncWindowsHistoricalRequest.parse({
+        ...base,
+        'action': 'archive',
+        'snapshotSha256': snapshot.manifest.snapshotSha256,
+      });
+      await expectLater(
+        runCloudSyncWindowsHistoricalPlan(
+          request: wrongConsent,
+          prepare: () async => selectedPlan(),
+        ),
+        throwsStateError,
+      );
+      expect(calls, isEmpty);
+      final archive = CloudSyncWindowsHistoricalRequest.parse({
+        ...base,
+        'action': 'archive',
+        'snapshotSha256': trial.source.identitySha256,
+      });
+      await runCloudSyncWindowsHistoricalPlan(
+        request: archive,
+        prepare: () async => selectedPlan(),
+      );
+      expect(calls, [guid]);
+      await runCloudSyncWindowsHistoricalPlan(
+        request: archive,
+        prepare: () async => selectedPlan(),
+      );
+      expect(calls, [guid]);
     },
   );
 
