@@ -2145,6 +2145,21 @@ pub async fn cloud_sync_inspect_attachment_sources(
     Ok(inventory)
 }
 
+/// Historical inventory uses the committed snapshot and the same canonical
+/// attachment identities as final records. No IDS receipt or upload is made.
+pub async fn cloud_sync_inspect_historical_attachment_sources(
+    cloud_messages_client: &Arc<CloudMessagesClient<DefaultAnisetteProvider>>,
+    context: CloudSyncHistoricalAttachmentContext,
+) -> anyhow::Result<Vec<CloudSyncAttachmentSourceEntry>> {
+    let auth = cloud_sync_capture_auth_snapshot(
+        cloud_messages_client, context.storage_directory.clone()).await?;
+    let inventory = cloud_sync_historical_attachment::inspect_sources(&context, &auth)?;
+    let after = cloud_sync_capture_auth_snapshot(
+        cloud_messages_client, context.storage_directory.clone()).await?;
+    cloud_sync_historical_attachment::open_source(&context, &after)?;
+    Ok(inventory)
+}
+
 #[frb(ignore)]
 fn cloud_sync_inspect_attachment_sources_bound(
     context: &CloudSyncNativeSendReceiptContext,

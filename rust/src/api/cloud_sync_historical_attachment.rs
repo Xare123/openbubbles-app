@@ -105,9 +105,33 @@ pub(super) fn open_source(
     Ok(source)
 }
 
+/// Read the complete, source-bound inventory before allocating randomized plans.
+pub(super) fn inspect_sources(
+    context: &CloudSyncHistoricalAttachmentContext,
+    auth: &CloudSyncNativeAuthMetadata,
+) -> anyhow::Result<Vec<CloudSyncAttachmentSourceEntry>> {
+    let source = open_source(context, auth)?;
+    let hasher =
+        crate::cloud_sync_protector::semantic_identifier_hasher(context.storage_directory.clone())
+            .map_err(|_| anyhow!("cloud_sync_historical_attachment_source_unavailable"))?;
+    source.media().ok_or_else(|| anyhow!("cloud_sync_historical_attachment_source_invalid"))?
+        .4.1.iter().map(|entry| {
+            let original = entry.3.as_deref()
+                .ok_or_else(|| anyhow!("cloud_sync_historical_attachment_source_invalid"))?;
+            let material = crate::cloud_sync_historical_attachment_source::historical_attachment_upload_material(
+                &source, original).map_err(|_| anyhow!("cloud_sync_historical_attachment_source_invalid"))?;
+            let logical = hasher.canonical_attachment_key_hash(&material.meta.guid)
+                .map_err(|_| anyhow!("cloud_sync_historical_attachment_source_invalid"))?;
+            Ok(CloudSyncAttachmentSourceEntry {
+                original_attachment_guid: original.to_owned(),
+                reflected_attachment_guid: material.meta.guid,
+                logical_entity_key_hash: logical.value().to_owned(),
+            })
+        }).collect()
+}
+
 /// Decode the original completed stage under an explicit owner. Historical
-/// content must still equal the original descriptor-derived metadata in full.
-/// A matching GUID alone cannot attach another file to a historical message.
+/// content must equal the descriptor-derived metadata in full, not just GUID.
 pub(super) fn open_record(
     storage: &str,
     auth: &CloudSyncNativeAuthMetadata,
@@ -505,6 +529,48 @@ pub(super) fn test_context(directory: &std::path::Path, sent: bool) -> UploadCon
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn historical_inventory_matches_final_record_identity_in_both_directions() {
+        for sent in [false, true] {
+            let directory = tempfile::tempdir().unwrap();
+            let input = test_input(directory.path(), sent, true);
+            let found = inspect_sources(&input, &input.expected_auth).unwrap();
+            assert_eq!(found.len(), 1);
+            let source = open_source(&input, &input.expected_auth).unwrap();
+            let original = source.media().unwrap().4 .1[0].3.as_deref().unwrap();
+            let material = crate::cloud_sync_historical_attachment_source::historical_attachment_upload_material(
+                &source, original).unwrap();
+            let expected = crate::cloud_sync_protector::semantic_identifier_hasher(
+                input.storage_directory.clone(),
+            )
+            .unwrap()
+            .canonical_attachment_key_hash(&material.meta.guid)
+            .unwrap();
+            assert_eq!(found[0].original_attachment_guid, original);
+            assert_eq!(found[0].reflected_attachment_guid, material.meta.guid);
+            assert_eq!(found[0].logical_entity_key_hash, expected.value());
+            let reopened = inspect_sources(&input, &input.expected_auth).unwrap();
+            assert_eq!(
+                reopened[0].logical_entity_key_hash,
+                found[0].logical_entity_key_hash
+            );
+        }
+    }
+
+    #[test]
+    fn historical_inventory_rejects_uncommitted_or_substituted_source() {
+        let directory = tempfile::tempdir().unwrap();
+        let input = test_input(directory.path(), true, false);
+        assert!(inspect_sources(&input, &input.expected_auth).is_err());
+        let input = test_input(directory.path(), true, true);
+        let mut wrong = input.clone();
+        wrong.source.snapshot_sha256 = "cd".repeat(32);
+        assert!(inspect_sources(&wrong, &input.expected_auth).is_err());
+        let mut auth = input.expected_auth.clone();
+        auth.account_fingerprint = "B".repeat(43);
+        assert!(inspect_sources(&input, &auth).is_err());
+    }
 
     #[test]
     fn historical_owner_requires_original_committed_source_and_every_binding_field() {
