@@ -282,6 +282,7 @@ mod cloud_sync_ids_attachment_source;
 mod cloud_sync_ids_mutation_source;
 mod cloud_sync_ids_mutation_stage;
 mod cloud_sync_historical_source;
+mod cloud_sync_historical_chat;
 mod cloud_sync_historical_projection;
 mod cloud_sync_historical_source_stage;
 mod cloud_sync_archive_discovery_source;

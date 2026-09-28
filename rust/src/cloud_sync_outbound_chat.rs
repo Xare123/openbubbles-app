@@ -166,7 +166,14 @@ pub(crate) fn outbound_chat_payload_sha256(
     chat: &CloudChat,
     server_record_name: &str,
 ) -> Result<String, Failure> {
-    encode_chat(chat, server_record_name).map(|bytes| digest(&bytes))
+    outbound_chat_payload_identity(chat, server_record_name).map(|(hash, _)| hash)
+}
+
+pub(crate) fn outbound_chat_payload_identity(
+    chat: &CloudChat,
+    server_record_name: &str,
+) -> Result<(String, u64), Failure> {
+    encode_chat(chat, server_record_name).map(|bytes| (digest(&bytes), bytes.len() as u64))
 }
 
 /// Call only with authenticated exact-name readback. Re-serialize every field,
