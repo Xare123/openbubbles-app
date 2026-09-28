@@ -86,6 +86,37 @@ void main() {
     });
   });
 
+  test(
+    'historical snapshot uses its own native purpose in both directions',
+    () async {
+      final bindings = _RecordingBindings();
+      final protector = RustCloudSyncProtector(
+        storageDirectory: '/private/app-support',
+        bindings: bindings,
+      );
+      await protector.protect(
+        scope: scope,
+        kind: CloudSyncProtectedValueKind.historicalSnapshot,
+        plaintext: 'synthetic history',
+      );
+      await protector.unprotect(
+        scope: scope,
+        kind: CloudSyncProtectedValueKind.historicalSnapshot,
+        ciphertext: 'synthetic sealed',
+      );
+      expect(bindings.protectCall?['purpose'], 'historicalSnapshot');
+      expect(bindings.unprotectCall?['purpose'], 'historicalSnapshot');
+      expect(
+        bindings.protectCall?['accountFingerprint'],
+        testAccountFingerprintA,
+      );
+      expect(
+        bindings.unprotectCall?['accountFingerprint'],
+        testAccountFingerprintA,
+      );
+    },
+  );
+
   test('rejects an empty storage directory before reaching native code', () {
     expect(
       () => RustCloudSyncProtector(

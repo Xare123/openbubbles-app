@@ -13,6 +13,7 @@ enum CloudSyncProtectedValueKind {
   systemFields,
   payloadReference,
   rawRecord,
+  historicalSnapshot,
 }
 
 /// Platform secret-storage boundary for Cloud Sync V2.

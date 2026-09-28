@@ -145,6 +145,25 @@ void main() {
     },
   );
 
+  test('detached worker reconstruction matches synchronous snapshot', () async {
+    final rows = [encodeHistoricalSnapshotRow(_row())];
+    final expected = capture(rows: rows);
+    final handles = ['sender@example.invalid'];
+    final pending = CloudSyncHistoricalSnapshot.fromEncodedRowsAsync(
+      encodedRows: rows,
+      account: _account,
+      accountHandles: handles,
+      capturedAtMs: _time,
+    );
+    rows.clear();
+    handles.clear();
+    final rebuilt = await pending;
+    expect(rebuilt.manifest.snapshotSha256, expected.manifest.snapshotSha256);
+    expect(rebuilt.scope, expected.scope);
+    expect(rebuilt.manifest.accountHandles, ['sender@example.invalid']);
+    expect((await rebuilt.readExact('one'))!.text, 'original');
+  });
+
   test(
     'snapshot pages exact sparse IDs and resumes without a live database',
     () async {

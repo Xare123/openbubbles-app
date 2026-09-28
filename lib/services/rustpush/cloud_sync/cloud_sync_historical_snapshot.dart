@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:isolate';
 
 import 'package:bluebubbles/database/models.dart';
 import 'package:crypto/crypto.dart';
@@ -46,6 +47,64 @@ final class CloudSyncHistoricalSnapshot implements HistoricalRowReader {
   final List<int> _ids;
   final Map<String, List<int>> _guidIndexes;
   String get scope => historicalArchiveScope(manifest, account);
+
+  /// Immutable canonical rows for private encrypted persistence only. Never
+  /// log this content or put it in a diagnostic/progress report.
+  Iterable<String> get encodedRows => _rows;
+
+  /// Production capture entry point. The SDK attaches and closes its own worker
+  /// Store; no native Store pointer, auth client or closure crosses isolates.
+  /// The caller must validate the source database's account ownership, not just
+  /// a newly supplied account string. That validation brackets the worker so a
+  /// logout/account switch cannot publish the result under a replacement owner.
+  static Future<CloudSyncHistoricalSnapshot> captureAsync({
+    required Store store,
+    required CloudSyncHistoricalAccountBinding account,
+    required List<String> accountHandles,
+    required int capturedAtMs,
+    required Future<void> Function() validateSource,
+    required bool Function() stillCurrent,
+    int rowLimit = maximumRows,
+    int byteLimit = maximumBytes,
+  }) async {
+    _requireLimits(rowLimit, byteLimit);
+    final input = _HistoricalCaptureInput(
+      account: account,
+      handles: List<String>.unmodifiable(accountHandles),
+      time: capturedAtMs,
+      rowLimit: rowLimit,
+      byteLimit: byteLimit,
+    );
+    void requireCurrent() {
+      if (!stillCurrent() || store.isClosed()) {
+        throw StateError('cloud_sync_historical_snapshot_identity_changed');
+      }
+    }
+
+    requireCurrent();
+    await validateSource();
+    requireCurrent();
+    final snapshot = await store.runAsync(_captureInWorker, input);
+    requireCurrent();
+    await validateSource();
+    requireCurrent();
+    return snapshot;
+  }
+
+  static CloudSyncHistoricalSnapshot _captureInWorker(
+    Store store,
+    _HistoricalCaptureInput input,
+  ) => capture(
+    store: store,
+    account: input.account,
+    accountHandles: input.handles,
+    capturedAtMs: input.time,
+    // The worker has no access to auth. Only the caller above validates it;
+    // this check concerns the lifetime of the SDK-attached read-only view.
+    stillCurrent: () => !store.isClosed(),
+    rowLimit: input.rowLimit,
+    byteLimit: input.byteLimit,
+  );
 
   /// Every Message, Chat, Handle and attachment relation is resolved inside the
   /// same transaction. Limits fail the complete export, never truncate history
@@ -130,6 +189,7 @@ final class CloudSyncHistoricalSnapshot implements HistoricalRowReader {
 
   /// Pure canonical reconstruction. Integrity and ordering checks here never
   /// authenticate an imported file or make its account assertion trustworthy.
+  /// Use [fromEncodedRowsAsync] when reopening a sizeable export on the UI.
   static CloudSyncHistoricalSnapshot fromEncodedRows({
     required Iterable<String> encodedRows,
     required CloudSyncHistoricalAccountBinding account,
@@ -217,6 +277,26 @@ final class CloudSyncHistoricalSnapshot implements HistoricalRowReader {
     );
   }
 
+  /// Only detached values cross this boundary. In particular, do not capture a
+  /// service/native client or the encrypted file owner inside Isolate.run.
+  static Future<CloudSyncHistoricalSnapshot> fromEncodedRowsAsync({
+    required List<String> encodedRows,
+    required CloudSyncHistoricalAccountBinding account,
+    required List<String> accountHandles,
+    required int capturedAtMs,
+  }) {
+    final rows = List<String>.unmodifiable(encodedRows);
+    final handles = List<String>.unmodifiable(accountHandles);
+    return Isolate.run(
+      () => fromEncodedRows(
+        encodedRows: rows,
+        account: account,
+        accountHandles: handles,
+        capturedAtMs: capturedAtMs,
+      ),
+    );
+  }
+
   static void _requireLimits(int rows, int bytes) {
     if (rows < 1 || rows > maximumRows || bytes < 1 || bytes > maximumBytes) {
       throw StateError('cloud_sync_historical_snapshot_limit');
@@ -271,4 +351,19 @@ final class _DigestSink implements Sink<Digest> {
   void add(Digest data) => value = data;
   @override
   void close() {}
+}
+
+final class _HistoricalCaptureInput {
+  const _HistoricalCaptureInput({
+    required this.account,
+    required this.handles,
+    required this.time,
+    required this.rowLimit,
+    required this.byteLimit,
+  });
+  final CloudSyncHistoricalAccountBinding account;
+  final List<String> handles;
+  final int time;
+  final int rowLimit;
+  final int byteLimit;
 }

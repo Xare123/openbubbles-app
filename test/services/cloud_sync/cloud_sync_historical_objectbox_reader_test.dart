@@ -617,4 +617,63 @@ void main() {
     expect(store.box<Message>().count(), 2);
     expect(store.box<Message>().getAll().every((row) => row.text == 'before'), isTrue);
   });
+
+  Future<CloudSyncHistoricalSnapshot> captureAsync({
+    required Future<void> Function() validate,
+    bool Function()? current,
+    List<String>? handles,
+  }) => CloudSyncHistoricalSnapshot.captureAsync(
+    store: store,
+    account: const CloudSyncHistoricalAccountBinding(
+      accountFingerprint: _account, protectedStoreIdentity: _storeIdentity),
+    accountHandles: handles ?? ['me@example.com'],
+    capturedAtMs: 1700000000000,
+    validateSource: validate,
+    stillCurrent: current ?? () => true,
+  );
+
+  test('worker capture returns detached content and keeps caller store open', () async {
+    final message = putMessage(guid: 'worker', text: 'before', isFromMe: true, sender: me, owner: chat);
+    var validations = 0;
+    final handles = ['me@example.com'];
+    final snapshot = await captureAsync(handles: handles, validate: () async {
+      validations++;
+      // Input aliases were detached before the first asynchronous boundary.
+      handles[0] = 'changed@example.com';
+      if (validations == 2) {
+        message.text = 'after';
+        message.attributedBody = [AttributedBody.raw('after')];
+        store.box<Message>().put(message);
+      }
+    });
+    expect(validations, 2);
+    expect(store.isClosed(), isFalse);
+    expect(snapshot.manifest.accountHandles, ['me@example.com']);
+    expect((await snapshot.readExact('worker'))!.text, 'before');
+    expect(store.box<Message>().get(message.id!)!.text, 'after');
+  });
+
+  test('worker result is rejected when source ownership changes during capture', () async {
+    putMessage(guid: 'worker', text: 'before', isFromMe: true, sender: me, owner: chat);
+    var validations = 0;
+    var current = true;
+    await expectLater(captureAsync(current: () => current, validate: () async {
+      if (++validations == 2) current = false;
+    }), throwsStateError);
+    expect(validations, 2);
+    expect(store.isClosed(), isFalse);
+    expect(store.box<Message>().count(), 1);
+  });
+
+  test('failed source qualification aborts before worker capture', () async {
+    // Empty DB would throw snapshot_empty if the worker were allowed to run.
+    var validations = 0;
+    await expectLater(captureAsync(validate: () async {
+      validations++;
+      throw StateError('synthetic_owner_mismatch');
+    }), throwsA(isA<StateError>().having((e) => e.message, 'reason', 'synthetic_owner_mismatch')));
+    expect(validations, 1);
+    expect(store.isClosed(), isFalse);
+    expect(store.box<Message>().count(), 0);
+  });
 }
