@@ -61,7 +61,10 @@ void main() {
     expect(end, greaterThan(start));
     final wake = source.substring(start, end);
 
-    expect(wake, contains('_cloudSyncV2AndroidBackgroundScopeHash'));
+    expect(wake, contains('_cloudSyncV2BackgroundReadPreferences().load()'));
+    expect(wake, contains('!preference.enabled'));
+    expect(wake, contains('preference.identity.scopeHash != scopeHash'));
+    expect(wake, isNot(contains('_cloudSyncV2DeveloperRuntimeAllowed')));
     expect(wake, contains('cloud_sync_android_background_scope_mismatch'));
     expect(wake, contains('allowAndroidBackgroundIsolate: true'));
     expect(

@@ -66,6 +66,7 @@ abstract final class CloudSyncAndroidBackgroundPolicy {
       'cloud_sync_android_background_disabled',
       'cloud_sync_android_background_scope_mismatch',
       'cloud_sync_android_background_work_kind_invalid',
+      'cloud_sync_background_preference_identity_changed',
       'cloud_sync_canary_package_required',
       'cloud_sync_developer_mode_required',
       'cloud_sync_native_auth_account_changed',

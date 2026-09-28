@@ -9,6 +9,7 @@ import 'package:bluebubbles/app/layouts/settings/pages/profile/profile_scaffold.
 import 'package:bluebubbles/app/layouts/settings/pages/profile/cloud_sync_keychain_card.dart';
 import 'package:bluebubbles/app/layouts/settings/pages/profile/cloud_sync_progress_card.dart';
 import 'package:bluebubbles/app/layouts/settings/pages/profile/cloud_sync_historical_import_card.dart';
+import 'package:bluebubbles/app/layouts/settings/pages/profile/cloud_sync_background_read_card.dart';
 import 'package:bluebubbles/app/layouts/settings/pages/profile/cloud_sync_profile_entry.dart';
 import 'package:bluebubbles/app/layouts/settings/pages/profile/registration_repair_dialog.dart';
 import 'package:bluebubbles/app/layouts/settings/pages/theming/avatar/avatar_crop.dart';
@@ -536,6 +537,11 @@ class _ProfilePanelState extends OptimizedState<ProfilePanel> with WidgetsBindin
                         isAvailable: () => pushService.cloudSyncV2HistoricalImportAvailable,
                         onPrepare: pushService.prepareCloudSyncV2HistoricalImport,
                         onConfirm: pushService.confirmCloudSyncV2HistoricalImport,
+                      ),
+                    if (pushService.cloudSyncV2BackgroundReadVisible)
+                      CloudSyncBackgroundReadCard(
+                        onLoad: pushService.readCloudSyncV2BackgroundReadPreference,
+                        onChanged: pushService.setCloudSyncV2BackgroundReadPreference,
                       ),
                   ]),
                 if (CloudSyncProfileEntry.showV2Card(v2Visible: pushService.cloudSyncV2ProgressVisible) && pushService.state?.icloudServices?.keychain != null)

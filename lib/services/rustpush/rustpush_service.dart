@@ -40,6 +40,7 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_attachment_proven
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_attachment_production_adapter.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_attachment_sync_gate.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_android_background.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_background_read_preference.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_dev_gate.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_composer_admission.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_send_journal.dart';
@@ -8179,6 +8180,7 @@ class RustPushService extends GetxService {
   int? _cloudSyncV2ReceivedRoundCeiling;
   bool _cloudSyncV2ReceivedPassDeferred = false;
   bool _cloudSyncV2AndroidBackgroundRegistered = false;
+  Future<CloudSyncBackgroundReadPreference>? _cloudSyncV2BackgroundPreferenceInFlight;
   static const _cloudSyncV2SemanticPullQuiescenceTimeout =
       Duration(seconds: 50);
   static const _cloudSyncV2PcsOperationTimeout = Duration(seconds: 30);
@@ -8193,31 +8195,91 @@ class RustPushService extends GetxService {
   bool get _cloudSyncV2AndroidBackgroundRuntimeAllowed =>
       CloudSyncDevGate.androidBackgroundReadEnabled &&
       CloudSyncDevGate.manualSemanticPullEnabled &&
-      _cloudSyncV2CanaryRuntimeAllowed &&
-      _cloudSyncV2DeveloperRuntimeAllowed;
+      _cloudSyncV2CanaryRuntimeAllowed;
 
-  Future<String?> _cloudSyncV2AndroidBackgroundScopeHash() async {
+  bool get cloudSyncV2BackgroundReadVisible =>
+      _cloudSyncV2AndroidBackgroundRuntimeAllowed;
+
+  CloudSyncBackgroundReadPreferences _cloudSyncV2BackgroundReadPreferences() {
     final expectedState = state;
     final client = expectedState?.icloudServices?.cloudMessagesClient;
     final storage = statePath;
-    if (client == null || storage.isEmpty) return null;
+    final store = Database.store;
+    bool stillCurrent() => !loggingOut && !_serviceClosing &&
+        _cloudSyncV2AndroidBackgroundRuntimeAllowed &&
+        client != null && storage.isNotEmpty &&
+        identical(expectedState, state) &&
+        identical(client, state?.icloudServices?.cloudMessagesClient) &&
+        identical(store, Database.store) && !store.isClosed() &&
+        storage == statePath && !ss.settings.cloudSyncingEnabled.value &&
+        isSyncing.value == null;
     final provider = CloudSyncProductionAuthSnapshotProvider(
       readActiveClient: () => state?.icloudServices?.cloudMessagesClient,
       nativeAuthBinding: FrbCloudSyncNativeAuthBinding(),
       privateStorageDirectory: storage,
     );
-    final auth = await provider.capture();
-    if (auth == null ||
-        !identical(expectedState, state) ||
-        !identical(client, state?.icloudServices?.cloudMessagesClient) ||
-        storage != statePath) {
-      return null;
-    }
-    return CloudSyncAndroidBackgroundPolicy.scopeHash(
-      CloudSyncAndroidBackgroundPolicy.semanticMessageScope(
-        auth.accountFingerprint,
-      ),
+    return CloudSyncBackgroundReadPreferences(
+      captureIdentity: () async {
+        final auth = await provider.capture().timeout(const Duration(seconds: 10));
+        if (auth == null) return null;
+        return CloudSyncBackgroundReadIdentity(
+          scopeHash: CloudSyncAndroidBackgroundPolicy.scopeHash(
+            CloudSyncAndroidBackgroundPolicy.semanticMessageScope(auth.accountFingerprint),
+          ),
+          protectedStoreIdentity: auth.protectedStoreIdentity,
+        );
+      },
+      stillCurrent: stillCurrent,
+      reload: ss.prefs.reload,
+      read: ss.prefs.get,
+      write: ss.prefs.setBool,
+      developerDefault: () => _cloudSyncV2DeveloperRuntimeAllowed,
     );
+  }
+
+  Future<CloudSyncBackgroundReadPreference> readCloudSyncV2BackgroundReadPreference() {
+    if (!cloudSyncV2BackgroundReadVisible || !ls.isUiThread || mcs.background) {
+      throw StateError('cloud_sync_background_preference_unavailable');
+    }
+    return _cloudSyncV2BackgroundReadPreferences().load();
+  }
+
+  Future<CloudSyncBackgroundReadPreference> setCloudSyncV2BackgroundReadPreference(
+    CloudSyncBackgroundReadPreference expected,
+    bool enabled,
+  ) async {
+    if (!cloudSyncV2BackgroundReadVisible || !ls.isUiThread || mcs.background ||
+        ls.currentState != AppLifecycleState.resumed ||
+        _cloudSyncV2BackgroundPreferenceInFlight != null) {
+      throw StateError('cloud_sync_background_preference_unavailable');
+    }
+    final preferences = _cloudSyncV2BackgroundReadPreferences();
+    final operation = preferences.setEnabled(expected, enabled);
+    _cloudSyncV2BackgroundPreferenceInFlight = operation;
+    try {
+      final saved = await operation;
+      if (!preferences.stillCurrent()) {
+        throw StateError('cloud_sync_background_preference_identity_changed');
+      }
+      if (saved.enabled) {
+        await _configureCloudSyncV2AndroidBackgroundRead();
+      } else {
+        // The existing Android outcome adapter retains an already-dispatched
+        // Dart engine until its reply; cancellation never discards protected work.
+        await _disableCloudSyncV2AndroidBackgroundRead();
+      }
+      if (!preferences.stillCurrent()) {
+        throw StateError('cloud_sync_background_preference_identity_changed');
+      }
+      if (saved.enabled && !_cloudSyncV2AndroidBackgroundRegistered) {
+        throw StateError('cloud_sync_background_preference_schedule_pending');
+      }
+      return saved;
+    } finally {
+      if (identical(_cloudSyncV2BackgroundPreferenceInFlight, operation)) {
+        _cloudSyncV2BackgroundPreferenceInFlight = null;
+      }
+    }
   }
 
   Future<void> _configureCloudSyncV2AndroidBackgroundRead() async {
@@ -8229,11 +8291,14 @@ class RustPushService extends GetxService {
       return;
     }
     try {
-      final scopeHash = await _cloudSyncV2AndroidBackgroundScopeHash();
-      if (scopeHash == null) return;
+      final preference = await _cloudSyncV2BackgroundReadPreferences().load();
+      if (!preference.enabled) {
+        await _disableCloudSyncV2AndroidBackgroundRead();
+        return;
+      }
       final accepted = await mcs.invokeMethod(
         'cloud-sync-v2-background-control',
-        <String, Object>{'action': 'configure', 'scopeHash': scopeHash},
+        <String, Object>{'action': 'configure', 'scopeHash': preference.identity.scopeHash},
       );
       _cloudSyncV2AndroidBackgroundRegistered = accepted == true;
       if (!_cloudSyncV2AndroidBackgroundRegistered) {
@@ -8277,6 +8342,8 @@ class RustPushService extends GetxService {
       return;
     }
     try {
+      final preference = await _cloudSyncV2BackgroundReadPreferences().load();
+      if (!preference.enabled) return;
       await mcs.invokeMethod(
         'cloud-sync-v2-background-control',
         const <String, Object>{'action': 'hint', 'kind': 'METADATA'},
@@ -10849,9 +10916,6 @@ class RustPushService extends GetxService {
       if (!_cloudSyncV2CanaryRuntimeAllowed) {
         throw StateError('cloud_sync_canary_package_required');
       }
-      if (!_cloudSyncV2DeveloperRuntimeAllowed) {
-        throw StateError('cloud_sync_developer_mode_required');
-      }
       if (!CloudSyncAndroidBackgroundPolicy.isCanonicalScopeHash(scopeHash)) {
         throw StateError('cloud_sync_android_background_scope_mismatch');
       }
@@ -10875,12 +10939,11 @@ class RustPushService extends GetxService {
       if (expectedClient == null || statePath.isEmpty) {
         throw StateError('cloud_sync_native_auth_account_unavailable');
       }
-      final currentScopeHash =
-          await _cloudSyncV2AndroidBackgroundScopeHash();
-      if (currentScopeHash == null) {
-        throw StateError('cloud_sync_native_auth_account_unavailable');
+      final preference = await _cloudSyncV2BackgroundReadPreferences().load();
+      if (!preference.enabled) {
+        throw StateError('cloud_sync_android_background_disabled');
       }
-      if (currentScopeHash != scopeHash) {
+      if (preference.identity.scopeHash != scopeHash) {
         throw StateError('cloud_sync_android_background_scope_mismatch');
       }
 
