@@ -308,8 +308,17 @@ void main() {
   });
 
   test('historical group adoption reopens without live-send provenance', () async {
+    final peerQuery = store.box<Handle>()
+        .query(Handle_.address.equals('peer@example.invalid')
+            .and(Handle_.service.equals('iMessage'))).build();
+    final Handle peer;
+    try {
+      peer = peerQuery.findFirst()!;
+    } finally {
+      peerQuery.close();
+    }
     final peers = [
-      Handle(address: 'peer@example.invalid', service: 'iMessage'),
+      peer,
       Handle(address: 'second@example.invalid', service: 'iMessage'),
     ];
     store.box<Handle>().putMany(peers);

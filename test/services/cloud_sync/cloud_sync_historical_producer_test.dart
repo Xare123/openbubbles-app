@@ -473,7 +473,7 @@ void main() {
       );
       final result = await producer.run();
       expect(result.summary.assessed, 6);
-      expect(result.summary.staged, 2);
+      expect(result.summary.staged, 3);
       expect(result.summary.completed, isTrue);
       expect(
         result.summary.ineligibleByReason[CloudSyncHistoricalArchiveReasons
@@ -493,16 +493,23 @@ void main() {
       expect(
         result.summary.ineligibleByReason[CloudSyncHistoricalArchiveReasons
             .group],
-        1,
+        isNull,
       );
       expect(result.output.staged.map((s) => s.guid).toSet(), {
         'guid-incoming-1',
         'guid-sent-1',
+        'guid-group-1',
       });
       for (final staged in result.output.staged) {
         final payload =
             jsonDecode(utf8.decode(seen[staged.guid]!)) as Map<String, dynamic>;
         expect(payload['guid'], staged.guid);
+        if (staged.guid == 'guid-group-1') {
+          // Eligibility stages a group source, not a remote create. Parent
+          // discovery/proof and incoming-endpoint policy are downstream gates.
+          expect(payload['format'], 'cloud-sync-historical-source-v2');
+          expect(payload['groupMetadata'], isA<List>());
+        }
         expect(staged.key.length, 64);
         expect(staged.byteLength, seen[staged.guid]!.length);
       }
@@ -541,20 +548,21 @@ void main() {
       }
 
       final first = await pass();
-      expect(first, {'guid-incoming-1', 'guid-sent-1'});
-      expect(admission.creates, 2);
+      expect(first, {'guid-incoming-1', 'guid-sent-1', 'guid-group-1'});
+      expect(admission.creates, 3);
       await reopen();
       final second = await pass();
       expect(second, isEmpty);
-      expect(admission.creates, 2);
+      expect(admission.creates, 3);
       expect((await _FileCursorStore(serviceDir).load())?.done, isTrue);
       // Scan completion does not consume the durable pending journal.
       // Recreate the journal independently after all producer objects.
       final pending = _FileAdoptions(serviceDir).pending();
-      expect(pending, hasLength(2));
+      expect(pending, hasLength(3));
       expect(pending.map((s) => s.guid).toSet(), {
         'guid-incoming-1',
         'guid-sent-1',
+        'guid-group-1',
       });
     } finally {
       if (serviceDir.existsSync()) await serviceDir.delete(recursive: true);
@@ -622,7 +630,8 @@ void main() {
     }
     expect(admission.decisions['guid-sent-1'], _AdmissionDecision.retained);
     expect(admission.remote.containsKey('guid-sent-1'), isFalse);
-    expect(admission.creates, 1);
+    expect(admission.creates, 2);
+    expect(admission.remote.keys.toSet(), {'guid-incoming-1', 'guid-group-1'});
   });
 
   test('wrong-account manifest stages nothing', () async {
@@ -838,13 +847,13 @@ void main() {
           stageAndAdopt: reopenedJournal.stageAndAdopt,
         );
         expect((await resumed.run()).summary.completed, isTrue);
-        expect(reopenedJournal.newWrites, afterAdoption ? 1 : 2);
-        expect(_FileAdoptions(serviceDir).pending(), hasLength(2));
+        expect(reopenedJournal.newWrites, afterAdoption ? 2 : 3);
+        expect(_FileAdoptions(serviceDir).pending(), hasLength(3));
         // A completed scan does not rescan, and its pending journal survives.
         final repeated = await resumed.run();
         expect(repeated.summary.assessed, 0);
         expect(repeated.output.staged, isEmpty);
-        expect(_FileAdoptions(serviceDir).pending(), hasLength(2));
+        expect(_FileAdoptions(serviceDir).pending(), hasLength(3));
       },
     );
   }
