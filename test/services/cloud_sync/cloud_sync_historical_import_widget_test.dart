@@ -7,6 +7,7 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_historical_a
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_historical_import_controller.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_historical_producer.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_historical_staging.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_writer_authority.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
@@ -286,6 +287,22 @@ void main() {
     await review(tester);
     expect(find.textContaining('private body'), findsNothing);
     expect(find.textContaining('stopped safely'), findsOneWidget);
+    expect(calls, 0);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('unsafe initial writer state explains recovery without offering upload', (tester) async {
+    beforeLoad = () async {
+      throw const CloudKitWriterAuthorityFailure(
+        'cloudkit_writer_initial_setup_requires_manual_recovery',
+      );
+    };
+    await tester.pumpWidget(host());
+    await review(tester);
+    expect(find.textContaining('saved sync setup needs recovery'), findsOneWidget);
+    expect(find.textContaining('messages and pending uploads are preserved'), findsOneWidget);
+    expect(find.text('Upload messages'), findsNothing);
+    expect(find.textContaining('cloudkit_writer_'), findsNothing);
     expect(calls, 0);
     await tester.pumpWidget(const SizedBox.shrink());
   });

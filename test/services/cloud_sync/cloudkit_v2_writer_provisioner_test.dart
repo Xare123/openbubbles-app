@@ -260,6 +260,46 @@ void main() {
     },
   );
 
+  test('first historical setup preserves existing chats without submitting work', () async {
+    final chat = Chat(guid: 'iMessage;-;history@example.com')..ckSyncState = false;
+    final chatId = objectBox.box<Chat>().put(chat);
+    final message = Message(
+      guid: 'A2512CA4-56B3-4EF1-B075-03842F208663',
+      text: 'synthetic retained history',
+      dateCreated: clock,
+      isFromMe: false,
+    )..chat.targetId = chatId;
+    final messageId = objectBox.box<Message>().put(message);
+    suppliedMeasurements = _measurements(
+      unsyncedLegacyMessages: objectBox.box<Message>().count(),
+      unsyncedLegacyChats: objectBox.box<Chat>().count(),
+    );
+    quarantineThrows = true;
+    expect(authority.read(writerScope), isNull);
+
+    final initial = await provisioner.ensureV2Owned(
+      expectedAuth: expectedAuth,
+      initialOwnerOnly: true,
+    );
+    final restored = await provisioner.ensureV2Owned(
+      expectedAuth: expectedAuth,
+      initialOwnerOnly: true,
+    );
+    expect(initial.disposition, CloudKitV2WriterProvisioningDisposition.provisioned);
+    expect(restored.disposition, CloudKitV2WriterProvisioningDisposition.alreadyOwned);
+    expect(restored.snapshot.epoch, initial.snapshot.epoch);
+    final retained = objectBox.box<Message>().get(messageId)!;
+    expect(objectBox.box<Message>().count(), 1);
+    expect(objectBox.box<Chat>().count(), 1);
+    expect(retained.guid, message.guid);
+    expect(retained.text, message.text);
+    expect(retained.dateCreated, clock);
+    expect(retained.chat.targetId, chatId);
+    expect(retained.ckSyncState, isFalse);
+    expect(objectBox.box<Chat>().get(chatId)!.ckSyncState, isFalse);
+    expect(await cloudSyncStore.readOutboxEntries(syncScope), isEmpty);
+  });
+
   test(
     'automatic initial setup cannot clear pending legacy deletions',
     () async {

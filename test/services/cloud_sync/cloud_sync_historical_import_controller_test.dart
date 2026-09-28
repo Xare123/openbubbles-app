@@ -9,6 +9,7 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_historical_p
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_historical_snapshot.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_historical_snapshot_codec.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_historical_staging.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_writer_authority.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 /// Composition tests for the manual import lifecycle over synthetic
@@ -239,6 +240,31 @@ void main() {
       'CloudSyncHistoricalImportConfirmation(redacted)',
     );
   });
+
+  for (final failure in {
+    'cloudkit_writer_identity_changed': 'cloud_sync_historical_import_identity_changed',
+    'cloudkit_writer_identity_revalidation_failed': 'cloud_sync_historical_import_identity_changed',
+    'cloudkit_writer_initial_setup_requires_manual_recovery': 'cloud_sync_historical_import_owner_required',
+    'cloudkit_writer_authority_requires_manual_recovery': 'cloud_sync_historical_import_owner_required',
+    'cloudkit_writer_transition_precondition_failed': 'cloud_sync_historical_import_busy',
+    'cloudkit_writer_v2_restore_precondition_failed': 'cloud_sync_historical_import_busy',
+    'private error content': 'cloud_sync_historical_import_failed',
+  }.entries) {
+    test('writer preparation safely reports ${failure.key}', () async {
+      final controller = CloudSyncHistoricalImportController();
+      await expectLater(
+        controller.prepare(() async {
+          throw CloudKitWriterAuthorityFailure(failure.key);
+        }),
+        throwsA(isA<StateError>().having((e) => e.message, 'message', failure.value)),
+      );
+      expect(controller.failureCode, failure.value);
+      expect(controller.phase, CloudSyncHistoricalImportPhase.needsAttention);
+      expect(controller.active, isFalse);
+      expect(archive.calls, 0);
+      controller.dispose();
+    });
+  }
 
   test('cancelled and foreign confirmations are rejected', () async {
     final controller = CloudSyncHistoricalImportController();

@@ -30,6 +30,30 @@ CloudSyncProfileReadiness readiness({
 );
 
 void main() {
+  test('Profile historical preparation initializes only a fresh writer before preview', () {
+    final source = File('lib/services/rustpush/rustpush_service.dart').readAsStringSync();
+    final begin = source.indexOf('prepareCloudSyncV2HistoricalImport()');
+    final end = source.indexOf('Future<void> confirmCloudSyncV2HistoricalImport(', begin);
+    final prepare = source.substring(begin, end);
+    const setup = 'await _cloudSyncV2Outbound().ensureWriterOwned(initialOwnerOnly: true)';
+    expect(prepare, contains(setup));
+    final setupIndex = prepare.indexOf(setup);
+    final planIndex = prepare.indexOf('return prepareCloudSyncHistoricalImportPlan(');
+    expect(setupIndex, lessThan(planIndex));
+    expect(prepare.substring(0, setupIndex), contains('if (!stillCurrent())'));
+    expect(prepare.substring(setupIndex, planIndex), contains('if (!stillCurrent())'));
+    expect(prepare, contains('ls.retainEngineUntil('));
+    expect(prepare, contains('cloudSyncV2HistoricalImport.prepare('));
+    for (final forbidden in [
+      '_cloudSyncV2DeveloperRuntimeAllowed', 'prepareCloudSyncV2OutboundWriter(',
+      'initialOwnerOnly: false', '_queueCloudSyncV2LocalSends(',
+      'cloudSyncingEnabled.value =', 'confirmCloudSyncV2HistoricalImport(',
+      '.runDoubleConfirmed(', '.confirm(',
+    ]) {
+      expect(prepare, isNot(contains(forbidden)), reason: forbidden);
+    }
+  });
+
   test('Profile retry refreshes admission before arming and shares shutdown tracking', () {
     final source = File('lib/services/rustpush/rustpush_service.dart').readAsStringSync();
     final begin = source.indexOf('Future<CloudSyncUploadRetryAction> prepareCloudSyncV2PendingUploadRetry()');

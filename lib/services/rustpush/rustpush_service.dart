@@ -10395,6 +10395,17 @@ class RustPushService extends GetxService {
           storage == statePath && accountLabel == ss.settings.iCloudAccount.value &&
           ss.settings.finishedSetup.value && !ss.settings.cloudSyncingEnabled.value &&
           isSyncing.value == null;
+      if (!stillCurrent()) {
+        throw StateError('cloud_sync_historical_import_identity_changed');
+      }
+      // Normal Profile must work before the developer-only writer setup has
+      // ever run. This only initializes a fresh owner or restores stable V2;
+      // legacy ownership and pending deletion queues remain untouched.
+      // Preparing the snapshot still cannot upload without exact confirmation.
+      await _cloudSyncV2Outbound().ensureWriterOwned(initialOwnerOnly: true);
+      if (!stillCurrent()) {
+        throw StateError('cloud_sync_historical_import_identity_changed');
+      }
       return prepareCloudSyncHistoricalImportPlan(
         state: capturedState, store: store, storageDirectory: storage,
         accountLabel: accountLabel, stillCurrent: stillCurrent,

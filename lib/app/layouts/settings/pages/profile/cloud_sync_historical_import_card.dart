@@ -66,7 +66,7 @@ class _HistoricalImportCardState extends State<CloudSyncHistoricalImportCard> {
       'cloud_sync_historical_import_identity_changed' =>
         'The account or confirmation changed. Review the destination again before continuing.',
       'cloud_sync_historical_import_owner_required' =>
-        'History uploads are not enabled for this account yet. No messages were submitted.',
+        'The saved sync setup needs recovery before history uploads can start. Your messages and pending uploads are preserved. Share diagnostics if this persists.',
       'cloud_sync_historical_import_source_invalid' ||
       'cloud_sync_historical_import_source_changed' =>
         'The selected history does not match its saved snapshot. Review the source again. Existing messages and saved uploads are preserved.',

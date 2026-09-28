@@ -8,6 +8,7 @@ import 'cloud_sync_historical_cursor_file.dart';
 import 'cloud_sync_historical_producer.dart';
 import 'cloud_sync_historical_snapshot.dart';
 import 'cloud_sync_historical_staging.dart';
+import 'cloudkit_writer_authority.dart';
 
 enum CloudSyncHistoricalImportPhase {
   idle,
@@ -338,6 +339,20 @@ final class CloudSyncHistoricalImportController extends ChangeNotifier {
   });
 
   static String _safeFailure(Object error) {
+    if (error is CloudKitWriterAuthorityFailure) {
+      return switch (error.safeCode) {
+        'cloudkit_writer_identity_changed' ||
+        'cloudkit_writer_identity_revalidation_failed' =>
+          'cloud_sync_historical_import_identity_changed',
+        'cloudkit_writer_initial_setup_requires_manual_recovery' ||
+        'cloudkit_writer_authority_requires_manual_recovery' =>
+          'cloud_sync_historical_import_owner_required',
+        'cloudkit_writer_transition_precondition_failed' ||
+        'cloudkit_writer_v2_restore_precondition_failed' =>
+          'cloud_sync_historical_import_busy',
+        _ => 'cloud_sync_historical_import_failed',
+      };
+    }
     const known = {
       'cloud_sync_historical_import_confirmation_expired',
       'cloud_sync_historical_import_identity_changed',
