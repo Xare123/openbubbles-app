@@ -106,6 +106,45 @@ pub(crate) fn compare_historical_group_raw(
     Ok(compare_historical_group_record(expected, found))
 }
 
+/// Readback of our exact staged historical media, not equivalence of arbitrary
+/// found media. Check the complete raw protobufs before comparing headers.
+/// Only the already-byte-identical body is removed from the comparison view;
+/// all other content, direction, route and known status rules remain unchanged.
+/// The caller binds the original source, staged envelope and child readbacks.
+pub(crate) fn verify_historical_media_raw(
+    expected: &CloudMessage,
+    found: &CloudMessage,
+    raw: &ReceivedRawProtos<'_>,
+) -> Result<(), ReceivedRawMatchFailure> {
+    verify_raw_fields(found, raw)?;
+    let expected_body = expected.msg_proto.0.attributed_body.as_deref();
+    if expected_body.is_none_or(|body| body.is_empty())
+        || expected_body != found.msg_proto.0.attributed_body.as_deref()
+    {
+        return Err(ReceivedRawMatchFailure::ValueMismatch);
+    }
+    let mut expected_headers = expected.clone();
+    let mut found_headers = found.clone();
+    expected_headers.msg_proto.0.attributed_body = None;
+    found_headers.msg_proto.0.attributed_body = None;
+    let is_group = expected
+        .msg_proto_4
+        .as_ref()
+        .and_then(|proto| proto.0.group_id.as_deref())
+        .is_some_and(|route| route.starts_with("iMessage;+;"));
+    let comparison = if is_group {
+        compare_historical_group_record(&expected_headers, &found_headers)
+    } else if expected.destination_caller_id.is_empty() {
+        compare_historical_record_unknown_endpoint(&expected_headers, &found_headers)
+    } else {
+        compare_received_record(&expected_headers, &found_headers)
+    };
+    if comparison != ReceivedRecordMatchVerdict::EquivalentSupportedPlainText {
+        return Err(ReceivedRawMatchFailure::ValueMismatch);
+    }
+    Ok(())
+}
+
 fn verify_raw_fields(
     found: &CloudMessage,
     raw: &ReceivedRawProtos<'_>,

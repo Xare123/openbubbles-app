@@ -492,6 +492,15 @@ pub(crate) fn validate_source_projected_attributed_body(
     encoded: &[u8],
     expected: &rustpush::StCollapsedValue,
 ) -> Result<(), CloudCanonicalQuarantineReason> {
+    validate_source_projected_attributed_bodies(encoded, std::slice::from_ref(expected))
+}
+
+/// The same bounded comparison for the original ordered body list retained by
+/// a historical source. Never flatten separate bodies or compare only the first.
+pub(crate) fn validate_source_projected_attributed_bodies(
+    encoded: &[u8],
+    expected: &[rustpush::StCollapsedValue],
+) -> Result<(), CloudCanonicalQuarantineReason> {
     use rustpush::StCollapsedValue as Expected;
     fn fields(
         decoder: &BoundedTypedStreamDecoder<'_>,
@@ -576,14 +585,14 @@ pub(crate) fn validate_source_projected_attributed_body(
         }
     }
     let validate = || -> Result<(), BoundedStreamFailure> {
-        if encoded.is_empty() || encoded.len() > 1024 * 1024 {
+        if encoded.is_empty() || encoded.len() > 1024 * 1024 || expected.is_empty() || expected.len() > 16 {
             return Err(BoundedStreamFailure::Oversized);
         }
         let (decoder, values) = BoundedTypedStreamDecoder::new(encoded)?.decode()?;
-        if values.len() != 1 {
+        if values.len() != expected.len() {
             return Err(BoundedStreamFailure::Malformed);
         }
-        compare(&decoder, &values[0], expected, 0)
+        fields(&decoder, &values, expected, 0)
     };
     validate().map_err(|error| match error {
         BoundedStreamFailure::Malformed => CloudCanonicalQuarantineReason::MalformedAttributedBody,

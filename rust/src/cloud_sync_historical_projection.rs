@@ -24,6 +24,29 @@ pub(crate) fn project_historical_plain_text(
     if source.media().is_some() {
         return Err(Failure::UnsupportedMessage);
     }
+    project_historical_headers(source, chat)
+}
+
+/// Body material only. The writer must separately prove the complete set of
+/// attachment children and pin that proof in the historical media envelope.
+pub(crate) fn project_historical_media(
+    source: &HistoricalArchiveSource,
+    chat: &CloudCanonicalChatPayload,
+) -> Result<CloudMessage, Failure> {
+    let projection = source
+        .media()
+        .ok_or(Failure::UnsupportedMessage)?
+        .project_attributed_body(source.guid(), source.text())?;
+    let mut message = project_historical_headers(source, chat)?;
+    message.msg_proto.0.text = Some(projection.text);
+    message.msg_proto.0.attributed_body = Some(projection.encoded_body);
+    Ok(message)
+}
+
+fn project_historical_headers(
+    source: &HistoricalArchiveSource,
+    chat: &CloudCanonicalChatPayload,
+) -> Result<CloudMessage, Failure> {
     if chat.service() != CloudCanonicalService::IMessage {
         return Err(Failure::UnsupportedMessage);
     }

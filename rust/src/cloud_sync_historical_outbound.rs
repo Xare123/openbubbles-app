@@ -5,12 +5,14 @@
 
 use super::{CloudSyncOutboundFailure as Failure, NativeProtectedOutboundStage};
 use crate::cloud_sync_canonical_dto::{CloudCanonicalChatPayload, CloudCanonicalEntityKind};
-use crate::cloud_sync_historical_projection::project_historical_plain_text;
+use crate::cloud_sync_historical_projection::{
+    project_historical_media, project_historical_plain_text,
+};
 use crate::cloud_sync_historical_source::HistoricalArchiveSource;
 use crate::cloud_sync_native_fetch::cloud_sync_open_protected_outbound_message;
 use crate::cloud_sync_received_raw_match::{
     compare_historical_group_raw, compare_historical_raw_unknown_endpoint, compare_received_raw,
-    ReceivedRawProtos,
+    verify_historical_media_raw, ReceivedRawProtos,
 };
 use crate::cloud_sync_received_record_match::ReceivedRecordMatchVerdict;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
@@ -41,6 +43,8 @@ struct Envelope {
     source_sha256: String,
     parent_binding_sha256: String,
     message: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    attachment_readback_binding_sha256: Option<String>,
 }
 
 pub(crate) struct NativeOpenedHistoricalMessage {
@@ -70,17 +74,43 @@ fn encode(
     parent_binding_sha256: &str,
     server_record_name: &str,
 ) -> Result<Vec<u8>, Failure> {
-    if !valid_digest(parent_binding_sha256) {
+    encode_with_children(
+        source,
+        chat,
+        parent_binding_sha256,
+        server_record_name,
+        None,
+    )
+}
+
+fn encode_with_children(
+    source: &HistoricalArchiveSource,
+    chat: &CloudCanonicalChatPayload,
+    parent_binding_sha256: &str,
+    server_record_name: &str,
+    attachment_readback_binding_sha256: Option<&str>,
+) -> Result<Vec<u8>, Failure> {
+    if !valid_digest(parent_binding_sha256)
+        || attachment_readback_binding_sha256.is_some_and(|value| !valid_digest(value))
+    {
         return Err(Failure::BindingMismatch);
     }
-    let message = project_historical_plain_text(source, chat)?;
+    let message = match attachment_readback_binding_sha256 {
+        None => project_historical_plain_text(source, chat)?,
+        Some(_) => project_historical_media(source, chat)?,
+    };
     let bytes = super::encode_message_fields(message, server_record_name)?;
     let envelope = Envelope {
-        version: 1,
+        version: if attachment_readback_binding_sha256.is_some() {
+            2
+        } else {
+            1
+        },
         guid_hash: source.guid_hash()?,
         source_sha256: source.source_sha256()?,
         parent_binding_sha256: parent_binding_sha256.into(),
         message: URL_SAFE_NO_PAD.encode(bytes),
+        attachment_readback_binding_sha256: attachment_readback_binding_sha256.map(str::to_owned),
     };
     let mut encoded = MAGIC.to_vec();
     encoded.extend(serde_json::to_vec(&envelope).map_err(|_| Failure::MalformedMessage)?);
@@ -96,6 +126,16 @@ fn decode(
     chat: &CloudCanonicalChatPayload,
     parent_binding_sha256: &str,
 ) -> Result<NativeOpenedHistoricalMessage, Failure> {
+    decode_with_children(encoded, source, chat, parent_binding_sha256, None)
+}
+
+fn decode_with_children(
+    encoded: &[u8],
+    source: &HistoricalArchiveSource,
+    chat: &CloudCanonicalChatPayload,
+    parent_binding_sha256: &str,
+    attachment_readback_binding_sha256: Option<&str>,
+) -> Result<NativeOpenedHistoricalMessage, Failure> {
     if encoded.len() > MAX_BYTES {
         return Err(Failure::OversizedMessage);
     }
@@ -103,8 +143,16 @@ fn decode(
         .strip_prefix(MAGIC)
         .ok_or(Failure::MalformedMessage)?;
     let envelope: Envelope = serde_json::from_slice(json).map_err(|_| Failure::MalformedMessage)?;
-    if envelope.version != 1
+    if envelope.version
+        != if attachment_readback_binding_sha256.is_some() {
+            2
+        } else {
+            1
+        }
         || !valid_digest(parent_binding_sha256)
+        || attachment_readback_binding_sha256.is_some_and(|value| !valid_digest(value))
+        || envelope.attachment_readback_binding_sha256.as_deref()
+            != attachment_readback_binding_sha256
         || envelope.guid_hash != source.guid_hash()?
         || envelope.source_sha256 != source.source_sha256()?
         || envelope.parent_binding_sha256 != parent_binding_sha256
@@ -119,7 +167,28 @@ fn decode(
         return Err(Failure::MalformedMessage);
     }
     let (message, server_record_name) = super::decode_message_fields(&bytes)?;
-    let expected = project_historical_plain_text(source, chat)?;
+    let expected = match attachment_readback_binding_sha256 {
+        None => project_historical_plain_text(source, chat)?,
+        Some(_) => {
+            let projection = source
+                .media()
+                .ok_or(Failure::UnsupportedMessage)?
+                .project_attributed_body(source.guid(), source.text())?;
+            projection.validate_encoded_body(
+                message
+                    .msg_proto
+                    .0
+                    .attributed_body
+                    .as_deref()
+                    .ok_or(Failure::MalformedMessage)?,
+            )?;
+            let mut expected = project_historical_media(source, chat)?;
+            // NSDictionary order is not stable between projections. Keep the
+            // original bytes after bounded semantic verification, never restage.
+            expected.msg_proto.0.attributed_body = message.msg_proto.0.attributed_body.clone();
+            expected
+        }
+    };
     if super::encode_message_fields(expected, &server_record_name)? != bytes {
         return Err(Failure::BindingMismatch);
     }
@@ -151,6 +220,38 @@ pub(crate) fn stage_historical_message(
     )
 }
 
+/// The durable journal must supply and recheck the exact all-children readback
+/// binding. This function stages local bytes only; the digest is not by itself
+/// authority to create a record. Plaintext/IDS entry points cannot open it.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn stage_historical_media_message(
+    storage_directory: PathBuf,
+    account_fingerprint: String,
+    container_scoped_user_id: &str,
+    source: &HistoricalArchiveSource,
+    chat: &CloudCanonicalChatPayload,
+    parent_binding_sha256: &str,
+    attachment_readback_binding_sha256: &str,
+) -> Result<NativeProtectedOutboundStage, Failure> {
+    require_source_store(source, &storage_directory, &account_fingerprint)?;
+    let record = super::deterministic_message_record_name(source.guid(), container_scoped_user_id)?;
+    let encoded = encode_with_children(
+        source,
+        chat,
+        parent_binding_sha256,
+        &record,
+        Some(attachment_readback_binding_sha256),
+    )?;
+    super::stage_encoded_message(
+        storage_directory,
+        account_fingerprint,
+        CloudCanonicalEntityKind::Message,
+        source.guid(),
+        &record,
+        encoded,
+    )
+}
+
 pub(crate) fn open_staged_historical_message(
     storage_directory: PathBuf,
     account_fingerprint: String,
@@ -159,6 +260,52 @@ pub(crate) fn open_staged_historical_message(
     source: &HistoricalArchiveSource,
     chat: &CloudCanonicalChatPayload,
     parent_binding_sha256: &str,
+) -> Result<NativeOpenedHistoricalMessage, Failure> {
+    open_staged_with_children(
+        storage_directory,
+        account_fingerprint,
+        protected_payload_reference,
+        expected_payload_sha256,
+        source,
+        chat,
+        parent_binding_sha256,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn open_staged_historical_media_message(
+    storage_directory: PathBuf,
+    account_fingerprint: String,
+    protected_payload_reference: &str,
+    expected_payload_sha256: &str,
+    source: &HistoricalArchiveSource,
+    chat: &CloudCanonicalChatPayload,
+    parent_binding_sha256: &str,
+    attachment_readback_binding_sha256: &str,
+) -> Result<NativeOpenedHistoricalMessage, Failure> {
+    open_staged_with_children(
+        storage_directory,
+        account_fingerprint,
+        protected_payload_reference,
+        expected_payload_sha256,
+        source,
+        chat,
+        parent_binding_sha256,
+        Some(attachment_readback_binding_sha256),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn open_staged_with_children(
+    storage_directory: PathBuf,
+    account_fingerprint: String,
+    protected_payload_reference: &str,
+    expected_payload_sha256: &str,
+    source: &HistoricalArchiveSource,
+    chat: &CloudCanonicalChatPayload,
+    parent_binding_sha256: &str,
+    attachment_readback_binding_sha256: Option<&str>,
 ) -> Result<NativeOpenedHistoricalMessage, Failure> {
     require_source_store(source, &storage_directory, &account_fingerprint)?;
     let protected = cloud_sync_open_protected_outbound_message(
@@ -177,7 +324,13 @@ pub(crate) fn open_staged_historical_message(
     {
         return Err(Failure::BindingMismatch);
     }
-    decode(&bytes, source, chat, parent_binding_sha256)
+    decode_with_children(
+        &bytes,
+        source,
+        chat,
+        parent_binding_sha256,
+        attachment_readback_binding_sha256,
+    )
 }
 
 /// The caller must bind exact server record identity, ETag and original outer
@@ -196,6 +349,11 @@ pub(crate) fn verify_historical_readback(
         msg_proto_3: actual.msg_proto_3.as_deref(),
         msg_proto_4: actual.msg_proto_4.as_deref(),
     };
+    if opened.message.msg_proto.0.attributed_body.is_some() {
+        verify_historical_media_raw(&opened.message, &actual.message, &raw)
+            .map_err(|_| Failure::BindingMismatch)?;
+        return Ok(opened.payload_sha256.clone());
+    }
     let is_group = opened
         .message
         .msg_proto_4
@@ -234,6 +392,286 @@ mod tests {
             msg_proto_4: message.msg_proto_4.as_ref().map(|v| v.0.encode_to_vec()),
             message,
         }
+    }
+
+    fn media_fixture(
+        sent: bool,
+        group: bool,
+        account: &str,
+        store: &str,
+    ) -> (HistoricalArchiveSource, CloudCanonicalChatPayload) {
+        use crate::cloud_sync_historical_attachment_source::tests as attachment;
+        use crate::cloud_sync_historical_source::{
+            HistoricalBinding, HistoricalGroupMetadata, HistoricalRow,
+        };
+        let original = attachment::source_with(&attachment::descriptor(), sent, |_| {});
+        let parent = if group {
+            crate::cloud_sync_outbound::attachment_parent_test_support::group()
+        } else {
+            chat("friend@example.com", CloudCanonicalChatStyle::Direct)
+        };
+        let group_metadata = group.then(|| {
+            HistoricalGroupMetadata(
+                1,
+                Some(parent.group_id().to_owned()),
+                vec![
+                    ("friend@example.com".into(), "iMessage".into()),
+                    ("+15555550100".into(), "iMessage".into()),
+                ],
+            )
+        });
+        let source = HistoricalArchiveSource::capture_with_media(
+            &HistoricalRow {
+                guid: original.guid(),
+                text: original.text(),
+                sender: original.sender(),
+                peer: original.peer(),
+                chat_guid: parent.guid(),
+                date_created_ms: original.sent_timestamp(),
+                is_from_me: sent,
+            },
+            &HistoricalBinding {
+                snapshot_sha256: &"ab".repeat(32),
+                account_fingerprint: account,
+                protected_store_identity: store,
+            },
+            sent,
+            group_metadata,
+            None,
+            original.media().cloned(),
+        )
+        .unwrap();
+        (source, parent)
+    }
+
+    #[test]
+    fn historical_media_envelope_requires_exact_child_source_parent_and_explicit_lane() {
+        for sent in [false, true] {
+            for group in [false, true] {
+                let (source, chat) =
+                    media_fixture(sent, group, "synthetic-account", "synthetic-store");
+                let parent = "b".repeat(64);
+                let children = "c".repeat(64);
+                assert!(encode(&source, &chat, &parent, "record").is_err());
+                let encoded =
+                    encode_with_children(&source, &chat, &parent, "record", Some(&children))
+                        .unwrap();
+                assert!(decode(&encoded, &source, &chat, &parent).is_err());
+                assert!(super::super::decode_outbound_envelope(&encoded).is_err());
+                let opened =
+                    decode_with_children(&encoded, &source, &chat, &parent, Some(&children))
+                        .unwrap();
+                assert_eq!(opened.message.msg_proto.0.text.as_deref(), Some(" "));
+                assert!(opened.message.msg_proto.0.attributed_body.is_some());
+                assert_eq!(
+                    opened.message.flags.contains(MessageFlags::IS_FROM_ME),
+                    sent
+                );
+                assert_eq!(opened.payload_sha256, super::super::sha256_hex(&encoded));
+                for wrong in ["", "bad", &"d".repeat(64)] {
+                    assert!(
+                        decode_with_children(&encoded, &source, &chat, &parent, Some(wrong))
+                            .is_err()
+                    );
+                }
+                assert!(decode_with_children(
+                    &encoded,
+                    &source,
+                    &chat,
+                    &"d".repeat(64),
+                    Some(&children)
+                )
+                .is_err());
+                let (other, _) =
+                    media_fixture(!sent, group, "synthetic-account", "synthetic-store");
+                assert!(
+                    decode_with_children(&encoded, &other, &chat, &parent, Some(&children))
+                        .is_err()
+                );
+                let mut envelope: Envelope =
+                    serde_json::from_slice(&encoded[MAGIC.len()..]).unwrap();
+                envelope.version = 1;
+                let downgraded =
+                    [MAGIC, serde_json::to_vec(&envelope).unwrap().as_slice()].concat();
+                assert!(decode_with_children(
+                    &downgraded,
+                    &source,
+                    &chat,
+                    &parent,
+                    Some(&children)
+                )
+                .is_err());
+            }
+        }
+        let text = historical_source(true, "Only text", &"a".repeat(64));
+        assert!(encode_with_children(
+            &text,
+            &parent(),
+            &"b".repeat(64),
+            "record",
+            Some(&"c".repeat(64))
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn historical_media_readback_preserves_body_raw_fields_and_all_content_identity() {
+        for sent in [false, true] {
+            for group in [false, true] {
+                let (source, chat) =
+                    media_fixture(sent, group, "synthetic-account", "synthetic-store");
+                let parent = "b".repeat(64);
+                let children = "c".repeat(64);
+                let encoded =
+                    encode_with_children(&source, &chat, &parent, "record", Some(&children))
+                        .unwrap();
+                let opened =
+                    decode_with_children(&encoded, &source, &chat, &parent, Some(&children))
+                        .unwrap();
+                let mut status = opened.message.clone();
+                status.flags |= MessageFlags::IS_DELIVERED | MessageFlags::IS_READ;
+                status.msg_proto.0.date_delivered = Some(900);
+                status.msg_proto.0.date_read = Some(1000);
+                status.utm = Some(std::time::SystemTime::UNIX_EPOCH);
+                assert!(verify_historical_readback(
+                    &opened,
+                    &inspection(status),
+                    &opened.payload_sha256
+                )
+                .is_ok());
+                for change in 0..9 {
+                    let mut actual = opened.message.clone();
+                    match change {
+                        0 => actual.msg_proto.0.attributed_body = None,
+                        1 => actual.msg_proto.0.attributed_body.as_mut().unwrap().push(0),
+                        2 => actual.msg_proto.0.text = Some("changed".into()),
+                        3 => actual.msg_proto.0.message_summary_info = Some(vec![1]),
+                        4 => actual.chat_id = "another-chat".into(),
+                        5 => {
+                            actual.msg_proto_4.as_mut().unwrap().0.group_id =
+                                Some("iMessage;+;another".into())
+                        }
+                        6 => actual.destination_caller_id = "another@example.invalid".into(),
+                        7 => actual.flags.toggle(MessageFlags::IS_FROM_ME),
+                        _ => actual.time += 1_000_000,
+                    }
+                    assert!(verify_historical_readback(
+                        &opened,
+                        &inspection(actual),
+                        &opened.payload_sha256
+                    )
+                    .is_err());
+                }
+                let mut raw = inspection(opened.message.clone());
+                raw.msg_proto.extend([0xf8, 0x07, 0x01]);
+                assert!(verify_historical_readback(&opened, &raw, &opened.payload_sha256).is_err());
+                let mut duplicate = inspection(opened.message.clone());
+                duplicate.msg_proto.extend([0x1a, 1, b' ']);
+                assert!(
+                    verify_historical_readback(&opened, &duplicate, &opened.payload_sha256)
+                        .is_err()
+                );
+                assert!(verify_historical_readback(
+                    &opened,
+                    &inspection(opened.message.clone()),
+                    &"a".repeat(64)
+                )
+                .is_err());
+            }
+        }
+    }
+
+    #[test]
+    fn historical_plain_envelope_encoding_is_unchanged() {
+        #[derive(Serialize)]
+        struct OriginalEnvelope {
+            version: u32,
+            guid_hash: String,
+            source_sha256: String,
+            parent_binding_sha256: String,
+            message: String,
+        }
+        let source = historical_source(true, "Original history", &"a".repeat(64));
+        let parent_hash = "b".repeat(64);
+        let encoded = encode(&source, &parent(), &parent_hash, "record").unwrap();
+        let old = OriginalEnvelope {
+            version: 1,
+            guid_hash: source.guid_hash().unwrap(),
+            source_sha256: source.source_sha256().unwrap(),
+            parent_binding_sha256: parent_hash,
+            message: URL_SAFE_NO_PAD.encode(
+                super::super::encode_message_fields(
+                    project_historical_plain_text(&source, &parent()).unwrap(),
+                    "record",
+                )
+                .unwrap(),
+            ),
+        };
+        assert_eq!(
+            encoded,
+            [MAGIC, serde_json::to_vec(&old).unwrap().as_slice()].concat()
+        );
+    }
+
+    #[test]
+    fn historical_media_committed_stage_reopens_only_with_same_child_binding() {
+        use crate::cloud_sync_native_fetch::cloud_sync_commit_protected_page_lease;
+        let directory = tempfile::tempdir().unwrap();
+        let store = crate::cloud_sync_protector::protected_store_identity(
+            directory.path().to_string_lossy().into_owned(),
+        )
+        .unwrap();
+        let account = "A".repeat(43);
+        let (source, chat) = media_fixture(false, true, &account, &store);
+        let parent = "b".repeat(64);
+        let children = "c".repeat(64);
+        let stage = stage_historical_media_message(
+            directory.path().to_path_buf(),
+            account.clone(),
+            "container-user",
+            &source,
+            &chat,
+            &parent,
+            &children,
+        )
+        .unwrap();
+        cloud_sync_commit_protected_page_lease(
+            directory.path().to_path_buf(),
+            &stage.lease_reference,
+            std::slice::from_ref(&stage.protected_payload_reference),
+        )
+        .unwrap();
+        let open = |account: String, digest: &str, children: &str| {
+            open_staged_historical_media_message(
+                directory.path().to_path_buf(),
+                account,
+                &stage.protected_payload_reference,
+                digest,
+                &source,
+                &chat,
+                &parent,
+                children,
+            )
+        };
+        let opened = open(account.clone(), &stage.payload_sha256, &children).unwrap();
+        assert_eq!(
+            opened.server_record_name(),
+            super::super::deterministic_message_record_name(source.guid(), "container-user")
+                .unwrap()
+        );
+        assert!(open(account.clone(), &stage.payload_sha256, &"d".repeat(64)).is_err());
+        assert!(open(account, &"d".repeat(64), &children).is_err());
+        assert!(open("B".repeat(43), &stage.payload_sha256, &children).is_err());
+        assert!(open_staged_historical_message(
+            directory.path().to_path_buf(),
+            "A".repeat(43),
+            &stage.protected_payload_reference,
+            &stage.payload_sha256,
+            &source,
+            &chat,
+            &parent
+        )
+        .is_err());
     }
 
     #[test]

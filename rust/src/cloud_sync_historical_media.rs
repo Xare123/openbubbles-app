@@ -6,8 +6,12 @@
 
 use crate::cloud_sync_canonical_dto::parse_owned_attachment_guid;
 use crate::cloud_sync_outbound::CloudSyncOutboundFailure as Failure;
+use rustpush::{
+    coder_encode_flattened, NSAttributedString, NSDictionaryTypedCoder, NSNumber, NSString,
+    StCollapsedValue,
+};
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 const MAX_BYTES: usize = 1024 * 1024;
 const MAX_TEXT_BYTES: usize = 256 * 1024;
@@ -72,13 +76,17 @@ struct Run {
 #[serde(deny_unknown_fields)]
 struct Attributes {
     #[serde(rename = "__kIMMessagePartAttributeName")]
-    _part: u32,
+    part: u32,
     #[serde(default, rename = "__kIMFileTransferGUIDAttributeName")]
     attachment: Option<String>,
 }
 
 impl HistoricalMedia {
     pub(crate) fn validate(&self, message_guid: &str, text: &str) -> Result<(), Failure> {
+        self.validated_bodies(message_guid, text).map(|_| ())
+    }
+
+    fn validated_bodies(&self, message_guid: &str, text: &str) -> Result<Vec<Body>, Failure> {
         if self.0 != 1 || self.1 == 0 || self.4 .0 != 1 {
             return Err(Failure::MalformedMessage);
         }
@@ -128,7 +136,7 @@ impl HistoricalMedia {
         }
         let mut linked = HashSet::new();
         let mut run_count = 0;
-        for body in bodies {
+        for body in &bodies {
             if body.string.is_empty()
                 || body.string.contains('\0')
                 || body.string.len() > MAX_TEXT_BYTES
@@ -138,7 +146,7 @@ impl HistoricalMedia {
             }
             let utf16: Vec<u16> = body.string.encode_utf16().collect();
             let mut offset = 0usize;
-            for run in body.runs {
+            for run in &body.runs {
                 run_count += 1;
                 if run_count > 128 {
                     return Err(Failure::OversizedMessage);
@@ -175,7 +183,76 @@ impl HistoricalMedia {
         if linked != inventory_guids {
             return Err(Failure::BindingMismatch);
         }
-        Ok(())
+        Ok(bodies)
+    }
+
+    /// Match legacy encodeAttributedBody's list/range grammar using only the
+    /// frozen supported attributes. No current-row lookup, new part indexes,
+    /// missing formatting defaults, IDS reflection, or attachment reminting.
+    pub(crate) fn project_attributed_body(
+        &self,
+        message_guid: &str,
+        text: &str,
+    ) -> Result<HistoricalAttributedProjection, Failure> {
+        let bodies = self.validated_bodies(message_guid, text)?;
+        let text = bodies[0].string.clone();
+        let mut values = Vec::with_capacity(bodies.len());
+        let mut attachment_guids = Vec::with_capacity(self.4 .1.len());
+        for body in bodies {
+            let mut ranges = Vec::with_capacity(body.runs.len());
+            for run in body.runs {
+                let mut attributes = HashMap::from_iter([(
+                    "__kIMMessagePartAttributeName".to_owned(),
+                    NSNumber(run.attributes.part).encode(),
+                )]);
+                if let Some(guid) = run.attributes.attachment {
+                    let canonical = apple_guid(&guid, message_guid)?;
+                    attributes.insert(
+                        "__kIMFileTransferGUIDAttributeName".to_owned(),
+                        NSString(canonical.clone()).encode(),
+                    );
+                    attachment_guids.push(canonical);
+                }
+                ranges.push((run.range.1, NSDictionaryTypedCoder(attributes)));
+            }
+            values.push(
+                NSAttributedString {
+                    text: body.string,
+                    ranges,
+                }
+                .encode(),
+            );
+        }
+        let encoded_body = coder_encode_flattened(&values);
+        if encoded_body.is_empty() || encoded_body.len() > MAX_BYTES {
+            return Err(Failure::OversizedMessage);
+        }
+        Ok(HistoricalAttributedProjection {
+            text,
+            encoded_body,
+            attachment_guids,
+            values,
+        })
+    }
+}
+
+/// Material only. The parent must still wait for every exact child readback
+/// and retain the original staged bytes. Dictionary ordering may vary between
+/// equivalent projections, so reopening compares through the bounded AST.
+pub(crate) struct HistoricalAttributedProjection {
+    pub(crate) text: String,
+    pub(crate) encoded_body: Vec<u8>,
+    pub(crate) attachment_guids: Vec<String>,
+    values: Vec<StCollapsedValue>,
+}
+
+impl HistoricalAttributedProjection {
+    pub(crate) fn validate_encoded_body(&self, encoded: &[u8]) -> Result<(), Failure> {
+        crate::cloud_sync_canonical_converter::validate_source_projected_attributed_bodies(
+            encoded,
+            &self.values,
+        )
+        .map_err(|_| Failure::BindingMismatch)
     }
 }
 
@@ -230,6 +307,140 @@ mod tests {
             payload["guid"].as_str().unwrap(),
             payload["text"].as_str().unwrap(),
         )
+    }
+
+    fn project(
+        payload: &serde_json::Value,
+        media: &HistoricalMedia,
+    ) -> HistoricalAttributedProjection {
+        media
+            .project_attributed_body(
+                payload["guid"].as_str().unwrap(),
+                payload["text"].as_str().unwrap(),
+            )
+            .unwrap()
+    }
+
+    #[test]
+    fn projection_preserves_original_text_utf16_parts_and_reference_order() {
+        for index in [0, 1] {
+            let (payload, media) = fixture(index);
+            let projection = project(&payload, &media);
+            let decoded = rustpush::coder_decode_flattened(&projection.encoded_body);
+            assert_eq!(decoded.len(), 1);
+            let body = NSAttributedString::decode(&decoded[0]);
+            let original: serde_json::Value = serde_json::from_str(&media.3).unwrap();
+            assert_eq!(body.text, original[0]["string"].as_str().unwrap());
+            assert_eq!(projection.text, body.text);
+            assert_eq!(
+                body.ranges.iter().map(|value| value.0).sum::<u32>(),
+                body.text.encode_utf16().count() as u32
+            );
+            for (range, expected) in body
+                .ranges
+                .iter()
+                .zip(original[0]["runs"].as_array().unwrap())
+            {
+                assert_eq!(range.0, expected["range"][1].as_u64().unwrap() as u32);
+                assert_eq!(
+                    NSNumber::decode(&range.1 .0["__kIMMessagePartAttributeName"]).0,
+                    expected["attributes"]["__kIMMessagePartAttributeName"]
+                        .as_u64()
+                        .unwrap() as u32
+                );
+                assert_eq!(
+                    range.1 .0.len(),
+                    expected["attributes"].as_object().unwrap().len()
+                );
+            }
+            projection
+                .validate_encoded_body(&projection.encoded_body)
+                .unwrap();
+            let suffixes = if index == 0 { vec![2] } else { vec![1, 5] };
+            assert_eq!(
+                projection.attachment_guids,
+                suffixes
+                    .into_iter()
+                    .map(|part| format!("at_{part}_{}", payload["guid"].as_str().unwrap()))
+                    .collect::<Vec<_>>()
+            );
+            if index == 0 {
+                assert_eq!(media.2, None);
+                assert_eq!(projection.text, " ");
+            } else {
+                assert_ne!(projection.text, media.2.clone().unwrap());
+                assert_eq!(body.ranges[0].0, 11); // emoji takes two UTF-16 units
+            }
+        }
+    }
+
+    #[test]
+    fn separate_bodies_are_not_flattened_or_partly_validated() {
+        let (payload, mut media) = fixture(1);
+        let owner = payload["guid"].as_str().unwrap();
+        media.3 = serde_json::json!([
+            {"string":"Caption 😀", "runs":[{"range":[0,10],
+                "attributes":{"__kIMMessagePartAttributeName":0}}]},
+            {"string":" ", "runs":[{"range":[0,1],"attributes":{
+                "__kIMMessagePartAttributeName":4,"__kIMFileTransferGUIDAttributeName":format!("{owner}_1")}}]},
+            {"string":"\u{fffc}", "runs":[{"range":[0,1],"attributes":{
+                "__kIMMessagePartAttributeName":7,"__kIMFileTransferGUIDAttributeName":format!("{owner}_5")}}]}
+        ]).to_string();
+        let projection = project(&payload, &media);
+        assert_eq!(projection.text, "Caption 😀");
+        let decoded = rustpush::coder_decode_flattened(&projection.encoded_body);
+        assert_eq!(decoded.len(), 3);
+        assert_eq!(NSAttributedString::decode(&decoded[1]).text, " ");
+        assert_eq!(NSAttributedString::decode(&decoded[2]).text, "\u{fffc}");
+        projection
+            .validate_encoded_body(&projection.encoded_body)
+            .unwrap();
+        let mut reversed = projection.values.clone();
+        reversed.swap(1, 2);
+        assert!(projection
+            .validate_encoded_body(&coder_encode_flattened(&reversed))
+            .is_err());
+        assert!(projection
+            .validate_encoded_body(&coder_encode_flattened(&projection.values[..1]))
+            .is_err());
+        let mut changed = NSAttributedString::decode(&projection.values[2]);
+        changed.ranges[0]
+            .1
+             .0
+            .insert("__kIMMessagePartAttributeName".into(), NSNumber(8).encode());
+        let mut wrong_part = projection.values.clone();
+        wrong_part[2] = changed.encode();
+        assert!(projection
+            .validate_encoded_body(&coder_encode_flattened(&wrong_part))
+            .is_err());
+    }
+
+    #[test]
+    fn projection_reopen_accepts_dictionary_order_but_rejects_extra_or_malformed_content() {
+        let (payload, media) = fixture(1);
+        let projection = project(&payload, &media);
+        // Independent projection may have a different HashMap serialization order.
+        projection
+            .validate_encoded_body(&project(&payload, &media).encoded_body)
+            .unwrap();
+        for raw in [
+            &[][..],
+            &[1, 2, 3][..],
+            &projection.encoded_body[..projection.encoded_body.len() - 1],
+        ] {
+            assert!(projection.validate_encoded_body(raw).is_err());
+        }
+        let mut body = NSAttributedString::decode(&projection.values[0]);
+        body.ranges[0]
+            .1
+             .0
+            .insert("__kIMTextBoldAttributeName".into(), NSNumber(1).encode());
+        assert!(projection
+            .validate_encoded_body(&coder_encode_flattened(&[body.encode()]))
+            .is_err());
+        assert!(projection
+            .validate_encoded_body(&vec![0; MAX_BYTES + 1])
+            .is_err());
     }
 
     #[test]
