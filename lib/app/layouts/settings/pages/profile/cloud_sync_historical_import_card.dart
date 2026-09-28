@@ -221,6 +221,11 @@ class _HistoricalImportCardState extends State<CloudSyncHistoricalImportCard> {
                 '${c.readerHandoffs} found in iCloud and handed to sync; '
                 '${c.skippedOwned} managed by existing sync.',
               ),
+              if (c.deferredMissingMetadata > 0)
+                Text(
+                  '${c.deferredMissingMetadata} older messages need additional address information before uploading. '
+                  'Their protected copies remain saved; other supported messages can continue.',
+                ),
               if (unsupported > 0 || c.retainedConflicts > 0)
                 Text(
                   'Not imported: $unsupported unsupported, ${c.retainedConflicts} conflicts. Originals remain local.',

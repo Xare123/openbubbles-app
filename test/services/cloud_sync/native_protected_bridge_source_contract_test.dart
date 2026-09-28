@@ -42,6 +42,7 @@ void main() {
     const receivedReader = 'lib/services/rustpush/cloud_sync/cloud_sync_received_reader_adapter.dart';
     const receivedDiscovery = 'lib/services/rustpush/cloud_sync/cloud_sync_received_discovery_retain_adapter.dart';
     const historicalDiscovery = 'lib/services/rustpush/cloud_sync/cloud_sync_historical_discovery_adapter.dart';
+    const historicalImport = 'lib/services/rustpush/cloud_sync/cloud_sync_historical_import_runtime.dart';
 
     for (final entity in Directory('lib').listSync(recursive: true)) {
       if (entity is! File || !entity.path.endsWith('.dart')) continue;
@@ -63,7 +64,7 @@ void main() {
         .toList(growable: false);
     expect(
       normalized,
-      unorderedEquals([allowed, localSource, windowsSource, receivedSource, receivedReader, receivedDiscovery, historicalDiscovery]),
+      unorderedEquals([allowed, localSource, windowsSource, receivedSource, receivedReader, receivedDiscovery, historicalDiscovery, historicalImport]),
       reason:
           'only reviewed gated compositions and purpose-bound discovery construct this transport',
     );
@@ -395,6 +396,64 @@ void main() {
       reason:
           'semantic protected fetch must carry the exact active writer-pause capability',
     );
+  });
+
+  test('historical import retains source, owner and single-use consent gates', () {
+    final runtime = File(
+      'lib/services/rustpush/cloud_sync/cloud_sync_historical_import_runtime.dart',
+    ).readAsStringSync();
+    final constructor = runtime.indexOf('NativeProtectedCloudSyncTransport(');
+    expect(constructor, greaterThan(0));
+    expect(
+      RegExp(r'NativeProtectedCloudSyncTransport\(').allMatches(runtime).length,
+      1,
+    );
+    final beforeConstruction = runtime.substring(0, constructor);
+    for (final gate in [
+      'await validate();',
+      '!stillCurrent()',
+      'store.isClosed()',
+      'latest.nativeSessionId != metadata.nativeSessionId',
+      'latest.accountFingerprint != metadata.accountFingerprint',
+      'latest.protectedStoreIdentity != metadata.protectedStoreIdentity',
+      'owner == null || owner.owner != CloudKitWriterOwner.v2',
+    ]) {
+      expect(beforeConstruction, contains(gate));
+    }
+    for (final gate in [
+      'validateIdentity: validate',
+      'validateCurrentIdentity: validate',
+      'capturedIdentity: auth',
+      'CloudSyncHistoricalArchiveCoordinator.production(',
+      'await settlePendingReader();',
+      'await transport.quiesceNativeOperations();',
+    ]) {
+      expect(runtime, contains(gate));
+    }
+    for (final forbidden in [
+      'provisionInitialOwner(', 'sendMsg(', 'sendMessage(', 'flushOutbox(',
+      'CloudSyncEngine(',
+    ]) {
+      expect(runtime, isNot(contains(forbidden)));
+    }
+    final service = File('lib/services/rustpush/rustpush_service.dart').readAsStringSync();
+    final composition = _section(service,
+      'bool get cloudSyncV2HistoricalImportVisible',
+      'bool get cloudSyncV2HistoryReadActive');
+    for (final gate in [
+      'CloudSyncDevGate.manualOutboundCanaryEnabled',
+      'CloudKitWriterOwnership.v2MutationsEnabled',
+      '!cloudSyncV2HistoricalImportAvailable',
+      'ls.retainEngineUntil(',
+      'identical(capturedState, state)',
+      'identical(store, Database.store)',
+      '!ss.settings.cloudSyncingEnabled.value',
+      'cloudSyncV2HistoricalImport.confirm(confirmation)',
+    ]) {
+      expect(composition, contains(gate));
+    }
+    expect(composition, isNot(contains('provisionInitialOwner(')));
+    expect(composition, isNot(contains('settings.save(')));
   });
 
   test('received capture is independently gated and performs no upload', () {

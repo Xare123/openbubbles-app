@@ -12,12 +12,21 @@ import 'cloud_sync_models.dart';
 import 'cloud_sync_production_sampler_adapter.dart';
 import 'objectbox_cloud_sync_store.dart';
 
-enum CloudSyncHistoricalArchiveDisposition { retainedByReader, confirmedCreate }
+enum CloudSyncHistoricalArchiveDisposition {
+  retainedByReader,
+  confirmedCreate,
+
+  /// The exact encrypted source remains in its journal, without a write. Old
+  /// received rows lack their original receiving endpoint. Future policy can
+  /// revisit them; do not guess an address or block later supported rows.
+  retainedMissingMetadata,
+}
 
 /// Connects one qualified source to the real exact-discovery/create queue.
 /// Use [call] as the producer's stageAndAdopt callback with an ARCHIVE cursor,
 /// never a completed staging-only cursor. A return means reader ownership or
-/// confirmed protected readback, not merely a locally sealed source. Unknown
+/// confirmed protected readback, or an explicitly reported metadata deferral.
+/// A deferral retains its exact source and grants no remote-write authority. Unknown
 /// outcomes throw without advancing the producer; retry reopens exact ownership.
 /// Snapshot/account qualification and scheduling remain caller responsibilities.
 final class CloudSyncHistoricalArchiveCoordinator {
@@ -201,6 +210,18 @@ final class CloudSyncHistoricalArchiveCoordinator {
       if (_confirmed(intent)) {
         onDisposition?.call(
           CloudSyncHistoricalArchiveDisposition.confirmedCreate,
+        );
+        return sealed;
+      }
+      if (request.origin ==
+              CloudSyncHistoricalArchiveOrigin.historicalReceived &&
+          intent.admittedOperationId == null) {
+        // Exact discovery had no reader handoff. This source cannot currently
+        // be projected for create because its original endpoint was never saved.
+        // Preserve the committed source for a later policy, and allow supported
+        // rows behind it to proceed. Never skip a submitted/uncertain operation.
+        onDisposition?.call(
+          CloudSyncHistoricalArchiveDisposition.retainedMissingMetadata,
         );
         return sealed;
       }

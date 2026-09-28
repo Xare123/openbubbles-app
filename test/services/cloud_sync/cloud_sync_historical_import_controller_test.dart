@@ -362,6 +362,23 @@ void main() {
     },
   );
 
+  test(
+    'metadata deferral does not count as upload or block later rows',
+    () async {
+      final controller = CloudSyncHistoricalImportController();
+      archive.dispositionFor = (guid) => guid == _uuid(1)
+          ? CloudSyncHistoricalArchiveDisposition.retainedMissingMetadata
+          : CloudSyncHistoricalArchiveDisposition.confirmedCreate;
+      await controller.confirm(await prepareFor(controller, snapshot()));
+      expect(archive.calls, 3);
+      expect(controller.handled, 3);
+      expect(controller.deferredMissingMetadata, 1);
+      expect(controller.confirmedCreates, 2);
+      expect(controller.readerHandoffs, 0);
+      expect(controller.scanComplete, isTrue);
+    },
+  );
+
   test('all-ineligible complete scan has zero confirmed uploads', () async {
     final controller = CloudSyncHistoricalImportController();
     final snap = _snapshot([

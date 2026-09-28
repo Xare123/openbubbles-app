@@ -32,6 +32,7 @@ void main() {
     CloudProtectedPageLeaseTransport? selected,
     CloudSyncHistoricalCursorMode mode =
         CloudSyncHistoricalCursorMode.stageOnly,
+    int archiveRevision = 0,
   }) => CloudSyncHistoricalCursorFile(
     privateStorageDirectory: directory.path,
     manifest: _manifest(snapshot: snapshot),
@@ -42,6 +43,7 @@ void main() {
     transport: selected ?? transport,
     stillCurrent: () => current,
     mode: mode,
+    archiveRevision: archiveRevision,
   );
 
   HistoricalProducerCursor progress(
@@ -57,7 +59,11 @@ void main() {
     path.join(
       directory.path,
       CloudSyncHistoricalCursorFile.directoryName,
-      '${store.scope}${store.mode == CloudSyncHistoricalCursorMode.archive ? '.archive' : ''}.json',
+      '${store.scope}${store.mode != CloudSyncHistoricalCursorMode.archive
+          ? ''
+          : store.archiveRevision == 0
+          ? '.archive'
+          : '.archive-r${store.archiveRevision}'}.json',
     ),
   );
 
@@ -122,6 +128,126 @@ void main() {
     expect((await cursorFile().load())?.lastId, progress(first, 5).lastId);
     await stale.load();
     await stale.save(progress(stale, 6));
+  });
+
+  test(
+    'new archive policy replays the same snapshot without erasing old progress',
+    () async {
+      final first = cursorFile(
+        mode: CloudSyncHistoricalCursorMode.archive,
+        archiveRevision: 1,
+      );
+      await first.load();
+      await first.save(progress(first, null));
+      final oldBytes = await target(first).readAsBytes();
+      expect(
+        (await cursorFile(
+          mode: CloudSyncHistoricalCursorMode.archive,
+          archiveRevision: 1,
+        ).load())?.done,
+        isTrue,
+      );
+      final next = cursorFile(
+        mode: CloudSyncHistoricalCursorMode.archive,
+        archiveRevision: 2,
+      );
+      expect(next.scope, first.scope); // Source/account identity is unchanged.
+      expect(
+        await next.load(),
+        isNull,
+      ); // A past scan is not new-codec completion.
+      await next.save(progress(next, 5));
+      expect(
+        (await cursorFile(
+          mode: CloudSyncHistoricalCursorMode.archive,
+          archiveRevision: 1,
+        ).load())?.done,
+        isTrue,
+      );
+      expect(
+        (await cursorFile(
+          mode: CloudSyncHistoricalCursorMode.archive,
+          archiveRevision: 2,
+        ).load())?.lastId,
+        progress(next, 5).lastId,
+      );
+      expect(await target(first).readAsBytes(), oldBytes);
+    },
+  );
+
+  test(
+    'versioned archive preserves legacy archive and staging progress',
+    () async {
+      final stage = cursorFile();
+      final oldArchive = cursorFile(
+        mode: CloudSyncHistoricalCursorMode.archive,
+      );
+      for (final old in [stage, oldArchive]) {
+        await old.load();
+        await old.save(progress(old, null));
+      }
+      final stageBytes = await target(stage).readAsBytes();
+      final archiveBytes = await target(oldArchive).readAsBytes();
+      final next = cursorFile(
+        mode: CloudSyncHistoricalCursorMode.archive,
+        archiveRevision: 1,
+      );
+      expect(await next.load(), isNull);
+      await next.save(progress(next, 4));
+      expect(await target(stage).readAsBytes(), stageBytes);
+      expect(await target(oldArchive).readAsBytes(), archiveBytes);
+      expect(await target(next).parent.list().toList(), hasLength(3));
+    },
+  );
+
+  test(
+    'wrong revision content is retained and rejected even if renamed',
+    () async {
+      final first = cursorFile(
+        mode: CloudSyncHistoricalCursorMode.archive,
+        archiveRevision: 1,
+      );
+      await first.load();
+      await first.save(progress(first, null));
+      final next = cursorFile(
+        mode: CloudSyncHistoricalCursorMode.archive,
+        archiveRevision: 2,
+      );
+      final before = await target(first).readAsBytes();
+      await target(first).copy(target(next).path);
+      await expectLater(next.load(), throwsStateError);
+      expect(await target(next).readAsBytes(), before);
+      expect(await target(first).readAsBytes(), before);
+    },
+  );
+
+  test('archive revision retains compare-and-swap protection', () async {
+    final first = cursorFile(
+      mode: CloudSyncHistoricalCursorMode.archive,
+      archiveRevision: 1,
+    );
+    final stale = cursorFile(
+      mode: CloudSyncHistoricalCursorMode.archive,
+      archiveRevision: 1,
+    );
+    await first.load();
+    await stale.load();
+    await first.save(progress(first, 5));
+    await expectLater(stale.save(progress(stale, null)), throwsStateError);
+    expect((await stale.load())?.lastId, progress(first, 5).lastId);
+  });
+
+  test('archive revision must be bounded and cannot version staging', () {
+    for (final invalid in [-1, 0x80000000]) {
+      expect(
+        () => cursorFile(
+          mode: CloudSyncHistoricalCursorMode.archive,
+          archiveRevision: invalid,
+        ),
+        throwsStateError,
+      );
+    }
+    expect(() => cursorFile(archiveRevision: 1), throwsStateError);
   });
 
   test('snapshot namespaces do not replace previous scan progress', () async {

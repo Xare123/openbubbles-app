@@ -101,6 +101,7 @@ final class CloudSyncHistoricalImportController extends ChangeNotifier {
   int retainedConflicts = 0;
   int confirmedCreates = 0;
   int readerHandoffs = 0;
+  int deferredMissingMetadata = 0;
   Map<String, int> ineligibleByReason = const {};
   bool scanComplete = false;
 
@@ -110,6 +111,7 @@ final class CloudSyncHistoricalImportController extends ChangeNotifier {
   CloudSyncHistoricalImportConfirmation? _confirmation;
   final Set<String> _confirmedGuids = {};
   final Set<String> _readerGuids = {};
+  final Set<String> _deferredGuids = {};
   bool get active => _pending != null;
 
   Future<T> _owned<T>(Future<T> Function() body) async {
@@ -196,9 +198,10 @@ final class CloudSyncHistoricalImportController extends ChangeNotifier {
     _pauseRequested = false;
     failureCode = null;
     assessed = handled = skippedOwned = retainedConflicts = 0;
-    confirmedCreates = readerHandoffs = 0;
+    confirmedCreates = readerHandoffs = deferredMissingMetadata = 0;
     _confirmedGuids.clear();
     _readerGuids.clear();
+    _deferredGuids.clear();
     ineligibleByReason = const {};
     scanComplete = false;
     phase = CloudSyncHistoricalImportPhase.running;
@@ -258,6 +261,10 @@ final class CloudSyncHistoricalImportController extends ChangeNotifier {
               case CloudSyncHistoricalArchiveDisposition.retainedByReader:
                 _readerGuids.add(request.guid);
                 readerHandoffs = _readerGuids.length;
+              case CloudSyncHistoricalArchiveDisposition
+                  .retainedMissingMetadata:
+                _deferredGuids.add(request.guid);
+                deferredMissingMetadata = _deferredGuids.length;
             }
             return result.source;
           },

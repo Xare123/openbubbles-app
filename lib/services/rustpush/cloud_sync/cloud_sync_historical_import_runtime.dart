@@ -19,6 +19,11 @@ import 'cloudkit_writer_ownership.dart';
 import 'native_protected_cloud_sync_transport.dart';
 import 'objectbox_cloud_sync_store.dart';
 
+// Bump after a reviewed change expands historical eligibility/projection. This
+// replays the same retained snapshot, not its exact already-owned operations.
+// Old progress, pending writes and confirmations remain intact in their journals.
+const _historicalArchivePolicyRevision = 1;
+
 /// Production composition for one explicit historical import. Preparing only
 /// reopens/captures a private encrypted snapshot, never calls archive or sends an
 /// iMessage. The controller consumes exact source/destination consent later.
@@ -178,6 +183,7 @@ Future<CloudSyncHistoricalImportPlan> prepareCloudSyncHistoricalImportPlan({
       transport: transport,
       stillCurrent: stillCurrent,
       mode: CloudSyncHistoricalCursorMode.archive,
+      archiveRevision: _historicalArchivePolicyRevision,
     ),
     registry: ObjectBoxHistoricalOwnership(store: store, journal: journal),
     stillCurrent: stillCurrent,

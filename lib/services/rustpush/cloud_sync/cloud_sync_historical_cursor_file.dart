@@ -27,13 +27,18 @@ final class CloudSyncHistoricalCursorFile implements HistoricalCursorStore {
     required this.transport,
     required this.stillCurrent,
     this.mode = CloudSyncHistoricalCursorMode.stageOnly,
+    this.archiveRevision = 0,
   }) : _root = Directory(privateStorageDirectory).absolute,
        _storeIdentity = account.protectedStoreIdentity,
        scope = historicalArchiveScope(manifest, account) {
     if (!manifest.hasValidShape(nowMs: DateTime.now().millisecondsSinceEpoch) ||
         !account.hasValidShape ||
         manifest.accountFingerprint != account.accountFingerprint ||
-        !path.isAbsolute(privateStorageDirectory)) {
+        !path.isAbsolute(privateStorageDirectory) ||
+        archiveRevision < 0 ||
+        archiveRevision > 0x7fffffff ||
+        (mode == CloudSyncHistoricalCursorMode.stageOnly &&
+            archiveRevision != 0)) {
       throw StateError('cloud_sync_historical_cursor_binding_invalid');
     }
   }
@@ -51,6 +56,12 @@ final class CloudSyncHistoricalCursorFile implements HistoricalCursorStore {
   final CloudProtectedPageLeaseTransport transport;
   final bool Function() stillCurrent;
   final CloudSyncHistoricalCursorMode mode;
+
+  /// Revision of archive eligibility/projection, not source identity. An older
+  /// completed scan may have retained unsupported rows. A reviewed newer policy
+  /// gets fresh progress over the same immutable source while its journals still
+  /// reconcile exact old operations. Zero preserves the original cursor format.
+  final int archiveRevision;
   bool _loaded = false;
   String? _expectedEncoded;
 
@@ -98,7 +109,11 @@ final class CloudSyncHistoricalCursorFile implements HistoricalCursorStore {
     }
     // A finished staging scan is not a finished upload. Keep independent
     // cursors so old staging-only progress can never bypass archival work.
-    final suffix = mode == CloudSyncHistoricalCursorMode.archive ? '.archive' : '';
+    final suffix = mode != CloudSyncHistoricalCursorMode.archive
+        ? ''
+        : archiveRevision == 0
+        ? '.archive'
+        : '.archive-r$archiveRevision';
     final target = File(path.join(directoryPath, '$scope$suffix.json'));
     final type = await FileSystemEntity.type(target.path, followLinks: false);
     if (type != FileSystemEntityType.notFound &&
@@ -125,7 +140,14 @@ final class CloudSyncHistoricalCursorFile implements HistoricalCursorStore {
     _validate(cursor);
     final body = mode == CloudSyncHistoricalCursorMode.stageOnly
         ? <Object?>[1, scope, cursor.lastId, cursor.done]
-        : <Object?>[2, scope, cursor.lastId, cursor.done, 'archive'];
+        : <Object?>[
+            archiveRevision == 0 ? 2 : 3,
+            scope,
+            cursor.lastId,
+            cursor.done,
+            'archive',
+            if (archiveRevision != 0) archiveRevision,
+          ];
     final checksum = sha256.convert(utf8.encode(jsonEncode(body))).toString();
     return jsonEncode([...body, checksum]);
   }
@@ -134,11 +156,22 @@ final class CloudSyncHistoricalCursorFile implements HistoricalCursorStore {
     try {
       final fields = jsonDecode(encoded);
       final archive = mode == CloudSyncHistoricalCursorMode.archive;
-      final checksumIndex = archive ? 5 : 4;
+      final versioned = archive && archiveRevision != 0;
+      final checksumIndex = versioned
+          ? 6
+          : archive
+          ? 5
+          : 4;
       if (fields is! List ||
-          fields.length != (archive ? 6 : 5) ||
-          fields[0] != (archive ? 2 : 1) ||
+          fields.length != checksumIndex + 1 ||
+          fields[0] !=
+              (versioned
+                  ? 3
+                  : archive
+                  ? 2
+                  : 1) ||
           (archive && fields[4] != 'archive') ||
+          (versioned && fields[5] != archiveRevision) ||
           fields[1] is! String ||
           (fields[2] != null && fields[2] is! String) ||
           fields[3] is! bool ||

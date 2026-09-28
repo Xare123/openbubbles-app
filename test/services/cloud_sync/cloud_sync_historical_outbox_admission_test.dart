@@ -1169,6 +1169,319 @@ void main() {
       expect(row().admittedOperationId, operation.operationId);
     },
   );
+
+  group('received missing-metadata retention', () {
+    late CloudSyncHistoricalArchiveRequest receivedRequest;
+    late List<int> receivedBytes;
+    late CloudSyncHistoricalProtectedSourceBinding receivedSource;
+    late int receivedIntentId;
+
+    CloudSyncHistoricalArchiveIntentEntity receivedRow() => store
+        .box<CloudSyncHistoricalArchiveIntentEntity>()
+        .get(receivedIntentId)!;
+
+    CloudSyncHistoricalArchiveCoordinator receivedCoordinator({
+      required Future<bool> Function(CloudSyncHistoricalArchiveIntent) discover,
+      required Future<CloudSyncLocalSendConsumerResult> Function(
+        CloudSyncHistoricalCreateSelection,
+      )
+      consume,
+      void Function(CloudSyncHistoricalArchiveDisposition)? onDisposition,
+    }) => CloudSyncHistoricalArchiveCoordinator(
+      store: store,
+      journal: journal(),
+      durable: durable(),
+      validate: () async {},
+      discover: discover,
+      consume: consume,
+      stage: (request, bytes) async => StagedHistoricalSource(
+        key: request.sourceSha256,
+        guid: request.guid,
+        sha256: receivedSource.payloadSha256,
+        byteLength: receivedSource.payloadLength,
+      ),
+      onDisposition: onDisposition,
+    );
+
+    setUp(() {
+      // Genuine received canonical source: rebuilt from an actual synthetic
+      // incoming Message through assessment with matching digests/binding,
+      // never by flipping origin over the sent fixture source.
+      final peerQuery = store
+          .box<Handle>()
+          .query(Handle_.address.equals('peer@example.invalid'))
+          .build();
+      final Handle peer;
+      try {
+        peer = peerQuery.findFirst()!;
+      } finally {
+        peerQuery.close();
+      }
+      peer.originalROWID = 101;
+      store.box<Handle>().put(peer);
+      final incoming = Message(
+        guid: 'historical-synthetic-incoming',
+        text: 'synthetic incoming text',
+        attributedBody: [AttributedBody.raw('synthetic incoming text')],
+        isFromMe: false,
+        dateCreated: _now.subtract(const Duration(days: 3)),
+        handle: peer,
+      )..chat.target = chat;
+      store.box<Message>().put(incoming);
+      final assessed = assessHistoricalArchiveRow(
+        mapHistoricalRow(
+          message: incoming,
+          chat: mapHistoricalChat(chat),
+          rowSnapshotSha256: 'a' * 64,
+        ),
+        CloudSyncHistoricalSourceManifest(
+          snapshotSha256: 'a' * 64,
+          accountFingerprint: _account,
+          accountHandles: [sender.address],
+          messageCount: 1,
+          capturedAtMs: _now.millisecondsSinceEpoch,
+        ),
+        CloudSyncHistoricalAccountBinding(
+          accountFingerprint: _account,
+          protectedStoreIdentity: _protectedStore,
+        ),
+        nowMs: _now.millisecondsSinceEpoch,
+      );
+      expect(
+        assessed,
+        isA<CloudSyncHistoricalArchiveEligible>(),
+        reason: assessed is CloudSyncHistoricalArchiveIneligible
+            ? assessed.reason
+            : null,
+      );
+      receivedRequest =
+          (assessed as CloudSyncHistoricalArchiveEligible).request;
+      expect(
+        receivedRequest.origin,
+        CloudSyncHistoricalArchiveOrigin.historicalReceived,
+      );
+      receivedBytes = utf8.encode(
+        jsonEncode(
+          stagedHistoricalPayload(
+            request: receivedRequest,
+            text: 'synthetic incoming text',
+          ),
+        ),
+      );
+      receivedSource = CloudSyncHistoricalProtectedSourceBinding(
+        accountFingerprint: _account,
+        protectedStoreIdentity: _protectedStore,
+        snapshotSha256: receivedRequest.snapshotSha256,
+        messageGuidHash: receivedRequest.guidHash,
+        sourceSha256: receivedRequest.sourceSha256,
+        protectedReference: 'obcs2.ref.${'Q' * 43}',
+        leaseReference: 'obcs2.lease.${'c' * 32}',
+        payloadSha256: historicalBytesSha256(receivedBytes),
+        payloadLength: receivedBytes.length,
+      );
+      receivedIntentId = journal().adopt(receivedSource).id;
+      journal().markSourceLeaseCommitted(
+        intentId: receivedIntentId,
+        expectedSource: receivedSource,
+      );
+    });
+
+    test(
+      'received NotFound is retained without consume across reopen',
+      () async {
+        var consumes = 0;
+        var discoveries = 0;
+        final dispositions = <CloudSyncHistoricalArchiveDisposition>[];
+        CloudSyncHistoricalArchiveCoordinator coordinator() =>
+            receivedCoordinator(
+              discover: (_) async {
+                discoveries++;
+                return false;
+              },
+              consume: (_) async {
+                consumes++;
+                return const CloudSyncLocalSendConsumerResult(admitted: 1);
+              },
+              onDisposition: dispositions.add,
+            );
+        final sealed = await coordinator().call(receivedRequest, receivedBytes);
+        expect(sealed.sha256, receivedSource.payloadSha256);
+        expect(consumes, 0);
+        expect(discoveries, 1);
+        expect(dispositions, [
+          CloudSyncHistoricalArchiveDisposition.retainedMissingMetadata,
+        ]);
+        expect(receivedRow().state, 1);
+        expect(receivedRow().admittedOperationId, isNull);
+        expect(receivedRow().readerObservationBinding, isNull);
+        expect(store.box<CloudOutboxOperationEntity>().count(), 0);
+        store.close();
+        store = await openStore(directory: directory.path);
+        final reopened = await coordinator().call(
+          receivedRequest,
+          receivedBytes,
+        );
+        expect(reopened.sha256, receivedSource.payloadSha256);
+        expect(consumes, 0);
+        expect(discoveries, 2);
+        expect(dispositions, [
+          CloudSyncHistoricalArchiveDisposition.retainedMissingMetadata,
+          CloudSyncHistoricalArchiveDisposition.retainedMissingMetadata,
+        ]);
+        expect(receivedRow().state, 1);
+        expect(receivedRow().admittedOperationId, isNull);
+      },
+    );
+
+    test('durable found reader ownership is still handed to reader', () async {
+      // The remote discovery answer is synthesized as a bare bool; reader
+      // ownership itself is durable journal state linked below.
+      journal().markDiscoveryAdopted(
+        transactionStore: store,
+        scope: _messageScope,
+        intentId: receivedIntentId,
+        source: receivedSource,
+        currentAuth: auth,
+        stillCurrent: () => true,
+        change: CloudFetchedChange(
+          changeId: 'D' * 43,
+          recordIdHash: 'R' * 43,
+          etagHash: 'E' * 43,
+          payloadSha256: 'd' * 64,
+          type: CloudChangeType.save,
+        ),
+        generation: generation,
+        observedAtMs: _now.millisecondsSinceEpoch,
+      );
+      var consumes = 0;
+      final dispositions = <CloudSyncHistoricalArchiveDisposition>[];
+      final coordinator = receivedCoordinator(
+        discover: (_) async => true,
+        consume: (_) async {
+          consumes++;
+          return const CloudSyncLocalSendConsumerResult(admitted: 1);
+        },
+        onDisposition: dispositions.add,
+      );
+      final sealed = await coordinator.call(receivedRequest, receivedBytes);
+      expect(sealed.sha256, receivedSource.payloadSha256);
+      expect(consumes, 0);
+      expect(dispositions, [
+        CloudSyncHistoricalArchiveDisposition.retainedByReader,
+      ]);
+      expect(receivedRow().readerObservationBinding, isNotNull);
+      expect(
+        journal()
+            .read(
+              messageGuidHash: receivedRequest.guidHash,
+              sourceSha256: receivedRequest.sourceSha256,
+            )!
+            .readerChangeId,
+        'D' * 43,
+      );
+    });
+
+    test('consume errors are never converted to deferred success', () async {
+      // The received path returns before consume without an admitted
+      // operation, so the error path is exercised on the sent fixtures
+      // where consume is genuinely reached.
+      var consumes = 0;
+      final dispositions = <CloudSyncHistoricalArchiveDisposition>[];
+      final coordinator = archiveCoordinator(
+        discover: (_) async => false,
+        consume: (_) async {
+          consumes++;
+          throw StateError('synthetic consume failure');
+        },
+        onDisposition: dispositions.add,
+      );
+      await expectLater(
+        coordinator.call(request, canonicalBytes),
+        throwsStateError,
+      );
+      expect(consumes, 1);
+      expect(dispositions, isEmpty);
+      expect(row().state, 1);
+      expect(row().admittedOperationId, isNull);
+      expect(store.box<CloudOutboxOperationEntity>().count(), 0);
+    });
+
+    test(
+      'received admitted-uncertain operations still throw without deferral',
+      () async {
+        // A real operation is admitted through the durable store (no native
+        // proof involved), then left uncertain; only the uncertain receipt
+        // below is synthesized.
+        final selected = journal().readForCreateAdmission(
+          scope: _messageScope,
+          intentId: receivedIntentId,
+          currentAuth: auth,
+          request: receivedRequest,
+          localChatId: chat.id!,
+          generation: generation,
+          logicalEntityKeyHash: 'L' * 43,
+          serverRecordIdHash: 'M' * 43,
+        );
+        final operation = admit(selected);
+        final entity = store.box<CloudOutboxOperationEntity>().getAll().single
+          ..state = CloudOutboxStatus.unknownOutcome.index;
+        store.box<CloudOutboxOperationEntity>().put(entity);
+        var consumes = 0;
+        final dispositions = <CloudSyncHistoricalArchiveDisposition>[];
+        final coordinator = receivedCoordinator(
+          discover: (_) async => false,
+          consume: (_) async {
+            consumes++;
+            return const CloudSyncLocalSendConsumerResult(outboxBlocked: true);
+          },
+          onDisposition: dispositions.add,
+        );
+        await expectLater(
+          coordinator.call(receivedRequest, receivedBytes),
+          throwsA(
+            isA<StateError>().having(
+              (failure) => failure.message,
+              'message',
+              'cloud_sync_historical_archive_confirmation_pending',
+            ),
+          ),
+        );
+        expect(consumes, 1);
+        expect(dispositions, isEmpty);
+        expect(receivedRow().admittedOperationId, operation.operationId);
+        expect(store.box<CloudOutboxOperationEntity>().count(), 1);
+      },
+    );
+
+    test('received discovery failure is not metadata deferral', () async {
+      final before = receivedRow().protectedSourceBinding;
+      final dispositions = <CloudSyncHistoricalArchiveDisposition>[];
+      var consumes = 0;
+      final coordinator = receivedCoordinator(
+        discover: (_) async => throw StateError('synthetic discovery failure'),
+        consume: (_) async {
+          consumes++;
+          return const CloudSyncLocalSendConsumerResult(admitted: 1);
+        },
+        onDisposition: dispositions.add,
+      );
+      await expectLater(
+        coordinator.call(receivedRequest, receivedBytes),
+        throwsA(
+          isA<StateError>().having(
+            (error) => error.message,
+            'message',
+            'synthetic discovery failure',
+          ),
+        ),
+      );
+      expect(dispositions, isEmpty);
+      expect(consumes, 0);
+      expect(receivedRow().state, 1);
+      expect(receivedRow().protectedSourceBinding, before);
+      expect(store.box<CloudOutboxOperationEntity>().count(), 0);
+    });
+  });
 }
 
 class _OneHistoricalRow implements HistoricalRowReader {
