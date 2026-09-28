@@ -221,6 +221,7 @@ fn input(
         attachment_parent_group_proof: None,
         received_archive_proof: None,
         historical_archive_proof: Some(proof.clone()),
+        historical_chat_source: None,
     }
 }
 

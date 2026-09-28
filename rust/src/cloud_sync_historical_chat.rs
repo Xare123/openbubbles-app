@@ -53,16 +53,29 @@ pub(crate) fn open_historical_group_parent(
     source_stage: &NativeHistoricalArchiveStage,
     parent_stage: &NativeProtectedOutboundStage,
 ) -> Result<(CloudChat, String), Failure> {
-    let source = open_historical_archive_source(storage.clone(), binding, source_stage)?;
-    if parent_stage.protected_server_record_reference != parent_stage.protected_payload_reference {
-        return Err(Failure::BindingMismatch);
-    }
     cloud_sync_verify_committed_lease_exact(
         storage.clone(),
         &parent_stage.lease_reference,
         std::slice::from_ref(&parent_stage.protected_payload_reference),
     )
     .map_err(|_| Failure::ProtectedStorage)?;
+    open_historical_group_parent_for_identity(storage, binding, source_stage, parent_stage)
+}
+
+/// Read-only comparison before admission also needs the original, uncommitted
+/// candidate. This reopens the committed source and verifies every parent byte,
+/// but grants no submission authority. Write/recovery callers must use the
+/// committed-parent opener above, never this identity-only entry point.
+pub(crate) fn open_historical_group_parent_for_identity(
+    storage: PathBuf,
+    binding: &HistoricalBinding,
+    source_stage: &NativeHistoricalArchiveStage,
+    parent_stage: &NativeProtectedOutboundStage,
+) -> Result<(CloudChat, String), Failure> {
+    let source = open_historical_archive_source(storage.clone(), binding, source_stage)?;
+    if parent_stage.protected_server_record_reference != parent_stage.protected_payload_reference {
+        return Err(Failure::BindingMismatch);
+    }
     let (candidate, record_name) = open_staged_outbound_chat(
         storage.clone(),
         binding.account_fingerprint.to_owned(),
@@ -228,7 +241,7 @@ fn project_historical_group_parent(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::{
         cloud_sync_historical_source::{
@@ -239,7 +252,7 @@ mod tests {
         cloud_sync_outbound_chat::verify_chat_readback,
     };
 
-    fn parent() -> HistoricalParentState {
+    pub(crate) fn parent() -> HistoricalParentState {
         HistoricalParentState(
             1,
             Some("stable-group".into()),
@@ -257,7 +270,7 @@ mod tests {
         )
     }
 
-    fn source(
+    pub(crate) fn source(
         binding: &HistoricalBinding,
         parent: HistoricalParentState,
         route: &str,
