@@ -11,7 +11,9 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_historical_s
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_models.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_protector.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_transport.dart';
+import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:path/path.dart' as p;
 
 /// Pure filesystem tests for the encrypted snapshot file. No ObjectBox
 /// store is opened and no native bridge is touched: snapshots are built
@@ -207,9 +209,11 @@ void main() {
     CloudSyncHistoricalAccountBinding? account,
     CloudSyncProtector? protectorOverride,
     CloudProtectedPageLeaseTransport? transportOverride,
+    String? sourceIdentity,
   }) => CloudSyncHistoricalSnapshotFile(
     privateStorageDirectory: directory.path,
     account: account ?? _account(),
+    sourceIdentitySha256: sourceIdentity,
     protector: protectorOverride ?? protector,
     transport: transportOverride ?? transport,
     validateIdentity: validateIdentity,
@@ -808,4 +812,116 @@ void main() {
       expect(seen, [for (var i = 1; i <= 250; i++) i]);
     },
   );
+
+  test('default slot preserves the exact legacy v1 file name', () async {
+    final snapshot = _snapshot([_row(1)]);
+    await file().save(snapshot);
+    final legacyKey = sha256
+        .convert(
+          utf8.encode(
+            jsonEncode([
+              'cloud-sync-historical-snapshot-file-v1',
+              _t('A'),
+              'obcs2.store.${_t('S')}',
+            ]),
+          ),
+        )
+        .toString();
+    final target = snapshotFile();
+    expect(target.path.endsWith('$legacyKey.snapshot'), isTrue);
+    expect(
+      (await file().load())!.manifest.snapshotSha256,
+      snapshot.manifest.snapshotSha256,
+    );
+  });
+
+  test('two source slots stay isolated under one account and store', () async {
+    final alpha = _snapshot([_row(1)]);
+    final live = _snapshot([_row(1, text: 'divergent live row')]);
+    expect(live.manifest.snapshotSha256, isNot(alpha.manifest.snapshotSha256));
+    await file(sourceIdentity: 'a' * 64).save(alpha);
+    await file(sourceIdentity: 'b' * 64).save(live);
+    final files = directory
+        .listSync(recursive: true)
+        .whereType<File>()
+        .where((f) => f.path.endsWith('.snapshot'))
+        .toList();
+    expect(files, hasLength(2));
+    final reloadedAlpha = (await file(sourceIdentity: 'a' * 64).load())!;
+    final reloadedLive = (await file(sourceIdentity: 'b' * 64).load())!;
+    expect(
+      reloadedAlpha.manifest.snapshotSha256,
+      alpha.manifest.snapshotSha256,
+    );
+    expect(reloadedLive.manifest.snapshotSha256, live.manifest.snapshotSha256);
+    expect(reloadedAlpha.encodedRows.toList(), alpha.encodedRows.toList());
+    expect(reloadedLive.encodedRows.toList(), live.encodedRows.toList());
+  });
+
+  test(
+    'transplanted slot file is rejected while the donor still loads',
+    () async {
+      final alpha = _snapshot([_row(1)]);
+      final live = _snapshot([_row(1, text: 'divergent live row')]);
+      await file(sourceIdentity: 'a' * 64).save(alpha);
+      final alphaPath = snapshotFile().path;
+      await file(sourceIdentity: 'b' * 64).save(live);
+      final livePath = directory
+          .listSync(recursive: true)
+          .whereType<File>()
+          .where(
+            (f) => f.path.endsWith('.snapshot') && !p.equals(f.path, alphaPath),
+          )
+          .single
+          .path;
+      final destinationEnvelope =
+          jsonDecode(await File(livePath).readAsString()) as List;
+      // Copy slot A bytes over slot B: outer key and sealed slot disagree.
+      await File(
+        livePath,
+      ).writeAsBytes(await File(alphaPath).readAsBytes(), flush: true);
+      await expectLater(
+        file(sourceIdentity: 'b' * 64).load(),
+        throwsStateError,
+      );
+      // Fixing the public outer key must not bypass the sealed source binding.
+      final transplanted =
+          jsonDecode(await File(alphaPath).readAsString()) as List;
+      transplanted[1] = destinationEnvelope[1];
+      await File(livePath).writeAsString(jsonEncode(transplanted), flush: true);
+      await expectLater(
+        file(sourceIdentity: 'b' * 64).load(),
+        throwsStateError,
+      );
+      expect(
+        (await file(sourceIdentity: 'a' * 64).load())!.manifest.snapshotSha256,
+        alpha.manifest.snapshotSha256,
+      );
+    },
+  );
+
+  test('invalid source identities are rejected at construction', () {
+    for (final bad in ['ZZZ', 'A' * 64, 'a' * 63, 'a' * 65, '']) {
+      expect(
+        () => file(sourceIdentity: bad),
+        throwsA(
+          isA<StateError>().having(
+            (e) => e.message,
+            'message',
+            'cloud_sync_historical_snapshot_binding_invalid',
+          ),
+        ),
+      );
+    }
+  });
+
+  test('repeated same-source reopening returns identical snapshots', () async {
+    final snapshot = _snapshot([_row(1)]);
+    await file(sourceIdentity: 'a' * 64).save(snapshot);
+    for (var i = 0; i < 2; i++) {
+      final loaded = (await file(sourceIdentity: 'a' * 64).load())!;
+      expect(loaded.manifest.snapshotSha256, snapshot.manifest.snapshotSha256);
+      expect(loaded.encodedRows.toList(), snapshot.encodedRows.toList());
+    }
+  });
 }

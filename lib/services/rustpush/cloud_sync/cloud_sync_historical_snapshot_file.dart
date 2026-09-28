@@ -24,6 +24,7 @@ final class CloudSyncHistoricalSnapshotFile {
   CloudSyncHistoricalSnapshotFile({
     required String privateStorageDirectory,
     required this.account,
+    this.sourceIdentitySha256,
     required this.protector,
     required this.transport,
     required this.validateIdentity,
@@ -31,6 +32,8 @@ final class CloudSyncHistoricalSnapshotFile {
   }) : _root = Directory(privateStorageDirectory).absolute {
     if (!path.isAbsolute(privateStorageDirectory) ||
         !account.hasValidShape ||
+        (sourceIdentitySha256 != null &&
+            !RegExp(r'^[a-f0-9]{64}$').hasMatch(sourceIdentitySha256!)) ||
         !RegExp(r'^[A-Za-z0-9_-]{43}$').hasMatch(account.accountFingerprint) ||
         !RegExp(
           r'^obcs2\.store\.[A-Za-z0-9_-]{43}$',
@@ -51,22 +54,38 @@ final class CloudSyncHistoricalSnapshotFile {
 
   final Directory _root;
   final CloudSyncHistoricalAccountBinding account;
+
+  /// Optional immutable source slot for external-source captures (for
+  /// example a separately qualified Alpha snapshot). Exact lowercase hex
+  /// digest only: never a label, path, or account secret. This selects
+  /// storage, never proves account ownership. Null preserves the exact
+  /// v1 file name and legacy behavior.
+  final String? sourceIdentitySha256;
   final CloudSyncProtector protector;
   final CloudProtectedPageLeaseTransport transport;
   final Future<void> Function() validateIdentity;
   final bool Function() stillCurrent;
 
-  String get _key => sha256
-      .convert(
-        utf8.encode(
-          jsonEncode([
-            _tag,
-            account.accountFingerprint,
-            account.protectedStoreIdentity,
-          ]),
-        ),
-      )
-      .toString();
+  String get _key {
+    final fields = <String>[
+      _tag,
+      account.accountFingerprint,
+      account.protectedStoreIdentity,
+    ];
+    final source = sourceIdentitySha256;
+    // Null keeps the exact v1 digest; a source slot extends it.
+    if (source != null) fields.add(source);
+    return sha256.convert(utf8.encode(jsonEncode(fields))).toString();
+  }
+
+  /// Legacy 9-slot headers load only without a source identity; 10-slot
+  /// headers must carry exactly this instance source slot. Either way a
+  /// transplanted file cannot be accepted by renaming.
+  bool _sourceSlotMatches(List<dynamic> header) =>
+      (header.length == 9 && sourceIdentitySha256 == null) ||
+      (header.length == 10 &&
+          header[9] is String &&
+          header[9] == sourceIdentitySha256);
 
   CloudSyncScope get _scope => CloudSyncScope(
     accountFingerprint: account.accountFingerprint,
@@ -238,7 +257,7 @@ final class CloudSyncHistoricalSnapshotFile {
     );
     final header = jsonDecode(encodedHeader);
     if (header is! List ||
-        header.length != 9 ||
+        (header.length != 9 && header.length != 10) ||
         header[0] != 1 ||
         header[1] is! String ||
         !RegExp(r'^[a-f0-9]{64}$').hasMatch(header[1] as String) ||
@@ -254,6 +273,7 @@ final class CloudSyncHistoricalSnapshotFile {
         (header[7] as int) < 1 ||
         (header[7] as int) > CloudSyncHistoricalSnapshot.maximumBytes ||
         header[8] != chunks.length ||
+        !_sourceSlotMatches(header) ||
         jsonEncode(header) != encodedHeader) {
       throw StateError('cloud_sync_historical_snapshot_invalid');
     }
@@ -353,6 +373,10 @@ final class CloudSyncHistoricalSnapshotFile {
         snapshot.manifest.capturedAtMs,
         snapshot.encodedByteLength,
         chunks.length,
+        // Sealed source binding: a transplanted file carries the wrong
+        // slot here even when its outer key is renamed. Null saves stay
+        // byte-identical to legacy v1.
+        if (sourceIdentitySha256 != null) sourceIdentitySha256,
       ]),
     );
     final encoded = utf8.encode(jsonEncode([_tag, _key, header, chunks]));
