@@ -41,7 +41,7 @@
 #![cfg_attr(not(test), allow(dead_code))]
 
 use crate::cloud_sync_received_record_match::{
-    compare_received_record, ReceivedRecordMatchVerdict,
+    compare_historical_record_unknown_endpoint, compare_received_record, ReceivedRecordMatchVerdict,
 };
 use rustpush::cloud_messages::{
     cloudmessagesp::{MessageProto, MessageProto2, MessageProto3, MessageProto4},
@@ -78,6 +78,26 @@ pub fn compare_received_raw(
     found: &CloudMessage,
     raw: &ReceivedRawProtos<'_>,
 ) -> Result<ReceivedRecordMatchVerdict, ReceivedRawMatchFailure> {
+    verify_raw_fields(found, raw)?;
+    Ok(compare_received_record(expected, found))
+}
+
+/// Historical-only unknown-endpoint candidate. The exact same raw-field checks
+/// run first; missing/duplicate/unknown protobuf fields cannot become equivalent.
+/// This comparison grants neither received provenance nor remote write authority.
+pub(crate) fn compare_historical_raw_unknown_endpoint(
+    expected: &CloudMessage,
+    found: &CloudMessage,
+    raw: &ReceivedRawProtos<'_>,
+) -> Result<ReceivedRecordMatchVerdict, ReceivedRawMatchFailure> {
+    verify_raw_fields(found, raw)?;
+    Ok(compare_historical_record_unknown_endpoint(expected, found))
+}
+
+fn verify_raw_fields(
+    found: &CloudMessage,
+    raw: &ReceivedRawProtos<'_>,
+) -> Result<(), ReceivedRawMatchFailure> {
     use ReceivedRawMatchFailure as Failure;
     verify_msg_proto(raw.msg_proto, &found.msg_proto.0)?;
     match (raw.msg_proto_2, found.msg_proto_2.as_ref()) {
@@ -95,7 +115,7 @@ pub fn compare_received_raw(
         (Some(bytes), Some(wrapper)) => verify_msg_proto4(bytes, &wrapper.0)?,
         _ => return Err(Failure::ValueMismatch),
     }
-    Ok(compare_received_record(expected, found))
+    Ok(())
 }
 
 fn read_varint(input: &[u8], position: &mut usize) -> Result<u64, ReceivedRawMatchFailure> {

@@ -8,7 +8,9 @@ use crate::cloud_sync_canonical_dto::{CloudCanonicalChatPayload, CloudCanonicalE
 use crate::cloud_sync_historical_projection::project_historical_plain_text;
 use crate::cloud_sync_historical_source::HistoricalArchiveSource;
 use crate::cloud_sync_native_fetch::cloud_sync_open_protected_outbound_message;
-use crate::cloud_sync_received_raw_match::{compare_received_raw, ReceivedRawProtos};
+use crate::cloud_sync_received_raw_match::{
+    compare_historical_raw_unknown_endpoint, compare_received_raw, ReceivedRawProtos,
+};
 use crate::cloud_sync_received_record_match::ReceivedRecordMatchVerdict;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use rustpush::cloud_messages::{CloudMessage, CloudMessageRecordInspection};
@@ -193,9 +195,12 @@ pub(crate) fn verify_historical_readback(
         msg_proto_3: actual.msg_proto_3.as_deref(),
         msg_proto_4: actual.msg_proto_4.as_deref(),
     };
-    if compare_received_raw(&opened.message, &actual.message, &raw)
-        != Ok(ReceivedRecordMatchVerdict::EquivalentSupportedPlainText)
-    {
+    let comparison = if opened.message.destination_caller_id.is_empty() {
+        compare_historical_raw_unknown_endpoint(&opened.message, &actual.message, &raw)
+    } else {
+        compare_received_raw(&opened.message, &actual.message, &raw)
+    };
+    if comparison != Ok(ReceivedRecordMatchVerdict::EquivalentSupportedPlainText) {
         return Err(Failure::BindingMismatch);
     }
     Ok(opened.payload_sha256.clone())
@@ -305,14 +310,73 @@ mod tests {
     }
 
     #[test]
-    fn missing_incoming_endpoint_never_creates_an_envelope() {
-        assert!(encode(
-            &historical_source(false, "Incoming", &"a".repeat(64)),
-            &parent(),
-            &"b".repeat(64),
-            "record"
-        )
-        .is_err());
+    fn historical_unknown_endpoint_roundtrip_does_not_become_live_received_proof() {
+        let source = historical_source(false, "Incoming", &"a".repeat(64));
+        let bytes = encode(&source, &parent(), &"b".repeat(64), "record").unwrap();
+        let opened = decode(&bytes, &source, &parent(), &"b".repeat(64)).unwrap();
+        assert_eq!(opened.message().destination_caller_id, "");
+        assert_eq!(opened.message().sender, "peer@example.invalid");
+        assert!(!opened.message().flags.contains(MessageFlags::IS_FROM_ME));
+        assert!(super::super::decode_outbound_envelope(&bytes).is_err());
+        let actual = inspection(opened.message().clone());
+        let raw = ReceivedRawProtos {
+            msg_proto: &actual.msg_proto,
+            msg_proto_2: actual.msg_proto_2.as_deref(),
+            msg_proto_3: actual.msg_proto_3.as_deref(),
+            msg_proto_4: actual.msg_proto_4.as_deref(),
+        };
+        // The ordinary live-received validator still requires a known endpoint.
+        assert_eq!(
+            compare_received_raw(opened.message(), &actual.message, &raw),
+            Ok(ReceivedRecordMatchVerdict::NeedsProjectionOrUnsupported),
+        );
+        assert!(verify_historical_readback(&opened, &actual, &opened.payload_sha256).is_ok());
+        let mut known = opened.message().clone();
+        known.destination_caller_id = "owner@example.invalid".into();
+        let mut outgoing = opened.message().clone();
+        outgoing.flags.insert(MessageFlags::IS_FROM_ME);
+        outgoing.sender.clear();
+        for unsupported in [known, outgoing] {
+            assert_eq!(
+                crate::cloud_sync_received_record_match::compare_historical_record_unknown_endpoint(
+                    &unsupported,
+                    &unsupported,
+                ),
+                ReceivedRecordMatchVerdict::NeedsProjectionOrUnsupported,
+            );
+        }
+    }
+
+    #[test]
+    fn unknown_endpoint_readback_cannot_guess_identity_or_ignore_wire_changes() {
+        let source = historical_source(false, "Incoming", &"a".repeat(64));
+        let bytes = encode(&source, &parent(), &"b".repeat(64), "record").unwrap();
+        let opened = decode(&bytes, &source, &parent(), &"b".repeat(64)).unwrap();
+        for field in 0..6 {
+            let mut changed = opened.message().clone();
+            match field {
+                0 => changed.destination_caller_id = "new-preference@example.invalid".into(),
+                1 => changed.sender = "other@example.invalid".into(),
+                2 => changed.flags.insert(MessageFlags::IS_FROM_ME),
+                3 => changed.chat_id = "iMessage;-;other@example.invalid".into(),
+                4 => changed.msg_proto.0.text = Some("Changed".into()),
+                _ => changed.time += 1_000_000,
+            }
+            assert!(verify_historical_readback(
+                &opened,
+                &inspection(changed),
+                &opened.payload_sha256,
+            )
+            .is_err());
+        }
+        let mut unknown = inspection(opened.message().clone());
+        unknown.msg_proto.extend([0xf8, 0x07, 0x01]);
+        assert!(verify_historical_readback(&opened, &unknown, &opened.payload_sha256).is_err());
+        let mut duplicate = inspection(opened.message().clone());
+        // Duplicate text is rejected even when it repeats the expected value.
+        duplicate.msg_proto.extend([0x1a, 0x08]);
+        duplicate.msg_proto.extend(b"Incoming");
+        assert!(verify_historical_readback(&opened, &duplicate, &opened.payload_sha256).is_err());
     }
 
     #[test]

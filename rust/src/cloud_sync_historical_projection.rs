@@ -1,7 +1,8 @@
 //! Historical source projection, not live-send proof or write authority.
-//! Known sent identities can be represented exactly. Old incoming rows do not
-//! retain their receiving endpoint, so they remain discoverable but cannot use
-//! this create projection yet. Never substitute a current chat sender preference.
+//! Known sent identities are exact. The historical received candidate represents
+//! an unknown original receiving endpoint as a present empty scalar, never a
+//! guessed current chat preference. This is not live received provenance. The
+//! app coordinator keeps this candidate deferred pending live compatibility proof.
 #![cfg_attr(not(test), allow(dead_code))]
 
 use crate::cloud_sync_canonical_dto::{
@@ -18,18 +19,19 @@ pub(crate) fn project_historical_plain_text(
     source: &HistoricalArchiveSource,
     chat: &CloudCanonicalChatPayload,
 ) -> Result<CloudMessage, Failure> {
-    if source.origin() != HistoricalArchiveOrigin::HistoricalSent
-        || chat.service() != CloudCanonicalService::IMessage
+    if chat.service() != CloudCanonicalService::IMessage
         || chat.style() != CloudCanonicalChatStyle::Direct
     {
         return Err(Failure::UnsupportedMessage);
     }
     let peer = bare(source.peer());
     let sender = bare(source.sender());
+    let sent = source.origin() == HistoricalArchiveOrigin::HistoricalSent;
     let route = format!("iMessage;-;{peer}");
     if peer.is_empty()
         || sender.is_empty()
-        || peer == sender
+        || (sent && peer == sender)
+        || (!sent && peer != sender)
         || source.chat_guid() != route
         || chat.guid() != route
         || chat.chat_identifier() != peer
@@ -49,10 +51,20 @@ pub(crate) fn project_historical_plain_text(
         r#type: 1,
         error: 0,
         chat_id: route.clone(),
-        sender: String::new(),
+        sender: if sent {
+            String::new()
+        } else {
+            sender.to_owned()
+        },
         time,
         msg_proto_2: None,
-        destination_caller_id: sender.to_owned(),
+        // Empty is an explicit unknown scalar, not an omitted encrypted field.
+        // Original known sender/peer, direction, GUID, time and body remain exact.
+        destination_caller_id: if sent {
+            sender.to_owned()
+        } else {
+            String::new()
+        },
         msg_proto: GZipWrapper(MessageProto {
             unk1: 1,
             text: Some(source.text().to_owned()),
@@ -65,8 +77,12 @@ pub(crate) fn project_historical_plain_text(
         }),
         flags: MessageFlags::IS_FINISHED
             | MessageFlags::IS_SENT
-            | MessageFlags::IS_FROM_ME
-            | MessageFlags::WAS_DATA_DETECTED,
+            | MessageFlags::WAS_DATA_DETECTED
+            | if sent {
+                MessageFlags::IS_FROM_ME
+            } else {
+                MessageFlags::empty()
+            },
         guid: source.guid().to_owned(),
         msg_proto_3: Some(GZipWrapper(MessageProto3 {
             unk2: Some(0),
@@ -163,14 +179,23 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn incoming_missing_endpoint_is_not_replaced_by_current_chat_preference() {
+    fn incoming_unknown_endpoint_is_preserved_not_replaced_by_current_chat_preference() {
         let source = source(false, "Incoming history", &"a".repeat(64));
-        assert!(matches!(
-            project_historical_plain_text(
-                &source,
-                &chat("peer@example.invalid", CloudCanonicalChatStyle::Direct)
-            ),
-            Err(Failure::UnsupportedMessage)
+        let projected = project_historical_plain_text(
+            &source,
+            &chat("peer@example.invalid", CloudCanonicalChatStyle::Direct),
+        )
+        .unwrap();
+        assert_eq!(projected.destination_caller_id, "");
+        assert_eq!(projected.sender, "peer@example.invalid");
+        assert_eq!(projected.guid, source.guid());
+        assert_eq!(
+            projected.msg_proto.0.text.as_deref(),
+            Some("Incoming history")
+        );
+        assert_eq!(projected.time, 721_692_800_123_000_000);
+        assert!(!projected.flags.intersects(
+            MessageFlags::IS_FROM_ME | MessageFlags::IS_READ | MessageFlags::IS_DELIVERED
         ));
     }
 

@@ -140,7 +140,7 @@ fn proto4_group_unsupported(nested: Option<&MessageProto4>, chat_id: &str) -> bo
 /// 1, error 0, canonical direct route, redundant-or-absent groupId, known
 /// flags) with received identities and positive time. Anything else is not
 /// provable here, even when both sides match it exactly.
-fn expected_shape_supported(expected: &CloudMessage) -> bool {
+fn expected_shape_supported(expected: &CloudMessage, historical_unknown_endpoint: bool) -> bool {
     if expected.service != "iMessage"
         || expected.r#type != 1
         || expected.error != 0
@@ -148,7 +148,7 @@ fn expected_shape_supported(expected: &CloudMessage) -> bool {
         || expected.guid.is_empty()
         || expected.chat_id.is_empty()
         || (expected.flags.contains(MessageFlags::IS_FROM_ME) != expected.sender.is_empty())
-        || expected.destination_caller_id.is_empty()
+        || (!historical_unknown_endpoint && expected.destination_caller_id.is_empty())
         || !expected.chat_id.starts_with("iMessage;-;")
         || expected.chat_id == "iMessage;-;"
     {
@@ -193,11 +193,37 @@ pub fn compare_received_record(
     expected: &CloudMessage,
     found: &CloudMessage,
 ) -> ReceivedRecordMatchVerdict {
+    compare_record(expected, found, false)
+}
+
+/// Historical-only candidate: the original local endpoint was not persisted.
+/// Require an incoming direct source with an explicitly unknown endpoint. This
+/// never upgrades unknown metadata to live received proof or relaxes the public
+/// received comparator. Found must preserve that exact empty value too.
+pub(crate) fn compare_historical_record_unknown_endpoint(
+    expected: &CloudMessage,
+    found: &CloudMessage,
+) -> ReceivedRecordMatchVerdict {
+    if !expected.destination_caller_id.is_empty()
+        || expected.flags.contains(MessageFlags::IS_FROM_ME)
+        || expected.sender.is_empty()
+        || expected.chat_id.strip_prefix("iMessage;-;") != Some(expected.sender.as_str())
+    {
+        return ReceivedRecordMatchVerdict::NeedsProjectionOrUnsupported;
+    }
+    compare_record(expected, found, true)
+}
+
+fn compare_record(
+    expected: &CloudMessage,
+    found: &CloudMessage,
+    historical_unknown_endpoint: bool,
+) -> ReceivedRecordMatchVerdict {
     use ReceivedRecordMatchVerdict as Verdict;
 
     // Validate the expectation first: unsupported expected shapes project even
     // when both sides carry the identical shape.
-    if !expected_shape_supported(expected) {
+    if !expected_shape_supported(expected, historical_unknown_endpoint) {
         return Verdict::NeedsProjectionOrUnsupported;
     }
     // Core identity: exact, no normalization, no alias guessing, no UUID folding.
