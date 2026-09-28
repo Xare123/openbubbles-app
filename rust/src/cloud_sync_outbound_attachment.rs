@@ -34,6 +34,7 @@ use wire::CloudSyncOutboundAttachmentV1;
 
 /// Envelope version. Any other version on decode is rejected, never migrated.
 const ATTACHMENT_PAYLOAD_VERSION: u32 = 1;
+const HISTORICAL_ATTACHMENT_PAYLOAD_VERSION: u32 = 2;
 /// Upper bound for the encoded envelope. Mirrors the attachment metadata
 /// bound used by the legacy create path so readback stays bounded.
 const MAX_ATTACHMENT_ENVELOPE_BYTES: usize = 2 * 1024 * 1024;
@@ -45,6 +46,59 @@ const MAX_IDENTIFIER_BYTES: usize = 4 * 1024;
 /// CloudKit zone bound by transport at create time. Mirrors the private
 /// ATTACHMENT_CREATE_ZONE in attachment_create.
 const ATTACHMENT_CREATE_ZONE: &str = "attachmentManateeZone";
+
+/// Retained provenance, not network authority. Historical-sent and IDS-sent
+/// remain different even when GUID, content and direction are identical.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum AttachmentSourceKind {
+    IdsSent,
+    HistoricalSent,
+    HistoricalReceived,
+}
+
+impl AttachmentSourceKind {
+    pub(crate) fn historical(
+        source: &crate::cloud_sync_historical_source::HistoricalArchiveSource,
+    ) -> Self {
+        match source.origin() {
+            crate::cloud_sync_historical_source::HistoricalArchiveOrigin::HistoricalSent => {
+                Self::HistoricalSent
+            }
+            crate::cloud_sync_historical_source::HistoricalArchiveOrigin::HistoricalReceived => {
+                Self::HistoricalReceived
+            }
+        }
+    }
+
+    pub(crate) fn wire(self) -> u32 {
+        match self {
+            Self::IdsSent => 0,
+            Self::HistoricalSent => 1,
+            Self::HistoricalReceived => 2,
+        }
+    }
+
+    pub(crate) fn native_origin(self) -> rustpush::cloud_messages::CloudAttachmentRecordOrigin {
+        use rustpush::cloud_messages::CloudAttachmentRecordOrigin as Native;
+        match self {
+            Self::IdsSent => Native::IdsSent,
+            Self::HistoricalSent => Native::HistoricalSent,
+            Self::HistoricalReceived => Native::HistoricalReceived,
+        }
+    }
+
+    pub(crate) fn outgoing(self) -> bool {
+        self.native_origin().is_outgoing()
+    }
+
+    fn envelope_version(self) -> u32 {
+        if self == Self::IdsSent {
+            ATTACHMENT_PAYLOAD_VERSION
+        } else {
+            HISTORICAL_ATTACHMENT_PAYLOAD_VERSION
+        }
+    }
+}
 
 /// Same initial-create identity as Dart, with an Attachment-only scope.
 /// A syntactically valid Message/Chat/mutation ID is not interchangeable.
@@ -90,7 +144,19 @@ pub(crate) fn encode_attachment(
     attachment: &CloudAttachment,
     server_record_name: &str,
 ) -> Result<Vec<u8>, Failure> {
-    validate(attachment, server_record_name)?;
+    encode_attachment_for_source(
+        AttachmentSourceKind::IdsSent,
+        attachment,
+        server_record_name,
+    )
+}
+
+pub(crate) fn encode_attachment_for_source(
+    kind: AttachmentSourceKind,
+    attachment: &CloudAttachment,
+    server_record_name: &str,
+) -> Result<Vec<u8>, Failure> {
+    validate(attachment, server_record_name, kind)?;
     let mut attachment_meta_plist = Vec::new();
     plist::to_writer_binary(&mut attachment_meta_plist, &attachment.cm.0)
         .map_err(|_| Failure::MalformedMessage)?;
@@ -102,10 +168,11 @@ pub(crate) fn encode_attachment(
     }
     let asset_proto = attachment.lqa.encode_to_vec();
     let envelope = CloudSyncOutboundAttachmentV1 {
-        schema_version: ATTACHMENT_PAYLOAD_VERSION,
+        schema_version: kind.envelope_version(),
         server_record_name: server_record_name.to_owned(),
         attachment_meta_plist,
         asset_proto,
+        source_kind: kind.wire(),
     };
     if envelope.encoded_len() > MAX_ATTACHMENT_ENVELOPE_BYTES {
         return Err(Failure::OversizedMessage);
@@ -119,12 +186,22 @@ pub(crate) fn encode_attachment(
 pub(crate) fn decode_attachment_envelope(
     encoded: &[u8],
 ) -> Result<(CloudAttachment, String), Failure> {
+    decode_attachment_envelope_for_source(AttachmentSourceKind::IdsSent, encoded)
+}
+
+/// Expected provenance must come from the committed owner/plan, not from the
+/// payload being inspected. Old envelopes cannot be promoted to history.
+pub(crate) fn decode_attachment_envelope_for_source(
+    kind: AttachmentSourceKind,
+    encoded: &[u8],
+) -> Result<(CloudAttachment, String), Failure> {
     if encoded.is_empty() || encoded.len() > MAX_ATTACHMENT_ENVELOPE_BYTES {
         return Err(Failure::OversizedMessage);
     }
     let envelope =
         CloudSyncOutboundAttachmentV1::decode(encoded).map_err(|_| Failure::MalformedMessage)?;
-    if envelope.schema_version != ATTACHMENT_PAYLOAD_VERSION
+    if envelope.schema_version != kind.envelope_version()
+        || envelope.source_kind != kind.wire()
         || envelope.attachment_meta_plist.is_empty()
         || envelope.attachment_meta_plist.len() > MAX_ATTACHMENT_METADATA_BYTES / 2
         || envelope.asset_proto.is_empty()
@@ -140,7 +217,7 @@ pub(crate) fn decode_attachment_envelope(
         cm: GZipWrapper(metadata),
         lqa: asset,
     };
-    validate(&attachment, &envelope.server_record_name)?;
+    validate(&attachment, &envelope.server_record_name, kind)?;
     Ok((attachment, envelope.server_record_name))
 }
 
@@ -181,14 +258,36 @@ pub(crate) fn verify_attachment_readback(
     original_record_name: &str,
     expected_payload_sha256: &str,
 ) -> Result<String, Failure> {
+    verify_attachment_readback_for_source(
+        AttachmentSourceKind::IdsSent,
+        expected,
+        actual,
+        receipt_record_name,
+        original_record_name,
+        expected_payload_sha256,
+    )
+}
+
+pub(crate) fn verify_attachment_readback_for_source(
+    kind: AttachmentSourceKind,
+    expected: &CloudAttachment,
+    actual: &CloudAttachment,
+    receipt_record_name: &str,
+    original_record_name: &str,
+    expected_payload_sha256: &str,
+) -> Result<String, Failure> {
     if receipt_record_name != original_record_name {
         return Err(Failure::BindingMismatch);
     }
-    let expected_digest = outbound_attachment_payload_sha256(expected, original_record_name)?;
+    let expected_digest = digest(&encode_attachment_for_source(
+        kind,
+        expected,
+        original_record_name,
+    )?);
     if expected_digest != expected_payload_sha256 {
         return Err(Failure::BindingMismatch);
     }
-    verify_stable_attachment_content(expected, actual, original_record_name)?;
+    verify_stable_attachment_content(expected, actual, original_record_name, kind)?;
     Ok(expected_digest)
 }
 
@@ -200,7 +299,23 @@ pub(crate) fn stage_outbound_attachment(
     attachment: CloudAttachment,
     server_record_name: &str,
 ) -> Result<NativeProtectedOutboundStage, Failure> {
-    let encoded = encode_attachment(&attachment, server_record_name)?;
+    stage_attachment_for_source(
+        AttachmentSourceKind::IdsSent,
+        storage_directory,
+        account_fingerprint,
+        attachment,
+        server_record_name,
+    )
+}
+
+pub(crate) fn stage_attachment_for_source(
+    kind: AttachmentSourceKind,
+    storage_directory: PathBuf,
+    account_fingerprint: String,
+    attachment: CloudAttachment,
+    server_record_name: &str,
+) -> Result<NativeProtectedOutboundStage, Failure> {
+    let encoded = encode_attachment_for_source(kind, &attachment, server_record_name)?;
     let hasher = crate::cloud_sync_protector::semantic_identifier_hasher(
         storage_directory.to_string_lossy().into_owned(),
     )
@@ -235,6 +350,24 @@ pub(crate) fn open_staged_outbound_attachment(
     expected_payload_sha256: &str,
     expected_record_id_hash: &str,
 ) -> Result<(CloudAttachment, String), Failure> {
+    open_staged_attachment_for_source(
+        AttachmentSourceKind::IdsSent,
+        storage_directory,
+        account_fingerprint,
+        protected_reference,
+        expected_payload_sha256,
+        expected_record_id_hash,
+    )
+}
+
+pub(crate) fn open_staged_attachment_for_source(
+    kind: AttachmentSourceKind,
+    storage_directory: PathBuf,
+    account_fingerprint: String,
+    protected_reference: &str,
+    expected_payload_sha256: &str,
+    expected_record_id_hash: &str,
+) -> Result<(CloudAttachment, String), Failure> {
     let value = cloud_sync_open_protected_outbound_attachment(
         storage_directory.clone(),
         account_fingerprint,
@@ -250,7 +383,7 @@ pub(crate) fn open_staged_outbound_attachment(
     if digest(&encoded) != expected_payload_sha256 {
         return Err(Failure::BindingMismatch);
     }
-    let (attachment, record_name) = decode_attachment_envelope(&encoded)?;
+    let (attachment, record_name) = decode_attachment_envelope_for_source(kind, &encoded)?;
     let hasher = crate::cloud_sync_protector::semantic_identifier_hasher(
         storage_directory.to_string_lossy().into_owned(),
     )
@@ -269,6 +402,7 @@ fn verify_stable_attachment_content(
     expected: &CloudAttachment,
     actual: &CloudAttachment,
     record_name: &str,
+    kind: AttachmentSourceKind,
 ) -> Result<(), Failure> {
     let mut expected_meta = Vec::new();
     plist::to_writer_binary(&mut expected_meta, &expected.cm.0)
@@ -298,7 +432,7 @@ fn verify_stable_attachment_content(
     // record that lost its content identity is divergence, not a transient.
     // The upload receipt is deliberately not required here: the fetch
     // decoder does not require one.
-    validate_completed_attachment_shape(actual).map_err(|_| Failure::BindingMismatch)?;
+    validate_completed_attachment_shape(actual, kind).map_err(|_| Failure::BindingMismatch)?;
     // Record identity: the expected envelope always carries the staged binding
     // (encode requires it). A present fetched record_id must satisfy the same
     // binding; an omitted one rests on the authenticated outer exact-name
@@ -315,7 +449,11 @@ fn verify_stable_attachment_content(
     Ok(())
 }
 
-fn validate(attachment: &CloudAttachment, record_name: &str) -> Result<(), Failure> {
+fn validate(
+    attachment: &CloudAttachment,
+    record_name: &str,
+    kind: AttachmentSourceKind,
+) -> Result<(), Failure> {
     if record_name.is_empty()
         || record_name.len() > MAX_IDENTIFIER_BYTES
         || !Uuid::parse_str(record_name)
@@ -323,7 +461,7 @@ fn validate(attachment: &CloudAttachment, record_name: &str) -> Result<(), Failu
     {
         return Err(Failure::MalformedMessage);
     }
-    validate_completed_attachment_shape(attachment)?;
+    validate_completed_attachment_shape(attachment, kind)?;
     validate_record_binding(attachment.lqa.record_id.as_ref(), record_name)?;
     // Completed upload shape only: a staged-but-never-uploaded asset has no
     // receipt and must not enter the initial-create envelope.
@@ -338,41 +476,18 @@ fn validate(attachment: &CloudAttachment, record_name: &str) -> Result<(), Failu
     Ok(())
 }
 
-/// Exact shape from the legacy attachment_create validator (validate_attachment),
-/// mapped onto the shared failure type. The zone/record_id create-only binding
-/// is left to transport on purpose.
-///
-/// NOTE: these checks duplicate that private validator because the agreed scope
-/// covers only this file, lib.rs, and the proto. If the source validator is ever
-/// exposed, delete this copy and call it instead (pending refactor, not new logic).
-fn validate_completed_attachment_shape(attachment: &CloudAttachment) -> Result<(), Failure> {
-    let metadata = &attachment.cm.0;
-    let asset = &attachment.lqa;
-    if metadata.guid.is_empty()
-        || metadata.guid.len() > MAX_IDENTIFIER_BYTES
-        || metadata.guid.chars().any(char::is_control)
-        || !metadata.is_outgoing
-        || metadata.version != 1
-        || metadata.total_bytes < 0
-        || asset.size != Some(metadata.total_bytes as u64)
-        || asset.size.is_none_or(|size| size > u32::MAX as u64)
-        || !asset
-            .signature
-            .as_ref()
-            .is_some_and(|signature| signature.len() == 21 && signature[0] == 4)
-        || !asset
-            .reference_signature
-            .as_ref()
-            .is_some_and(|signature| signature.len() == 21 && signature[0] == 1)
-        || !asset
-            .protection_info
-            .as_ref()
-            .and_then(|info| info.protection_info.as_ref())
-            .is_some_and(|key| key.len() == 32)
-    {
-        return Err(Failure::MalformedMessage);
-    }
-    Ok(())
+/// Share the actual transport content validator so historical support cannot
+/// disagree between protected recovery, save and authenticated readback.
+/// Record/account binding and completed-upload receipts remain separate checks.
+fn validate_completed_attachment_shape(
+    attachment: &CloudAttachment,
+    kind: AttachmentSourceKind,
+) -> Result<(), Failure> {
+    rustpush::cloud_messages::validate_cloud_attachment_record_content(
+        attachment,
+        kind.native_origin(),
+    )
+    .map_err(|_| Failure::MalformedMessage)
 }
 /// Record identity binding using the actual RecordIdentifier schema: the
 /// staged asset must carry a record_id whose record name is the allocated
@@ -540,6 +655,190 @@ mod tests {
             original,
             outbound_attachment_payload_sha256(&resized, RECORD).unwrap()
         );
+    }
+
+    #[test]
+    fn historical_envelopes_preserve_direction_without_promoting_old_ids_material() {
+        use AttachmentSourceKind::{HistoricalReceived, HistoricalSent, IdsSent};
+        let old = encode_attachment(&fixture(), RECORD).unwrap();
+        // A zero/default added field must not alter existing protected bytes.
+        #[derive(prost::Message)]
+        struct LegacyEnvelope {
+            #[prost(uint32, tag = "1")]
+            schema_version: u32,
+            #[prost(string, tag = "2")]
+            server_record_name: String,
+            #[prost(bytes = "vec", tag = "3")]
+            attachment_meta_plist: Vec<u8>,
+            #[prost(bytes = "vec", tag = "4")]
+            asset_proto: Vec<u8>,
+        }
+        let legacy = LegacyEnvelope::decode(old.as_slice()).unwrap();
+        assert_eq!(legacy.encode_to_vec(), old);
+        for kind in [HistoricalSent, HistoricalReceived] {
+            let mut original = fixture();
+            original.cm.0.is_outgoing = kind.outgoing();
+            let encoded = encode_attachment_for_source(kind, &original, RECORD).unwrap();
+            let wire = CloudSyncOutboundAttachmentV1::decode(encoded.as_slice()).unwrap();
+            assert_eq!(wire.schema_version, HISTORICAL_ATTACHMENT_PAYLOAD_VERSION);
+            assert_eq!(wire.source_kind, kind.wire());
+            let (reopened, name) = decode_attachment_envelope_for_source(kind, &encoded).unwrap();
+            assert_eq!(name, RECORD);
+            assert_eq!(reopened.cm.0.is_outgoing, kind.outgoing());
+            assert_eq!(
+                encode_attachment_for_source(kind, &reopened, &name).unwrap(),
+                encoded
+            );
+            assert!(decode_attachment_envelope(&encoded).is_err());
+            assert!(decode_attachment_envelope_for_source(kind, &old).is_err());
+            for other in [IdsSent, HistoricalSent, HistoricalReceived] {
+                if other != kind {
+                    assert!(decode_attachment_envelope_for_source(other, &encoded).is_err());
+                }
+            }
+            for mutate in [(1, kind.wire()), (2, 0), (2, 3), (3, kind.wire())] {
+                let mut broken = CloudSyncOutboundAttachmentV1::decode(encoded.as_slice()).unwrap();
+                broken.schema_version = mutate.0;
+                broken.source_kind = mutate.1;
+                assert!(
+                    decode_attachment_envelope_for_source(kind, &broken.encode_to_vec()).is_err()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn historical_readback_keeps_the_same_stable_witness_and_exact_record_requirement() {
+        for kind in [
+            AttachmentSourceKind::HistoricalSent,
+            AttachmentSourceKind::HistoricalReceived,
+        ] {
+            let mut original = fixture();
+            original.cm.0.is_outgoing = kind.outgoing();
+            let encoded = encode_attachment_for_source(kind, &original, RECORD).unwrap();
+            let expected = digest(&encoded);
+            let (mut remote, _) = decode_attachment_envelope_for_source(kind, &encoded).unwrap();
+            remote.lqa.upload_receipt = None;
+            remote.lqa.record_id = None; // Authenticated outer exact-name receipt still required.
+            assert_eq!(
+                verify_attachment_readback_for_source(
+                    kind, &original, &remote, RECORD, RECORD, &expected
+                )
+                .unwrap(),
+                expected,
+            );
+            assert!(
+                verify_attachment_readback(&original, &remote, RECORD, RECORD, &expected).is_err()
+            );
+            assert!(verify_attachment_readback_for_source(
+                kind,
+                &original,
+                &remote,
+                OTHER_RECORD,
+                RECORD,
+                &expected
+            )
+            .is_err());
+            assert!(verify_attachment_readback_for_source(
+                kind,
+                &original,
+                &remote,
+                RECORD,
+                RECORD,
+                &"f".repeat(64)
+            )
+            .is_err());
+            let changes: &[fn(&mut CloudAttachment)] = &[
+                |a| a.cm.0.is_outgoing = !a.cm.0.is_outgoing,
+                |a| a.cm.0.guid = "foreign-guid".into(),
+                |a| a.lqa.size = Some(4),
+                |a| a.lqa.signature = Some(vec![4; 20]),
+                |a| a.lqa.reference_signature = Some(vec![1; 20]),
+                |a| a.lqa.protection_info.as_mut().unwrap().protection_info = Some(vec![9; 32]),
+            ];
+            for change in changes {
+                let (mut divergent, _) =
+                    decode_attachment_envelope_for_source(kind, &encoded).unwrap();
+                change(&mut divergent);
+                assert!(verify_attachment_readback_for_source(
+                    kind, &original, &divergent, RECORD, RECORD, &expected
+                )
+                .is_err());
+            }
+        }
+    }
+
+    #[test]
+    fn historical_protected_stage_reopens_exact_provenance_account_and_payload() {
+        for kind in [
+            AttachmentSourceKind::HistoricalSent,
+            AttachmentSourceKind::HistoricalReceived,
+        ] {
+            let directory = tempfile::tempdir().unwrap();
+            let account = "A".repeat(43);
+            let mut original = fixture();
+            original.cm.0.is_outgoing = kind.outgoing();
+            let encoded = encode_attachment_for_source(kind, &original, RECORD).unwrap();
+            let stage = stage_attachment_for_source(
+                kind,
+                directory.path().into(),
+                account.clone(),
+                original,
+                RECORD,
+            )
+            .unwrap();
+            crate::cloud_sync_native_fetch::cloud_sync_commit_protected_page_lease(
+                directory.path().into(),
+                &stage.lease_reference,
+                std::slice::from_ref(&stage.protected_payload_reference),
+            )
+            .unwrap();
+            let reopen = |source_kind, owner, payload_hash: &str, record_hash: &str| {
+                open_staged_attachment_for_source(
+                    source_kind,
+                    directory.path().into(),
+                    owner,
+                    &stage.protected_payload_reference,
+                    payload_hash,
+                    record_hash,
+                )
+            };
+            for _ in 0..2 {
+                let (value, name) = reopen(
+                    kind,
+                    account.clone(),
+                    &stage.payload_sha256,
+                    &stage.server_record_id_hash,
+                )
+                .unwrap();
+                assert_eq!(
+                    encode_attachment_for_source(kind, &value, &name).unwrap(),
+                    encoded
+                );
+            }
+            assert!(reopen(
+                AttachmentSourceKind::IdsSent,
+                account.clone(),
+                &stage.payload_sha256,
+                &stage.server_record_id_hash
+            )
+            .is_err());
+            assert!(reopen(
+                kind,
+                "B".repeat(43),
+                &stage.payload_sha256,
+                &stage.server_record_id_hash
+            )
+            .is_err());
+            assert!(reopen(
+                kind,
+                account.clone(),
+                &"0".repeat(64),
+                &stage.server_record_id_hash
+            )
+            .is_err());
+            assert!(reopen(kind, account, &stage.payload_sha256, &"X".repeat(43)).is_err());
+        }
     }
 
     #[test]

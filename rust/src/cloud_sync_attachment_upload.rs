@@ -36,8 +36,14 @@ use crate::{
         cloud_sync_verify_committed_lease_exact,
     },
     cloud_sync_outbound::{CloudSyncOutboundFailure as Failure, NativeProtectedOutboundStage},
-    cloud_sync_outbound_attachment::{encode_attachment, validate_record_binding},
+    cloud_sync_outbound_attachment::{
+        decode_attachment_envelope_for_source, encode_attachment_for_source,
+        validate_record_binding, AttachmentSourceKind as AttachmentUploadSourceKind,
+    },
 };
+
+#[cfg(test)]
+use crate::cloud_sync_outbound_attachment::encode_attachment;
 
 mod wire {
     include!(concat!(
@@ -47,6 +53,7 @@ mod wire {
 }
 
 const VERSION: u32 = 2;
+const HISTORICAL_VERSION: u32 = 3;
 const MAX_PLAN_BYTES: usize = 2 * 1024 * 1024;
 const MAX_METADATA_BYTES: usize = 1024 * 1024;
 const MAX_IDENTIFIER_BYTES: usize = 4096;
@@ -76,10 +83,11 @@ impl<R: Read> Read for PreparationSource<R> {
 }
 
 /// Local file preparation only, using existing boundary-key material. Caller
-/// must first validate the live account/container and pin the actual IDS source.
+/// must first validate the live account/container and pin the actual typed source.
 /// This neither uploads bytes nor provisions missing keychain/CloudKit state.
-pub(crate) async fn prepare_attachment_upload_plan<R: Read + Send + Sync>(
+async fn prepare_attachment_upload_plan<R: Read + Send + Sync>(
     client: &CloudMessagesClient<DefaultAnisetteProvider>,
+    source_kind: AttachmentUploadSourceKind,
     parent_message_guid: String,
     parent_source_sha256: String,
     record_identifier: RecordIdentifier,
@@ -101,7 +109,8 @@ pub(crate) async fn prepare_attachment_upload_plan<R: Read + Send + Sync>(
     if source.count != expected_length {
         return Err(Failure::BindingMismatch.into());
     }
-    Ok(AttachmentUploadPlan::new(
+    Ok(AttachmentUploadPlan::new_for_source(
+        source_kind,
         parent_message_guid,
         parent_source_sha256,
         record_identifier,
@@ -139,8 +148,44 @@ pub(crate) async fn prepare_verified_ids_upload_plan<R: Read + Send>(
     .map_err(|_| AttachmentUploadPreparationFailure::SourceUnavailable)?;
     prepare_attachment_upload_plan(
         client,
+        AttachmentUploadSourceKind::IdsSent,
         decoded.message_guid.clone(),
         parent_source_sha256,
+        record_identifier,
+        material.meta,
+        snapshot,
+    )
+    .await
+}
+
+/// Reuse the same bounded private snapshot and randomized preparation with
+/// explicit historical ownership. The caller still binds account/store and
+/// records a durable attempt before network submission; no IDS send occurs.
+pub(crate) async fn prepare_verified_historical_upload_plan<R: Read + Send>(
+    client: &CloudMessagesClient<DefaultAnisetteProvider>,
+    historical: &crate::cloud_sync_historical_source::HistoricalArchiveSource,
+    original_attachment_guid: &str,
+    record_identifier: RecordIdentifier,
+    source: &mut R,
+    private_directory: &Path,
+) -> Result<AttachmentUploadPlan, AttachmentUploadPreparationFailure> {
+    let material =
+        crate::cloud_sync_historical_attachment_source::historical_attachment_upload_material(
+            historical,
+            original_attachment_guid,
+        )?;
+    let snapshot = crate::cloud_sync_attachment_source_file::snapshot_verified_source(
+        source,
+        &material.file,
+        private_directory,
+    )
+    .await
+    .map_err(|_| AttachmentUploadPreparationFailure::SourceUnavailable)?;
+    prepare_attachment_upload_plan(
+        client,
+        AttachmentUploadSourceKind::historical(historical),
+        historical.guid().to_owned(),
+        historical.source_sha256()?,
         record_identifier,
         material.meta,
         snapshot,
@@ -154,7 +199,7 @@ pub(crate) async fn prepare_verified_ids_upload_plan<R: Read + Send>(
 pub(crate) enum AttachmentUploadPreparationFailure {
     #[error("attachment source preparation unavailable")]
     PreparationUnavailable,
-    #[error("attachment source unavailable or does not match original IDS bytes")]
+    #[error("attachment source unavailable or does not match its original descriptor")]
     SourceUnavailable,
     #[error("attachment upload source invalid")]
     InvalidSource(#[from] Failure),
@@ -162,6 +207,7 @@ pub(crate) enum AttachmentUploadPreparationFailure {
 
 /// No Debug/Serialize implementation: the preparation contains file keys.
 pub(crate) struct AttachmentUploadPlan {
+    source_kind: AttachmentUploadSourceKind,
     parent_message_guid: String,
     parent_source_sha256: String,
     record_identifier: RecordIdentifier,
@@ -184,7 +230,28 @@ impl AttachmentUploadPlan {
         prepared: PreparedPut,
         source_file_sha256: String,
     ) -> Result<Self, Failure> {
+        Self::new_for_source(
+            AttachmentUploadSourceKind::IdsSent,
+            parent_message_guid,
+            parent_source_sha256,
+            record_identifier,
+            metadata,
+            prepared,
+            source_file_sha256,
+        )
+    }
+
+    fn new_for_source(
+        source_kind: AttachmentUploadSourceKind,
+        parent_message_guid: String,
+        parent_source_sha256: String,
+        record_identifier: RecordIdentifier,
+        metadata: AttachmentMeta,
+        prepared: PreparedPut,
+        source_file_sha256: String,
+    ) -> Result<Self, Failure> {
         let plan = Self {
+            source_kind,
             parent_message_guid,
             parent_source_sha256,
             record_identifier,
@@ -207,14 +274,23 @@ impl AttachmentUploadPlan {
         if let Some(identity) = &self.upload_identity {
             validate_upload_identity(identity)?;
         }
-        if !Uuid::parse_str(&self.parent_message_guid)
-            .is_ok_and(|id| id.get_version() == Some(uuid::Version::Random))
+        let valid_parent = if self.source_kind == AttachmentUploadSourceKind::IdsSent {
+            Uuid::parse_str(&self.parent_message_guid)
+                .is_ok_and(|id| id.get_version() == Some(uuid::Version::Random))
+        } else {
+            !self.parent_message_guid.is_empty()
+                && self.parent_message_guid.len() <= MAX_IDENTIFIER_BYTES
+                && !self.parent_message_guid.chars().any(char::is_control)
+                && !self.parent_message_guid.starts_with("temp")
+                && !self.parent_message_guid.starts_with("error")
+        };
+        if !valid_parent
             || !is_sha256(&self.parent_source_sha256)
             || !is_sha256(&self.source_file_sha256)
             || self.metadata.guid.is_empty()
             || self.metadata.guid.len() > MAX_IDENTIFIER_BYTES
             || self.metadata.guid.chars().any(char::is_control)
-            || !self.metadata.is_outgoing
+            || self.metadata.is_outgoing != self.source_kind.outgoing()
             || self.metadata.version != 1
             || self.metadata.total_bytes < 0
             || self.metadata.total_bytes as u64 != self.prepared.total_len as u64
@@ -306,11 +382,71 @@ impl AttachmentUploadPlan {
         )
         .await
         .map_err(|_| AttachmentUploadPreparationFailure::SourceUnavailable)?;
-        self.prepare_native_submission(
+        self.prepare_native_submission_for_source(
+            AttachmentUploadSourceKind::IdsSent,
             client,
             writer_binding,
             &decoded.message_guid,
             parent_source_sha256,
+            record_identifier,
+            local_operation_id,
+            snapshot,
+            timeout,
+        )
+        .await
+    }
+
+    /// Historical reopen uses the SAME sealed plan/request identity and exact
+    /// descriptor, never the IDS decoder or a freshly allocated upload attempt.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn prepare_verified_historical_submission<R: Read + Send>(
+        &self,
+        client: &CloudMessagesClient<DefaultAnisetteProvider>,
+        writer_binding: &CloudMessagesWriterPreparationBinding<DefaultAnisetteProvider>,
+        historical: &crate::cloud_sync_historical_source::HistoricalArchiveSource,
+        original_attachment_guid: &str,
+        record_identifier: &RecordIdentifier,
+        local_operation_id: String,
+        source: &mut R,
+        private_directory: &Path,
+        timeout: Duration,
+    ) -> Result<
+        CloudMessagesPreparedUploadSubmission<
+            DefaultAnisetteProvider,
+            crate::cloud_sync_attachment_source_file::OwnedAttachmentSource,
+        >,
+        AttachmentUploadPreparationFailure,
+    > {
+        let kind = AttachmentUploadSourceKind::historical(historical);
+        let source_hash = historical.source_sha256()?;
+        self.validate_source_origin(kind, historical.guid(), &source_hash, record_identifier)?;
+        let material =
+            crate::cloud_sync_historical_attachment_source::historical_attachment_upload_material(
+                historical,
+                original_attachment_guid,
+            )?;
+        let mut expected = Vec::new();
+        let mut actual = Vec::new();
+        plist::to_writer_binary(&mut expected, &self.metadata)
+            .map_err(|_| Failure::MalformedMessage)?;
+        plist::to_writer_binary(&mut actual, &material.meta)
+            .map_err(|_| Failure::MalformedMessage)?;
+        if expected != actual {
+            return Err(Failure::BindingMismatch.into());
+        }
+        let snapshot = crate::cloud_sync_attachment_source_file::snapshot_verified_source(
+            source,
+            &material.file,
+            private_directory,
+        )
+        .await
+        .map_err(|_| AttachmentUploadPreparationFailure::SourceUnavailable)?;
+        self.prepare_native_submission_for_source(
+            kind,
+            client,
+            writer_binding,
+            historical.guid(),
+            &source_hash,
             record_identifier,
             local_operation_id,
             snapshot,
@@ -326,12 +462,14 @@ impl AttachmentUploadPlan {
         encoded: &[u8],
     ) -> Result<CloudAttachment, Failure> {
         let (attachment, record_name) =
-            crate::cloud_sync_outbound_attachment::decode_attachment_envelope(encoded)?;
+            decode_attachment_envelope_for_source(self.source_kind, encoded)?;
         if record_name != self.record_name()? {
             return Err(Failure::BindingMismatch);
         }
         let validated = self.complete(attachment.lqa)?;
-        if encode_attachment(&validated, self.record_name()?)? != encoded {
+        if encode_attachment_for_source(self.source_kind, &validated, self.record_name()?)?
+            != encoded
+        {
             return Err(Failure::BindingMismatch);
         }
         Ok(validated)
@@ -346,7 +484,23 @@ impl AttachmentUploadPlan {
         parent_source_sha256: &str,
         record_identifier: &RecordIdentifier,
     ) -> Result<(), Failure> {
-        if self.parent_message_guid != parent_message_guid
+        self.validate_source_origin(
+            AttachmentUploadSourceKind::IdsSent,
+            parent_message_guid,
+            parent_source_sha256,
+            record_identifier,
+        )
+    }
+
+    fn validate_source_origin(
+        &self,
+        kind: AttachmentUploadSourceKind,
+        parent_message_guid: &str,
+        parent_source_sha256: &str,
+        record_identifier: &RecordIdentifier,
+    ) -> Result<(), Failure> {
+        if self.source_kind != kind
+            || self.parent_message_guid != parent_message_guid
             || self.parent_source_sha256 != parent_source_sha256
             || self.record_identifier != *record_identifier
         {
@@ -357,6 +511,18 @@ impl AttachmentUploadPlan {
 
     pub(crate) fn validate_parent_source(&self, guid: &str, sha256: &str) -> Result<(), Failure> {
         self.validate_origin(guid, sha256, &self.record_identifier)
+    }
+
+    pub(crate) fn validate_historical_parent_source(
+        &self,
+        source: &crate::cloud_sync_historical_source::HistoricalArchiveSource,
+    ) -> Result<(), Failure> {
+        self.validate_source_origin(
+            AttachmentUploadSourceKind::historical(source),
+            source.guid(),
+            &source.source_sha256()?,
+            &self.record_identifier,
+        )
     }
 
     /// Inspect a completed receipt without creating a new envelope or lease.
@@ -422,9 +588,36 @@ impl AttachmentUploadPlan {
         record_identifier: &RecordIdentifier,
         local_operation_id: String,
         apple_operation_uuid: String,
+        source: R,
+    ) -> Result<CloudAttachmentNativeUploadInput<R>, Failure> {
+        self.native_upload_input_for_source(
+            AttachmentUploadSourceKind::IdsSent,
+            parent_message_guid,
+            parent_source_sha256,
+            record_identifier,
+            local_operation_id,
+            apple_operation_uuid,
+            source,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn native_upload_input_for_source<R: Read + Seek + Send + Sync>(
+        &self,
+        kind: AttachmentUploadSourceKind,
+        parent_message_guid: &str,
+        parent_source_sha256: &str,
+        record_identifier: &RecordIdentifier,
+        local_operation_id: String,
+        apple_operation_uuid: String,
         mut source: R,
     ) -> Result<CloudAttachmentNativeUploadInput<R>, Failure> {
-        self.validate_origin(parent_message_guid, parent_source_sha256, record_identifier)?;
+        self.validate_source_origin(
+            kind,
+            parent_message_guid,
+            parent_source_sha256,
+            record_identifier,
+        )?;
         if self.upload_attempt_id()? != apple_operation_uuid {
             return Err(Failure::BindingMismatch);
         }
@@ -450,8 +643,9 @@ impl AttachmentUploadPlan {
     /// plan. Reopening must never allocate a replacement request identity.
     /// Caller must durably begin this attempt before consuming the owner.
     #[allow(clippy::too_many_arguments)]
-    pub(crate) async fn prepare_native_submission<R: Read + Seek + Send + Sync>(
+    async fn prepare_native_submission_for_source<R: Read + Seek + Send + Sync>(
         &self,
+        kind: AttachmentUploadSourceKind,
         client: &CloudMessagesClient<DefaultAnisetteProvider>,
         writer_binding: &CloudMessagesWriterPreparationBinding<DefaultAnisetteProvider>,
         parent_message_guid: &str,
@@ -468,7 +662,8 @@ impl AttachmentUploadPlan {
             .upload_identity
             .as_ref()
             .ok_or(Failure::BindingMismatch)?;
-        let input = self.native_upload_input(
+        let input = self.native_upload_input_for_source(
+            kind,
             parent_message_guid,
             parent_source_sha256,
             record_identifier,
@@ -498,7 +693,9 @@ impl AttachmentUploadPlan {
             return Err(Failure::OversizedMessage);
         }
         let wire = wire::CloudSyncAttachmentUploadV1 {
-            schema_version: if self.upload_identity.is_some() {
+            schema_version: if self.source_kind != AttachmentUploadSourceKind::IdsSent {
+                HISTORICAL_VERSION
+            } else if self.upload_identity.is_some() {
                 VERSION
             } else {
                 1
@@ -519,6 +716,7 @@ impl AttachmentUploadPlan {
                 .as_ref()
                 .map(|identity| identity.operation_uuids()[0].clone())
                 .unwrap_or_default(),
+            source_kind: self.source_kind.wire(),
         };
         if wire.encoded_len() > MAX_PLAN_BYTES {
             return Err(Failure::OversizedMessage);
@@ -532,17 +730,23 @@ impl AttachmentUploadPlan {
         }
         let wire = wire::CloudSyncAttachmentUploadV1::decode(bytes)
             .map_err(|_| Failure::MalformedMessage)?;
-        if !matches!(wire.schema_version, 1 | VERSION)
+        if !matches!(wire.schema_version, 1 | VERSION | HISTORICAL_VERSION)
             || wire.attachment_meta_plist.len() > MAX_METADATA_BYTES
             || wire.record_identifier_proto.len() > MAX_IDENTIFIER_BYTES
         {
             return Err(Failure::MalformedMessage);
         }
+        let source_kind = match (wire.schema_version, wire.source_kind) {
+            (1 | VERSION, 0) => AttachmentUploadSourceKind::IdsSent,
+            (HISTORICAL_VERSION, 1) => AttachmentUploadSourceKind::HistoricalSent,
+            (HISTORICAL_VERSION, 2) => AttachmentUploadSourceKind::HistoricalReceived,
+            _ => return Err(Failure::MalformedMessage),
+        };
         let upload_identity = match wire.schema_version {
             1 if wire.upload_request_uuid.is_empty() && wire.upload_operation_uuid.is_empty() => {
                 None
             }
-            VERSION => Some(
+            VERSION | HISTORICAL_VERSION => Some(
                 CloudKitRequestIdentity::new(
                     wire.upload_request_uuid,
                     vec![wire.upload_operation_uuid],
@@ -552,6 +756,7 @@ impl AttachmentUploadPlan {
             _ => return Err(Failure::MalformedMessage),
         };
         let plan = Self {
+            source_kind,
             parent_message_guid: wire.parent_message_guid,
             parent_source_sha256: wire.parent_source_sha256,
             record_identifier: RecordIdentifier::decode(wire.record_identifier_proto.as_slice())
@@ -592,7 +797,7 @@ impl AttachmentUploadPlan {
             cm: GZipWrapper(self.metadata.clone()),
             lqa: asset,
         };
-        encode_attachment(&attachment, self.record_name()?)?;
+        encode_attachment_for_source(self.source_kind, &attachment, self.record_name()?)?;
         Ok(attachment)
     }
 }
@@ -1311,6 +1516,155 @@ mod tests {
         )
         .unwrap();
         assert_eq!(journaled.encode().unwrap(), original.encode().unwrap());
+    }
+
+    async fn historical_plan(
+        sent: bool,
+    ) -> (
+        AttachmentUploadPlan,
+        crate::cloud_sync_historical_source::HistoricalArchiveSource,
+    ) {
+        use crate::cloud_sync_historical_attachment_source::{
+            historical_attachment_upload_material, tests as fixture,
+        };
+        let mut attachment = fixture::descriptor();
+        let rustpush::AttachmentType::MMCS(file) = &mut attachment.a_type else {
+            unreachable!()
+        };
+        file.size = CONTENT.len();
+        let source = fixture::source_with(&attachment, sent, |_| {});
+        let material =
+            historical_attachment_upload_material(&source, &fixture::guid(&source)).unwrap();
+        let prepared = prepare_put_v2(
+            FileContainer::new(Cursor::new(CONTENT.to_vec())),
+            &[0x42; 32],
+        )
+        .await
+        .unwrap();
+        let plan = AttachmentUploadPlan::new_for_source(
+            AttachmentUploadSourceKind::historical(&source),
+            source.guid().to_owned(),
+            source.source_sha256().unwrap(),
+            record(),
+            material.meta,
+            prepared,
+            digest(CONTENT),
+        )
+        .unwrap();
+        (plan, source)
+    }
+
+    #[tokio::test]
+    async fn historical_plan_reopens_exact_origin_direction_keys_and_attempt_without_ids_authority()
+    {
+        for sent in [false, true] {
+            let (original, source) = historical_plan(sent).await;
+            let encoded = original.encode().unwrap();
+            let wire = wire::CloudSyncAttachmentUploadV1::decode(encoded.as_slice()).unwrap();
+            assert_eq!(wire.schema_version, HISTORICAL_VERSION);
+            assert_eq!(wire.source_kind, if sent { 1 } else { 2 });
+            let reopened = AttachmentUploadPlan::decode(&encoded).unwrap();
+            assert_eq!(reopened.encode().unwrap(), encoded);
+            assert_eq!(reopened.metadata.is_outgoing, sent);
+            assert_eq!(
+                reopened.upload_attempt_id().unwrap(),
+                original.upload_attempt_id().unwrap()
+            );
+            assert!(reopened.validate_historical_parent_source(&source).is_ok());
+            assert!(reopened
+                .validate_parent_source(source.guid(), &source.source_sha256().unwrap())
+                .is_err());
+            assert!(reopened
+                .native_upload_input(
+                    source.guid(),
+                    &source.source_sha256().unwrap(),
+                    &record(),
+                    "synthetic-upload".into(),
+                    reopened.upload_attempt_id().unwrap().into(),
+                    Cursor::new(CONTENT),
+                )
+                .is_err());
+            let input = reopened
+                .native_upload_input_for_source(
+                    AttachmentUploadSourceKind::historical(&source),
+                    source.guid(),
+                    &source.source_sha256().unwrap(),
+                    &record(),
+                    "synthetic-upload".into(),
+                    reopened.upload_attempt_id().unwrap().into(),
+                    Cursor::new(CONTENT),
+                )
+                .unwrap();
+            assert_eq!(input.prepared.total_sig, original.prepared.total_sig);
+            let completed = reopened.complete(asset(&reopened)).unwrap();
+            assert_eq!(completed.cm.0.is_outgoing, sent);
+        }
+    }
+
+    #[tokio::test]
+    async fn historical_plan_rejects_origin_downgrade_direction_changes_and_changed_source() {
+        let (original, source) = historical_plan(false).await;
+        let encoded = original.encode().unwrap();
+        for mutate in [
+            (|wire: &mut wire::CloudSyncAttachmentUploadV1| wire.schema_version = VERSION)
+                as fn(&mut wire::CloudSyncAttachmentUploadV1),
+            |wire| wire.source_kind = 0,
+            |wire| wire.source_kind = 1,
+            |wire| wire.source_kind = 3,
+            |wire| wire.upload_request_uuid.clear(),
+            |wire| wire.upload_operation_uuid.clear(),
+        ] {
+            let mut wire = wire::CloudSyncAttachmentUploadV1::decode(encoded.as_slice()).unwrap();
+            mutate(&mut wire);
+            assert!(AttachmentUploadPlan::decode(&wire.encode_to_vec()).is_err());
+        }
+        let (_, sent) = historical_plan(true).await;
+        assert!(original.validate_historical_parent_source(&sent).is_err());
+        assert!(original
+            .validate_source_origin(
+                AttachmentUploadSourceKind::HistoricalReceived,
+                source.guid(),
+                &"f".repeat(64),
+                &record()
+            )
+            .is_err());
+        let mut changed = original;
+        changed.metadata.is_outgoing = true;
+        assert!(changed.encode().is_err());
+        let old = plan().await;
+        let mut wire =
+            wire::CloudSyncAttachmentUploadV1::decode(old.encode().unwrap().as_slice()).unwrap();
+        assert_eq!(wire.schema_version, VERSION);
+        assert_eq!(wire.source_kind, 0);
+        wire.source_kind = 1;
+        assert!(AttachmentUploadPlan::decode(&wire.encode_to_vec()).is_err());
+    }
+
+    #[tokio::test]
+    async fn historical_plan_sealed_reopen_keeps_source_kind_and_confirmed_result_binding() {
+        let (original, source) = historical_plan(false).await;
+        let directory = tempfile::tempdir().unwrap();
+        let account = "A".repeat(43);
+        let staged =
+            stage_attachment_upload(directory.path().into(), account.clone(), &original).unwrap();
+        crate::cloud_sync_native_fetch::cloud_sync_commit_protected_page_lease(
+            directory.path().into(),
+            &staged.lease_reference,
+            std::slice::from_ref(&staged.protected_payload_reference),
+        )
+        .unwrap();
+        let reopened = open_attachment_upload(directory.path().into(), account, &staged).unwrap();
+        assert!(reopened.validate_historical_parent_source(&source).is_ok());
+        assert_eq!(reopened.encode().unwrap(), original.encode().unwrap());
+        let encoded = encode_attachment_for_source(
+            AttachmentUploadSourceKind::historical(&source),
+            &reopened.complete(asset(&reopened)).unwrap(),
+            reopened.record_name().unwrap(),
+        )
+        .unwrap();
+        assert!(reopened.validate_completed_envelope(&encoded).is_ok());
+        let (other, _) = historical_plan(false).await;
+        assert!(other.validate_completed_envelope(&encoded).is_err());
     }
 
     #[tokio::test]

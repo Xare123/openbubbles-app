@@ -43,6 +43,10 @@ message CloudSyncOutboundAttachmentV1 {
   string server_record_name = 2;
   bytes attachment_meta_plist = 3;
   bytes asset_proto = 4;
+  // Version 1 retains absent/zero = IDS sent. Version 2 is historical-only:
+  // 1 historical sent, 2 historical received. This is local provenance and
+  // is never serialized into the Apple attachment record itself.
+  uint32 source_kind = 5;
 }
 
 // Native-only pre-upload recovery material, protected under a different
@@ -61,6 +65,10 @@ message CloudSyncAttachmentUploadV1 {
   // Version 1 is recoverable for inspection/result validation, never submission.
   string upload_request_uuid = 8;
   string upload_operation_uuid = 9;
+  // Version 3 is historical-only: 1 historical sent, 2 historical received.
+  // Versions 1/2 retain absent/zero = original IDS sent. Never infer origin
+  // from metadata.is_outgoing or reinterpret an old local-send plan.
+  uint32 source_kind = 10;
 }
 // Native-only IDS composer source: the provided pre-send MessageInst
 // plus explicit ordered local attachment GUIDs paired to the
