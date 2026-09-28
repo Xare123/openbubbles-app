@@ -4,6 +4,8 @@ import 'dart:io';
 import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_historical_archive_request.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_historical_chat_state.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_historical_attachment_inventory.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_historical_media_source.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_historical_staging.dart';
 import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -100,6 +102,7 @@ CloudSyncHistoricalRowView _row({
   bool threadOriginatorPresent = false,
   bool hasAttachments = false,
   int attachmentCount = 0,
+  CloudSyncHistoricalAttachmentInventory? attachmentInventory,
   bool subjectPresent = false,
   bool expressiveSendStyleIdPresent = false,
   bool balloonBundleIdPresent = false,
@@ -137,6 +140,7 @@ CloudSyncHistoricalRowView _row({
     threadOriginatorPresent: threadOriginatorPresent,
     hasAttachments: hasAttachments,
     attachmentCount: attachmentCount,
+    attachmentInventory: attachmentInventory,
     subjectPresent: subjectPresent,
     expressiveSendStyleIdPresent: expressiveSendStyleIdPresent,
     balloonBundleIdPresent: balloonBundleIdPresent,
@@ -236,6 +240,58 @@ void main() {
         jsonEncode(stagedHistoricalPayload(request: request, text: text)),
         vector['canonicalPayload'],
       );
+    });
+  }
+
+  final mediaVectors = (jsonDecode(File(
+    'test/fixtures/cloud_sync/historical_source_v4.json',
+  ).readAsStringSync()) as List).cast<Map<String, dynamic>>();
+  for (final vector in mediaVectors) {
+    test('native media wire vector and guarded staging ${vector['name']}', () {
+      final payload = jsonDecode(vector['canonicalPayload'] as String)
+          as Map<String, dynamic>;
+      final media = CloudSyncHistoricalMediaSource.fromWire(payload['media']);
+      CloudSyncHistoricalRowView captured({String? changedText,
+        List<AttributedBody>? changedBodies,
+        CloudSyncHistoricalAttachmentInventory? changedInventory}) => _row(
+          text: changedText ?? media.originalText,
+          attributedBodies: changedBodies ?? (jsonDecode(media.bodyJson) as List)
+              .map((body) => AttributedBody.fromMap(
+                  (body as Map).cast<String, dynamic>())).toList(),
+          messageId: media.messageId,
+          hasAttachments: true,
+          attachmentCount: media.inventory.attachments.length,
+          attachmentInventory: changedInventory ?? media.inventory,
+        );
+      final row = captured();
+      // Source support does not turn on unfinished historical media uploads.
+      expect(_reason(row), CloudSyncHistoricalArchiveReasons.media);
+      final assessment = assessHistoricalArchiveRow(row, _manifest(),
+          _accountBinding(), nowMs: _nowMs, includeMediaSource: true)
+          as CloudSyncHistoricalArchiveEligible;
+      final request = assessment.request;
+      expect(request.guidHash, vector['guidHash']);
+      expect(request.sourceSha256, vector['sourceSha256']);
+      final encoded = encodeHistoricalSource(request: request, currentRow: row,
+          manifest: _manifest(), account: _accountBinding(), nowMs: _nowMs);
+      expect(utf8.decode(encoded.canonicalBytes), vector['canonicalPayload']);
+      expect(historicalArchiveRowMatchesRequest(row, request, nowMs: _nowMs), isTrue);
+
+      void rejects(CloudSyncHistoricalRowView changed) {
+        expect(historicalArchiveRowMatchesRequest(changed, request, nowMs: _nowMs), isFalse);
+        expect(() => encodeHistoricalSource(request: request, currentRow: changed,
+            manifest: _manifest(), account: _accountBinding(), nowMs: _nowMs), throwsStateError);
+      }
+      rejects(captured(changedText: 'different caption'));
+      final changedBody = (jsonDecode(media.bodyJson) as List)
+          .map((body) => AttributedBody.fromMap(
+              (body as Map).cast<String, dynamic>())).toList();
+      changedBody.first.runs.first.range[1] += 1;
+      rejects(captured(changedBodies: changedBody));
+      final inventoryWire = media.inventory.toWire();
+      ((inventoryWire[1] as List).first as List)[8] = 'changed-name.jpg';
+      rejects(captured(changedInventory:
+          CloudSyncHistoricalAttachmentInventory.fromWire(inventoryWire)));
     });
   }
 

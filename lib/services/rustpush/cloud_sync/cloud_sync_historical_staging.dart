@@ -102,7 +102,9 @@ Map<String, Object?> stagedHistoricalPayload({
   required CloudSyncHistoricalArchiveRequest request,
   required String text,
 }) => <String, Object?>{
-  'format': request.parentState != null
+  'format': request.media != null
+      ? 'cloud-sync-historical-source-v4'
+      : request.parentState != null
       ? 'cloud-sync-historical-source-v3'
       : request.groupMetadata == null
           ? 'cloud-sync-historical-source-v1'
@@ -120,6 +122,7 @@ Map<String, Object?> stagedHistoricalPayload({
   'protectedStoreIdentity': request.protectedStoreIdentity,
   if (request.groupMetadata case final group?) 'groupMetadata': group.toWire(),
   if (request.parentState case final parent?) 'parentState': parent.toWire(),
+  if (request.media case final media?) 'media': media.toWire(),
 };
 
 /// Pure reassessment plus canonical encoding for one assessed request and
@@ -140,6 +143,7 @@ EncodedHistoricalSource encodeHistoricalSource({
     manifest,
     account,
     nowMs: nowMs,
+    includeMediaSource: request.media != null,
   );
   if (reassessed is! CloudSyncHistoricalArchiveEligible) {
     throw StateError(
@@ -161,13 +165,14 @@ EncodedHistoricalSource encodeHistoricalSource({
           jsonEncode(request.groupMetadata?.toWire()) ||
       jsonEncode(fresh.parentState?.toWire()) !=
           jsonEncode(request.parentState?.toWire()) ||
+      jsonEncode(fresh.media?.toWire()) != jsonEncode(request.media?.toWire()) ||
       fresh.dateCreatedMs != request.dateCreatedMs ||
       fresh.origin != request.origin ||
       fresh.isFromMe != request.isFromMe) {
     throw StateError('cloud_sync_historical_archive_source_changed');
   }
-  final text = currentRow.text;
-  if (text == null || text.isEmpty) {
+  final text = currentRow.text ?? '';
+  if (request.media == null && text.isEmpty) {
     throw StateError('cloud_sync_historical_archive_body_changed');
   }
   final bytes = utf8.encode(

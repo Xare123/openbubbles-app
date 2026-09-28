@@ -7,6 +7,7 @@ import 'package:crypto/crypto.dart';
 
 import 'cloud_sync_historical_chat_state.dart';
 import 'cloud_sync_historical_attachment_inventory.dart';
+import 'cloud_sync_historical_media_source.dart';
 
 /// Pure eligibility for one stored on-device message row as a historical
 /// archive candidate (v2: supervisor review corrections applied).
@@ -294,6 +295,7 @@ class CloudSyncHistoricalArchiveRequest {
     required this.peerAddress,
     this.groupMetadata,
     this.parentState,
+    this.media,
   });
 
   final String guid;
@@ -311,6 +313,7 @@ class CloudSyncHistoricalArchiveRequest {
   final String peerAddress;
   final CloudSyncHistoricalGroupMetadata? groupMetadata;
   final CloudSyncHistoricalChatState? parentState;
+  final CloudSyncHistoricalMediaSource? media;
 }
 
 /// Fixed reason codes. None carries content, GUIDs, handles, or times.
@@ -354,6 +357,9 @@ CloudSyncHistoricalArchiveAssessment assessHistoricalArchiveRow(
   CloudSyncHistoricalSourceManifest manifest,
   CloudSyncHistoricalAccountBinding account, {
   int? nowMs,
+  // Source-codec preparation only. Production callers leave this false until
+  // historical child upload/readback is integrated with the existing queue.
+  bool includeMediaSource = false,
 }) {
   final now = nowMs ?? DateTime.now().millisecondsSinceEpoch;
   if (!manifest.hasValidShape(nowMs: now) ||
@@ -366,6 +372,7 @@ CloudSyncHistoricalArchiveAssessment assessHistoricalArchiveRow(
   }
   return _assessHistoricalBoundRow(
     row,
+    includeMediaSource: includeMediaSource,
     snapshotParentState: row.chat.parentState,
     snapshotSha256: manifest.snapshotSha256,
     accountFingerprint: manifest.accountFingerprint,
@@ -401,6 +408,7 @@ bool historicalArchiveRowMatchesRequest(
   }
   final assessment = _assessHistoricalBoundRow(
     row,
+    includeMediaSource: request.media != null,
     // The veto below compares the current message and route, not mutable chat
     // preferences or newly restored cloud bookkeeping. Parent creation uses
     // the original protected snapshot separately. Re-reading newer metadata
@@ -427,6 +435,7 @@ bool historicalArchiveRowMatchesRequest(
 
 CloudSyncHistoricalArchiveAssessment _assessHistoricalBoundRow(
   CloudSyncHistoricalRowView row, {
+  required bool includeMediaSource,
   required CloudSyncHistoricalChatState? snapshotParentState,
   required String snapshotSha256,
   required String accountFingerprint,
@@ -517,12 +526,22 @@ CloudSyncHistoricalArchiveAssessment _assessHistoricalBoundRow(
       CloudSyncHistoricalArchiveReasons.reaction,
     );
   }
+  CloudSyncHistoricalMediaSource? media;
   if (row.hasAttachments ||
       row.attachmentCount > 0 ||
       (row.attachmentInventory?.attachments.isNotEmpty ?? false)) {
-    return const CloudSyncHistoricalArchiveIneligible(
-      CloudSyncHistoricalArchiveReasons.media,
-    );
+    if (!includeMediaSource) {
+      return const CloudSyncHistoricalArchiveIneligible(
+        CloudSyncHistoricalArchiveReasons.media,
+      );
+    }
+    try {
+      media = CloudSyncHistoricalMediaSource.capture(row);
+    } catch (_) {
+      return const CloudSyncHistoricalArchiveIneligible(
+        CloudSyncHistoricalArchiveReasons.media,
+      );
+    }
   }
   if (row.hasActualEditOrUnsend || row.dateEditedPresent) {
     return const CloudSyncHistoricalArchiveIneligible(
@@ -588,12 +607,12 @@ CloudSyncHistoricalArchiveAssessment _assessHistoricalBoundRow(
       CloudSyncHistoricalArchiveReasons.counterparts,
     );
   }
-  final text = row.text;
-  if (text == null ||
-      text.trim().isEmpty ||
-      text.contains('\u0000') ||
-      utf8.encode(text).length > _maxTextBytes ||
-      !_hasSinglePlainBody(row.attributedBodies, text)) {
+  final text = row.text ?? '';
+  if (media == null &&
+      (text.trim().isEmpty ||
+          text.contains('\u0000') ||
+          utf8.encode(text).length > _maxTextBytes ||
+          !_hasSinglePlainBody(row.attributedBodies, text))) {
     return const CloudSyncHistoricalArchiveIneligible(
       CloudSyncHistoricalArchiveReasons.body,
     );
@@ -611,11 +630,13 @@ CloudSyncHistoricalArchiveAssessment _assessHistoricalBoundRow(
       guid: guid,
       guidHash: _digest(['cloud-sync-historical-archive-guid-v1', guid]),
       sourceSha256: _digest([
-        snapshotParentState != null
-            ? 'cloud-sync-historical-archive-source-v3'
-            : group == null
-                ? 'cloud-sync-historical-archive-source-v1'
-                : 'cloud-sync-historical-archive-source-v2',
+        media != null
+            ? 'cloud-sync-historical-archive-source-v4'
+            : snapshotParentState != null
+                ? 'cloud-sync-historical-archive-source-v3'
+                : group == null
+                    ? 'cloud-sync-historical-archive-source-v1'
+                    : 'cloud-sync-historical-archive-source-v2',
         guid,
         text,
         sender,
@@ -629,6 +650,7 @@ CloudSyncHistoricalArchiveAssessment _assessHistoricalBoundRow(
         protectedStoreIdentity,
         if (group != null) group.toWire(),
         if (snapshotParentState case final parent?) parent.toWire(),
+        if (media case final captured?) captured.toWire(),
       ]),
       origin: origin,
       textSha256: historicalTextDigest(text),
@@ -642,6 +664,7 @@ CloudSyncHistoricalArchiveAssessment _assessHistoricalBoundRow(
       protectedStoreIdentity: protectedStoreIdentity,
       groupMetadata: group,
       parentState: snapshotParentState,
+      media: media,
     ),
   );
 }

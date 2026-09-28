@@ -19,6 +19,11 @@ pub(crate) fn project_historical_plain_text(
     source: &HistoricalArchiveSource,
     chat: &CloudCanonicalChatPayload,
 ) -> Result<CloudMessage, Failure> {
+    // A media source must go through child upload/readback and a media-aware
+    // parent projector. Never silently archive just its caption as plain text.
+    if source.media().is_some() {
+        return Err(Failure::UnsupportedMessage);
+    }
     if chat.service() != CloudCanonicalService::IMessage {
         return Err(Failure::UnsupportedMessage);
     }
