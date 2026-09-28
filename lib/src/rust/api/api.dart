@@ -443,6 +443,7 @@ cloudSyncOpenHistoricalArchiveCreateProof({
   required String chatLogicalEntityKeyHash,
   required CloudSyncChatIdentitySourceInput chatSource,
   required String parentBindingSha256,
+  String? attachmentReadbackBindingSha256,
 }) => RustLib.instance.api.crateApiApiCloudSyncOpenHistoricalArchiveCreateProof(
   cloudMessagesClient: cloudMessagesClient,
   nativeWriterPauseToken: nativeWriterPauseToken,
@@ -453,6 +454,7 @@ cloudSyncOpenHistoricalArchiveCreateProof({
   chatLogicalEntityKeyHash: chatLogicalEntityKeyHash,
   chatSource: chatSource,
   parentBindingSha256: parentBindingSha256,
+  attachmentReadbackBindingSha256: attachmentReadbackBindingSha256,
 );
 
 /// Consumes one fresh native exact NotFound for this identical historical
@@ -557,6 +559,69 @@ Future<MessageInst> cloudSyncRestoreIdsMutationSource({
   cloudMessagesClient: cloudMessagesClient,
   context: context,
 );
+
+/// Stage local preparation only. The historical journal must adopt and commit
+/// it under the selected immutable source before a byte upload is authorized.
+Future<CloudSyncAttachmentUploadPlanResult>
+cloudSyncStageHistoricalAttachmentUploadPlan({
+  required ArcCloudMessagesClientDefaultAnisetteProvider cloudMessagesClient,
+  required CloudSyncHistoricalAttachmentContext context,
+  required String originalAttachmentGuid,
+  required String sourcePath,
+}) => RustLib.instance.api
+    .crateApiApiCloudSyncStageHistoricalAttachmentUploadPlan(
+      cloudMessagesClient: cloudMessagesClient,
+      context: context,
+      originalAttachmentGuid: originalAttachmentGuid,
+      sourcePath: sourcePath,
+    );
+
+Future<CloudSyncPreparedAttachmentUploadResult>
+cloudSyncPrepareHistoricalAttachmentUpload({
+  required ArcCloudMessagesClientDefaultAnisetteProvider cloudMessagesClient,
+  required CloudSyncHistoricalAttachmentContext context,
+  required CloudSyncAttachmentUploadPlanReference planStage,
+  required String originalAttachmentGuid,
+  required String sourcePath,
+  required BigInt requestTimeoutSeconds,
+}) =>
+    RustLib.instance.api.crateApiApiCloudSyncPrepareHistoricalAttachmentUpload(
+      cloudMessagesClient: cloudMessagesClient,
+      context: context,
+      planStage: planStage,
+      originalAttachmentGuid: originalAttachmentGuid,
+      sourcePath: sourcePath,
+      requestTimeoutSeconds: requestTimeoutSeconds,
+    );
+
+/// Local exact-receipt inspection only; never retries an upload or creates a lease.
+Future<CloudSyncAttachmentUploadReceiptEvidence?>
+cloudSyncVerifyHistoricalAttachmentUploadReceipt({
+  required ArcCloudMessagesClientDefaultAnisetteProvider cloudMessagesClient,
+  required CloudSyncHistoricalAttachmentContext context,
+  required CloudSyncAttachmentUploadPlanReference planStage,
+  required String expectedAttemptId,
+}) => RustLib.instance.api
+    .crateApiApiCloudSyncVerifyHistoricalAttachmentUploadReceipt(
+      cloudMessagesClient: cloudMessagesClient,
+      context: context,
+      planStage: planStage,
+      expectedAttemptId: expectedAttemptId,
+    );
+
+/// Recreate a lost bridge result from its committed native receipt without
+/// uploading again. An adopted result must reuse its existing lease instead.
+Future<CloudSyncProtectedOutboundStage?>
+cloudSyncRecoverHistoricalAttachmentUpload({
+  required ArcCloudMessagesClientDefaultAnisetteProvider cloudMessagesClient,
+  required CloudSyncHistoricalAttachmentContext context,
+  required CloudSyncAttachmentUploadPlanReference planStage,
+}) =>
+    RustLib.instance.api.crateApiApiCloudSyncRecoverHistoricalAttachmentUpload(
+      cloudMessagesClient: cloudMessagesClient,
+      context: context,
+      planStage: planStage,
+    );
 
 /// Stage one original upload plan from the exact retained IDS source. The
 /// caller holds the V2 writer interlock and protected-store exclusion, proves
@@ -865,6 +930,24 @@ Future<CloudSyncPreparedMessageCreateResult> cloudSyncPrepareAttachmentCreate({
   inputs: inputs,
 );
 
+/// Historical child record save through the same one-shot native consumer.
+/// The caller's journal must bind this source, completed upload and operation.
+Future<CloudSyncPreparedMessageCreateResult>
+cloudSyncPrepareHistoricalAttachmentCreate({
+  required ArcCloudMessagesClientDefaultAnisetteProvider cloudMessagesClient,
+  required CloudSyncHistoricalAttachmentContext context,
+  required String requestUuid,
+  required BigInt requestTimeoutSeconds,
+  required List<CloudSyncPreparedMessageCreateInput> inputs,
+}) =>
+    RustLib.instance.api.crateApiApiCloudSyncPrepareHistoricalAttachmentCreate(
+      cloudMessagesClient: cloudMessagesClient,
+      context: context,
+      requestUuid: requestUuid,
+      requestTimeoutSeconds: requestTimeoutSeconds,
+      inputs: inputs,
+    );
+
 /// Drops only an unconsumed prepared owner and its native writer permit.
 /// Idempotent: true means an owner was released; false means no owner remains
 /// in this handle. An already-taken consume owner is untouched, so false is
@@ -971,6 +1054,21 @@ Future<CloudSyncOutboundReconcileResult> cloudSyncReconcileAttachmentCreate({
   requestUuid: requestUuid,
   input: input,
 );
+
+/// Exact historical child readback; NotFound never authorizes another byte upload.
+Future<CloudSyncOutboundReconcileResult>
+cloudSyncReconcileHistoricalAttachmentCreate({
+  required ArcCloudMessagesClientDefaultAnisetteProvider cloudMessagesClient,
+  required CloudSyncHistoricalAttachmentContext context,
+  required String requestUuid,
+  required CloudSyncPreparedMessageCreateInput input,
+}) => RustLib.instance.api
+    .crateApiApiCloudSyncReconcileHistoricalAttachmentCreate(
+      cloudMessagesClient: cloudMessagesClient,
+      context: context,
+      requestUuid: requestUuid,
+      input: input,
+    );
 
 /// Windows-only read diagnostic. Compares bounded feed variants without
 /// persisting tokens, projecting records, or returning account content.
@@ -3955,6 +4053,33 @@ class CloudSyncAttachmentUploadReceiptEvidence {
           completedPayloadSha256 == other.completedPayloadSha256 &&
           logicalEntityKeyHash == other.logicalEntityKeyHash &&
           serverRecordIdHash == other.serverRecordIdHash;
+}
+
+/// A retained historical source and current CloudKit identity, never an IDS
+/// send context. The existing upload owner/capability/receipt engine is shared.
+class CloudSyncHistoricalAttachmentContext {
+  final String storageDirectory;
+  final CloudSyncNativeAuthMetadata expectedAuth;
+  final CloudSyncNativeHistoricalArchiveSourceBinding source;
+
+  const CloudSyncHistoricalAttachmentContext({
+    required this.storageDirectory,
+    required this.expectedAuth,
+    required this.source,
+  });
+
+  @override
+  int get hashCode =>
+      storageDirectory.hashCode ^ expectedAuth.hashCode ^ source.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is CloudSyncHistoricalAttachmentContext &&
+          runtimeType == other.runtimeType &&
+          storageDirectory == other.storageDirectory &&
+          expectedAuth == other.expectedAuth &&
+          source == other.source;
 }
 
 /// Typed input for one conditional message update preparation. Every identity

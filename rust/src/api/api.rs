@@ -2580,12 +2580,11 @@ fn cloud_sync_attachment_upload_record_identifier(
     ))
 }
 
-/// Byte-upload owner, separate from a final CloudKit record-save owner. The
-/// immutable file, randomized plan, exact client and native permit stay native.
-#[frb(ignore)]
 #[path = "cloud_sync_historical_attachment.rs"]
 mod cloud_sync_historical_attachment;
 
+/// Byte-upload owner, separate from a final CloudKit record-save owner. The
+/// immutable file, randomized plan, exact client and native permit stay native.
 #[frb(opaque)]
 pub struct CloudSyncPreparedAttachmentUploadHandle {
     owner: tokio::sync::Mutex<Option<CloudSyncAttachmentUploadOwner>>,
