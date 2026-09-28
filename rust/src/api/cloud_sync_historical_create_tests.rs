@@ -155,6 +155,7 @@ fn proof_fixture_with_group(
         request,
         route,
         parent_binding_sha256: "b".repeat(64),
+        attachment_readback_binding_sha256: None,
         expires_at: std::time::Instant::now() + Duration::from_secs(300),
     }
 }
@@ -187,15 +188,7 @@ fn input(
     let source =
         cloud_sync_validate_historical_create_proof(&proof.storage_directory, &proof.auth, proof)
             .unwrap();
-    let stage = crate::cloud_sync_outbound::historical::stage_historical_message(
-        PathBuf::from(&proof.storage_directory),
-        proof.auth.account_fingerprint.clone(),
-        CONTAINER,
-        &source,
-        &proof.route,
-        &proof.parent_binding_sha256,
-    )
-    .unwrap();
+    let stage = cloud_sync_stage_historical_proof_message(proof, CONTAINER, &source).unwrap();
     if commit {
         cloud_sync_commit_protected_page_lease(
             PathBuf::from(&proof.storage_directory),
@@ -296,6 +289,125 @@ fn historical_api_absence_requires_exact_fresh_purpose_and_source() {
         },
     );
     assert!(check(&received, &absent(&proof), false, Duration::ZERO).is_err());
+}
+
+#[test]
+fn historical_api_media_requires_children_through_stage_reopen_and_raw_readback() {
+    use crate::cloud_sync_historical_attachment_source::tests as media_fixture;
+    for group in [false, true] {
+        for sent in [false, true] {
+            let directory = tempfile::tempdir().unwrap();
+            let mut proof = proof_fixture_with_group(directory.path(), true, group);
+            let plain = cloud_sync_validate_historical_create_proof(
+                &proof.storage_directory,
+                &proof.auth,
+                &proof,
+            )
+            .unwrap();
+            let media = media_fixture::source_with(&media_fixture::descriptor(), sent, |_| {});
+            let binding = HistoricalBinding {
+                snapshot_sha256: &proof.snapshot_sha256,
+                account_fingerprint: &proof.auth.account_fingerprint,
+                protected_store_identity: &proof.auth.protected_store_identity,
+            };
+            let source = HistoricalArchiveSource::capture_with_media(
+                &HistoricalRow {
+                    guid: media.guid(),
+                    text: media.text(),
+                    sender: if sent { plain.sender() } else { plain.peer() },
+                    peer: plain.peer(),
+                    chat_guid: plain.chat_guid(),
+                    date_created_ms: media.sent_timestamp(),
+                    is_from_me: sent,
+                },
+                &binding,
+                sent,
+                plain.group_metadata().cloned(),
+                None,
+                media.media().cloned(),
+            )
+            .unwrap();
+            proof.source = stage_historical_archive_source(
+                directory.path().to_path_buf(),
+                &binding,
+                &source.source_sha256().unwrap(),
+                &source.encode().unwrap(),
+            )
+            .unwrap();
+            cloud_sync_commit_protected_page_lease(
+                directory.path().to_path_buf(),
+                &proof.source.lease_reference,
+                std::slice::from_ref(&proof.source.protected_reference),
+            )
+            .unwrap();
+            // A media source can never degrade to caption-only creation.
+            assert!(cloud_sync_validate_historical_create_proof(
+                &proof.storage_directory,
+                &proof.auth,
+                &proof
+            )
+            .is_err());
+            proof.attachment_readback_binding_sha256 = Some("c".repeat(64));
+            let input = input(&proof, true);
+            let open = |value: &CloudSyncPreparedMessageCreateInput| {
+                cloud_sync_open_message_create_bound(
+                    &proof.storage_directory,
+                    &proof.auth,
+                    CONTAINER,
+                    value,
+                )
+            };
+            let opened = open(&input).unwrap();
+            assert!(opened.message().msg_proto.0.attributed_body.is_some());
+            assert_eq!(
+                opened
+                    .message()
+                    .flags
+                    .contains(rustpush::cloud_messages::MessageFlags::IS_FROM_ME),
+                sent
+            );
+            assert_eq!(
+                opened
+                    .verify_raw_readback(
+                        &inspection(opened.message().clone()),
+                        &input.payload_sha256
+                    )
+                    .unwrap(),
+                input.payload_sha256
+            );
+            for child in [None, Some("invalid".into()), Some("d".repeat(64))] {
+                let mut changed = input.clone();
+                changed
+                    .historical_archive_proof
+                    .as_mut()
+                    .unwrap()
+                    .attachment_readback_binding_sha256 = child;
+                assert!(open(&changed).is_err());
+            }
+            let mut changed = input.clone();
+            changed.historical_archive_proof = None;
+            assert!(open(&changed).is_err());
+            let mut actual = inspection(opened.message().clone());
+            actual.msg_proto.extend([0xf8, 0x07, 0x01]);
+            assert!(opened
+                .verify_raw_readback(&actual, &input.payload_sha256)
+                .is_err());
+            let mut actual = opened.message().clone();
+            actual.msg_proto.0.attributed_body.as_mut().unwrap().push(0);
+            assert!(opened
+                .verify_raw_readback(&inspection(actual), &input.payload_sha256)
+                .is_err());
+        }
+    }
+    let directory = tempfile::tempdir().unwrap();
+    let mut plain = proof_fixture(directory.path(), true);
+    plain.attachment_readback_binding_sha256 = Some("c".repeat(64));
+    assert!(cloud_sync_validate_historical_create_proof(
+        &plain.storage_directory,
+        &plain.auth,
+        &plain
+    )
+    .is_err());
 }
 
 #[test]

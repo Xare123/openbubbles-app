@@ -220,6 +220,10 @@ pub(crate) struct AttachmentUploadPlan {
 }
 
 impl AttachmentUploadPlan {
+    pub(crate) fn source_kind(&self) -> AttachmentUploadSourceKind {
+        self.source_kind
+    }
+
     /// Caller supplies the original allocated record identifier obtained from
     /// the exact authenticated container. No fresh allocation occurs on reopen.
     pub(crate) fn new(
