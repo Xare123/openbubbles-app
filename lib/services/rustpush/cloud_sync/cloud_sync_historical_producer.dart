@@ -28,11 +28,20 @@ abstract class HistoricalRowReader {
   Future<HistoricalRowPage> readPage({String? cursor, required int limit});
 }
 
-/// Exact-GUID ownership known before this run. Production feeds the V2
-/// record-map plus the local-send and received journals.
+/// Exact-GUID ownership. Fixtures may supply sets; production overrides resolve
+/// to query the current owning journals before each row. Neither skipOwned nor
+/// an existing journal means that CloudKit has confirmed an upload.
 abstract class HistoricalOwnershipRegistry {
-  Set<String> get ownedGuids;
-  Set<String> get conflictGuids;
+  Set<String> get ownedGuids => const {};
+  Set<String> get conflictGuids => const {};
+
+  CloudSyncHistoricalDedupeVerdict resolve(
+    CloudSyncHistoricalArchiveRequest request,
+  ) => resolveHistoricalDedupe(
+    guid: request.guid,
+    ownedGuids: ownedGuids,
+    conflictGuids: conflictGuids,
+  );
 }
 
 /// Scoped cursor record. Null means never started; done marks a completed
@@ -127,6 +136,8 @@ class CloudSyncHistoricalProducer {
     this.pageLimit = 50,
     this.maxPages = 20,
     this.nowMs,
+    this.shouldContinue,
+    this.onProgress,
   });
 
   final HistoricalRowReader reader;
@@ -151,6 +162,13 @@ class CloudSyncHistoricalProducer {
   final int pageLimit;
   final int maxPages;
   final int? nowMs;
+
+  /// Pause at admission boundaries, never cancel an in-flight stage/readback.
+  /// An interrupted page keeps its old cursor and replays idempotently later.
+  final bool Function()? shouldContinue;
+
+  /// Counts for this invocation only. They do not prove remote confirmation.
+  final void Function(HistoricalProducerSummary)? onProgress;
 
   /// Scope binding this run: snapshot, account, and protected store.
   String get scope => historicalArchiveScope(manifest, account);
@@ -201,13 +219,24 @@ class CloudSyncHistoricalProducer {
     final stagedGuids = <String, String>{};
     var completed = false;
     var pages = 0;
+    HistoricalProducerSummary summary() => HistoricalProducerSummary(
+      assessed: assessed,
+      staged: stagedCount,
+      skippedOwned: skippedOwned,
+      retainedConflict: retainedConflict,
+      ineligibleByReason: Map.unmodifiable(ineligibleByReason),
+      completed: completed,
+    );
+    scan:
     while (pages < maxPages) {
+      if (shouldContinue?.call() == false) break;
       final page = await reader.readPage(cursor: cursor, limit: pageLimit);
       if (page.views.length > pageLimit ||
           (page.nextCursor != null && page.nextCursor == cursor)) {
         throw StateError('cloud_sync_historical_archive_page_invalid');
       }
       for (final view in page.views) {
+        if (shouldContinue?.call() == false) break scan;
         assessed++;
         final assessment = assessHistoricalArchiveRow(
           view,
@@ -219,6 +248,7 @@ class CloudSyncHistoricalProducer {
           final reason =
               (assessment as CloudSyncHistoricalArchiveIneligible).reason;
           ineligibleByReason.update(reason, (n) => n + 1, ifAbsent: () => 1);
+          onProgress?.call(summary());
           continue;
         }
         final request = assessment.request;
@@ -227,13 +257,10 @@ class CloudSyncHistoricalProducer {
             throw StateError('cloud_sync_historical_archive_source_conflict');
           }
           skippedOwned++;
+          onProgress?.call(summary());
           continue;
         }
-        switch (resolveHistoricalDedupe(
-          guid: request.guid,
-          ownedGuids: registry.ownedGuids,
-          conflictGuids: registry.conflictGuids,
-        )) {
+        switch (registry.resolve(request)) {
           case CloudSyncHistoricalDedupeVerdict.skipOwned:
             skippedOwned++;
           case CloudSyncHistoricalDedupeVerdict.retainConflict:
@@ -244,6 +271,12 @@ class CloudSyncHistoricalProducer {
               throw StateError(
                 'cloud_sync_historical_archive_source_unavailable',
               );
+            }
+            // Reading/validating the source can await native identity. A pause
+            // requested during that await must not admit another operation.
+            if (shouldContinue?.call() == false) {
+              assessed--;
+              break scan;
             }
             final encoded = encodeHistoricalSource(
               request: request,
@@ -260,10 +293,7 @@ class CloudSyncHistoricalProducer {
               encoded.canonicalBytes,
             );
             final expectedLength = encoded.canonicalBytes.length;
-            final sealed = await stageAndAdopt(
-              request,
-              encoded.canonicalBytes,
-            );
+            final sealed = await stageAndAdopt(request, encoded.canonicalBytes);
             _requireSealedMatches(
               request,
               expectedSha256,
@@ -274,6 +304,7 @@ class CloudSyncHistoricalProducer {
             stagedGuids[request.guid] = request.sourceSha256;
             stagedCount++;
         }
+        onProgress?.call(summary());
       }
       cursor = page.nextCursor;
       await cursors.save(
@@ -290,14 +321,7 @@ class CloudSyncHistoricalProducer {
       }
     }
     return (
-      summary: HistoricalProducerSummary(
-        assessed: assessed,
-        staged: stagedCount,
-        skippedOwned: skippedOwned,
-        retainedConflict: retainedConflict,
-        ineligibleByReason: ineligibleByReason,
-        completed: completed,
-      ),
+      summary: summary(),
       output: HistoricalProducerOutput(staged: staged),
     );
   }

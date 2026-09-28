@@ -8,6 +8,7 @@ import 'package:bluebubbles/app/layouts/settings/pages/profile/posterkit.dart';
 import 'package:bluebubbles/app/layouts/settings/pages/profile/profile_scaffold.dart';
 import 'package:bluebubbles/app/layouts/settings/pages/profile/cloud_sync_keychain_card.dart';
 import 'package:bluebubbles/app/layouts/settings/pages/profile/cloud_sync_progress_card.dart';
+import 'package:bluebubbles/app/layouts/settings/pages/profile/cloud_sync_historical_import_card.dart';
 import 'package:bluebubbles/app/layouts/settings/pages/profile/cloud_sync_profile_entry.dart';
 import 'package:bluebubbles/app/layouts/settings/pages/profile/registration_repair_dialog.dart';
 import 'package:bluebubbles/app/layouts/settings/pages/theming/avatar/avatar_crop.dart';
@@ -529,6 +530,13 @@ class _ProfilePanelState extends OptimizedState<ProfilePanel> with WidgetsBindin
                       canRetryPendingUpload: () => pushService.cloudSyncV2PendingUploadRetryAvailable,
                       onPrepareUploadRetry: pushService.prepareCloudSyncV2PendingUploadRetry,
                     ),
+                    if (pushService.cloudSyncV2HistoricalImportVisible)
+                      CloudSyncHistoricalImportCard(
+                        controller: pushService.cloudSyncV2HistoricalImport,
+                        isAvailable: () => pushService.cloudSyncV2HistoricalImportAvailable,
+                        onPrepare: pushService.prepareCloudSyncV2HistoricalImport,
+                        onConfirm: pushService.confirmCloudSyncV2HistoricalImport,
+                      ),
                   ]),
                 if (CloudSyncProfileEntry.showV2Card(v2Visible: pushService.cloudSyncV2ProgressVisible) && pushService.state?.icloudServices?.keychain != null)
                   const CloudSyncKeychainCard(),

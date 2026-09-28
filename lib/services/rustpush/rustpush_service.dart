@@ -73,6 +73,8 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_models.dart'
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_message_update_executor.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_observability.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_progress.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_historical_import_controller.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_historical_import_runtime.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_background_progress.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_background_status.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_profile_readiness.dart';
@@ -8150,6 +8152,7 @@ class RustPushService extends GetxService {
   Future<CloudSyncSemanticDrainResult>? _cloudSyncV2SemanticPullInFlight;
   final _cloudSyncV2AttachmentGate = CloudAttachmentSyncGate();
   final cloudSyncV2Progress = CloudSyncProgress();
+  final cloudSyncV2HistoricalImport = CloudSyncHistoricalImportController();
   bool _cloudSyncV2SemanticPullQuiescing = false;
   static const int _cloudSyncV2AutomaticCatchUpMaximumBatches = 8;
   static const Duration _cloudSyncV2AutomaticCatchUpYield =
@@ -10007,6 +10010,7 @@ class RustPushService extends GetxService {
         !_cloudSyncV2CanaryRuntimeAllowed ||
         !ls.isUiThread ||
         loggingOut || _serviceClosing ||
+        cloudSyncV2HistoricalImport.active ||
         _cloudSyncV2PcsPreparationQuiescing ||
         _cloudSyncV2PcsPreparationInFlight != null ||
         _cloudSyncV2SemanticPullQuiescing ||
@@ -10334,6 +10338,7 @@ class RustPushService extends GetxService {
       legacyEnabledOrRunning: ss.settings.cloudSyncingEnabled.value ||
           isSyncing.value != null,
       operationActive: _cloudSyncV2PcsPreparationInFlight != null ||
+          cloudSyncV2HistoricalImport.active ||
           cloudSyncV2HistoryReadActive || _cloudSyncV2OutboundQuiescing ||
           _cloudSyncV2OutboundConfirmation != null ||
           _cloudSyncV2OutboundProvisioningInFlight != null ||
@@ -10349,6 +10354,87 @@ class RustPushService extends GetxService {
 
   String? get cloudSyncV2ProgressUnavailableMessage =>
       _cloudSyncV2ProfileReadiness.message;
+
+  /// Explicit existing-history import, separate from automatic new-message
+  /// archival. A retained outbox is not blanket permission to drain it: the
+  /// historical coordinator selects only its own exact operation at dispatch.
+  bool get cloudSyncV2HistoricalImportVisible => cloudSyncV2ProgressVisible &&
+      CloudSyncDevGate.manualOutboundCanaryEnabled && CloudKitWriterOwnership.v2MutationsEnabled;
+
+  bool get cloudSyncV2HistoricalImportAvailable {
+    if (!cloudSyncV2HistoricalImportVisible ||
+        cloudSyncV2HistoricalImport.active || cloudSyncV2Progress.active ||
+        _cloudSyncV2MessageUpdateInFlight != null) {
+      return false;
+    }
+    final readiness = _cloudSyncV2ProfileReadiness;
+    return readiness == CloudSyncProfileReadiness.ready ||
+        readiness == CloudSyncProfileReadiness.unfinishedUploads;
+  }
+
+  Future<CloudSyncHistoricalImportConfirmation>
+  prepareCloudSyncV2HistoricalImport() {
+    _readCloudSyncV2ProfileReadiness(fresh: true);
+    if (!cloudSyncV2HistoricalImportAvailable) {
+      throw StateError('cloud_sync_historical_import_unavailable');
+    }
+    return ls.retainEngineUntil(() => cloudSyncV2HistoricalImport.prepare(() async {
+      final capturedState = state;
+      final client = capturedState?.icloudServices?.cloudMessagesClient;
+      if (capturedState == null || client == null) {
+        throw StateError('cloud_sync_historical_import_identity_changed');
+      }
+      final store = Database.store;
+      final storage = statePath;
+      final accountLabel = ss.settings.iCloudAccount.value;
+      bool stillCurrent() => !loggingOut && !_serviceClosing &&
+          !_cloudSyncV2OutboundQuiescing && !_cloudSyncV2PcsPreparationQuiescing &&
+          identical(capturedState, state) &&
+          identical(client, state?.icloudServices?.cloudMessagesClient) &&
+          identical(store, Database.store) && !store.isClosed() &&
+          storage == statePath && accountLabel == ss.settings.iCloudAccount.value &&
+          ss.settings.finishedSetup.value && !ss.settings.cloudSyncingEnabled.value &&
+          isSyncing.value == null;
+      return prepareCloudSyncHistoricalImportPlan(
+        state: capturedState, store: store, storageDirectory: storage,
+        accountLabel: accountLabel, stillCurrent: stillCurrent,
+        settleReader: () async {
+          if (!stillCurrent() || !cloudSyncV2HistoricalImport.active ||
+              _cloudSyncV2SemanticPullInFlight != null) {
+            throw StateError('cloud_sync_historical_import_reader_pending');
+          }
+          // The source handoff has released its network/store locks. Use normal
+          // projection and preserve edits/unsends; do not enable uploads or
+          // recursively restart the importer. One bounded pass, never a full
+          // retained-history sweep for every discovered record.
+          final read = _runCloudSyncV2ManualSemanticPull(
+            maximumPasses: 1, sweepRetainedAtHead: false,
+          );
+          _cloudSyncV2SemanticPullInFlight = read;
+          try {
+            await read;
+          } finally {
+            if (identical(_cloudSyncV2SemanticPullInFlight, read)) {
+              _cloudSyncV2SemanticPullInFlight = null;
+            }
+          }
+        },
+      );
+    }));
+  }
+
+  Future<void> confirmCloudSyncV2HistoricalImport(
+    CloudSyncHistoricalImportConfirmation confirmation,
+  ) {
+    _readCloudSyncV2ProfileReadiness(fresh: true);
+    if (!cloudSyncV2HistoricalImportAvailable) {
+      cloudSyncV2HistoricalImport.cancel(confirmation);
+      throw StateError('cloud_sync_historical_import_unavailable');
+    }
+    // No settings are changed. Even an admitted Apple call survives foreground
+    // loss until the controller reaches its safe next-row pause boundary.
+    return ls.retainEngineUntil(() => cloudSyncV2HistoricalImport.confirm(confirmation));
+  }
 
   bool get cloudSyncV2HistoryReadActive =>
       _cloudSyncV2SemanticPullInFlight != null || _cloudSyncV2SemanticPullQuiescing;
@@ -11070,6 +11156,7 @@ class RustPushService extends GetxService {
         !_cloudSyncV2DeveloperRuntimeAllowed ||
         !ls.isUiThread ||
         loggingOut ||
+        cloudSyncV2HistoricalImport.active ||
         _cloudSyncV2OutboundQuiescing ||
         _cloudSyncV2OutboundProvisioningInFlight != null ||
         _cloudSyncV2OutboundInFlight != null ||
@@ -11368,6 +11455,7 @@ class RustPushService extends GetxService {
       readPreflight: _buildCloudSyncV2OutboundPreflight().read,
       privateStorageDirectory: statePath,
       receiptRecoveryAllowed: () => statePath == expectedStorage && cloudSyncV2ProgressVisible &&
+          !cloudSyncV2HistoricalImport.active &&
           ss.settings.finishedSetup.value && !loggingOut && !_serviceClosing &&
           !_cloudSyncV2OutboundQuiescing && !_cloudSyncV2PcsPreparationQuiescing &&
           !cloudSyncV2Progress.restartRequired && !cloudSyncV2HistoryReadActive &&
@@ -11706,10 +11794,18 @@ class RustPushService extends GetxService {
     _cloudSyncV2PcsPreparationQuiescing = true;
     _cloudSyncV2SemanticPullQuiescing = true;
     _cloudSyncV2OutboundQuiescing = true;
+    cloudSyncV2HistoricalImport.invalidate();
     _cloudSyncV2MessageUpdateRetryTimer?.cancel();
     _cloudSyncV2MessageUpdateRetryTimer = null;
     _cloudSyncV2MessageUpdateRetryDueUtc = null;
     try {
+      try {
+        await cloudSyncV2HistoricalImport.drain()
+            .timeout(_cloudSyncV2OutboundQuiescenceTimeout);
+      } on TimeoutException {
+        // Retain the existing native state if an admitted request is unfinished.
+        throw StateError('cloud_sync_historical_import_quiescence_timeout');
+      }
       try {
         await _cloudSyncV2ReceivedRuntime?.dispose().timeout(_cloudSyncV2OutboundQuiescenceTimeout);
         _cloudSyncV2ReceivedRuntime = null;
@@ -11923,6 +12019,8 @@ class RustPushService extends GetxService {
     api.SharedPushState closingState,
   ) async {
     try {
+      await cloudSyncV2HistoricalImport.drain()
+          .timeout(_cloudSyncV2OutboundQuiescenceTimeout);
       await _cloudSyncV2LocalSendRuntime?.dispose()
           .timeout(_cloudSyncV2OutboundQuiescenceTimeout);
       _cloudSyncV2LocalSendRuntime = null;
@@ -11946,6 +12044,7 @@ class RustPushService extends GetxService {
   void onClose() {
     _serviceClosing = true;
     cloudSyncV2Progress.pause();
+    cloudSyncV2HistoricalImport.invalidate();
     unawaited(_disableCloudSyncV2AndroidBackgroundRead());
     _networkRefreshTimer?.cancel();
     _networkSubscription?.cancel();

@@ -343,7 +343,7 @@ void main() {
   );
 }
 
-class _EmptyRegistry implements HistoricalOwnershipRegistry {
+class _EmptyRegistry extends HistoricalOwnershipRegistry {
   @override
   Set<String> get ownedGuids => const {};
   @override

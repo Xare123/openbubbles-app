@@ -116,6 +116,9 @@ class LifecycleService extends GetxService with WidgetsBindingObserver {
     Logger.debug("App State changed to $state");
     if (isUiThread) {
       pushService.cloudSyncV2Progress.onAppLifecycleState(state);
+      if (state != AppLifecycleState.resumed) {
+        pushService.cloudSyncV2HistoricalImport.pause();
+      }
     }
 
     // If the current state is resume, and we've already had a resume, remove all states up to the last resume.

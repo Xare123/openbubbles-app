@@ -104,7 +104,7 @@ class _StoreReader implements HistoricalRowReader {
   }
 }
 
-class _Registry implements HistoricalOwnershipRegistry {
+class _Registry extends HistoricalOwnershipRegistry {
   _Registry({Set<String>? owned, Set<String>? conflicts})
     : ownedGuids = owned ?? {},
       conflictGuids = conflicts ?? {};

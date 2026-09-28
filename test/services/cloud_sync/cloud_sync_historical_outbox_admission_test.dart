@@ -1181,7 +1181,7 @@ class _OneHistoricalRow implements HistoricalRowReader {
   }) async => HistoricalRowPage(views: [view], nextCursor: null);
 }
 
-class _NoHistoricalOwners implements HistoricalOwnershipRegistry {
+class _NoHistoricalOwners extends HistoricalOwnershipRegistry {
   @override
   Set<String> get ownedGuids => const {};
   @override
