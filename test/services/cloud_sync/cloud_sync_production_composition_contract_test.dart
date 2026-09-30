@@ -271,14 +271,17 @@ void main() {
     expect(end, greaterThan(start));
     final worker = source.substring(start, end);
     final read = worker.indexOf(
-      'await runCloudSyncV2ManualSemanticPullConfirmed(',
+      'final read = _runCloudSyncV2ManualSemanticPull(',
     );
     final result = worker.indexOf('return result;', read);
     expect(read, greaterThan(0));
     expect(result, greaterThan(read));
     final readback = worker.substring(read, result);
     expect(readback, contains('maximumPasses: 1,'));
-    expect(readback, contains('resumeAutomaticUploads: false,'));
+    expect(readback, contains('sweepRetainedAtHead: false,'));
+    expect(readback, contains('_cloudSyncV2SemanticPullInFlight = read;'));
+    expect(readback, contains('identical(_cloudSyncV2SemanticPullInFlight, read)'));
+    expect(readback, isNot(contains('_queueCloudSyncV2LocalSends(')));
   });
 
   test(

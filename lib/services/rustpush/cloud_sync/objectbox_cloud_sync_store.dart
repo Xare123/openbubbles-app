@@ -3659,6 +3659,7 @@ class ObjectBoxCloudSyncStore
     final scopeKey = _scopeKey(scope);
     final leaseIdHash = _digest('outbox-lease\u001f$leaseId');
     return _store.runInTransaction(TxMode.write, () {
+      _validateOutboxDispatch?.call();
       final checkpoint = _checkpointLocked(scope, nowMs: nowMs);
       final entities = <CloudOutboxOperationEntity>[];
       for (final operationId in ids) {

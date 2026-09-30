@@ -20,6 +20,7 @@ import 'cloud_inbox_applier.dart';
 import 'cloud_protected_page_lease_lifecycle.dart';
 import 'cloud_sync_engine.dart';
 import 'cloud_sync_dev_gate.dart';
+import 'cloud_sync_automatic_archive_preference.dart';
 import 'cloud_sync_local_send_consumer.dart';
 import 'cloud_sync_local_send_recovery.dart';
 import 'cloud_sync_local_send_journal.dart';
@@ -714,13 +715,16 @@ final class CloudSyncProductionLocalSendAdapter {
     required ActiveCloudMessagesClientReader readActiveClient,
     required String privateStorageDirectory,
     required bool Function() stillCurrent,
+    CloudSyncAutomaticArchiveIdentity? automaticArchiveIdentity,
   }) : _readActiveClient = readActiveClient,
        _privateStorageDirectory = privateStorageDirectory,
-       _stillCurrent = stillCurrent;
+       _stillCurrent = stillCurrent,
+       _automaticArchiveIdentity = automaticArchiveIdentity;
 
   final ActiveCloudMessagesClientReader _readActiveClient;
   final String _privateStorageDirectory;
   final bool Function() _stillCurrent;
+  final CloudSyncAutomaticArchiveIdentity? _automaticArchiveIdentity;
   Future<CloudSyncLocalSendConsumerResult>? _running;
   CloudSyncNativeAuthSnapshot? _boundAuth;
   CloudSyncLocalSendExactSelection? _exactSelection;
@@ -813,6 +817,13 @@ final class CloudSyncProductionLocalSendAdapter {
         !_stillCurrent()) {
       throw StateError('cloud_sync_local_send_consumer_disabled');
     }
+    // Explicit diagnostic/history selections retain their own authority. An
+    // unrestricted automatic pass must have a scoped grant before touching DB.
+    if (selection == null && historical == null &&
+        (_automaticArchiveIdentity == null ||
+            _automaticArchiveIdentity.writerEpoch <= 0)) {
+      throw StateError('cloud_sync_automatic_archive_confirmation_required');
+    }
     final objectBox = Database.store;
     final authProvider = CloudSyncProductionAuthSnapshotProvider(
       readActiveClient: _readActiveClient,
@@ -837,6 +848,14 @@ final class CloudSyncProductionLocalSendAdapter {
       // A worker may use an explicitly provisioned owner, never silently
       // migrate a user's legacy account or quarantine legacy writes itself.
       throw StateError('cloud_sync_local_send_owner_required');
+    }
+    if (selection == null && historical == null &&
+        !_automaticArchiveIdentity!.matchesBinding(
+          accountFingerprint: auth.accountFingerprint,
+          protectedStoreIdentity: auth.protectedStoreIdentity,
+          writerEpoch: owner.epoch,
+        )) {
+      throw StateError('cloud_sync_automatic_archive_identity_changed');
     }
     // Authority is pinned to this bounded pass, not the adapter lifetime.
     // Reconciliation may advance the epoch. The old pass still fails its
@@ -910,6 +929,7 @@ final class CloudSyncProductionLocalSendAdapter {
     final chatEvidence = <String, CloudSyncChatIdentityEvidence>{};
     final historicalChatOrigins = <String, CloudSyncHistoricalParentOrigin>{};
     late final void Function() validateHistoricalSelection;
+    late final CloudSyncLocalSendAuthFence fence;
     final durable = ObjectBoxCloudSyncStore(
       store: objectBox,
       protector: protector,
@@ -920,7 +940,12 @@ final class CloudSyncProductionLocalSendAdapter {
       readChatIdentityEvidence: (operation) => chatEvidence[operation.operationId],
       readHistoricalChatOrigin: (operation) => historicalChatOrigins[operation.operationId],
       recordExistingHistoryDiagnostic: existingHistoryDiagnostics.record,
-      validateOutboxDispatch: historical == null ? null : () => validateHistoricalSelection(),
+      validateOutboxDispatch: () {
+        // Applies to queued recovery and child dispatch, not only admission of
+        // new candidates. Revoked consent cannot dispatch the next operation.
+        fence.requireCurrentBinding(auth);
+        if (historical != null) validateHistoricalSelection();
+      },
     );
     final interlock = CloudKitOperationInterlock(
       privateStorageDirectory: _privateStorageDirectory, fenceStore: durable,
@@ -932,7 +957,7 @@ final class CloudSyncProductionLocalSendAdapter {
       schemaVersion: 2,
       persistenceLane: CloudSyncPersistenceLane.semantic,
     );
-    final fence = CloudSyncLocalSendAuthFence(
+    fence = CloudSyncLocalSendAuthFence(
       expected: auth, capture: authProvider.capture,
       stillCurrent: () => _stillCurrent() && !objectBox.isClosed() &&
           identical(objectBox, Database.store) &&

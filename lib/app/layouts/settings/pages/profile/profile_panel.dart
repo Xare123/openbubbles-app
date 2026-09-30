@@ -10,6 +10,7 @@ import 'package:bluebubbles/app/layouts/settings/pages/profile/cloud_sync_keycha
 import 'package:bluebubbles/app/layouts/settings/pages/profile/cloud_sync_progress_card.dart';
 import 'package:bluebubbles/app/layouts/settings/pages/profile/cloud_sync_historical_import_card.dart';
 import 'package:bluebubbles/app/layouts/settings/pages/profile/cloud_sync_background_read_card.dart';
+import 'package:bluebubbles/app/layouts/settings/pages/profile/cloud_sync_automatic_archive_card.dart';
 import 'package:bluebubbles/app/layouts/settings/pages/profile/cloud_sync_profile_entry.dart';
 import 'package:bluebubbles/app/layouts/settings/pages/profile/registration_repair_dialog.dart';
 import 'package:bluebubbles/app/layouts/settings/pages/theming/avatar/avatar_crop.dart';
@@ -542,6 +543,11 @@ class _ProfilePanelState extends OptimizedState<ProfilePanel> with WidgetsBindin
                       CloudSyncBackgroundReadCard(
                         onLoad: pushService.readCloudSyncV2BackgroundReadPreference,
                         onChanged: pushService.setCloudSyncV2BackgroundReadPreference,
+                      ),
+                    if (pushService.cloudSyncV2AutomaticArchiveVisible)
+                      CloudSyncAutomaticArchiveCard(
+                        onLoad: pushService.readCloudSyncV2AutomaticArchivePreference,
+                        onChanged: pushService.setCloudSyncV2AutomaticArchivePreference,
                       ),
                   ]),
                 if (CloudSyncProfileEntry.showV2Card(v2Visible: pushService.cloudSyncV2ProgressVisible) && pushService.state?.icloudServices?.keychain != null)

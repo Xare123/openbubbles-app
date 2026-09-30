@@ -16,6 +16,17 @@ import 'package:universal_io/io.dart';
 import 'cloud_sync_test_helpers.dart';
 
 void main() {
+  test('unrestricted adapter cannot read an account without scoped consent', () async {
+    var clientReads = 0;
+    final adapter = CloudSyncProductionLocalSendAdapter(
+      readActiveClient: () { clientReads++; return null; },
+      privateStorageDirectory: 'unused-unconsented-path',
+      stillCurrent: () => true,
+    );
+    await expectLater(adapter.runOnce(), throwsStateError);
+    expect(clientReads, 0);
+  });
+
   test(
     'exact production selection stays pinned and never enables runtime',
     () async {
@@ -78,11 +89,20 @@ void main() {
       expect(adapter, contains(
         '(historical != null && !CloudSyncDevGate.manualSemanticPullEnabled)',
       ));
-      expect(adapter, contains('validateOutboxDispatch: historical == null ? null : () => validateHistoricalSelection()'));
+      final dispatchGuard = adapter.substring(
+        adapter.indexOf('validateOutboxDispatch: () {'),
+        adapter.indexOf('final interlock = CloudKitOperationInterlock'),
+      );
+      expect(dispatchGuard, contains('fence.requireCurrentBinding(auth)'));
+      expect(dispatchGuard, contains('if (historical != null) validateHistoricalSelection()'));
       expect(adapter, contains('return rows.where(historical.owns).toList(growable: false)'));
       expect(adapter, contains('expectedOperation: historicalOperation'));
       expect(adapter, contains('validateContinuation: historical == null ? null : validateSelection'));
       expect(adapter, contains('owner.owner != CloudKitWriterOwner.v2'));
+      expect(adapter.indexOf('cloud_sync_automatic_archive_confirmation_required'),
+        lessThan(adapter.indexOf('final objectBox = Database.store')));
+      expect(adapter.indexOf('_automaticArchiveIdentity!.matchesBinding('),
+        lessThan(adapter.indexOf('late final CloudSyncAttachmentUploadJournal uploads')));
       // Composition guard only: behavior across epochs is covered by the
       // real ObjectBox retained-upload tests, not by these source assertions.
       expect(adapter, isNot(contains('_boundWriterEpoch')));

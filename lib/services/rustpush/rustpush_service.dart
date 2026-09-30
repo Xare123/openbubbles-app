@@ -41,6 +41,7 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_attachment_produc
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_attachment_sync_gate.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_android_background.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_background_read_preference.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_automatic_archive_preference.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_dev_gate.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_composer_admission.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_send_journal.dart';
@@ -8160,6 +8161,10 @@ class RustPushService extends GetxService {
       Duration(milliseconds: 250);
   CloudSyncProductionOutboundCanaryAdapter? _cloudSyncV2OutboundAdapter;
   CloudSyncLocalSendRuntime? _cloudSyncV2LocalSendRuntime;
+  bool Function()? _cloudSyncV2AutomaticArchiveRuntimeCurrent;
+  CloudSyncAutomaticArchiveIdentity? _cloudSyncV2AutomaticArchiveIdentity;
+  Future<void>? _cloudSyncV2AutomaticArchiveAdmission;
+  Future<CloudSyncAutomaticArchivePreference>? _cloudSyncV2AutomaticArchiveSetting;
   CloudSyncOutboundCanaryConfirmation? _cloudSyncV2OutboundConfirmation;
   Future<CloudKitV2WriterProvisioningResult>?
       _cloudSyncV2OutboundProvisioningInFlight;
@@ -8353,19 +8358,179 @@ class RustPushService extends GetxService {
     }
   }
 
+  bool get cloudSyncV2AutomaticArchiveVisible =>
+      CloudSyncDevGate.localSendRuntimeEnabled &&
+      CloudSyncDevGate.manualOutboundCanaryEnabled &&
+      CloudKitWriterOwnership.v2MutationsEnabled &&
+      _cloudSyncV2CanaryRuntimeAllowed;
+
+  bool get _cloudSyncV2AutomaticArchiveActive =>
+      _cloudSyncV2LocalSendRuntime != null &&
+      _cloudSyncV2AutomaticArchiveRuntimeCurrent?.call() == true;
+
+  CloudSyncAutomaticArchivePreferences _cloudSyncV2AutomaticArchivePreferences() {
+    final expectedState = state;
+    final client = expectedState?.icloudServices?.cloudMessagesClient;
+    final storage = statePath;
+    final store = Database.store;
+    final authority = ObjectBoxCloudKitWriterAuthority(store: store);
+    String? capturedAccount;
+    bool stillCurrent() => cloudSyncV2AutomaticArchiveVisible &&
+        !loggingOut && !_serviceClosing && !_cloudSyncV2OutboundQuiescing &&
+        client != null && storage.isNotEmpty &&
+        identical(expectedState, state) &&
+        identical(client, state?.icloudServices?.cloudMessagesClient) &&
+        identical(store, Database.store) && !store.isClosed() &&
+        storage == statePath && !ss.settings.cloudSyncingEnabled.value;
+    int currentEpoch() {
+      if (!stillCurrent() || capturedAccount == null) return 0;
+      final owner = authority.read(CloudKitWriterScope(
+        accountFingerprint: capturedAccount!,
+      ));
+      return owner?.owner == CloudKitWriterOwner.v2 ? owner!.epoch : 0;
+    }
+    final provider = CloudSyncProductionAuthSnapshotProvider(
+      readActiveClient: () => state?.icloudServices?.cloudMessagesClient,
+      nativeAuthBinding: FrbCloudSyncNativeAuthBinding(),
+      privateStorageDirectory: storage,
+    );
+    return CloudSyncAutomaticArchivePreferences(
+      captureIdentity: () async {
+        final auth = await provider.capture().timeout(const Duration(seconds: 10));
+        if (auth == null || !stillCurrent()) return null;
+        capturedAccount = auth.accountFingerprint;
+        return CloudSyncAutomaticArchiveIdentity(
+          accountFingerprint: auth.accountFingerprint,
+          protectedStoreIdentity: auth.protectedStoreIdentity,
+          writerEpoch: currentEpoch(),
+        );
+      },
+      currentWriterEpoch: currentEpoch,
+      stillCurrent: stillCurrent,
+      reload: ss.prefs.reload,
+      read: ss.prefs.get,
+      write: ss.prefs.setString,
+      prepareWriter: () async {
+        if (!stillCurrent() || _cloudSyncV2OutboundProvisioningInFlight != null ||
+            _cloudSyncV2OutboundInFlight != null ||
+            _cloudSyncV2MessageUpdateInFlight != null ||
+            _cloudSyncV2SemanticPullInFlight != null) {
+          throw StateError('cloud_sync_automatic_archive_setup_busy');
+        }
+        final operation = _cloudSyncV2Outbound()
+            .ensureWriterOwned(initialOwnerOnly: true);
+        _cloudSyncV2OutboundProvisioningInFlight = operation;
+        try {
+          await operation;
+          if (!stillCurrent()) {
+            throw StateError('cloud_sync_automatic_archive_identity_changed');
+          }
+        } finally {
+          if (identical(_cloudSyncV2OutboundProvisioningInFlight, operation)) {
+            _cloudSyncV2OutboundProvisioningInFlight = null;
+          }
+        }
+      },
+    );
+  }
+
+  Future<CloudSyncAutomaticArchivePreference> readCloudSyncV2AutomaticArchivePreference() {
+    if (!cloudSyncV2AutomaticArchiveVisible || !ls.isUiThread || mcs.background) {
+      throw StateError('cloud_sync_automatic_archive_unavailable');
+    }
+    return _cloudSyncV2AutomaticArchivePreferences().load();
+  }
+
+  Future<CloudSyncAutomaticArchivePreference> setCloudSyncV2AutomaticArchivePreference(
+    CloudSyncAutomaticArchivePreference expected,
+    bool enabled, {
+    required bool acknowledgeQueuedUploads,
+  }) async {
+    if (!cloudSyncV2AutomaticArchiveVisible || !ls.isUiThread || mcs.background ||
+        ls.currentState != AppLifecycleState.resumed ||
+        _cloudSyncV2AutomaticArchiveSetting != null) {
+      throw StateError('cloud_sync_automatic_archive_unavailable');
+    }
+    final operation = _cloudSyncV2AutomaticArchivePreferences().setEnabled(
+      expected, enabled, acknowledgeQueuedUploads: acknowledgeQueuedUploads,
+    );
+    _cloudSyncV2AutomaticArchiveSetting = operation;
+    try {
+      final saved = await operation;
+      if (saved.enabled) {
+        _queueCloudSyncV2LocalSends(CloudSyncTrigger.localOutbox);
+      } else {
+        // Revoke before retiring the worker. Its identity fence observes the
+        // changed grant before subsequent effects; already-submitted work is
+        // retained for exact recovery, never deleted or blindly re-sent.
+        unawaited(_retireCloudSyncV2AutomaticArchive().catchError((Object _) {
+          Logger.warn('Cloud Sync V2 automatic archive is still quiescing');
+        }));
+      }
+      return saved;
+    } finally {
+      if (identical(_cloudSyncV2AutomaticArchiveSetting, operation)) {
+        _cloudSyncV2AutomaticArchiveSetting = null;
+      }
+    }
+  }
+
+  Future<void> _retireCloudSyncV2AutomaticArchive() async {
+    final runtime = _cloudSyncV2LocalSendRuntime;
+    if (runtime == null) return;
+    await runtime.dispose();
+    if (identical(_cloudSyncV2LocalSendRuntime, runtime)) {
+      _cloudSyncV2LocalSendRuntime = null;
+      _cloudSyncV2AutomaticArchiveRuntimeCurrent = null;
+      _cloudSyncV2AutomaticArchiveIdentity = null;
+    }
+  }
+
   void _queueCloudSyncV2LocalSends(CloudSyncTrigger trigger) {
     _queueCloudSyncV2ReceivedSources(trigger);
+    if (!cloudSyncV2AutomaticArchiveVisible || !ls.isUiThread || mcs.background ||
+        _cloudSyncV2AutomaticArchiveAdmission != null || loggingOut ||
+        _cloudSyncV2OutboundQuiescing || statePath.isEmpty ||
+        state?.icloudServices?.cloudMessagesClient == null) {
+      return;
+    }
+    final admission = _admitCloudSyncV2AutomaticArchive(trigger);
+    _cloudSyncV2AutomaticArchiveAdmission = admission;
+    unawaited(admission.catchError((Object _) {
+      Logger.warn('Cloud Sync V2 automatic archive setting unavailable; queue retained');
+    }).whenComplete(() {
+      if (identical(_cloudSyncV2AutomaticArchiveAdmission, admission)) {
+        _cloudSyncV2AutomaticArchiveAdmission = null;
+      }
+    }));
+  }
+
+  Future<void> _admitCloudSyncV2AutomaticArchive(CloudSyncTrigger trigger) async {
+    final preferences = _cloudSyncV2AutomaticArchivePreferences();
+    final consent = await preferences.load();
+    if (!preferences.isGranted(consent)) {
+      await _retireCloudSyncV2AutomaticArchive();
+      return;
+    }
+    if (_cloudSyncV2LocalSendRuntime != null &&
+        _cloudSyncV2AutomaticArchiveRuntimeCurrent?.call() != true) {
+      await _retireCloudSyncV2AutomaticArchive();
+    }
+    if (!preferences.isGranted(consent)) return;
+    _startCloudSyncV2AutomaticArchive(trigger, preferences, consent);
+  }
+
+  void _startCloudSyncV2AutomaticArchive(
+    CloudSyncTrigger trigger,
+    CloudSyncAutomaticArchivePreferences preferences,
+    CloudSyncAutomaticArchivePreference consent,
+  ) {
     if (!CloudSyncDevGate.localSendRuntimeEnabled ||
         !CloudSyncDevGate.manualOutboundCanaryEnabled ||
         !CloudKitWriterOwnership.v2MutationsEnabled ||
-        !_cloudSyncV2CanaryRuntimeAllowed || !_cloudSyncV2DeveloperRuntimeAllowed ||
+        !_cloudSyncV2CanaryRuntimeAllowed || !preferences.isGranted(consent) ||
         !ls.isUiThread || loggingOut || _cloudSyncV2OutboundQuiescing ||
-        _cloudSyncV2SemanticPullInFlight != null ||
-        _cloudSyncV2OutboundConfirmation != null ||
-        _cloudSyncV2OutboundProvisioningInFlight != null ||
-        _cloudSyncV2OutboundInFlight != null ||
-        _cloudSyncV2MessageUpdateInFlight != null ||
-        ss.settings.cloudSyncingEnabled.value || isSyncing.value != null ||
+        ss.settings.cloudSyncingEnabled.value ||
         statePath.isEmpty || state?.icloudServices?.cloudMessagesClient == null) {
       return;
     }
@@ -8379,16 +8544,32 @@ class RustPushService extends GetxService {
           identical(expectedClient, state?.icloudServices?.cloudMessagesClient) &&
           identical(expectedStore, Database.store) && !expectedStore.isClosed() &&
           !ss.settings.cloudSyncingEnabled.value &&
-          _cloudSyncV2DeveloperRuntimeAllowed;
+          preferences.isGranted(consent);
+      void requireIdle() {
+        if (!stillCurrent()) {
+          throw StateError('cloud_sync_local_send_identity_changed');
+        }
+        if (_cloudSyncV2SemanticPullInFlight != null ||
+            _cloudSyncV2OutboundConfirmation != null ||
+            _cloudSyncV2OutboundProvisioningInFlight != null ||
+            _cloudSyncV2OutboundInFlight != null ||
+            _cloudSyncV2MessageUpdateInFlight != null ||
+            isSyncing.value != null) {
+          // Keep the existing scheduler/backoff alive while history is busy.
+          // A dropped trigger would strand queued sends until another event.
+          throw const CloudKitOperationInterlockException('cloudkit_interlock_busy');
+        }
+      }
+      _cloudSyncV2AutomaticArchiveRuntimeCurrent = stillCurrent;
+      _cloudSyncV2AutomaticArchiveIdentity = consent.identity;
       final adapter = CloudSyncProductionLocalSendAdapter(
         readActiveClient: () => state?.icloudServices?.cloudMessagesClient,
         privateStorageDirectory: expectedStorage, stillCurrent: stillCurrent,
+        automaticArchiveIdentity: consent.identity,
       );
       _cloudSyncV2LocalSendRuntime = CloudSyncLocalSendRuntime(
         prepare: () async {
-          if (!stillCurrent()) {
-            throw StateError('cloud_sync_local_send_identity_changed');
-          }
+          requireIdle();
           // Explicit automatic-upload Canary opt-in includes initial writer
           // setup, but never silently migrates legacy ownership or its queues.
           // Release the transition lock before taking the attachment gate.
@@ -8418,16 +8599,7 @@ class RustPushService extends GetxService {
         },
         drain: () async {
           final result = await _cloudSyncV2AttachmentGate.run(
-          validate: () {
-            if (!stillCurrent() || _cloudSyncV2SemanticPullInFlight != null ||
-                _cloudSyncV2OutboundConfirmation != null ||
-                _cloudSyncV2OutboundProvisioningInFlight != null ||
-                _cloudSyncV2OutboundInFlight != null ||
-                _cloudSyncV2MessageUpdateInFlight != null ||
-                isSyncing.value != null) {
-              throw StateError('cloud_sync_local_send_runtime_unavailable');
-            }
-          },
+          validate: requireIdle,
           action: adapter.runOnce,
           );
           if (result.admitted > 0 || result.deferred > 0 || result.outboxBlocked) {
@@ -8453,10 +8625,19 @@ class RustPushService extends GetxService {
             try {
               // The runtime owns the delayed retry after this readback.
               // Do not turn its own semantic read into an immediate new pass.
-              await runCloudSyncV2ManualSemanticPullConfirmed(
-                maximumPasses: 1,
-                resumeAutomaticUploads: false,
+              // This internal dependency read is authorized by the active
+              // scoped consent, not the developer-only diagnostic wrapper.
+              final read = _runCloudSyncV2ManualSemanticPull(
+                maximumPasses: 1, sweepRetainedAtHead: false,
               );
+              _cloudSyncV2SemanticPullInFlight = read;
+              try {
+                await read;
+              } finally {
+                if (identical(_cloudSyncV2SemanticPullInFlight, read)) {
+                  _cloudSyncV2SemanticPullInFlight = null;
+                }
+              }
             } catch (_) {
               Logger.warn('Cloud Sync V2 Chat dependency readback deferred; intent retained');
             }
@@ -8806,7 +8987,8 @@ class RustPushService extends GetxService {
       return null;
     }
     if (!_cloudSyncV2CanaryRuntimeAllowed ||
-        !_cloudSyncV2DeveloperRuntimeAllowed || !ls.isUiThread) {
+        (!_cloudSyncV2DeveloperRuntimeAllowed && !_cloudSyncV2AutomaticArchiveActive) ||
+        !ls.isUiThread) {
       return null;
     }
     if (!CloudSyncComposerAdmission.isPlainTextCandidate(message)) return null;
@@ -9839,7 +10021,7 @@ class RustPushService extends GetxService {
     if (loggingOut ||
         _cloudSyncV2OutboundQuiescing ||
         !_cloudSyncV2CanaryRuntimeAllowed ||
-        !_cloudSyncV2DeveloperRuntimeAllowed) {
+        (!_cloudSyncV2DeveloperRuntimeAllowed && !_cloudSyncV2AutomaticArchiveActive)) {
       return;
     }
     final boundedDelay = Duration(
@@ -9896,10 +10078,12 @@ class RustPushService extends GetxService {
 
   Future<void> _runCloudSyncV2NativeSendReceiptReplay() async {
     _cloudSyncV2NativeReceiptReplayNeedsContinuation = false;
+    final developerReplay = _cloudSyncV2DeveloperRuntimeAllowed;
+    final automaticIdentity = _cloudSyncV2AutomaticArchiveIdentity;
     if (!CloudKitWriterOwnership.v2MutationsEnabled ||
         !CloudSyncDevGate.manualOutboundCanaryEnabled ||
         !_cloudSyncV2CanaryRuntimeAllowed ||
-        !_cloudSyncV2DeveloperRuntimeAllowed ||
+        (!developerReplay && !_cloudSyncV2AutomaticArchiveActive) ||
         (!ls.isUiThread && !mcs.background) ||
         loggingOut ||
         _cloudSyncV2OutboundQuiescing ||
@@ -9917,7 +10101,11 @@ class RustPushService extends GetxService {
         identical(currentState, state) &&
         identical(client, state?.icloudServices?.cloudMessagesClient) &&
         identical(objectBox, Database.store) &&
-        statePath == storagePath;
+        statePath == storagePath &&
+        (developerReplay
+            ? _cloudSyncV2DeveloperRuntimeAllowed
+            : _cloudSyncV2AutomaticArchiveActive &&
+                identical(automaticIdentity, _cloudSyncV2AutomaticArchiveIdentity));
     try {
       final nativeAuth = await FrbCloudSyncNativeAuthBinding()
           .capture(
@@ -9932,6 +10120,20 @@ class RustPushService extends GetxService {
         protectedStoreIdentity: nativeAuth.protectedStoreIdentity,
         cloudMessagesClient: client,
       );
+      final authority = ObjectBoxCloudKitWriterAuthority(store: objectBox);
+      final owner = authority.read(
+        CloudKitWriterScope(accountFingerprint: auth.accountFingerprint),
+      );
+      if (owner == null || owner.owner != CloudKitWriterOwner.v2) return;
+      if (!developerReplay &&
+          (automaticIdentity == null ||
+              !automaticIdentity.matchesBinding(
+                accountFingerprint: auth.accountFingerprint,
+                protectedStoreIdentity: auth.protectedStoreIdentity,
+                writerEpoch: owner.epoch,
+              ))) {
+        return;
+      }
       final replayBinding = CloudSyncNativeReceiptReplayBinding(
         expectedAuth: auth,
         expectedState: currentState!,
@@ -9942,15 +10144,8 @@ class RustPushService extends GetxService {
         readStore: () => Database.store,
         readClient: () => state?.icloudServices?.cloudMessagesClient,
         readStoragePath: () => statePath,
-        runtimeCurrent: () => !loggingOut &&
-            !_cloudSyncV2OutboundQuiescing &&
-            !objectBox.isClosed(),
+        runtimeCurrent: replayStillCurrent,
       );
-      final authority = ObjectBoxCloudKitWriterAuthority(store: objectBox);
-      final owner = authority.read(
-        CloudKitWriterScope(accountFingerprint: auth.accountFingerprint),
-      );
-      if (owner == null || owner.owner != CloudKitWriterOwner.v2) return;
       final replayScope = '${auth.accountFingerprint}\u001f'
           '${auth.protectedStoreIdentity}';
       if (_cloudSyncV2NativeReceiptReplayScope != replayScope) {
@@ -11894,6 +12089,8 @@ class RustPushService extends GetxService {
       if (localSendRuntime != null) {
         await localSendRuntime.dispose().timeout(_cloudSyncV2OutboundQuiescenceTimeout);
         _cloudSyncV2LocalSendRuntime = null;
+        _cloudSyncV2AutomaticArchiveRuntimeCurrent = null;
+        _cloudSyncV2AutomaticArchiveIdentity = null;
       }
       final nativeReceiptReplay = _cloudSyncV2NativeReceiptReplayInFlight;
       if (nativeReceiptReplay != null) {
@@ -12098,6 +12295,8 @@ class RustPushService extends GetxService {
       await _cloudSyncV2LocalSendRuntime?.dispose()
           .timeout(_cloudSyncV2OutboundQuiescenceTimeout);
       _cloudSyncV2LocalSendRuntime = null;
+      _cloudSyncV2AutomaticArchiveRuntimeCurrent = null;
+      _cloudSyncV2AutomaticArchiveIdentity = null;
       await _runCloudKitDestructiveReset(() async {
         if (!identical(state, closingState)) return;
         state = null;

@@ -5,6 +5,7 @@ import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_operation_identity.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_shadow_journal_budget.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_models.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_automatic_archive_preference.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_send_source_binding.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_received_archive_source_binding.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_received_record_observation.dart';
@@ -925,6 +926,70 @@ void main() {
       expect(leased.map((value) => value.operationId), [operation.operationId]);
     },
   );
+
+  test('revoked archival grant preserves queued and leased work without dispatch', () async {
+    await seedCompleteMessagesCloudAccount();
+    final scope = messagesCloudScope('messageManateeZone');
+    await enqueueMessagesCloudOutbound();
+    final identity = CloudSyncAutomaticArchiveIdentity(
+      accountFingerprint: scope.accountFingerprint,
+      protectedStoreIdentity: 'obcs2.store.${'S' * 43}',
+      writerEpoch: 1,
+    );
+    String? storedValue;
+    var nonce = 'a' * 32;
+    final preferences = CloudSyncAutomaticArchivePreferences(
+      captureIdentity: () async => identity,
+      currentWriterEpoch: () => 1,
+      stillCurrent: () => true,
+      reload: () async {},
+      read: (_) => storedValue,
+      write: (_, value) async { storedValue = value; return true; },
+      prepareWriter: () async {},
+      newGrant: () => nonce,
+    );
+    var consent = await preferences.load();
+    store = ObjectBoxCloudSyncStore(
+      store: objectBox, protector: protector, clock: () => currentTime,
+      validateOutboxDispatch: () {
+        if (!preferences.isGranted(consent)) {
+          throw StateError('cloud_sync_automatic_archive_identity_changed');
+        }
+      },
+    );
+    Future<List<CloudOutboxOperation>> lease() => store.leaseEligibleOutbox(
+      scope, now: testEpoch, limit: 1, leaseId: 'scoped-archive',
+      leaseDuration: const Duration(minutes: 1),
+      allowedActions: const {CloudOutboxAction.save},
+    );
+    final pending = (await store.readOutboxEntries(scope)).single;
+    await expectLater(lease(), throwsStateError);
+    expect((await store.readOutboxEntries(scope)).single.sameDurableSnapshotAs(pending), isTrue);
+    consent = await preferences.setEnabled(consent, true, acknowledgeQueuedUploads: true);
+    final leased = (await lease()).single;
+    final held = (await store.readOutboxEntries(scope)).single;
+    await preferences.setEnabled(consent, false, acknowledgeQueuedUploads: false);
+    await expectLater(store.markOutboxSubmissionStarted(
+      scope, leaseId: 'scoped-archive', now: testEpoch,
+      submissionIdentity: testSubmissionIdentity([leased.operationId]),
+    ), throwsStateError);
+    await expectLater(store.renewOutboxLease(
+      scope, leaseId: 'scoped-archive', operationIds: [leased.operationId],
+      now: testEpoch.add(const Duration(seconds: 1)),
+      leaseDuration: const Duration(minutes: 2),
+    ), throwsStateError);
+    expect((await store.readOutboxEntries(scope)).single.sameDurableSnapshotAs(held), isTrue);
+    nonce = 'b' * 32;
+    final next = await preferences.setEnabled(await preferences.load(), true,
+      acknowledgeQueuedUploads: true);
+    expect(preferences.isGranted(consent), isFalse, reason: 'old worker cannot inherit re-enable');
+    consent = next;
+    expect(await store.renewOutboxLease(
+      scope, leaseId: 'scoped-archive', operationIds: [leased.operationId],
+      now: testEpoch.add(const Duration(seconds: 1)),
+      leaseDuration: const Duration(minutes: 2),
+    ), isTrue);
+  });
 
   test(
     'legacy outbound versions are durably quarantined while version two remains eligible',

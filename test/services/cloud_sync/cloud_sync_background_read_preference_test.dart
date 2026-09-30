@@ -254,7 +254,7 @@ void main() {
       final start = source.indexOf(
         'bool get _cloudSyncV2AndroidBackgroundRuntimeAllowed',
       );
-      final end = source.indexOf('void _queueCloudSyncV2LocalSends', start);
+      final end = source.indexOf('bool get cloudSyncV2AutomaticArchiveVisible', start);
       final scheduling = source.substring(start, end);
       expect(
         scheduling,
@@ -278,7 +278,9 @@ void main() {
         end,
         source.indexOf('/// Local-only receive capture', end),
       );
-      expect(automatic, contains('!_cloudSyncV2DeveloperRuntimeAllowed'));
+      expect(automatic, contains('preferences.isGranted(consent)'));
+      expect(automatic, contains('automaticArchiveIdentity: consent.identity'));
+      expect(automatic, isNot(contains('developerDefault:')));
       expect(automatic, contains('CloudSyncDevGate.localSendRuntimeEnabled'));
     },
   );
