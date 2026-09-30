@@ -438,7 +438,7 @@ void main() {
       )),
       code,
     );
-    for (final unreviewed in ['$code private body', '${code}_unreviewed']) {
+    for (final unreviewed in ['${code}_unreviewed']) {
       expect(
         cloudSyncV2SafeFailureCode(CloudSyncFailure(
           category: CloudFailureCategory.dependency,
@@ -447,6 +447,19 @@ void main() {
         'cloud_sync_unknown_failure',
       );
     }
+    // Structured failures reject malformed diagnostic candidates before the
+    // outer mapper. Unstructured errors still reach the mapper and must redact.
+    expect(
+      () => CloudSyncFailure(
+        category: CloudFailureCategory.dependency,
+        safeCode: '$code private body',
+      ),
+      throwsArgumentError,
+    );
+    expect(
+      cloudSyncV2SafeFailureCode(StateError('$code private body')),
+      'cloud_sync_unknown_failure',
+    );
   });
 
   test('decoder Canary-retainable codes are reviewed report codes', () {

@@ -2965,7 +2965,9 @@ void main() {
           snapshot: CloudSemanticSnapshot(kind: CloudEntityKind.attachment,
             logicalEntityKeyHash: 'C' * 43,
             parentLogicalKeyHash: parentLogicalKey ?? parent.logicalEntityKeyHash,
-            immutableContentDigest: testSha256('f')),
+            immutableContentDigest: testSha256('f'),
+            etagHash: change.etagHash,
+            encryptedRawRecordReference: change.encryptedPayloadReference),
           payload: CloudAttachmentEntityPayload(
             logicalEntityKeyHash: 'C' * 43, canonicalGuid: '${attachmentGuid}_0',
             ownerLogicalKeyHash: parentLogicalKey ?? parent.logicalEntityKeyHash,
@@ -3036,10 +3038,15 @@ void main() {
         final beforeProof = intent().admittedBindingSha256;
         final beforeReadback = intent().confirmedReadbackBindingSha256;
         final beforeTimeline = List<String>.of(timeline);
-        final childId = objectBox.box<Attachment>().getAll().single.id;
+        final childId = objectBox.box<Attachment>().getAll().single.id!;
+        expect(objectBox.box<Attachment>().get(childId)!.message.targetId, local.id);
+        // Confirm the retained parent receipt before involving the decoder.
+        // This must not be replaced by a fabricated parent semantic snapshot.
+        expectExactParentProof(parent);
         final result = await attachmentEchoApplier(echo.decoded).apply(
           echo.entry, leaseFence: echo.fence);
-        expect(result.disposition, CloudInboxApplyDisposition.applied);
+        expect(result.disposition, CloudInboxApplyDisposition.applied,
+          reason: '${result.failureCategory?.name ?? 'none'}:${result.safeCode ?? 'none'}');
         expect(result.inboxStatusPersisted, isTrue);
         final drained = await store.readCheckpoint(childScope);
         expect(drained.pendingBatchId, isNull);
@@ -3154,6 +3161,11 @@ void main() {
           final beforeCursor = attachmentEchoCursorState(echo.entry.scope);
           final result = await applier.apply(echo.entry, leaseFence: echo.fence);
           expect(result.disposition, isNot(CloudInboxApplyDisposition.applied));
+          // Each negative must fail its ownership fence, not a malformed
+          // shared decoder fixture that would also reject the positive case.
+          expect(result.failureCategory, isNot(CloudFailureCategory.malformedRecord),
+            reason: result.safeCode ?? 'none');
+          expect(result.safeCode, isNot('semantic_snapshot_envelope_mismatch'));
           expect(result.inboxStatusPersisted, isFalse);
           expect(parentProofReadState(), before);
           expect(attachmentEchoCursorState(echo.entry.scope), beforeCursor);
