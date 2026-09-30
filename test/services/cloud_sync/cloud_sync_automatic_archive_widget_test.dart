@@ -53,12 +53,15 @@ void main() {
     theme: ThemeData.dark(useMaterial3: true).copyWith(
       textTheme: ThemeData.dark().textTheme.apply(fontFamily: 'Inter'),
     ),
-    home: MediaQuery(
-      data: MediaQueryData(textScaler: TextScaler.linear(scale)),
-      child: Scaffold(
-        body: SingleChildScrollView(
-          child: CloudSyncAutomaticArchiveCard(onLoad: load, onChanged: save),
-        ),
+    builder: (context, child) => MediaQuery(
+      data: MediaQuery.of(
+        context,
+      ).copyWith(textScaler: TextScaler.linear(scale)),
+      child: child!,
+    ),
+    home: Scaffold(
+      body: SingleChildScrollView(
+        child: CloudSyncAutomaticArchiveCard(onLoad: load, onChanged: save),
       ),
     ),
   );
@@ -248,6 +251,13 @@ void main() {
     tester.widget<Switch>(find.byType(Switch)).onChanged!(true);
     await tester.pumpAndSettle();
     expect(find.byType(AlertDialog), findsOneWidget);
+    expect(
+      MediaQuery.textScalerOf(
+        tester.element(find.byType(AlertDialog)),
+      ).scale(16),
+      32,
+      reason: 'root dialog routes must use the same large text as Profile',
+    );
     expect(tester.takeException(), isNull);
     await tester.tap(find.text('Cancel'));
     await tester.pumpAndSettle();
