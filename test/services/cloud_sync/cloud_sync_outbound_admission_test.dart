@@ -3038,6 +3038,11 @@ void main() {
         final beforeProof = intent().admittedBindingSha256;
         final beforeReadback = intent().confirmedReadbackBindingSha256;
         final beforeTimeline = List<String>.of(timeline);
+        final childScopeKey = cloudSyncPersistentScopeKey(childScope);
+        final otherInboxBefore = objectBox.box<CloudInboxChangeEntity>().getAll()
+            .where((row) => row.scopeKey != childScopeKey)
+            .map((row) => [row.id, row.changeKey, row.status, row.retryCount])
+            .toList();
         final childId = objectBox.box<Attachment>().getAll().single.id!;
         expect(objectBox.box<Attachment>().get(childId)!.message.targetId, local.id);
         // Confirm the retained parent receipt before involving the decoder.
@@ -3075,8 +3080,15 @@ void main() {
         store = ObjectBoxCloudSyncStore(store: objectBox, protector: _Protector(),
           clock: () => testEpoch);
         expect((await store.readCheckpoint(childScope)).pendingBatchId, isNull);
-        expect(objectBox.box<CloudInboxChangeEntity>().getAll().single.status,
+        final reopenedInbox = objectBox.box<CloudInboxChangeEntity>().getAll();
+        expect(reopenedInbox.singleWhere((row) =>
+          row.scopeKey == childScopeKey &&
+          row.generation == echo.entry.generation &&
+          row.changeIdHash == echo.entry.change.changeId).status,
           CloudInboxStatus.applied.index);
+        expect(reopenedInbox.where((row) => row.scopeKey != childScopeKey)
+          .map((row) => [row.id, row.changeKey, row.status, row.retryCount]).toList(),
+          otherInboxBefore);
         expectExactParentProof(parent);
         expect(objectBox.box<Attachment>().getAll().single.id, childId);
       });
