@@ -11,9 +11,10 @@ import 'cloud_sync_semantic_drain_controller_test.dart' as fixtures;
 CloudSyncSemanticDrainResult result({
   bool head = true,
   bool projected = true,
+  int messageApplied = 0,
 }) => CloudSyncSemanticDrainResult(
   passes: 1,
-  lastReport: fixtures.report(terminalEmpty: head),
+  lastReport: fixtures.report(terminalEmpty: head, messageApplied: messageApplied),
   persistedReportReference: 'persisted',
   remoteDrained: head,
   projectionComplete: projected,
@@ -250,6 +251,61 @@ void main() {
         return result();
       });
       expect(CloudSyncProgress().phase, CloudSyncProgressPhase.idle);
+    },
+  );
+
+  test(
+    'committed inbox applications update foreground restoration without a retained sweep',
+    () async {
+      final p = CloudSyncProgress();
+      final evidence = MemoryCloudSyncObserver();
+      final observer = CloudSyncProgressObserver(
+        p,
+        'messageManateeZone',
+        evidence,
+      );
+      await p.start(CloudSyncSpeed.turbo, () async {
+        final applied = CloudSyncEvent(
+          type: CloudSyncEventType.inboxApplied,
+          scopeDiagnosticKey: 'safe',
+          at: DateTime.utc(2026),
+          count: 7,
+        );
+        observer.onEvent(applied);
+        expect(p.fetched, 0);
+        expect(p.reprojected, 7);
+        expect(p.projectionExamined, 0);
+        p.projectionWindow(8, 3);
+        expect(p.reprojected, 10);
+        expect(p.projectionExamined, 8);
+        expect(evidence.events.single, same(applied));
+        return result(messageApplied: 7);
+      });
+      // Persisted run reports are status, not another increment of the same
+      // committed applications. Late events must not change a finished run.
+      expect(p.reprojected, 10);
+      observer.onEvent(
+        CloudSyncEvent(
+          type: CloudSyncEventType.inboxApplied,
+          scopeDiagnosticKey: 'safe',
+          at: DateTime.utc(2026),
+          count: 11,
+        ),
+      );
+      expect(p.reprojected, 10);
+      await p.start(CloudSyncSpeed.regular, () async {
+        expect(p.reprojected, 0);
+        observer.onEvent(
+          CloudSyncEvent(
+            type: CloudSyncEventType.inboxApplied,
+            scopeDiagnosticKey: 'safe',
+            at: DateTime.utc(2026),
+            count: -1,
+          ),
+        );
+        expect(p.reprojected, 0);
+        return result();
+      });
     },
   );
 

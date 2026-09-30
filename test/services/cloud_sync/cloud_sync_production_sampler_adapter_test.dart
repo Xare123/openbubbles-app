@@ -1,11 +1,13 @@
 import 'dart:async';
 
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_dev_gate.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_manual_semantic_pull_sampler.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_manual_shadow_sampler.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_models.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_production_sampler_adapter.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_store.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_operation_interlock.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_writer_ownership.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/in_memory_cloud_sync_store.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/objectbox_canonical_semantic_entity_adapter.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart'
@@ -16,14 +18,26 @@ import 'package:universal_io/io.dart';
 import 'cloud_sync_test_helpers.dart';
 
 void main() {
-  test('unrestricted adapter cannot read an account without scoped consent', () async {
+  test('unrestricted adapter reaches the exact admission guard before account reads', () async {
     var clientReads = 0;
     final adapter = CloudSyncProductionLocalSendAdapter(
       readActiveClient: () { clientReads++; return null; },
       privateStorageDirectory: 'unused-unconsented-path',
       stillCurrent: () => true,
     );
-    await expectLater(adapter.runOnce(), throwsStateError);
+    final automaticCompiled = CloudKitWriterOwnership.v2MutationsEnabled &&
+        CloudSyncDevGate.manualOutboundCanaryEnabled &&
+        CloudSyncDevGate.localSendRuntimeEnabled;
+    await expectLater(
+      adapter.runOnce(),
+      throwsA(isA<StateError>().having(
+        (error) => error.message,
+        'admission code',
+        automaticCompiled
+            ? 'cloud_sync_automatic_archive_confirmation_required'
+            : 'cloud_sync_local_send_consumer_disabled',
+      )),
+    );
     expect(clientReads, 0);
   });
 

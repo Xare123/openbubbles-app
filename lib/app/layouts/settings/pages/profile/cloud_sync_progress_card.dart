@@ -330,6 +330,10 @@ class _CloudSyncProgressCardState extends State<CloudSyncProgressCard> {
               Text(
                 '${p.fetched} downloaded, ${p.reprojected} restored to your chats',
               ),
+            if (!elsewhere && !checking && !retryBusy && p.projectionExamined > 0)
+              Text(
+                '${p.projectionExamined} checks of saved items (may include repeat checks)',
+              ),
             if (p.hasStarted && !elsewhere && !checking && !retryBusy)
               Text('Elapsed ${elapsedLabel(p.elapsed)}'),
             const SizedBox(height: 8),

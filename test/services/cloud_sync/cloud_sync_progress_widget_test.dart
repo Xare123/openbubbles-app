@@ -4,6 +4,7 @@ import 'dart:ui' as ui;
 
 import 'package:bluebubbles/app/layouts/settings/pages/profile/cloud_sync_progress_card.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_background_status.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_observability.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_progress.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_semantic_drain_controller.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_profile_readiness.dart';
@@ -76,6 +77,101 @@ void main() {
       ),
     ),
   );
+
+  testWidgets('foreground card shows committed inbox restorations before a sweep', (
+    tester,
+  ) async {
+    final progress = CloudSyncProgress();
+    final done = Completer<CloudSyncSemanticDrainResult>();
+    await tester.pumpWidget(host(progress, (_) async {}));
+    final run = progress.start(CloudSyncSpeed.turbo, () => done.future);
+    await tester.pump();
+    progress.event(
+      'messageManateeZone',
+      CloudSyncEvent(
+        type: CloudSyncEventType.inboxApplied,
+        scopeDiagnosticKey: 'safe',
+        at: DateTime.utc(2026),
+        count: 7,
+      ),
+    );
+    await tester.pump();
+    expect(find.text('0 downloaded, 7 restored to your chats'), findsOneWidget);
+    expect(find.text('0 downloaded, 0 restored to your chats'), findsNothing);
+    done.complete(fixtures.result());
+    await run;
+    await tester.pump();
+    expect(find.text('0 downloaded, 7 restored to your chats'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('saved-item checks are visible without opening details and are not downloads', (
+    tester,
+  ) async {
+    final progress = CloudSyncProgress();
+    final done = Completer<CloudSyncSemanticDrainResult>();
+    var readingElsewhere = false;
+    await tester.pumpWidget(host(
+      progress,
+      (_) async {},
+      isReading: () => readingElsewhere,
+    ));
+    expect(find.textContaining('checks of saved items'), findsNothing);
+    final run = progress.start(CloudSyncSpeed.turbo, () => done.future);
+    await tester.pump();
+    progress.activity(CloudSyncProgressPhase.replaying, 'messageManateeZone');
+    progress.projectionWindow(32, 0);
+    await tester.pump();
+    expect(
+      find.text('32 checks of saved items (may include repeat checks)'),
+      findsOneWidget,
+    );
+    expect(find.text('0 downloaded, 0 restored to your chats'), findsOneWidget);
+    progress.projectionWindow(32, 5);
+    await tester.pump();
+    expect(
+      find.text('64 checks of saved items (may include repeat checks)'),
+      findsOneWidget,
+    );
+    expect(find.text('0 downloaded, 5 restored to your chats'), findsOneWidget);
+    done.complete(fixtures.result());
+    await run;
+    await tester.pump();
+    expect(
+      find.text('64 checks of saved items (may include repeat checks)'),
+      findsOneWidget,
+    );
+    readingElsewhere = true;
+    await tester.pump(const Duration(seconds: 1));
+    expect(find.textContaining('checks of saved items'), findsNothing);
+    expect(find.textContaining('restored to your chats'), findsNothing);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('saved-item progress fits narrow screens with large text', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(320, 1000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final progress = CloudSyncProgress();
+    final done = Completer<CloudSyncSemanticDrainResult>();
+    await tester.pumpWidget(host(progress, (_) async {}, scale: 2));
+    final run = progress.start(CloudSyncSpeed.turbo, () => done.future);
+    await tester.pump();
+    progress.activity(CloudSyncProgressPhase.replaying, 'attachmentManateeZone');
+    progress.projectionWindow(1823, 0);
+    await tester.pump();
+    expect(
+      find.text('1823 checks of saved items (may include repeat checks)'),
+      findsOneWidget,
+    );
+    expect(tester.takeException(), isNull);
+    done.complete(fixtures.result());
+    await run;
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
 
   testWidgets('queued upload needs confirmation and settles without auto starting history', (tester) async {
     final done = Completer<String>();

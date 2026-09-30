@@ -743,6 +743,7 @@ CloudSyncSemanticDrainController _controller({
 CloudSyncSemanticPullReport report({
   bool terminalEmpty = false,
   int fetched = 0,
+  int messageApplied = 0,
   int retainedUnprojected = 0,
   int? blockingRetainedSaves,
   int outboxAfter = 0,
@@ -766,7 +767,7 @@ CloudSyncSemanticPullReport report({
           zoneLabel: label,
           status: status,
           fetched: terminalEmpty ? 0 : fetched,
-          applied: 0,
+          applied: label == 'messages' ? messageApplied : 0,
           deferred: 0,
           quarantined: 0,
           preflightQuarantined: 0,

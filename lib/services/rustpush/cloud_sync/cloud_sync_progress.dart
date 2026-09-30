@@ -147,6 +147,12 @@ class CloudSyncProgress extends ChangeNotifier
         (n) => n + event.count,
         ifAbsent: () => event.count,
       );
+    } else if (event.type == CloudSyncEventType.inboxApplied &&
+        event.count >= 0) {
+      // Count the engine's committed inbox applications as well as the
+      // separate retained-record sweep. Native decode activity alone is not
+      // evidence of a restored item; reports must not add these counts again.
+      reprojected += event.count;
     }
     if (event.type == CloudSyncEventType.fetchStarted) {
       activity(CloudSyncProgressPhase.fetching, zoneName);
