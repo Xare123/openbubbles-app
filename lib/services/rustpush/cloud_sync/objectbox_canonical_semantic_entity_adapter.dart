@@ -16,6 +16,14 @@ import 'objectbox_cloud_semantic_store_gateway.dart';
 
 typedef _ProvenChatOwner = ({Chat chat, String logicalEntityKeyHash});
 
+/// Exact, content-free v2 parent proof from the local-send journal, read inside
+/// the semantic transaction. It performs no network/secure-storage work and
+/// must revalidate the original receipt, source and complete child inventory.
+typedef CloudConfirmedLocalMessageOwnershipReader = List<Object>? Function(
+  CloudSyncScope scope,
+  Message parent,
+);
+
 const _extensionProjectionKey = 'cloudkit_v2_extension_projection';
 const _headingAssociationKey = 'cloudkit_v2_heading';
 
@@ -227,6 +235,7 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
     required this._identityResolver,
     CloudCanonicalActiveScope? chatDependencyScope,
     CloudCanonicalActiveScope? messageDependencyScope,
+    CloudConfirmedLocalMessageOwnershipReader? confirmedLocalMessageReader,
     CloudSyncSemanticDiagnosticRecorder? diagnosticRecorder,
     this._semanticApplyEnabled = false,
     this._allowExistingChatPresentationUpdates = false,
@@ -240,6 +249,8 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
        _chatDependencyScope = chatDependencyScope,
        // ignore: prefer_initializing_formals
        _messageDependencyScope = messageDependencyScope,
+       // ignore: prefer_initializing_formals
+       _confirmedLocalMessageReader = confirmedLocalMessageReader,
        // ignore: prefer_initializing_formals
        _diagnosticRecorder = diagnosticRecorder,
        _chats = store.box<Chat>(),
@@ -256,6 +267,7 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
   final CloudCanonicalIdentityResolver _identityResolver;
   final CloudCanonicalActiveScope? _chatDependencyScope;
   final CloudCanonicalActiveScope? _messageDependencyScope;
+  final CloudConfirmedLocalMessageOwnershipReader? _confirmedLocalMessageReader;
   final CloudSyncSemanticDiagnosticRecorder? _diagnosticRecorder;
   final bool _semanticApplyEnabled;
   final bool _allowExistingChatPresentationUpdates;
@@ -2324,6 +2336,18 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
       );
     }
     if (owners.length != 1) {
+      if (owners.isEmpty && kind == CloudEntityKind.message) {
+        // Use the same global claimant checks as ordinary dependency apply.
+        // Only an exact own receipt can replace the absent parent self-echo.
+        _requireCanonicalIdentityOwnership(
+          scope: dependencyScope,
+          generation: dependencyGeneration,
+          kind: kind,
+          logicalEntityKeyHash: logicalEntityKeyHash,
+          canonicalGuid: canonicalGuid,
+        );
+        return;
+      }
       throw CloudSyncFailure(
         category: CloudFailureCategory.dependency,
         safeCode: 'canonical_identity_owner_unproven',
@@ -2572,11 +2596,78 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
     // canonical row, which may predate V2 or belong to another account scope.
     // Existing rows therefore require their own exact, durable V2 proof.
     if (!exactDurableProof && _canonicalRowExists(canonicalGuid)) {
+      if (ownerCandidates.isEmpty &&
+          _hasConfirmedLocalMessageOwnership(
+            scope: scope,
+            generation: generation,
+            kind: kind,
+            logicalEntityKeyHash: logicalEntityKeyHash,
+            canonicalGuid: canonicalGuid,
+          )) {
+        return;
+      }
       throw CloudSyncFailure(
         category: CloudFailureCategory.dependency,
         safeCode: 'canonical_identity_owner_unproven',
       );
     }
+  }
+
+  bool _hasConfirmedLocalMessageOwnership({
+    required CloudSyncScope scope,
+    required int generation,
+    required CloudEntityKind kind,
+    required String logicalEntityKeyHash,
+    required String canonicalGuid,
+  }) {
+    final reader = _confirmedLocalMessageReader;
+    final active = _activeScopeProvider();
+    final dependency = _messageDependencyScope;
+    // Narrow to the actual cross-zone attachment-parent dependency. This is
+    // not ownership of an incoming Message, nor a replacement for a snapshot.
+    if (reader == null || kind != CloudEntityKind.message ||
+        active?.scope.zone != 'attachmentManateeZone' ||
+        dependency?.scope != scope || dependency?.generation != generation ||
+        scope.zone != 'messageManateeZone') {
+      return false;
+    }
+    final claimant = _snapshots.query(
+      CloudSemanticSnapshotEntity_.scopeGenerationKey
+          .equals(_scopeGenerationKey(scope, generation))
+          .and(CloudSemanticSnapshotEntity_.logicalEntityKeyHash
+              .equals(logicalEntityKeyHash)),
+    ).build()..limit = 1;
+    try {
+      // A stale/re-homed logical claimant may not be overridden by a receipt.
+      if (claimant.findFirst() != null) return false;
+    } finally {
+      claimant.close();
+    }
+    final parent = _findUniqueLegacyOwnershipMessage(canonicalGuid);
+    if (parent == null || parent.id == null || parent.id! <= 0 ||
+        parent.isFromMe != true || parent.dateDeleted != null ||
+        parent.associatedMessageGuid != null ||
+        parent.associatedMessagePart != null ||
+        parent.associatedMessageType != null ||
+        parent.associatedMessageEmoji != null ||
+        _findChat(canonicalGuid) != null || _findAttachment(canonicalGuid) != null) {
+      return false;
+    }
+    final proof = reader(scope, parent);
+    return proof != null && proof.length == 10 && proof[0] == 2 &&
+        proof[1] == cloudSyncPersistentScopeKey(scope) &&
+        proof[2] == generation && proof[3] == parent.id &&
+        proof[4] == CloudCanonicalIdentityDigest.forCanonicalGuidLookup(
+          scope: scope, generation: generation, canonicalGuid: canonicalGuid,
+        ) &&
+        proof[5] == CloudCanonicalIdentityDigest.forCanonicalGuid(
+          scope: scope, generation: generation, kind: kind,
+          logicalEntityKeyHash: logicalEntityKeyHash, canonicalGuid: canonicalGuid,
+        ) &&
+        proof[6] == logicalEntityKeyHash && proof[7] is String &&
+        _externalDigestPattern.hasMatch(proof[7] as String) &&
+        proof[8] is int && (proof[8] as int) > 0 && proof[9] is String &&
+        CloudCanonicalIdentityDigest.isValid(proof[9] as String);
   }
 
   void _validateMutationIdentitySet(CloudSemanticEntityPayload payload) {

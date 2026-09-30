@@ -399,6 +399,7 @@ void main() {
       'canonical_message_reply_parent_unavailable',
       'canonical_reaction_parent_unavailable',
       'checkpoint_pending_page_unresolved',
+      'messages_cloud_account_projection_incomplete',
       'fetch_page_exceeds_requested_limit',
       'preflight_invalid_change_shape',
       'preflight_malformed_metadata',
@@ -425,6 +426,26 @@ void main() {
     };
     for (final code in codes) {
       expect(cloudSyncV2SafeFailureCodeForCandidate(code), code);
+    }
+  });
+
+  test('reports exact account projection barrier without leaking suffixes', () {
+    const code = 'messages_cloud_account_projection_incomplete';
+    expect(
+      cloudSyncV2SafeFailureCode(CloudSyncFailure(
+        category: CloudFailureCategory.dependency,
+        safeCode: code,
+      )),
+      code,
+    );
+    for (final unreviewed in ['$code private body', '${code}_unreviewed']) {
+      expect(
+        cloudSyncV2SafeFailureCode(CloudSyncFailure(
+          category: CloudFailureCategory.dependency,
+          safeCode: unreviewed,
+        )),
+        'cloud_sync_unknown_failure',
+      );
     }
   });
 

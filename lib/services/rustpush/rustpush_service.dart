@@ -9091,6 +9091,33 @@ class RustPushService extends GetxService {
     if (!CloudKitWriterOwnership.v2MutationsEnabled) {
       return null;
     }
+    final queuedState = state;
+    final queuedStore = Database.store;
+    final queuedStorage = statePath;
+    // The automatic writer and semantic/media sessions already share this
+    // scheduler. Queue before touching protected mutation state, not by retrying
+    // an entered action or an IDS send. Cross-isolate/native fences still apply.
+    return _cloudSyncV2AttachmentGate.run(
+      waitTimeout: const Duration(seconds: 30),
+      validate: () {
+        if (!identical(queuedState, state) ||
+            !identical(queuedStore, Database.store) || queuedStore.isClosed() ||
+            queuedStorage != statePath || loggingOut ||
+            _cloudSyncV2OutboundQuiescing || !ls.isUiThread ||
+            ss.settings.cloudSyncingEnabled.value) {
+          throw StateError('cloud_sync_local_mutation_deferred');
+        }
+      },
+      action: () => _prepareCloudSyncV2LocalMutationAfterGate(
+        target: target, wire: wire,
+      ),
+    );
+  }
+
+  Future<_CloudSyncV2LocalMutationContext> _prepareCloudSyncV2LocalMutationAfterGate({
+    required Message target,
+    required api.MessageInst wire,
+  }) async {
     if (!CloudSyncDevGate.manualOutboundCanaryEnabled ||
         !_cloudSyncV2CanaryRuntimeAllowed ||
         !ls.isUiThread ||

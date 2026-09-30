@@ -2743,11 +2743,16 @@ final class CloudSyncLocalSendJournal {
       ),
     );
     if (row == null ||
+        intent.confirmedReadbackBindingSha256 != intent.admittedBindingSha256 ||
         row.state != CloudOutboxStatus.confirmed.index ||
         row.confirmedAtMs <= 0 ||
         row.protectedLeaseReference != null ||
         row.leaseIdHash != null ||
-        row.leaseExpiresAtMs != 0) {
+        row.leaseExpiresAtMs != 0 ||
+        row.nextEligibleAtMs != 0 ||
+        row.lastErrorCategory != null ||
+        row.appleRequestUuid == null ||
+        row.appleOperationUuid == null) {
       throw StateError('cloud_sync_local_send_readback_not_ready');
     }
     final scopeKey = cloudSyncPersistentScopeKey(scope);
@@ -2773,15 +2778,30 @@ final class CloudSyncLocalSendJournal {
     } finally {
       inbox.close();
     }
-    // A parent is a standalone message, never another reaction. Check the
-    // original direct-Chat binding before validating it to prevent recursion
-    // through a corrupted parent dependency. Existing v1 bindings are unchanged.
-    final dynamic chatBinding = jsonDecode(
-      intent.admittedChatBinding ?? 'null',
-    );
+    // A parent is a standalone direct/group message, never a reaction or a
+    // nested wrapper. Inspect only the shape here; the original immutable
+    // binding and the COMPLETE child readback proof are revalidated below.
+    dynamic chatBinding;
+    try {
+      final binding = intent.admittedChatBinding;
+      if (binding == null || binding.length > 65536) {
+        throw StateError('cloud_sync_local_send_parent_not_ready');
+      }
+      chatBinding = jsonDecode(binding);
+      if (chatBinding is List && chatBinding.isNotEmpty && chatBinding[0] == 4) {
+        if (chatBinding.length != 3 || chatBinding[1] is! String ||
+            (chatBinding[1] as String).length > 2048 ||
+            chatBinding[2] is! String) {
+          throw StateError('cloud_sync_local_send_parent_not_ready');
+        }
+        chatBinding = jsonDecode(chatBinding[1] as String);
+      }
+    } on FormatException {
+      throw StateError('cloud_sync_local_send_parent_not_ready');
+    }
     if (chatBinding is! List ||
-        chatBinding.length != 9 ||
-        chatBinding[0] != 1) {
+        !((chatBinding.length == 9 && chatBinding[0] == 1) ||
+            (chatBinding.length == 11 && chatBinding[0] == 3))) {
       throw StateError('cloud_sync_local_send_parent_not_ready');
     }
     final validated = _validatedExactAdoptedMessage(

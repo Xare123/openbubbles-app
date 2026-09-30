@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_attachment_provenance.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_attachment_sync_gate.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_operation_interlock.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -258,6 +259,204 @@ void main() {
     await Future.wait<void>(<Future<void>>[active, next]);
     expect(activeCompleted, isTrue);
     expect(nextActionRan, isTrue);
+  });
+
+  test(
+    'queued mutation waits for the background owner then validates fresh state once',
+    () async {
+      final gate = CloudAttachmentSyncGate();
+      final ownerStarted = Completer<void>();
+      final releaseOwner = Completer<void>();
+      var validations = 0;
+      var bodies = 0;
+      var observedPhase = '';
+
+      final owner = gate.run<String>(
+        validate: () {},
+        action: () async {
+          ownerStarted.complete();
+          await releaseOwner.future;
+          return 'owner-done';
+        },
+      );
+      await ownerStarted.future;
+
+      var phase = 'stale';
+      final queued = gate.run<String>(
+        waitTimeout: const Duration(seconds: 5),
+        validate: () {
+          validations++;
+          observedPhase = phase;
+          if (phase != 'fresh') throw StateError('stale validation');
+        },
+        action: () async {
+          bodies++;
+          return 'queued-done';
+        },
+      );
+
+      await _pumpEventTurns();
+      expect(validations, 0);
+      expect(bodies, 0);
+
+      phase = 'fresh';
+      releaseOwner.complete();
+      await expectLater(owner, completion('owner-done'));
+      await expectLater(queued, completion('queued-done'));
+      expect(validations, 1);
+      expect(observedPhase, 'fresh');
+      expect(bodies, 1);
+    },
+  );
+
+  test(
+    'admission timeout reports busy without running the body later or unlocking the owner',
+    () async {
+      final gate = CloudAttachmentSyncGate();
+      final ownerStarted = Completer<void>();
+      final releaseOwner = Completer<void>();
+      final events = <String>[];
+      var timedOutBodyRan = false;
+      var timedOutValidations = 0;
+
+      final owner = gate.run<String>(
+        validate: () {},
+        action: () async {
+          ownerStarted.complete();
+          await releaseOwner.future;
+          events.add('owner:end');
+          return 'owner-result';
+        },
+      );
+      await ownerStarted.future;
+
+      final timedOut = gate.run<String>(
+        waitTimeout: const Duration(milliseconds: 20),
+        validate: () {
+          timedOutValidations++;
+        },
+        action: () async {
+          timedOutBodyRan = true;
+          return 'late-body';
+        },
+      );
+      final next = gate.run<String>(
+        validate: () {},
+        action: () async {
+          events.add('next:end');
+          return 'next-result';
+        },
+      );
+
+      await expectLater(
+        timedOut,
+        throwsA(
+          isA<CloudKitOperationInterlockException>().having(
+            (error) => error.safeCode,
+            'safeCode',
+            'cloudkit_interlock_busy',
+          ),
+        ),
+      );
+
+      releaseOwner.complete();
+      await expectLater(owner, completion('owner-result'));
+      await expectLater(next, completion('next-result'));
+      await _pumpEventTurns(10);
+      expect(timedOutBodyRan, isFalse);
+      expect(timedOutValidations, 0);
+      expect(events, <String>['owner:end', 'next:end']);
+    },
+  );
+
+  test('entered errors propagate unchanged without replay or remap', () async {
+    final gate = CloudAttachmentSyncGate();
+    const enteredBusy = CloudKitOperationInterlockException(
+      'cloudkit_interlock_busy',
+    );
+    var actionCalls = 0;
+    var validateCalls = 0;
+
+    final enteredTimeout = gate.run<void>(
+      validate: () {},
+      action: () async {
+        actionCalls++;
+        throw TimeoutException('entered facing timeout');
+      },
+    );
+    await expectLater(enteredTimeout, throwsA(isA<TimeoutException>()));
+
+    final enteredBusyAction = gate.run<void>(
+      validate: () {},
+      action: () async {
+        actionCalls++;
+        throw enteredBusy;
+      },
+    );
+    await expectLater(enteredBusyAction, throwsA(same(enteredBusy)));
+
+    final enteredBusyValidate = gate.run<void>(
+      validate: () {
+        validateCalls++;
+        throw enteredBusy;
+      },
+      action: () async {},
+    );
+    await expectLater(enteredBusyValidate, throwsA(same(enteredBusy)));
+    expect(actionCalls, 2);
+    expect(validateCalls, 1);
+
+    final next = gate.run<String>(
+      validate: () {},
+      action: () async => 'still-open',
+    );
+    await expectLater(next, completion('still-open'));
+  });
+
+  test('entered action outlasts its wait timeout and still returns normally',
+      () async {
+    final gate = CloudAttachmentSyncGate();
+    final bodyStarted = Completer<void>();
+    final releaseBody = Completer<void>();
+    var validations = 0;
+    var completed = false;
+
+    final entered = gate.run<String>(
+      waitTimeout: const Duration(milliseconds: 20),
+      validate: () {
+        validations++;
+      },
+      action: () async {
+        bodyStarted.complete();
+        await releaseBody.future;
+        completed = true;
+        return 'entered-result';
+      },
+    );
+    final enteredExpectation = expectLater(entered, completion('entered-result'));
+
+    await bodyStarted.future;
+    await Future<void>.delayed(const Duration(milliseconds: 40));
+    expect(completed, isFalse);
+    releaseBody.complete();
+    await enteredExpectation;
+    expect(validations, 1);
+  });
+
+  test('non-positive wait timeout is rejected before queueing', () async {
+    final gate = CloudAttachmentSyncGate();
+    var bodyRan = false;
+    await expectLater(
+      gate.run<void>(
+        waitTimeout: Duration.zero,
+        validate: () {},
+        action: () async {
+          bodyRan = true;
+        },
+      ),
+      throwsA(isA<ArgumentError>()),
+    );
+    expect(bodyRan, isFalse);
   });
 }
 

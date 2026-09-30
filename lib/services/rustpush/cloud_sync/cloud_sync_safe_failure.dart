@@ -542,6 +542,9 @@ const _cloudSyncV2SafeFailureCodes = <String>{
   'cloud_sync_outbound_already_consumed',
   'cloud_sync_outbound_correlation_mismatch',
   'cloud_sync_outbound_mutation_capability_invalid',
+  // Account-wide checkpoint barrier. Reporting this does not grant admission
+  // or change the preserved inbox, backoff, tombstone or identity predicates.
+  'messages_cloud_account_projection_incomplete',
   ...CloudSyncV2DecoderSafeFailureCodes.all,
   ...CloudSyncV2ReceivedArchiveSafeFailureCodes.all,
   ...CloudSyncV2OutOfScopeServiceSafeFailureCodes.all,

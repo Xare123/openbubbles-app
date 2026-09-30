@@ -1400,4 +1400,99 @@ void main() {
     expect(block, isNot(contains('saves: true')));
     expect(block, isNot(contains('deletions: true')));
   });
+
+  test('queued mutation preparation shares the attachment gate with pinned identity', () {
+    final source = File(
+      'lib/services/rustpush/rustpush_service.dart',
+    ).readAsStringSync();
+    final methodStart = source.indexOf(
+      'Future<_CloudSyncV2LocalMutationContext?> '
+      '_prepareCloudSyncV2LocalMutation({',
+    );
+    final afterStart = source.indexOf(
+      'Future<_CloudSyncV2LocalMutationContext> '
+      '_prepareCloudSyncV2LocalMutationAfterGate({',
+      methodStart,
+    );
+    expect(methodStart, greaterThanOrEqualTo(0));
+    expect(afterStart, greaterThan(methodStart));
+    final method = source.substring(methodStart, afterStart);
+    expect(method, contains('_cloudSyncV2AttachmentGate.run('));
+    expect(method, contains('waitTimeout: const Duration(seconds: 30)'));
+    expect(method, contains('final queuedState = state;'));
+    expect(method, contains('final queuedStore = Database.store;'));
+    expect(method, contains('final queuedStorage = statePath;'));
+    expect(method, contains('!identical(queuedState, state)'));
+    expect(method, contains('!identical(queuedStore, Database.store)'));
+    expect(method, contains('queuedStore.isClosed()'));
+    expect(method, contains('queuedStorage != statePath'));
+    expect(method, contains('_cloudSyncV2OutboundQuiescing'));
+    expect(method, contains('!ls.isUiThread'));
+    expect(method, contains('_prepareCloudSyncV2LocalMutationAfterGate('));
+
+    final fallbackEnd = method.indexOf('final queuedState = state;');
+    final fallback = method.substring(0, fallbackEnd);
+    expect(
+      fallback,
+      contains('if (!CloudKitWriterOwnership.v2MutationsEnabled)'),
+    );
+    expect(fallback, contains('return null;'));
+  });
+
+  test('semantic attachment composition wires the read-only confirmed-parent bridge', () {
+    final source = File(
+      'lib/services/rustpush/cloud_sync/cloud_sync_production_sampler_adapter.dart',
+    ).readAsStringSync();
+    expect(source, contains("if (scope.zone == 'attachmentManateeZone')"));
+    expect(source, contains('ObjectBoxConfirmedMessageDependencyReader('));
+    expect(source, contains('owner.state == CloudKitWriterAuthorityState.stable'));
+    expect(source, contains('confirmedLocalMessageReader: confirmedParents?.read'));
+    expect(source, contains('identical(objectBox, Database.store)'));
+    final reader = File(
+      'lib/services/rustpush/cloud_sync/objectbox_confirmed_message_dependency_reader.dart',
+    ).readAsStringSync();
+    expect(reader, contains('uploads.requireParentReadbackProof('));
+    expect(reader, contains('_journal.readConfirmedParentDependency('));
+    expect(reader, isNot(contains('captureParentReadbackProof(')));
+    expect(reader, isNot(contains('admitLocalSend(')));
+    expect(reader, isNot(contains('.stage')));
+    expect(reader, isNot(contains('box<CloudSemanticSnapshotEntity>')));
+  });
+
+  test('mutation AfterGate keeps the original admission checks and protected interlock', () {
+    final source = File(
+      'lib/services/rustpush/rustpush_service.dart',
+    ).readAsStringSync();
+    final afterStart = source.indexOf(
+      'Future<_CloudSyncV2LocalMutationContext> '
+      '_prepareCloudSyncV2LocalMutationAfterGate({',
+    );
+    final methodEnd = source.indexOf(
+      'Future<_CloudSyncV2LocalSendContext?> _captureCloudSyncV2LocalSend({',
+      afterStart,
+    );
+    expect(afterStart, greaterThanOrEqualTo(0));
+    expect(methodEnd, greaterThan(afterStart));
+    final method = source.substring(afterStart, methodEnd);
+    expect(method, contains('CloudSyncDevGate.manualOutboundCanaryEnabled'));
+    expect(method, contains('_cloudSyncV2CanaryRuntimeAllowed'));
+    expect(method, contains('!ls.isUiThread'));
+    expect(method, contains('loggingOut'));
+    expect(method, contains('ss.settings.cloudSyncingEnabled.value'));
+    expect(method, contains('isSyncing.value != null'));
+    expect(method, contains('statePath.isEmpty'));
+    expect(method, contains('cloud_sync_local_mutation_deferred'));
+    expect(
+      method,
+      contains('CloudSyncLocalMutationIdentity.captureWire(wire)'),
+    );
+    expect(method, contains('cloud_sync_local_mutation_source_invalid'));
+    expect(method, contains('cloud_sync_local_mutation_runtime_unavailable'));
+    expect(method, contains('cloud_sync_local_mutation_auth_changed'));
+    expect(method, contains('cloud_sync_local_mutation_owner_required'));
+    expect(method, contains('CloudKitOperationInterlock('));
+    expect(method, contains('exclusion: interlock'));
+    expect(method, contains('.prepareSubmission('));
+    expect(method, isNot(contains('_cloudSyncV2AttachmentGate.run(')));
+  });
 }

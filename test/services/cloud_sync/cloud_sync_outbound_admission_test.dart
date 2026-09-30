@@ -4,6 +4,8 @@ import 'dart:io';
 
 import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_attachment_provenance.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_attachment_upload_journal.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_send_journal.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_send_source_binding.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_send_consumer.dart';
@@ -14,6 +16,7 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_create_queue
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_operation_interlock.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_persistent_keys.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/objectbox_cloud_sync_store.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/objectbox_confirmed_message_dependency_reader.dart';
 import 'package:bluebubbles/src/rust/api/api.dart' as frb_api;
 import 'package:bluebubbles/src/rust/frb_generated.dart';
 import 'package:crypto/crypto.dart';
@@ -36,8 +39,10 @@ final class _ConsumerExclusion implements CloudKitOperationExclusion {
 }
 
 void main() {
+  late _AttachmentParentBridge nativeBridge;
   setUpAll(() {
-    RustLib.initMock(api: _AttachmentParentBridge());
+    nativeBridge = _AttachmentParentBridge();
+    RustLib.initMock(api: nativeBridge);
   });
   tearDownAll(RustLib.dispose);
 
@@ -59,6 +64,7 @@ void main() {
       clock: () => testEpoch,
     );
     timeline = [];
+    nativeBridge.idsSendCalls = 0;
     transport = _StagingTransport(timeline);
     coordinator = CloudSyncOutboundAdmissionCoordinator(
       store: store,
@@ -356,18 +362,24 @@ void main() {
 
     Future<CloudOutboxOperation> confirmCloudSave({
       frb_api.CloudMessage Function(Message)? encoder,
+      CloudOutboxOperation? admittedOperation,
+      CloudSyncAttachmentUploadJournal? uploads,
     }) async {
-      transport.stages.add(_stage('a', 'P', 'L', 'S'));
-      final operation = await admit(encoder: encoder);
+      if (admittedOperation == null) {
+        transport.stages.add(_stage('a', 'P', 'L', 'S'));
+      }
+      final operation = admittedOperation ?? await admit(encoder: encoder);
+      final targetScope = operation.scope;
       store = ObjectBoxCloudSyncStore(
         store: objectBox,
         protector: _Protector(),
         clock: () => testEpoch,
         localSendJournal: journal,
+        attachmentUploadJournal: uploads,
       );
       const leaseId = 'synthetic-exact-readback-save';
       await store.leaseEligibleOutbox(
-        scope,
+        targetScope,
         now: testEpoch,
         limit: 1,
         leaseId: leaseId,
@@ -375,13 +387,13 @@ void main() {
         allowedActions: const {CloudOutboxAction.save},
       );
       await store.markOutboxSubmissionStarted(
-        scope,
+        targetScope,
         leaseId: leaseId,
         submissionIdentity: testSubmissionIdentity([operation.operationId]),
         now: testEpoch,
       );
       await store.commitOutboxCreateReceipt(
-        scope,
+        targetScope,
         leaseId: leaseId,
         receipt: CloudOutboxCreateReceipt(
           operationId: operation.operationId,
@@ -392,7 +404,9 @@ void main() {
         retainProtectedLeaseReference: true,
         now: testEpoch.add(const Duration(seconds: 1)),
       );
-      return (await store.readOutboxEntries(scope)).single;
+      return (await store.readOutboxEntries(targetScope)).singleWhere(
+        (row) => row.operationId == operation.operationId,
+      );
     }
 
     Future<void> prepareReaction({bool restoreParent = true}) async {
@@ -1555,6 +1569,200 @@ void main() {
       return parentOperation;
     }
 
+    CloudSyncAttachmentUploadJournal bindParentChildReadback() {
+      final childScope = siblingScope('attachmentManateeZone');
+      final generation = objectBox
+          .box<CloudSyncCheckpointEntity>()
+          .getAll()
+          .singleWhere(
+            (row) => row.checkpointKey == cloudSyncPersistentScopeKey(childScope),
+          )
+          .generation;
+      late CloudSyncAttachmentUploadJournal uploads;
+      journal = CloudSyncLocalSendJournal(
+        store: objectBox,
+        authority: authority,
+        authoritySnapshot: authority.read(writerScope)!,
+        attachmentParentReadback: (id, proof) {
+          if (proof != null) {
+            uploads.requireParentReadbackProof(
+              localSendIntentId: id,
+              proof: proof,
+            );
+            return proof;
+          }
+          // Synthetic native source inventory; production validates every
+          // retained child and its exact acknowledged receipt.
+          return uploads.captureParentReadbackProof(
+            localSendIntentId: id,
+            sourceAttachmentKeys: ['C' * 43],
+          );
+        },
+      );
+      uploads = CloudSyncAttachmentUploadJournal(
+        store: objectBox,
+        localSends: journal,
+        scope: childScope,
+        checkpointGeneration: generation,
+        currentAuth: currentAuth,
+      );
+      return uploads;
+    }
+
+    Future<void> acknowledgeParentChild() async {
+      final uploads = bindParentChildReadback();
+      final childScope = uploads.scope;
+      final plan = _stage('c', 'R', 'C', 'D');
+      final child = uploads.adoptPlan(
+        localSendIntentId: intentId,
+        plan: plan,
+        now: testEpoch,
+      );
+      const attempt = 'AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA';
+      uploads.beginAttempt(id: child.id, attemptId: attempt, now: testEpoch);
+      uploads.recordUploaded(
+        id: child.id,
+        attemptId: attempt,
+        result: _stage('d', 'Q', 'C', 'D'),
+        now: testEpoch,
+      );
+      store = ObjectBoxCloudSyncStore(
+        store: objectBox,
+        protector: _Protector(),
+        clock: () => testEpoch,
+        localSendJournal: journal,
+        attachmentUploadJournal: uploads,
+      );
+      store.admitCompletedAttachmentUpload(
+        scope: childScope,
+        uploads: uploads,
+        uploadId: child.id,
+        createdAt: testEpoch,
+      );
+      final confirmed = await confirmCloudSave(
+        admittedOperation: (await store.readOutboxEntries(childScope)).single,
+        uploads: uploads,
+      );
+      expect(confirmed.protectedLeaseReference, isNotNull);
+      await store.clearConfirmedProtectedOutboundLeaseReference(
+        expectedOperation: confirmed,
+        recordVerifiedLocalSendReadback: true,
+      );
+      expect(
+        (await store.readOutboxEntries(childScope)).single.protectedLeaseReference,
+        isNull,
+      );
+    }
+
+    List<Object> parentProofReadState() => [
+      objectBox
+          .box<CloudInboxChangeEntity>()
+          .getAll()
+          .map((row) => row.id)
+          .toList()
+        ..sort(),
+      objectBox
+          .box<CloudSemanticSnapshotEntity>()
+          .getAll()
+          .map((row) => row.id)
+          .toList()
+        ..sort(),
+      objectBox.box<Message>().getAll().map((row) => [
+        row.id,
+        row.guid,
+        row.text,
+        row.ckRecordId,
+        row.ckSyncState,
+      ]).toList(),
+      objectBox.box<CloudSyncLocalSendIntentEntity>().getAll().map((row) => [
+        row.id,
+        row.state,
+        row.idsConfirmationVersion,
+        row.protectedSourceBinding,
+        row.admittedOperationId,
+        row.admittedChatBinding,
+        row.admittedBindingSha256,
+        row.confirmedReadbackBindingSha256,
+      ]).toList(),
+      objectBox.box<CloudOutboxOperationEntity>().getAll().map((row) => [
+        row.operationId,
+        row.state,
+        row.confirmedAtMs,
+        row.payloadSha256,
+        row.protectedLeaseReference,
+        row.leaseIdHash,
+        row.leaseExpiresAtMs,
+        row.appleRequestUuid,
+        row.appleOperationUuid,
+      ]).toList(),
+      List<String>.of(timeline),
+      encodes,
+      transport.parentStageCalls,
+      transport.messageStageCalls,
+      nativeBridge.idsSendCalls,
+    ];
+
+    void expectExactParentProof(CloudOutboxOperation operation) {
+      expect(
+        objectBox.box<CloudInboxChangeEntity>().getAll().where(
+          (row) => row.zone == scope.zone,
+        ),
+        isEmpty,
+      );
+      expect(
+        objectBox.box<CloudSemanticSnapshotEntity>().getAll().where(
+          (row) => row.zone == scope.zone,
+        ),
+        isEmpty,
+      );
+      expect(
+        intent().confirmedReadbackBindingSha256,
+        intent().admittedBindingSha256,
+      );
+      final before = parentProofReadState();
+      final parent = objectBox.box<Message>().get(local.id!)!;
+      final proof = journal.readConfirmedParentDependency(
+        objectBox,
+        scope,
+        parent,
+      );
+      expect(proof, <Object>[
+        2,
+        cloudSyncPersistentScopeKey(scope),
+        operation.checkpointGeneration,
+        parent.id!,
+        CloudCanonicalIdentityDigest.forCanonicalGuidLookup(
+          scope: scope,
+          generation: operation.checkpointGeneration,
+          canonicalGuid: parent.guid!,
+        ),
+        CloudCanonicalIdentityDigest.forCanonicalGuid(
+          scope: scope,
+          generation: operation.checkpointGeneration,
+          kind: CloudEntityKind.message,
+          logicalEntityKeyHash: operation.logicalEntityKeyHash,
+          canonicalGuid: parent.guid!,
+        ),
+        operation.logicalEntityKeyHash,
+        operation.serverRecordIdHash!,
+        intentId,
+        intent().confirmedReadbackBindingSha256!,
+      ]);
+      expect(
+        journal.readConfirmedParentDependency(objectBox, scope, parent),
+        proof,
+      );
+      expect(parentProofReadState(), before);
+      expect(nativeBridge.idsSendCalls, 0);
+    }
+
+    test('confirmed v3 group parent proves ownership without self-echo', () async {
+      await prepareGroup();
+      final operation = await verifyOwnParent();
+      expect(jsonDecode(intent().admittedChatBinding!)[0], 3);
+      expectExactParentProof(operation);
+    });
+
     test(
       'exact reflected mutation parent proof survives only its E to E+1 to E+2 recovery',
       () async {
@@ -1644,6 +1852,31 @@ void main() {
       transport.stages.add(_stage('b', 'Q', 'N', 'T'));
       return admit(encoder: (message) => _LocalCloudMessage(message, type: 2));
     }
+
+    test('confirmed v2 reaction cannot become a standalone parent', () async {
+      await verifyOwnParent();
+      final reaction = await admitOwnParentReaction();
+      final confirmed = await confirmCloudSave(admittedOperation: reaction);
+      await store.clearConfirmedProtectedOutboundLeaseReference(
+        expectedOperation: confirmed,
+        recordVerifiedLocalSendReadback: true,
+      );
+      expect(jsonDecode(intent().admittedChatBinding!)[0], 2);
+      expect(intent().confirmedReadbackBindingSha256, isNotNull);
+      final before = parentProofReadState();
+      expect(
+        () => journal.readConfirmedParentDependency(objectBox, scope, local),
+        throwsA(
+          isA<StateError>().having(
+            (error) => error.message,
+            'code',
+            'cloud_sync_local_send_parent_not_ready',
+          ),
+        ),
+      );
+      expect(parentProofReadState(), before);
+      expect(nativeBridge.idsSendCalls, 0);
+    });
 
     test(
       'exact own-parent readback permits reaction without a change-feed echo',
@@ -2680,6 +2913,390 @@ void main() {
         attachmentParentContext: context,
       );
 
+      Future<CloudOutboxOperation> adoptReadbackAttachmentParent() async {
+        final source = await prepareAttachmentParent();
+        await acknowledgeParentChild();
+        transport.parentStages.add(_stage('a', 'P', 'L', 'S'));
+        return admitParent(parentContext(source, intent().messageGuidHash));
+      }
+
+      Future<CloudOutboxOperation> verifyAttachmentParent() async {
+        final operation = await confirmCloudSave(
+          admittedOperation: await adoptReadbackAttachmentParent(),
+        );
+        await store.clearConfirmedProtectedOutboundLeaseReference(
+          expectedOperation: operation,
+          recordVerifiedLocalSendReadback: true,
+        );
+        return operation;
+      }
+
+      Future<({CloudInboxEntry entry, CloudCoordinatorLeaseFence fence,
+          CloudDecodedMutation decoded})> journalOwnAttachmentEcho(
+        CloudOutboxOperation parent, {String? parentLogicalKey}
+      ) async {
+        final childScope = siblingScope('attachmentManateeZone');
+        final checkpoint = await store.readCheckpoint(childScope);
+        final fence = (await store.tryAcquireCoordinatorLease(
+          childScope, ownerId: 'own-attachment-echo', now: testEpoch,
+          leaseDuration: const Duration(minutes: 1),
+        ))!;
+        final change = CloudFetchedChange(
+          changeId: 'F' * 43, recordIdHash: 'D' * 43,
+          etagHash: 'E' * 43, type: CloudChangeType.save,
+          encryptedServerRecordId: testProtectedReference('Q'),
+          protectedSystemFieldsReference: testProtectedReference('R'),
+          encryptedPayloadReference: testProtectedReference('S'),
+          payloadSha256: testSha256('f'),
+        );
+        await store.journalFetchedBatch(
+          CloudFetchBatch(scope: childScope, changes: [change],
+            batchId: 'own-attachment-echo-page', generation: checkpoint.generation,
+            nextToken: 'own-attachment-echo-token', hasMore: false),
+          now: testEpoch, leaseFence: fence,
+          expectedGeneration: checkpoint.generation,
+          expectedFetchedToken: checkpoint.fetchedToken,
+        );
+        final entry = (await store.readEligibleInbox(childScope,
+          now: testEpoch, limit: 1)).single;
+        return (entry: entry, fence: fence, decoded: CloudDecodedMutation.upsert(
+          scope: childScope, generation: checkpoint.generation,
+          changeId: change.changeId,
+          snapshot: CloudSemanticSnapshot(kind: CloudEntityKind.attachment,
+            logicalEntityKeyHash: 'C' * 43,
+            parentLogicalKeyHash: parentLogicalKey ?? parent.logicalEntityKeyHash,
+            immutableContentDigest: testSha256('f')),
+          payload: CloudAttachmentEntityPayload(
+            logicalEntityKeyHash: 'C' * 43, canonicalGuid: '${attachmentGuid}_0',
+            ownerLogicalKeyHash: parentLogicalKey ?? parent.logicalEntityKeyHash,
+            ownerCanonicalGuid: attachmentGuid, ownerPart: 0,
+            fileName: 'fixture.png', mimeType: 'image/png',
+            bodyCapability: CloudAttachmentBodyCapability.materializable,
+            protectedLocalReference: testProtectedReference('T'),
+          ),
+        ));
+      }
+
+      TransactionalCloudInboxApplier attachmentEchoApplier(
+        CloudDecodedMutation decoded, {
+        bool receiptReaderEnabled = true,
+        bool loadedIdentityCurrent = true,
+        int? messageGeneration,
+      }) {
+        final registry = TransientCloudCanonicalIdentityRegistry();
+        final reader = ObjectBoxConfirmedMessageDependencyReader(
+          store: objectBox, authority: authority,
+          authoritySnapshot: authority.read(writerScope)!, auth: currentAuth,
+          attachmentScope: decoded.scope,
+          attachmentGeneration: decoded.generation,
+          stillCurrent: () => loadedIdentityCurrent,
+        );
+        final adapter = ObjectBoxCanonicalSemanticEntityAdapter(
+          store: objectBox,
+          activeScopeProvider: () => CloudCanonicalActiveScope(
+            scope: decoded.scope, generation: decoded.generation),
+          identityResolver: registry,
+          messageDependencyScope: CloudCanonicalActiveScope(
+            scope: scope, generation: messageGeneration ??
+                objectBox.box<CloudSyncCheckpointEntity>().getAll().singleWhere(
+                  (row) => row.checkpointKey == cloudSyncPersistentScopeKey(scope),
+                ).generation),
+          confirmedLocalMessageReader: receiptReaderEnabled ? reader.read : null,
+          semanticApplyEnabled: true, allowAttachmentMetadataUpserts: true,
+        );
+        return TransactionalCloudInboxApplier(
+          decoder: _OwnAttachmentEchoDecoder(decoded), identityRegistrar: registry,
+          activeScopeRevalidator: () async => true,
+          store: ObjectBoxCloudSemanticStoreGateway(
+            store: objectBox, canonicalAdapter: adapter, clock: () => testEpoch),
+        );
+      }
+
+      List<Object?> attachmentEchoCursorState(CloudSyncScope childScope) {
+        final row = objectBox.box<CloudSyncCheckpointEntity>().getAll().singleWhere(
+          (row) => row.checkpointKey == cloudSyncPersistentScopeKey(childScope),
+        );
+        return [row.generation, row.fetchedSequence, row.appliedSequence,
+          row.pendingBatchId, row.pendingFetchedTokenCiphertext,
+          row.fetchedTokenCiphertext, objectBox.box<CloudInboxChangeEntity>().getAll()
+            .map((entry) => [entry.id, entry.status, entry.fetchSequence,
+              entry.encryptedPayloadRef, entry.retryCount]).toList()];
+      }
+
+      test('own attachment echo drains its real pending page without parent self-echo', () async {
+        final parent = await verifyAttachmentParent();
+        final echo = await journalOwnAttachmentEcho(parent);
+        final childScope = echo.entry.scope;
+        final pending = await store.readCheckpoint(childScope);
+        expect(pending.pendingBatchId, 'own-attachment-echo-page');
+        expect(pending.lastAppliedSequence, 0);
+        expect(objectBox.box<CloudSyncCheckpointEntity>().getAll().singleWhere(
+          (row) => row.checkpointKey == cloudSyncPersistentScopeKey(childScope),
+        ).pendingFetchedTokenCiphertext, isNotNull);
+        final beforeProof = intent().admittedBindingSha256;
+        final beforeReadback = intent().confirmedReadbackBindingSha256;
+        final beforeTimeline = List<String>.of(timeline);
+        final childId = objectBox.box<Attachment>().getAll().single.id;
+        final result = await attachmentEchoApplier(echo.decoded).apply(
+          echo.entry, leaseFence: echo.fence);
+        expect(result.disposition, CloudInboxApplyDisposition.applied);
+        expect(result.inboxStatusPersisted, isTrue);
+        final drained = await store.readCheckpoint(childScope);
+        expect(drained.pendingBatchId, isNull);
+        expect(drained.lastAppliedSequence, drained.fetchedSequence);
+        expect(drained.fetchedToken, 'own-attachment-echo-token');
+        expect(objectBox.box<CloudSyncCheckpointEntity>().getAll().singleWhere(
+          (row) => row.checkpointKey == cloudSyncPersistentScopeKey(childScope),
+        ).pendingFetchedTokenCiphertext, isNull);
+        expect(objectBox.box<CloudSemanticSnapshotEntity>().getAll().where(
+          (row) => row.zone == scope.zone), isEmpty);
+        expect(objectBox.box<CloudInboxChangeEntity>().getAll().where(
+          (row) => row.zone == scope.zone), isEmpty);
+        expect(objectBox.box<CloudSemanticSnapshotEntity>().getAll().where(
+          (row) => row.zone == childScope.zone), hasLength(1));
+        expect(objectBox.box<Attachment>().getAll().single.id, childId);
+        expect(objectBox.box<Attachment>().getAll().single.message.targetId, local.id);
+        expect(intent().admittedBindingSha256, beforeProof);
+        expect(intent().confirmedReadbackBindingSha256, beforeReadback);
+        expect(timeline, beforeTimeline);
+        expect(nativeBridge.idsSendCalls, 0);
+        await store.releaseCoordinatorLease(childScope, leaseFence: echo.fence);
+        objectBox.close();
+        objectBox = await openStore(directory: directory.path);
+        bindJournal();
+        bindParentChildReadback();
+        store = ObjectBoxCloudSyncStore(store: objectBox, protector: _Protector(),
+          clock: () => testEpoch);
+        expect((await store.readCheckpoint(childScope)).pendingBatchId, isNull);
+        expect(objectBox.box<CloudInboxChangeEntity>().getAll().single.status,
+          CloudInboxStatus.applied.index);
+        expectExactParentProof(parent);
+        expect(objectBox.box<Attachment>().getAll().single.id, childId);
+      });
+
+      for (final rejection in ['reader disabled', 'loaded identity changed',
+        'parent generation changed', 'readback marker changed',
+        'child receipt regressed', 'parent history pending', 'parent tombstone',
+        'owner epoch changed', 'parent logical key changed',
+        'conflicting owner', 'hashless claimant', 're-homed logical claimant']) {
+        test('own attachment echo preserves the pending page when $rejection', () async {
+          final parent = await verifyAttachmentParent();
+          final echo = await journalOwnAttachmentEcho(parent,
+            parentLogicalKey: rejection == 'parent logical key changed' ? 'N' * 43 : null);
+          // Pin the loaded authority before simulating a transition, just as
+          // production constructs the reader before asynchronous decoding.
+          final applier = attachmentEchoApplier(echo.decoded,
+            receiptReaderEnabled: rejection != 'reader disabled',
+            loadedIdentityCurrent: rejection != 'loaded identity changed',
+            messageGeneration: rejection == 'parent generation changed' ? 2 : null,
+          );
+          if (rejection == 'readback marker changed') {
+            objectBox.box<CloudSyncLocalSendIntentEntity>().put(
+              intent()..confirmedReadbackBindingSha256 = testSha256('0'));
+          } else if (rejection == 'child receipt regressed') {
+            final box = objectBox.box<CloudOutboxOperationEntity>();
+            box.put(box.getAll().singleWhere(
+              (row) => row.zone == echo.entry.scope.zone)
+              ..protectedLeaseReference = testProtectedLeaseReference('d'));
+          } else if (rejection == 'owner epoch changed') {
+            final box = objectBox.box<CloudKitWriterAuthorityEntity>();
+            box.put(box.getAll().single..epoch += 1);
+          } else if (rejection == 'conflicting owner' ||
+              rejection == 'hashless claimant' ||
+              rejection == 're-homed logical claimant') {
+            // Simulate conflicting historical evidence, never insert a
+            // fabricated positive parent snapshot to make the echo pass.
+            final scopeKey = cloudSyncPersistentScopeKey(scope);
+            final generationKey = 'semantic-generation4:${sha256.convert(
+              utf8.encode('$scopeKey\u001f${parent.checkpointGeneration}'))}';
+            final guid = rejection == 're-homed logical claimant'
+                ? 'another-fixture-parent' : attachmentGuid;
+            final logical = rejection == 'conflicting owner'
+                ? 'Z' * 43 : parent.logicalEntityKeyHash;
+            objectBox.box<CloudSemanticSnapshotEntity>().put(CloudSemanticSnapshotEntity(
+              snapshotKey: 'semantic-snapshot4:$generationKey:message:$logical',
+              scopeGenerationKey: generationKey, scopeKey: scopeKey,
+              accountFingerprint: scope.accountFingerprint, container: scope.container,
+              database: scope.database, zone: scope.zone, streamKind: scope.streamKind.name,
+              schemaVersion: scope.schemaVersion, generation: parent.checkpointGeneration,
+              entityKind: CloudEntityKind.message.name, logicalEntityKeyHash: logical,
+              canonicalGuidLookupHash: rejection == 'hashless claimant' ? null :
+                CloudCanonicalIdentityDigest.forCanonicalGuidLookup(scope: scope,
+                  generation: parent.checkpointGeneration, canonicalGuid: guid),
+              canonicalGuidHash: rejection == 'hashless claimant' ? null :
+                CloudCanonicalIdentityDigest.forCanonicalGuid(scope: scope,
+                  generation: parent.checkpointGeneration, kind: CloudEntityKind.message,
+                  logicalEntityKeyHash: logical, canonicalGuid: guid),
+              updatedAtMs: testEpoch.millisecondsSinceEpoch,
+            ));
+          } else if (rejection == 'parent history pending' || rejection == 'parent tombstone') {
+            final checkpoint = await store.readCheckpoint(scope);
+            final fence = (await store.tryAcquireCoordinatorLease(scope,
+              ownerId: 'conflicting-parent-history', now: testEpoch,
+              leaseDuration: const Duration(minutes: 1)))!;
+            final tombstone = rejection == 'parent tombstone';
+            await store.journalFetchedBatch(CloudFetchBatch(
+              scope: scope, generation: checkpoint.generation,
+              changes: [CloudFetchedChange(changeId: 'H' * 43,
+                recordIdHash: parent.serverRecordIdHash!,
+                type: tombstone ? CloudChangeType.delete : CloudChangeType.save,
+                isTombstone: tombstone,
+                encryptedServerRecordId: testProtectedReference('J'),
+                protectedSystemFieldsReference: testProtectedReference('K'),
+                encryptedPayloadReference: tombstone ? null : testProtectedReference('L'),
+                payloadSha256: tombstone ? null : testSha256('a'))],
+              batchId: 'parent-history-page', nextToken: 'parent-history-token',
+              hasMore: false), now: testEpoch, leaseFence: fence,
+              expectedGeneration: checkpoint.generation,
+              expectedFetchedToken: checkpoint.fetchedToken);
+          }
+          final before = parentProofReadState();
+          final beforeCursor = attachmentEchoCursorState(echo.entry.scope);
+          final result = await applier.apply(echo.entry, leaseFence: echo.fence);
+          expect(result.disposition, isNot(CloudInboxApplyDisposition.applied));
+          expect(result.inboxStatusPersisted, isFalse);
+          expect(parentProofReadState(), before);
+          expect(attachmentEchoCursorState(echo.entry.scope), beforeCursor);
+          expect(nativeBridge.idsSendCalls, 0);
+        });
+      }
+
+      test('confirmed-parent bridge rejects a different account without changing receipts', () async {
+        await verifyAttachmentParent();
+        final childScope = siblingScope('attachmentManateeZone');
+        final reader = ObjectBoxConfirmedMessageDependencyReader(
+          store: objectBox, authority: authority,
+          authoritySnapshot: authority.read(writerScope)!, auth: currentAuth,
+          attachmentScope: childScope,
+          attachmentGeneration: (await store.readCheckpoint(childScope)).generation,
+          stillCurrent: () => true,
+        );
+        final other = CloudSyncScope(accountFingerprint: testAccountFingerprintB,
+          container: scope.container, database: scope.database, zone: scope.zone,
+          streamKind: scope.streamKind, schemaVersion: scope.schemaVersion,
+          persistenceLane: scope.persistenceLane);
+        final before = parentProofReadState();
+        expect(() => reader.read(other, local), throwsA(isA<StateError>().having(
+          (error) => error.message, 'code', 'cloud_sync_local_send_identity_changed')));
+        expect(parentProofReadState(), before);
+      });
+
+      test('confirmed v4 attachment parent proves ownership without self-echo after reopen', () async {
+        final operation = await verifyAttachmentParent();
+        final wrapper = jsonDecode(intent().admittedChatBinding!) as List;
+        expect(wrapper[0], 4);
+        expect(jsonDecode(wrapper[1] as String)[0], 1);
+        expect(jsonDecode(wrapper[2] as String)[0], 1);
+        expect(operation.status, CloudOutboxStatus.confirmed);
+        expectExactParentProof(operation);
+        objectBox.close();
+        objectBox = await openStore(directory: directory.path);
+        bindJournal();
+        bindParentChildReadback();
+        expectExactParentProof(operation);
+        expect(transport.parentStageCalls, 1);
+        expect(transport.messageStageCalls, 0);
+      });
+
+      for (final receipt in ['unconfirmed', 'save-only', 'generic cleanup']) {
+        test('v4 attachment parent $receipt cannot prove ownership', () async {
+          final pending = await adoptReadbackAttachmentParent();
+          if (receipt != 'unconfirmed') {
+            final confirmed = await confirmCloudSave(admittedOperation: pending);
+            if (receipt == 'generic cleanup') {
+              await store.clearConfirmedProtectedOutboundLeaseReference(
+                expectedOperation: confirmed,
+              );
+            }
+          }
+          expect(intent().confirmedReadbackBindingSha256, isNull);
+          final before = parentProofReadState();
+          expect(
+            journal.readConfirmedParentDependency(objectBox, scope, local),
+            isNull,
+          );
+          expect(parentProofReadState(), before);
+          expect(nativeBridge.idsSendCalls, 0);
+        });
+      }
+
+      for (final corruption in [
+        'null child validator',
+        'corrupt child proof',
+        'child receipt regression',
+        'nested wrapper',
+        'reaction wrapper',
+        'corrupt wrapper',
+      ]) {
+        test('confirmed v4 attachment parent rejects $corruption', () async {
+          await verifyAttachmentParent();
+          final originalBinding = intent().admittedBindingSha256;
+          final originalReadback = intent().confirmedReadbackBindingSha256;
+          switch (corruption) {
+            case 'null child validator':
+              journal = CloudSyncLocalSendJournal(
+                store: objectBox,
+                authority: authority,
+                authoritySnapshot: authority.read(writerScope)!,
+              );
+            case 'corrupt child proof':
+              // The real validator must reject drift in retained child proof
+              // evidence while the parent's original adoption stays intact.
+              final box = objectBox.box<CloudAttachmentUploadEntity>();
+              box.put(
+                box.getAll().single..resultPayloadSha256 = testSha256('e'),
+              );
+            case 'child receipt regression':
+              final box = objectBox.box<CloudOutboxOperationEntity>();
+              box.put(
+                box.getAll().singleWhere(
+                  (row) => row.zone == 'attachmentManateeZone',
+                )..protectedLeaseReference = testProtectedLeaseReference('d'),
+              );
+            case 'nested wrapper':
+            case 'reaction wrapper':
+            case 'corrupt wrapper':
+              final wrapper = jsonDecode(intent().admittedChatBinding!) as List;
+              if (corruption == 'nested wrapper') {
+                wrapper[1] = intent().admittedChatBinding;
+              } else if (corruption == 'reaction wrapper') {
+                wrapper[1] = jsonEncode([2, wrapper[1], []]);
+              } else {
+                wrapper[2] = null;
+              }
+              // Deliberately preserve both immutable digests. A malformed
+              // wrapper must never manufacture an adopted ownership binding.
+              objectBox.box<CloudSyncLocalSendIntentEntity>().put(
+                intent()..admittedChatBinding = jsonEncode(wrapper),
+              );
+          }
+          expect(intent().admittedBindingSha256, originalBinding);
+          expect(intent().confirmedReadbackBindingSha256, originalReadback);
+          final before = parentProofReadState();
+          final code = switch (corruption) {
+            'null child validator' =>
+              'cloud_sync_attachment_parent_readback_required',
+            'corrupt child proof' =>
+              'cloud_sync_attachment_upload_adoption_changed',
+            'child receipt regression' =>
+              'cloud_sync_attachment_upload_readback_not_ready',
+            _ => 'cloud_sync_local_send_parent_not_ready',
+          };
+          expect(
+            () => journal.readConfirmedParentDependency(objectBox, scope, local),
+            throwsA(
+              isA<StateError>().having(
+                (error) => error.message,
+                'code',
+                code,
+              ),
+            ),
+          );
+          expect(parentProofReadState(), before);
+          expect(nativeBridge.idsSendCalls, 0);
+        });
+      }
+
       test(
         'attachment parent crosses journal, explicit stage, and adoption',
         () async {
@@ -3067,6 +3684,30 @@ void main() {
         attachmentParentChatBinding: chatBinding,
       );
 
+      test('confirmed v4 group attachment parent proves ownership without self-echo', () async {
+        final prepared = await prepareGroupAttachmentParent();
+        await acknowledgeParentChild();
+        transport.parentStages.add(_stage('a', 'P', 'L', 'S'));
+        final operation = await confirmCloudSave(
+          admittedOperation: await admitGroupParent(
+            prepared.context,
+            prepared.chatBinding,
+            const _FakeGroupProof(),
+          ),
+        );
+        await store.clearConfirmedProtectedOutboundLeaseReference(
+          expectedOperation: operation,
+          recordVerifiedLocalSendReadback: true,
+        );
+        final wrapper = jsonDecode(intent().admittedChatBinding!) as List;
+        expect(wrapper[0], 4);
+        expect(wrapper[1], prepared.chatBinding);
+        expect(jsonDecode(prepared.chatBinding)[0], 3);
+        expectExactParentProof(operation);
+        expect(transport.parentStageCalls, 1);
+        expect(transport.messageStageCalls, 0);
+      });
+
       test(
         'group attachment parent pins the exact v3 binding inside v4',
         () async {
@@ -3429,6 +4070,8 @@ final class _Protector implements CloudSyncProtector {
 // attachment-parent admission test exercises genuine header encoding without
 // actual Rust or a local account.
 final class _AttachmentParentBridge implements RustLibApi {
+  int idsSendCalls = 0;
+
   @override
   frb_api.SystemTime crateApiApiUtmNow() => _AttachmentParentTime();
   @override
@@ -3456,7 +4099,13 @@ final class _AttachmentParentBridge implements RustLibApi {
     required int val,
   }) => _AttachmentParentFlags(val);
   @override
-  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+  dynamic noSuchMethod(Invocation invocation) {
+    if (invocation.memberName == #crateApiApiSend) {
+      idsSendCalls++;
+      throw StateError('unexpected IDS send');
+    }
+    return super.noSuchMethod(invocation);
+  }
 }
 
 final class _AttachmentParentTime implements frb_api.SystemTime {
@@ -3492,4 +4141,12 @@ final class _AttachmentParentFlags implements frb_api.MessageFlags {
   int bits() => value;
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+final class _OwnAttachmentEchoDecoder implements CloudSemanticDecoder {
+  const _OwnAttachmentEchoDecoder(this.mutation);
+  final CloudDecodedMutation mutation;
+
+  @override
+  Future<CloudDecodedMutation> decode(CloudInboxEntry entry) async => mutation;
 }

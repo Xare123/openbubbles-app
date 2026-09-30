@@ -49,6 +49,7 @@ import 'cloud_sync_read_budget.dart';
 import 'cloud_sync_store.dart';
 import 'native_protected_cloud_sync_transport.dart';
 import 'objectbox_canonical_semantic_entity_adapter.dart';
+import 'objectbox_confirmed_message_dependency_reader.dart';
 import 'objectbox_cloud_semantic_store_gateway.dart';
 import 'cloud_sync_protector.dart';
 import 'cloud_sync_reset_coordinator.dart';
@@ -611,24 +612,38 @@ final class CloudSyncProductionSemanticPullAdapter {
           scope: scope,
           generation: generation,
         );
+        final objectBox = Database.store;
+        bool stillCurrent() => !objectBox.isClosed() &&
+            identical(objectBox, Database.store) &&
+            identical(snapshot.cloudMessagesClient, readActiveClient());
+        final chatDependency = await cloudSyncProductionDependencyActiveScope(
+          store: durableStore, current: activeScope, zone: 'chatManateeZone',
+        );
+        final messageDependency = await cloudSyncProductionDependencyActiveScope(
+          store: durableStore, current: activeScope, zone: 'messageManateeZone',
+        );
+        ObjectBoxConfirmedMessageDependencyReader? confirmedParents;
+        if (scope.zone == 'attachmentManateeZone') {
+          final authority = ObjectBoxCloudKitWriterAuthority(store: objectBox);
+          final owner = authority.read(CloudKitWriterScope(
+            accountFingerprint: snapshot.accountFingerprint,
+          ));
+          if (owner != null && owner.owner == CloudKitWriterOwner.v2 &&
+              owner.state == CloudKitWriterAuthorityState.stable) {
+            confirmedParents = ObjectBoxConfirmedMessageDependencyReader(
+              store: objectBox, authority: authority, authoritySnapshot: owner,
+              auth: snapshot, attachmentScope: scope,
+              attachmentGeneration: generation, stillCurrent: stillCurrent,
+            );
+          }
+        }
         final canonicalAdapter = ObjectBoxCanonicalSemanticEntityAdapter(
-          store: Database.store,
-          activeScopeProvider: () =>
-              identical(snapshot.cloudMessagesClient, readActiveClient())
-              ? activeScope
-              : null,
+          store: objectBox,
+          activeScopeProvider: () => stillCurrent() ? activeScope : null,
           identityResolver: identityRegistry,
-          chatDependencyScope: await cloudSyncProductionDependencyActiveScope(
-            store: durableStore,
-            current: activeScope,
-            zone: 'chatManateeZone',
-          ),
-          messageDependencyScope:
-              await cloudSyncProductionDependencyActiveScope(
-                store: durableStore,
-                current: activeScope,
-                zone: 'messageManateeZone',
-              ),
+          chatDependencyScope: chatDependency,
+          messageDependencyScope: messageDependency,
+          confirmedLocalMessageReader: confirmedParents?.read,
           diagnosticRecorder: diagnostics.record,
           semanticApplyEnabled: true,
           allowExistingChatPresentationUpdates: false,
@@ -653,7 +668,7 @@ final class CloudSyncProductionSemanticPullAdapter {
         Future<bool> revalidateAccount() async {
           final current = await authProvider.capture();
           return snapshot.sameIdentity(current) &&
-              identical(snapshot.cloudMessagesClient, readActiveClient());
+              stillCurrent();
         }
         return TransactionalCloudInboxApplier(
           reconsiderExcludedChatMetadata: reconsiderExcludedChatMetadata,
