@@ -17,12 +17,14 @@ final class CloudSyncLocalSendConsumer {
     required CloudSyncLocalSendAuthFence authFence,
     required CloudKitOperationExclusion exclusion,
     required Future<bool> Function() drainExisting,
+    bool Function()? shouldYield,
     DateTime Function()? clock,
   }) : _journal = journal,
        _admit = admit,
        _authFence = authFence,
        _exclusion = exclusion,
        _drainExisting = drainExisting,
+       _shouldYield = shouldYield,
        _clock = clock ?? DateTime.now {
     if (scope.container != 'com.apple.messages.cloud' ||
         scope.database != 'private' ||
@@ -38,6 +40,7 @@ final class CloudSyncLocalSendConsumer {
   final CloudSyncLocalSendAuthFence _authFence;
   final CloudKitOperationExclusion _exclusion;
   final Future<bool> Function() _drainExisting;
+  final bool Function()? _shouldYield;
   final DateTime Function() _clock;
   Future<CloudSyncLocalSendConsumerResult>? _running;
   bool _runningExact = false;
@@ -65,6 +68,10 @@ final class CloudSyncLocalSendConsumer {
       await _validateAccount();
       return const CloudSyncLocalSendConsumerResult(outboxBlocked: true);
     }
+    await _validateAccount();
+    if (_shouldYield?.call() ?? false) {
+      return const CloudSyncLocalSendConsumerResult(yielded: true);
+    }
     final candidates = await _authFence.run(
       () => _journal.readReady(limit: maximumIntents),
       accountFingerprint: scope.accountFingerprint,
@@ -73,6 +80,16 @@ final class CloudSyncLocalSendConsumer {
     var deferred = 0;
     final deferredReasons = <String, int>{};
     for (final intent in candidates) {
+      // The preceding drain settled every entered operation. Yield before
+      // rotating/admitting the next origin, never during an uncertain save.
+      if (_shouldYield?.call() ?? false) {
+        return CloudSyncLocalSendConsumerResult(
+          admitted: admitted,
+          deferred: deferred,
+          yielded: true,
+          deferredReasons: Map.unmodifiable(deferredReasons),
+        );
+      }
       // Persist fair selection independently of staging. An unsupported or
       // dependency-blocked first row must not starve all later local sends.
       await _authFence.run(
@@ -186,6 +203,7 @@ final class CloudSyncLocalSendConsumerResult {
     this.outboxBlocked = false,
     this.chatReadbackPending = false,
     this.candidateLimitReached = false,
+    this.yielded = false,
     this.deferredReasons = const {},
     this.existingHistoryDiagnostics = const {},
     this.historicalAttachmentsUnavailable = false,
@@ -203,6 +221,10 @@ final class CloudSyncLocalSendConsumerResult {
   /// A full, completely examined batch may leave eligible origins beyond the
   /// selection limit. Continue fair rotation without no-progress backoff.
   final bool candidateLimitReached;
+
+  /// Work was left unexamined at a settled boundary to serve a queued caller.
+  /// Distinct from an unknown outcome, dependency failure or exhausted batch.
+  final bool yielded;
 
   /// Fixed, allowlisted codes only, aggregated per pass. Never identifiers,
   /// message text or raw exception/server content.

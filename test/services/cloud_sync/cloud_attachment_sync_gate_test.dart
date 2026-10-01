@@ -458,6 +458,191 @@ void main() {
     );
     expect(bodyRan, isFalse);
   });
+
+  test('entered request is excluded from waiting work', () async {
+    final gate = CloudAttachmentSyncGate();
+    final entered = Completer<void>();
+    final release = Completer<void>();
+    var observedInside = true;
+    final active = gate.run<void>(
+      validate: () {},
+      action: () async {
+        observedInside = gate.hasWaitingWork;
+        entered.complete();
+        await release.future;
+      },
+    );
+    await entered.future;
+    expect(observedInside, isFalse);
+    expect(gate.hasWaitingWork, isFalse);
+    release.complete();
+    await active;
+    expect(gate.hasWaitingWork, isFalse);
+  });
+
+  test('queued requests hand back FIFO and clear waiting work', () async {
+    final gate = CloudAttachmentSyncGate();
+    final ownerStarted = Completer<void>();
+    final releaseOwner = Completer<void>();
+    final events = <String>[];
+    final owner = gate.run<void>(
+      validate: () {},
+      action: () async {
+        ownerStarted.complete();
+        await releaseOwner.future;
+      },
+    );
+    await ownerStarted.future;
+    final first = gate.run<void>(
+      validate: () {},
+      action: () async {
+        events.add('first');
+      },
+    );
+    final second = gate.run<void>(
+      validate: () {},
+      action: () async {
+        events.add('second');
+      },
+    );
+    await _pumpEventTurns();
+    expect(gate.hasWaitingWork, isTrue);
+    releaseOwner.complete();
+    await Future.wait<void>([owner, first, second]);
+    expect(events, ['first', 'second']);
+    expect(gate.hasWaitingWork, isFalse);
+  });
+
+  test('queued timeout clears waiting work without a delayed body', () async {
+    final gate = CloudAttachmentSyncGate();
+    final ownerStarted = Completer<void>();
+    final releaseOwner = Completer<void>();
+    var bodyRan = false;
+    final owner = gate.run<void>(
+      validate: () {},
+      action: () async {
+        ownerStarted.complete();
+        await releaseOwner.future;
+      },
+    );
+    await ownerStarted.future;
+    final timedOut = gate.run<void>(
+      waitTimeout: const Duration(milliseconds: 20),
+      validate: () {},
+      action: () async {
+        bodyRan = true;
+      },
+    );
+    await expectLater(
+      timedOut,
+      throwsA(
+        isA<CloudKitOperationInterlockException>().having(
+          (error) => error.safeCode,
+          'safeCode',
+          'cloudkit_interlock_busy',
+        ),
+      ),
+    );
+    expect(gate.hasWaitingWork, isFalse);
+    releaseOwner.complete();
+    await owner;
+    await _pumpEventTurns(10);
+    expect(bodyRan, isFalse);
+    expect(gate.hasWaitingWork, isFalse);
+    var nextRan = false;
+    await gate.run<void>(
+      validate: () {},
+      action: () async {
+        nextRan = true;
+      },
+    );
+    expect(nextRan, isTrue);
+    expect(gate.hasWaitingWork, isFalse);
+  });
+
+  test(
+    'queued validation failure clears waiting work without poisoning',
+    () async {
+      final gate = CloudAttachmentSyncGate();
+      final ownerStarted = Completer<void>();
+      final releaseOwner = Completer<void>();
+      var bodyRan = false;
+      final owner = gate.run<void>(
+        validate: () {},
+        action: () async {
+          ownerStarted.complete();
+          await releaseOwner.future;
+        },
+      );
+      await ownerStarted.future;
+      final rejected = gate.run<void>(
+        validate: () {
+          throw StateError('stale validation');
+        },
+        action: () async {
+          bodyRan = true;
+        },
+      );
+      await _pumpEventTurns();
+      expect(gate.hasWaitingWork, isTrue);
+      final rejectedExpectation =
+          expectLater(rejected, throwsA(isA<StateError>()));
+      releaseOwner.complete();
+      await owner;
+      await rejectedExpectation;
+      expect(bodyRan, isFalse);
+      expect(gate.hasWaitingWork, isFalse);
+      var nextRan = false;
+      await gate.run<void>(
+        validate: () {},
+        action: () async {
+          nextRan = true;
+        },
+      );
+      expect(nextRan, isTrue);
+      expect(gate.hasWaitingWork, isFalse);
+    },
+  );
+
+  test(
+    'cancelled validation still excludes entry and preserves FIFO',
+    () async {
+      final gate = CloudAttachmentSyncGate();
+      final ownerStarted = Completer<void>();
+      final releaseOwner = Completer<void>();
+      final events = <String>[];
+      final owner = gate.run<void>(
+        validate: () {},
+        action: () async {
+          ownerStarted.complete();
+          await releaseOwner.future;
+        },
+      );
+      await ownerStarted.future;
+      final cancelled = gate.run<void>(
+        validate: () {
+          throw StateError('cancelled');
+        },
+        action: () async {
+          events.add('cancelled-body');
+        },
+      );
+      final next = gate.run<void>(
+        validate: () {},
+        action: () async {
+          events.add('next');
+        },
+      );
+      await _pumpEventTurns();
+      expect(gate.hasWaitingWork, isTrue);
+      final cancelledExpectation =
+          expectLater(cancelled, throwsA(isA<StateError>()));
+      releaseOwner.complete();
+      await Future.wait<void>([owner, next, cancelledExpectation]);
+      expect(events, ['next']);
+      expect(gate.hasWaitingWork, isFalse);
+    },
+  );
 }
 
 Future<void> _pumpEventTurns([int count = 2]) async {

@@ -126,6 +126,139 @@ void main() {
     expect(source, contains('return stillRunning;'));
   });
 
+  test('active archival defers only after durable mutation acceptance', () {
+    final start = source.indexOf(
+      'if (source?.kind == api.CloudSyncNativeSendSourceKind.mutation)',
+    );
+    final mutation = source.substring(
+      start,
+      source.indexOf('receiptSource =', start),
+    );
+    final journaled = mutation.indexOf('recordNativeReceiptIntentIfTracked(');
+    final defer = mutation.indexOf('if (replayBinding == null &&');
+    expect(journaled, greaterThanOrEqualTo(0));
+    expect(defer, greaterThan(journaled));
+    final handoff = mutation.substring(
+      defer,
+      mutation.indexOf('final cloudStore'),
+    );
+    expect(handoff, contains('_cloudSyncV2DeveloperRuntimeAllowed'));
+    expect(handoff, contains('_cloudSyncV2AutomaticArchiveActive'));
+    expect(handoff, contains('_scheduleCloudSyncV2MessageUpdateRetry('));
+    expect(handoff, contains('const Duration(milliseconds: 100)'));
+    expect(handoff, contains('return;'));
+    expect(handoff, isNot(contains('cloudSyncAcknowledgeNativeSendReceipt')));
+    expect(handoff, isNot(contains('markExactReadbackConfirmed')));
+    expect(handoff, isNot(contains('sendMsg(')));
+  });
+
+  test(
+    'accepted mutation recovery shares the gate and drains before handback',
+    () {
+      final start = source.indexOf('Future<void> processMutationReceipt()');
+      expect(start, greaterThanOrEqualTo(0));
+      final process = source.substring(
+        start,
+        source.indexOf('await _cloudSyncV2AttachmentGate.run<void>(', start),
+      );
+      expect(
+        process,
+        contains('await lifecycle.ensureRecoveredBeforeWrite();'),
+      );
+      expect(process, contains('await transport.quiesceNativeOperations();'));
+      expect(process, contains('finally {'));
+      final gateStart = source.indexOf(
+        'await _cloudSyncV2AttachmentGate.run<void>(',
+        start,
+      );
+      final gate = source.substring(
+        gateStart,
+        source.indexOf('return; // Never route mutation evidence', gateStart),
+      );
+      expect(gate, contains('waitTimeout: const Duration(seconds: 30)'));
+      expect(gate, contains('if (!confirmationBindingCurrent())'));
+      expect(
+        gate.indexOf('await validateMutationIdentity();'),
+        lessThan(gate.indexOf('await processMutationReceipt();')),
+      );
+      expect(gate, isNot(contains('.timeout(')));
+      expect(
+        gate,
+        contains('on CloudKitOperationInterlockException catch (error)'),
+      );
+      expect(
+        gate,
+        contains("if (error.safeCode != 'cloudkit_interlock_busy') rethrow;"),
+      );
+      expect(gate, contains('stage=scheduler_wait'));
+      expect(
+        gate,
+        contains(
+          '_scheduleCloudSyncV2MessageUpdateRetry(const Duration(seconds: 5))',
+        ),
+      );
+      expect(gate, isNot(contains('cloudSyncAcknowledgeNativeSendReceipt')));
+      expect(gate, isNot(contains('sendMsg(')));
+      expect(gate, contains('_cloudSyncV2MessageUpdateInFlight = null'));
+    },
+  );
+
+  test('queued receipt retries retain the engine without forcing release', () {
+    final start = source.indexOf(
+      'void _scheduleCloudSyncV2MessageUpdateRetry(',
+    );
+    final timer = source.substring(
+      start,
+      source.indexOf(
+        'Future<void> _replayCloudSyncV2NativeSendReceipts()',
+        start,
+      ),
+    );
+    expect(
+      timer,
+      contains(
+        'await ls.retainEngineUntil(_replayCloudSyncV2NativeSendReceipts)',
+      ),
+    );
+    expect(timer, contains('catch (error)'));
+    expect(timer, contains('cloudSyncV2SafeFailureCode(error)'));
+    expect(timer, isNot(contains('cloudSyncAcknowledgeNativeSendReceipt')));
+    expect(timer, isNot(contains('markExactReadbackConfirmed')));
+    expect(timer, isNot(contains('releaseEngine')));
+    expect(timer, isNot(contains('sendMsg(')));
+  });
+
+  test(
+    'replay retries only recognized lock contention, not arbitrary failures',
+    () {
+      final start = source.indexOf(
+        'Future<void> _runCloudSyncV2NativeSendReceiptReplay()',
+      );
+      final replay = source.substring(
+        start,
+        source.indexOf('Future<void> _saveCloudSyncV2LocalSend(', start),
+      );
+      final failure = replay.substring(replay.lastIndexOf('} catch (error) {'));
+      expect(
+        failure,
+        contains('error is CloudKitOperationInterlockException &&'),
+      );
+      expect(failure, contains("error.safeCode == 'cloudkit_interlock_busy'"));
+      expect(
+        failure,
+        contains(
+          '_scheduleCloudSyncV2MessageUpdateRetry(const Duration(seconds: 5))',
+        ),
+      );
+      expect(
+        failure,
+        contains('_cloudSyncV2NativeReceiptReplayNeedsContinuation = false'),
+      );
+      expect(failure, isNot(contains('cloudSyncAcknowledgeNativeSendReceipt')));
+      expect(failure, isNot(contains('sendMsg(')));
+    },
+  );
+
   test('native completion is awaited and only successful events authorize', () {
     final start = source.indexOf('if (push is api.PushMessage_SendConfirm)');
     final handler = source.substring(

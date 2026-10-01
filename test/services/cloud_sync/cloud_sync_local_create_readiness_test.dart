@@ -37,6 +37,7 @@ void main() {
       required Future<bool> Function() drain,
       Future<CloudOutboxOperation> Function(int)? admit,
       CloudSyncLocalSendAuthFence? fence,
+      bool Function()? shouldYield,
     }) => CloudSyncLocalSendConsumer(
       scope: fixture.scope(),
       journal: fixture.journal,
@@ -44,6 +45,7 @@ void main() {
       exclusion: _ConsumerExclusion(),
       drainExisting: drain,
       admit: admit ?? (_) => fixture.admitLocal(),
+      shouldYield: shouldYield,
     );
 
     setUp(() async {
@@ -2211,6 +2213,202 @@ const _attachAttemptA = 'AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA';
         () => attachValidate(attachSelectionFor(intentA), withJournal: false),
         throwsA(attachStateError('cloud_sync_local_send_unrelated_outbox')),
       );
+    });
+  });
+
+  group('cooperative yield handback', () {
+    test('settled drain yields without admission or rotation', () async {
+      final fixture = await _Fixture.create();
+      try {
+        final before = fixture.intent.updatedAtMs;
+        final consumer = CloudSyncLocalSendConsumer(
+          scope: fixture.scope(),
+          journal: fixture.journal,
+          authFence: fixture.authFence,
+          exclusion: _ConsumerExclusion(),
+          drainExisting: () async => true,
+          admit: (_) => fixture.admitLocal(),
+          shouldYield: () => true,
+        );
+        final result = await consumer.runOnce();
+        expect(result.yielded, isTrue);
+        expect(result.admitted, 0);
+        expect(result.deferred, 0);
+        expect(result.outboxBlocked, isFalse);
+        expect(result.candidateLimitReached, isFalse);
+        expect(fixture.transport.stageCalls, 0);
+        expect(
+          fixture.objectBox.box<CloudOutboxOperationEntity>().count(),
+          0,
+        );
+        expect(fixture.intent.updatedAtMs, before);
+        expect(fixture.intent.state, 1);
+      } finally {
+        await fixture.close();
+      }
+    });
+
+    test('unsettled drain never reports a safe yield', () async {
+      final fixture = await _Fixture.create();
+      try {
+        var drains = 0;
+        final consumer = CloudSyncLocalSendConsumer(
+          scope: fixture.scope(),
+          journal: fixture.journal,
+          authFence: fixture.authFence,
+          exclusion: _ConsumerExclusion(),
+          drainExisting: () async {
+            drains++;
+            return false;
+          },
+          admit: (_) {
+            throw StateError('unexpected admission');
+          },
+          shouldYield: () => true,
+        );
+        final result = await consumer.runOnce();
+        expect(result.yielded, isFalse);
+        expect(result.outboxBlocked, isTrue);
+        expect(result.admitted, 0);
+        expect(result.deferred, 0);
+        expect(drains, 1);
+      } finally {
+        await fixture.close();
+      }
+    });
+
+    test('yield pauses before the next origin without rotating it', () async {
+      final fixture = await _Fixture.create();
+      try {
+        final firstId = fixture.intentId;
+        fixture._createConfirmedIntent(
+          guid: '22222222-2222-4222-8222-222222222222',
+          existingChat: fixture.local.chat.target,
+        );
+        final secondId = fixture.intentId;
+        expect(secondId, isNot(firstId));
+        final secondBefore = fixture.objectBox
+            .box<CloudSyncLocalSendIntentEntity>()
+            .get(secondId)!
+            .updatedAtMs;
+        final considered = <int>[];
+        var waitingWork = false;
+        final consumer = CloudSyncLocalSendConsumer(
+          scope: fixture.scope(),
+          journal: fixture.journal,
+          authFence: fixture.authFence,
+          exclusion: _ConsumerExclusion(),
+          drainExisting: () async => true,
+          admit: (id) async {
+            considered.add(id);
+            waitingWork = true;
+            throw StateError(
+              'cloud_sync_local_send_chat_readback_pending',
+            );
+          },
+          shouldYield: () => waitingWork,
+        );
+        final result = await consumer.runOnce(maximumIntents: 2);
+        expect(result.yielded, isTrue);
+        expect(result.admitted, 0);
+        expect(result.deferred, 1);
+        expect(result.outboxBlocked, isFalse);
+        expect(result.deferredReasons, {
+          'cloud_sync_local_send_chat_readback_pending': 1,
+        });
+        expect(considered, [firstId]);
+        final secondAfter = fixture.objectBox
+            .box<CloudSyncLocalSendIntentEntity>()
+            .get(secondId)!;
+        expect(secondAfter.updatedAtMs, secondBefore);
+        expect(secondAfter.admittedOperationId, isNull);
+        expect(fixture.transport.stageCalls, 0);
+      } finally {
+        await fixture.close();
+      }
+    });
+
+    test(
+      'pending yield never masks an unsettled post-admission drain',
+      () async {
+        final fixture = await _Fixture.create();
+        try {
+          await fixture.seedAccount();
+          fixture.transport.stages.add(_stage());
+          var drains = 0;
+          var admissionSignalled = false;
+          final consumer = CloudSyncLocalSendConsumer(
+            scope: fixture.scope(),
+            journal: fixture.journal,
+            authFence: fixture.authFence,
+            exclusion: _ConsumerExclusion(),
+            drainExisting: () async => ++drains == 1,
+            admit: (_) async {
+              final operation = await fixture.admitLocal();
+              admissionSignalled = true;
+              return operation;
+            },
+            shouldYield: () => admissionSignalled,
+          );
+          final result = await consumer.runOnce();
+          expect(result.admitted, 1);
+          expect(result.outboxBlocked, isTrue);
+          expect(result.yielded, isFalse);
+          expect(drains, 2);
+          expect(fixture.transport.stageCalls, 1);
+          expect(
+            fixture.objectBox.box<CloudOutboxOperationEntity>().count(),
+            1,
+          );
+        } finally {
+          await fixture.close();
+        }
+      },
+    );
+
+    test('exact intent ignores a cooperative yield', () async {
+      final fixture = await _Fixture.create();
+      try {
+        await fixture.seedAccount();
+        fixture.transport.stages.add(_stage());
+        var drains = 0;
+        final consumer = CloudSyncLocalSendConsumer(
+          scope: fixture.scope(),
+          journal: fixture.journal,
+          authFence: fixture.authFence,
+          exclusion: _ConsumerExclusion(),
+          drainExisting: () async {
+            drains++;
+            return true;
+          },
+          admit: (_) => fixture.admitLocal(),
+          shouldYield: () => true,
+        );
+        final selection = CloudSyncLocalSendExactSelection(
+          intentId: fixture.intentId,
+          expectedRecipient: _chatIdentifier,
+          expectedSourceSha256: fixture.intent.sourceSha256,
+        );
+        Future<void> validateSelection() async {
+          selection.validate(
+            store: fixture.objectBox,
+            journal: fixture.journal,
+            durable: fixture.store,
+            scope: fixture.scope(),
+          );
+        }
+        final result = await consumer.runExactIntent(
+          intentId: fixture.intentId,
+          validateSelection: validateSelection,
+        );
+        expect(result.yielded, isFalse);
+        expect(result.admitted, 1);
+        expect(result.deferred, 0);
+        expect(drains, 2);
+        expect(fixture.transport.stageCalls, 1);
+      } finally {
+        await fixture.close();
+      }
     });
   });
 }

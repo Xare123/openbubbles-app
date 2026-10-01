@@ -8566,6 +8566,7 @@ class RustPushService extends GetxService {
         readActiveClient: () => state?.icloudServices?.cloudMessagesClient,
         privateStorageDirectory: expectedStorage, stillCurrent: stillCurrent,
         automaticArchiveIdentity: consent.identity,
+        shouldYield: () => _cloudSyncV2AttachmentGate.hasWaitingWork,
       );
       _cloudSyncV2LocalSendRuntime = CloudSyncLocalSendRuntime(
         prepare: () async {
@@ -8602,10 +8603,12 @@ class RustPushService extends GetxService {
           validate: requireIdle,
           action: adapter.runOnce,
           );
-          if (result.admitted > 0 || result.deferred > 0 || result.outboxBlocked) {
+          if (result.admitted > 0 || result.deferred > 0 ||
+              result.outboxBlocked || result.yielded) {
             Logger.info('Cloud Sync V2 upload pass '
                 'admitted=${result.admitted} deferred=${result.deferred} '
                 'outboxBlocked=${result.outboxBlocked} '
+                'yielded=${result.yielded} '
                 'chatReadbackPending=${result.chatReadbackPending} '
                 'reasons=${jsonEncode(result.deferredReasons)} '
                 'existingHistory=${jsonEncode(result.existingHistoryDiagnostics)}');
@@ -9578,6 +9581,7 @@ class RustPushService extends GetxService {
           return;
         }
         if (mutationIntentId == null) return;
+        final int confirmedMutationIntentId = mutationIntentId;
         final mutationReceiptCorrelation = _diagnosticHash(
           '${auth.accountFingerprint}\u001f${nativeReceipt.guidHash}',
         );
@@ -9587,6 +9591,18 @@ class RustPushService extends GetxService {
           'correlation=$mutationReceiptCorrelation '
           'process=$mutationProcessGeneration attempt=0',
         );
+
+        if (replayBinding == null &&
+            (_cloudSyncV2DeveloperRuntimeAllowed ||
+                _cloudSyncV2AutomaticArchiveActive)) {
+          // Acceptance is durable in both journals. Do not hold the incoming
+          // event handler while a history/upload pass owns CloudKit. Replay
+          // restores this same accepted source; it never sends IDS again.
+          _scheduleCloudSyncV2MessageUpdateRetry(
+            const Duration(milliseconds: 100),
+          );
+          return;
+        }
 
         final cloudStore = ObjectBoxCloudSyncStore(
           store: objectBox,
@@ -9667,207 +9683,18 @@ class RustPushService extends GetxService {
         final updateCompletion = Completer<void>();
         final updateInFlight = updateCompletion.future;
         _cloudSyncV2MessageUpdateInFlight = updateInFlight;
-        try {
-          await lifecycle.ensureRecoveredBeforeWrite();
-          final terminalSource =
-              mutationJournal.readTerminalSourceForCleanup(
-            intentId: mutationIntentId,
-            currentAuth: auth,
-            stillCurrent: confirmationBindingCurrent,
-          );
-          if (terminalSource != null) {
-            await transport.acknowledgeCommittedPageLease(
-              terminalSource.leaseReference,
-            );
-            api.cloudSyncAcknowledgeNativeSendReceipt(
-              storageDirectory: storagePath,
-              expectedAccountFingerprint: auth.accountFingerprint,
-              expectedProtectedStoreIdentity: auth.protectedStoreIdentity,
-              receipt: nativeReceipt,
-            );
-            Logger.info(
-              'Cloud Sync V2 mutation stage=terminal_cleanup_complete '
-              'correlation=$mutationReceiptCorrelation '
-              'process=$mutationProcessGeneration attempt=0',
-            );
-            return;
-          }
-          CloudSyncLocalMutationAdmissionSource? admission;
+        Future<void> processMutationReceipt() async {
           try {
-            // State 3/4 already contains the exact atomic local reflection.
-            // A restart at state 4 must proceed directly to adopted-operation
-            // reconciliation; restoring and reflecting again would re-enter a
-            // fresh-write-only authority path while mutationUnknown is armed.
-            admission = mutationJournal.readReflectedForUpdate(
-              intentId: mutationIntentId,
-              currentAuth: auth,
-              stillCurrent: confirmationBindingCurrent,
-              replayBinding: replayBinding,
-            );
-          } on StateError catch (error) {
-            if (error.message != 'cloud_sync_local_mutation_update_not_ready') {
-              rethrow;
-            }
-          }
-          if (admission == null) {
-            final mutationSource = mutationJournal.readReceiptConfirmedSource(
-              intentId: mutationIntentId,
+            await lifecycle.ensureRecoveredBeforeWrite();
+            final terminalSource =
+                mutationJournal.readTerminalSourceForCleanup(
+              intentId: confirmedMutationIntentId,
               currentAuth: auth,
               stillCurrent: confirmationBindingCurrent,
             );
-            await CloudSyncLocalMutationSourceStaging(
-              journal: mutationJournal,
-              authFence: authFence,
-              capturedAuth: auth,
-              stillCurrent: confirmationBindingCurrent,
-              exclusion: interlock,
-              transport: transport,
-            ).reflectConfirmed(
-              intentId: mutationIntentId,
-              source: mutationSource,
-              receipt: nativeReceipt,
-              replayBinding: replayBinding,
-              restore: (restoredSource) => api.cloudSyncRestoreIdsMutationSource(
-                cloudMessagesClient: client,
-                context: mutationContext(restoredSource),
-              ),
-            );
-            admission = mutationJournal.readReflectedForUpdate(
-              intentId: mutationIntentId,
-              currentAuth: auth,
-              stillCurrent: confirmationBindingCurrent,
-              replayBinding: replayBinding,
-            );
-          }
-          final admitted = admission;
-          final scope = CloudSyncScope(
-            accountFingerprint: auth.accountFingerprint,
-            container: 'com.apple.messages.cloud',
-            database: 'private',
-            zone: 'messageManateeZone',
-            streamKind: CloudSyncStreamKind.messages,
-            schemaVersion: 2,
-            persistenceLane: CloudSyncPersistenceLane.semantic,
-          );
-          final pendingCreateReadbacks =
-              await cloudStore.readPendingMessageCreateReadbacks(
-                scope,
-                maximumCount: 16,
-              );
-          for (final snapshot in pendingCreateReadbacks) {
-            await transport.finalizePendingMessageCreateReadback(
-              snapshot,
-              finalizeDurableReadback: (expected) =>
-                  cloudStore.finalizeMessageCreateReadbackLeases(
-                    expectedSnapshot: expected,
-                    createSourceLeaseCommitted: true,
-                    readbackLeaseCommitted: true,
-                  ),
-            );
-          }
-          final predecessor = admitted.requirePredecessor(
-            store: objectBox,
-            messageScope: scope,
-            readConfirmedLocalParent: (parent) =>
-                journal.readConfirmedParentDependency(
-                  objectBox,
-                  scope,
-                  parent,
-                  reflectedMutationValidated:
-                      admitted.matchesReflectedParent(parent),
-                ),
-          );
-          final executor = CloudSyncMessageUpdateExecutor(
-            objectBoxStore: objectBox,
-            cloudStore: cloudStore,
-            journal: mutationJournal,
-            transport: transport,
-            preparedSubmissionReleaser: transport,
-            leaseTransport: transport,
-            replayBinding: replayBinding,
-            readConfirmedLocalParent: (parent) =>
-                journal.readConfirmedParentDependency(
-                  objectBox,
-                  scope,
-                  parent,
-                  reflectedMutationValidated:
-                      admitted.matchesReflectedParent(parent),
-                ),
-          );
-          late final CloudOutboxOperation admittedOperation;
-          final result = await interlock.runExclusive(
-            kind: CloudKitOperationKind.v2ReadWrite,
-            action: () async {
-              // A restored credential generation can authenticate snapshots
-              // while its lookup-only CloudKit containers are still cold.
-              // Warm those read dependencies under the native writer pause
-              // before native writer preparation; no IDS send is repeated.
-              await identitySession.run<void>((_) async {});
-              admittedOperation = await executor.admitReflectedUpdate(
-                scope,
-                source: admitted,
-                predecessor: predecessor,
-                currentAuth: auth,
-                stillCurrent: confirmationBindingCurrent,
-                receipt: nativeReceipt,
-              );
-              Logger.info(
-                'Cloud Sync V2 mutation stage=journal_adopted '
-                'correlation=${_diagnosticHash(admittedOperation.operationId)} '
-                'process=$mutationProcessGeneration '
-                'attempt=${admittedOperation.attemptCount}',
-              );
-              Logger.info(
-                'Cloud Sync V2 mutation stage=conditional_submit_started '
-                'correlation=${_diagnosticHash(admittedOperation.operationId)} '
-                'process=$mutationProcessGeneration '
-                'attempt=${admittedOperation.attemptCount + 1}',
-              );
-              return executor.runOnce(
-                scope,
-                currentAuth: auth,
-                stillCurrent: confirmationBindingCurrent,
-              );
-            },
-          );
-          final exactOperations = (await cloudStore.readOutboxEntries(scope))
-              .where((operation) =>
-                  operation.operationId == admittedOperation.operationId)
-              .toList(growable: false);
-          if (exactOperations.length != 1) {
-            throw StateError('cloud_sync_message_update_adoption_missing');
-          }
-          final exactOperation = exactOperations.single;
-          if (exactOperation.status == CloudOutboxStatus.confirmed) {
-            // The executor only returns after exact server readback has been
-            // committed and both protected readback leases were finalized.
-            // The IDS mutation source and receipt can now be released.
-            try {
-              final confirmedSource =
-                  mutationJournal.markExactReadbackConfirmed(
-                intentId: mutationIntentId,
-                operation: exactOperation,
-                currentAuth: auth,
-                stillCurrent: confirmationBindingCurrent,
-                now: DateTime.now().toUtc(),
-              );
-              final operationCorrelation = _diagnosticHash(
-                exactOperation.operationId,
-              );
-              Logger.info(
-                'Cloud Sync V2 mutation stage=exact_readback_committed '
-                'correlation=$operationCorrelation '
-                'process=$mutationProcessGeneration '
-                'attempt=${exactOperation.attemptCount}',
-              );
+            if (terminalSource != null) {
               await transport.acknowledgeCommittedPageLease(
-                confirmedSource.leaseReference,
-              );
-              Logger.info(
-                'Cloud Sync V2 mutation stage=source_lease_finalized '
-                'correlation=$operationCorrelation '
-                'process=$mutationProcessGeneration '
-                'attempt=${exactOperation.attemptCount}',
+                terminalSource.leaseReference,
               );
               api.cloudSyncAcknowledgeNativeSendReceipt(
                 storageDirectory: storagePath,
@@ -9876,53 +9703,266 @@ class RustPushService extends GetxService {
                 receipt: nativeReceipt,
               );
               Logger.info(
-                'Cloud Sync V2 mutation stage=ids_receipt_acknowledged '
-                'correlation=$operationCorrelation '
-                'process=$mutationProcessGeneration '
-                'attempt=${exactOperation.attemptCount}',
+                'Cloud Sync V2 mutation stage=terminal_cleanup_complete '
+                'correlation=$mutationReceiptCorrelation '
+                'process=$mutationProcessGeneration attempt=0',
               );
-            } catch (_) {
-              Logger.warn(
-                'Cloud Sync V2 mutation receipt acknowledgement deferred',
+              return;
+            }
+            CloudSyncLocalMutationAdmissionSource? admission;
+            try {
+              // State 3/4 already contains the exact atomic local reflection.
+              // A restart at state 4 must proceed directly to adopted-operation
+              // reconciliation; restoring and reflecting again would re-enter a
+              // fresh-write-only authority path while mutationUnknown is armed.
+              admission = mutationJournal.readReflectedForUpdate(
+                intentId: confirmedMutationIntentId,
+                currentAuth: auth,
+                stillCurrent: confirmationBindingCurrent,
+                replayBinding: replayBinding,
               );
-              _scheduleCloudSyncV2MessageUpdateRetry(
-                const Duration(seconds: 1),
+            } on StateError catch (error) {
+              if (error.message != 'cloud_sync_local_mutation_update_not_ready') {
+                rethrow;
+              }
+            }
+            if (admission == null) {
+              final mutationSource = mutationJournal.readReceiptConfirmedSource(
+                intentId: confirmedMutationIntentId,
+                currentAuth: auth,
+                stillCurrent: confirmationBindingCurrent,
+              );
+              await CloudSyncLocalMutationSourceStaging(
+                journal: mutationJournal,
+                authFence: authFence,
+                capturedAuth: auth,
+                stillCurrent: confirmationBindingCurrent,
+                exclusion: interlock,
+                transport: transport,
+              ).reflectConfirmed(
+                intentId: confirmedMutationIntentId,
+                source: mutationSource,
+                receipt: nativeReceipt,
+                replayBinding: replayBinding,
+                restore: (restoredSource) => api.cloudSyncRestoreIdsMutationSource(
+                  cloudMessagesClient: client,
+                  context: mutationContext(restoredSource),
+                ),
+              );
+              admission = mutationJournal.readReflectedForUpdate(
+                intentId: confirmedMutationIntentId,
+                currentAuth: auth,
+                stillCurrent: confirmationBindingCurrent,
+                replayBinding: replayBinding,
               );
             }
-          } else if (exactOperation.status != CloudOutboxStatus.quarantined) {
-            final now = DateTime.now().toUtc();
-            final eligibleAt = exactOperation.nextEligibleAt;
-            final delay = eligibleAt == null
-                ? const Duration(seconds: 1)
-                : eligibleAt.difference(now);
-            _scheduleCloudSyncV2MessageUpdateRetry(delay);
+            final admitted = admission;
+            final scope = CloudSyncScope(
+              accountFingerprint: auth.accountFingerprint,
+              container: 'com.apple.messages.cloud',
+              database: 'private',
+              zone: 'messageManateeZone',
+              streamKind: CloudSyncStreamKind.messages,
+              schemaVersion: 2,
+              persistenceLane: CloudSyncPersistenceLane.semantic,
+            );
+            final pendingCreateReadbacks =
+                await cloudStore.readPendingMessageCreateReadbacks(
+                  scope,
+                  maximumCount: 16,
+                );
+            for (final snapshot in pendingCreateReadbacks) {
+              await transport.finalizePendingMessageCreateReadback(
+                snapshot,
+                finalizeDurableReadback: (expected) =>
+                    cloudStore.finalizeMessageCreateReadbackLeases(
+                      expectedSnapshot: expected,
+                      createSourceLeaseCommitted: true,
+                      readbackLeaseCommitted: true,
+                    ),
+              );
+            }
+            final predecessor = admitted.requirePredecessor(
+              store: objectBox,
+              messageScope: scope,
+              readConfirmedLocalParent: (parent) =>
+                  journal.readConfirmedParentDependency(
+                    objectBox,
+                    scope,
+                    parent,
+                    reflectedMutationValidated:
+                        admitted.matchesReflectedParent(parent),
+                  ),
+            );
+            final executor = CloudSyncMessageUpdateExecutor(
+              objectBoxStore: objectBox,
+              cloudStore: cloudStore,
+              journal: mutationJournal,
+              transport: transport,
+              preparedSubmissionReleaser: transport,
+              leaseTransport: transport,
+              replayBinding: replayBinding,
+              readConfirmedLocalParent: (parent) =>
+                  journal.readConfirmedParentDependency(
+                    objectBox,
+                    scope,
+                    parent,
+                    reflectedMutationValidated:
+                        admitted.matchesReflectedParent(parent),
+                  ),
+            );
+            late final CloudOutboxOperation admittedOperation;
+            final result = await interlock.runExclusive(
+              kind: CloudKitOperationKind.v2ReadWrite,
+              action: () async {
+                // A restored credential generation can authenticate snapshots
+                // while its lookup-only CloudKit containers are still cold.
+                // Warm those read dependencies under the native writer pause
+                // before native writer preparation; no IDS send is repeated.
+                await identitySession.run<void>((_) async {});
+                admittedOperation = await executor.admitReflectedUpdate(
+                  scope,
+                  source: admitted,
+                  predecessor: predecessor,
+                  currentAuth: auth,
+                  stillCurrent: confirmationBindingCurrent,
+                  receipt: nativeReceipt,
+                );
+                Logger.info(
+                  'Cloud Sync V2 mutation stage=journal_adopted '
+                  'correlation=${_diagnosticHash(admittedOperation.operationId)} '
+                  'process=$mutationProcessGeneration '
+                  'attempt=${admittedOperation.attemptCount}',
+                );
+                Logger.info(
+                  'Cloud Sync V2 mutation stage=conditional_submit_started '
+                  'correlation=${_diagnosticHash(admittedOperation.operationId)} '
+                  'process=$mutationProcessGeneration '
+                  'attempt=${admittedOperation.attemptCount + 1}',
+                );
+                return executor.runOnce(
+                  scope,
+                  currentAuth: auth,
+                  stillCurrent: confirmationBindingCurrent,
+                );
+              },
+            );
+            final exactOperations = (await cloudStore.readOutboxEntries(scope))
+                .where((operation) =>
+                    operation.operationId == admittedOperation.operationId)
+                .toList(growable: false);
+            if (exactOperations.length != 1) {
+              throw StateError('cloud_sync_message_update_adoption_missing');
+            }
+            final exactOperation = exactOperations.single;
+            if (exactOperation.status == CloudOutboxStatus.confirmed) {
+              // The executor only returns after exact server readback has been
+              // committed and both protected readback leases were finalized.
+              // The IDS mutation source and receipt can now be released.
+              try {
+                final confirmedSource =
+                    mutationJournal.markExactReadbackConfirmed(
+                  intentId: confirmedMutationIntentId,
+                  operation: exactOperation,
+                  currentAuth: auth,
+                  stillCurrent: confirmationBindingCurrent,
+                  now: DateTime.now().toUtc(),
+                );
+                final operationCorrelation = _diagnosticHash(
+                  exactOperation.operationId,
+                );
+                Logger.info(
+                  'Cloud Sync V2 mutation stage=exact_readback_committed '
+                  'correlation=$operationCorrelation '
+                  'process=$mutationProcessGeneration '
+                  'attempt=${exactOperation.attemptCount}',
+                );
+                await transport.acknowledgeCommittedPageLease(
+                  confirmedSource.leaseReference,
+                );
+                Logger.info(
+                  'Cloud Sync V2 mutation stage=source_lease_finalized '
+                  'correlation=$operationCorrelation '
+                  'process=$mutationProcessGeneration '
+                  'attempt=${exactOperation.attemptCount}',
+                );
+                api.cloudSyncAcknowledgeNativeSendReceipt(
+                  storageDirectory: storagePath,
+                  expectedAccountFingerprint: auth.accountFingerprint,
+                  expectedProtectedStoreIdentity: auth.protectedStoreIdentity,
+                  receipt: nativeReceipt,
+                );
+                Logger.info(
+                  'Cloud Sync V2 mutation stage=ids_receipt_acknowledged '
+                  'correlation=$operationCorrelation '
+                  'process=$mutationProcessGeneration '
+                  'attempt=${exactOperation.attemptCount}',
+                );
+              } catch (_) {
+                Logger.warn(
+                  'Cloud Sync V2 mutation receipt acknowledgement deferred',
+                );
+                _scheduleCloudSyncV2MessageUpdateRetry(
+                  const Duration(seconds: 1),
+                );
+              }
+            } else if (exactOperation.status != CloudOutboxStatus.quarantined) {
+              final now = DateTime.now().toUtc();
+              final eligibleAt = exactOperation.nextEligibleAt;
+              final delay = eligibleAt == null
+                  ? const Duration(seconds: 1)
+                  : eligibleAt.difference(now);
+              _scheduleCloudSyncV2MessageUpdateRetry(delay);
+            }
+            final reflected = objectBox.box<Message>().get(admitted.localMessageId);
+            final reflectedChat = reflected?.chat.target;
+            if (reflected != null && reflectedChat != null && ls.isUiThread) {
+              await ah.handleUpdatedMessage(reflectedChat, reflected, null);
+            }
+            Logger.info('Cloud Sync V2 mutation update pass completed $result');
+          } on StateError catch (error) {
+            if (error.message != 'cloud_sync_local_mutation_predecessor_not_ready') {
+              rethrow;
+            }
+            // The original create or an earlier edit may still be awaiting exact
+            // readback. Preserve this positive IDS receipt and let the bounded
+            // replay resume it after that dependency settles, without another IDS
+            // send. Returning also lets later receipts in this page make progress.
+            Logger.info('Cloud Sync V2 mutation stage=predecessor_wait '
+                'correlation=$mutationReceiptCorrelation '
+                'process=$mutationProcessGeneration attempt=0');
+            _scheduleCloudSyncV2MessageUpdateRetry(const Duration(seconds: 5));
+          } finally {
+            // Drain before handing the scheduler to its next caller. A queue
+            // timeout cannot interrupt this entered native operation.
+            await transport.quiesceNativeOperations();
           }
-          final reflected = objectBox.box<Message>().get(admitted.localMessageId);
-          final reflectedChat = reflected?.chat.target;
-          if (reflected != null && reflectedChat != null && ls.isUiThread) {
-            await ah.handleUpdatedMessage(reflectedChat, reflected, null);
-          }
-          Logger.info('Cloud Sync V2 mutation update pass completed $result');
-        } on StateError catch (error) {
-          if (error.message != 'cloud_sync_local_mutation_predecessor_not_ready') {
-            rethrow;
-          }
-          // The original create or an earlier edit may still be awaiting exact
-          // readback. Preserve this positive IDS receipt and let the bounded
-          // replay resume it after that dependency settles, without another IDS
-          // send. Returning also lets later receipts in this page make progress.
-          Logger.info('Cloud Sync V2 mutation stage=predecessor_wait '
+        }
+        try {
+          await _cloudSyncV2AttachmentGate.run<void>(
+            waitTimeout: const Duration(seconds: 30),
+            validate: () {
+              if (!confirmationBindingCurrent()) {
+                throw StateError('cloud_sync_local_send_identity_changed');
+              }
+            },
+            action: () async {
+              await validateMutationIdentity();
+              await processMutationReceipt();
+            },
+          );
+        } on CloudKitOperationInterlockException catch (error) {
+          if (error.safeCode != 'cloudkit_interlock_busy') rethrow;
+          // This is accepted-receipt recovery, not an expired Undo request or
+          // permission to resend. Preserve the receipt and retry admission.
+          Logger.info('Cloud Sync V2 mutation stage=scheduler_wait '
               'correlation=$mutationReceiptCorrelation '
               'process=$mutationProcessGeneration attempt=0');
           _scheduleCloudSyncV2MessageUpdateRetry(const Duration(seconds: 5));
         } finally {
-          try {
-            await transport.quiesceNativeOperations();
-          } finally {
-            if (!updateCompletion.isCompleted) updateCompletion.complete();
-            if (identical(_cloudSyncV2MessageUpdateInFlight, updateInFlight)) {
-              _cloudSyncV2MessageUpdateInFlight = null;
-            }
+          if (!updateCompletion.isCompleted) updateCompletion.complete();
+          if (identical(_cloudSyncV2MessageUpdateInFlight, updateInFlight)) {
+            _cloudSyncV2MessageUpdateInFlight = null;
           }
         }
         return; // Never route mutation evidence through create admission.
@@ -10073,7 +10113,18 @@ class RustPushService extends GetxService {
         _scheduleCloudSyncV2MessageUpdateRetry(const Duration(seconds: 1));
         return;
       }
-      unawaited(_replayCloudSyncV2NativeSendReceipts());
+      unawaited(() async {
+        try {
+          // Queued work may not own a native interlock yet. Retain its engine
+          // while awaiting admission as well as during exact receipt recovery.
+          await ls.retainEngineUntil(_replayCloudSyncV2NativeSendReceipts);
+        } catch (error) {
+          // A detached engine may reject admission. The protected receipt is
+          // still retained for the next normal startup; never force a release.
+          Logger.warn('Cloud Sync V2 mutation receipt recovery deferred '
+              'code=${cloudSyncV2SafeFailureCode(error)}');
+        }
+      }());
     });
     _cloudSyncV2MessageUpdateRetryTimer = scheduled;
     _cloudSyncV2MessageUpdateRetryDueUtc = dueUtc;
@@ -10213,9 +10264,14 @@ class RustPushService extends GetxService {
       // preventing retained receipts from starving later successful sends.
       _cloudSyncV2NativeReceiptReplayNeedsContinuation =
           _cloudSyncV2NativeReceiptReplayCursor != null;
-    } catch (_) {
+    } catch (error) {
       _cloudSyncV2NativeReceiptReplayNeedsContinuation = false;
-      Logger.warn('Cloud Sync V2 native send receipt replay deferred');
+      if (error is CloudKitOperationInterlockException &&
+          error.safeCode == 'cloudkit_interlock_busy') {
+        _scheduleCloudSyncV2MessageUpdateRetry(const Duration(seconds: 5));
+      }
+      Logger.warn('Cloud Sync V2 native send receipt replay deferred '
+          'code=${cloudSyncV2SafeFailureCode(error)}');
     }
   }
 

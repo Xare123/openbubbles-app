@@ -731,15 +731,18 @@ final class CloudSyncProductionLocalSendAdapter {
     required String privateStorageDirectory,
     required bool Function() stillCurrent,
     CloudSyncAutomaticArchiveIdentity? automaticArchiveIdentity,
+    bool Function()? shouldYield,
   }) : _readActiveClient = readActiveClient,
        _privateStorageDirectory = privateStorageDirectory,
        _stillCurrent = stillCurrent,
-       _automaticArchiveIdentity = automaticArchiveIdentity;
+       _automaticArchiveIdentity = automaticArchiveIdentity,
+       _shouldYield = shouldYield;
 
   final ActiveCloudMessagesClientReader _readActiveClient;
   final String _privateStorageDirectory;
   final bool Function() _stillCurrent;
   final CloudSyncAutomaticArchiveIdentity? _automaticArchiveIdentity;
+  final bool Function()? _shouldYield;
   Future<CloudSyncLocalSendConsumerResult>? _running;
   CloudSyncNativeAuthSnapshot? _boundAuth;
   CloudSyncLocalSendExactSelection? _exactSelection;
@@ -1784,6 +1787,7 @@ final class CloudSyncProductionLocalSendAdapter {
               retainedAttachmentResume: resuming);
         },
         drainExisting: drainExisting,
+        shouldYield: _shouldYield,
       );
       final result = selection == null
           ? await consumer.runOnce()
@@ -1794,17 +1798,28 @@ final class CloudSyncProductionLocalSendAdapter {
       var receivedDeferred = 0;
       var receivedBlocked = false;
       var receivedMore = false;
+      var receivedYielded = false;
       final receivedReasons = <String, int>{};
-      if (selection == null && !result.outboxBlocked &&
+      if (selection == null && !result.outboxBlocked && !result.yielded &&
           CloudSyncDevGate.receivedArchiveUploadsEnabled &&
           CloudSyncDevGate.receivedArchiveCaptureEnabled &&
           CloudSyncDevGate.receivedArchiveInspectionEnabled) {
         await interlock.runExclusive(kind: CloudKitOperationKind.v2ReadWrite, action: () async {
           await fence.run(() {}, accountFingerprint: scope.accountFingerprint);
           if (!await drainExisting()) { receivedBlocked = true; return; }
+          await fence.run(() {}, accountFingerprint: scope.accountFingerprint);
+          if (_shouldYield?.call() ?? false) {
+            receivedYielded = true;
+            return;
+          }
           final candidates = receivedJournal.readCreateCandidates(currentAuth: auth, limit: 5);
           receivedMore = candidates.length == 5;
           for (final candidate in candidates) {
+            if (_shouldYield?.call() ?? false) {
+              receivedYielded = true;
+              receivedMore = false;
+              break;
+            }
             await fence.run(() => receivedJournal.markReadConsidered(
                 intentId: candidate.intentId, now: DateTime.now().toUtc()),
               accountFingerprint: scope.accountFingerprint);
@@ -1825,6 +1840,7 @@ final class CloudSyncProductionLocalSendAdapter {
         admitted: result.admitted + receivedAdmitted, deferred: result.deferred + receivedDeferred,
         outboxBlocked: result.outboxBlocked || receivedBlocked,
         candidateLimitReached: result.candidateLimitReached || receivedMore,
+        yielded: result.yielded || receivedYielded,
         chatReadbackPending: chatReadbackPending && !result.outboxBlocked,
         deferredReasons: {
           for (final key in {...result.deferredReasons.keys, ...receivedReasons.keys})

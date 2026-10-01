@@ -20,6 +20,11 @@ bool cloudAttachmentLaneWaitsForSemanticPull(
 /// hold this gate for the whole automatic catch-up or acquire it recursively.
 final class CloudAttachmentSyncGate {
   final Lock _lock = Lock();
+  int _waiting = 0;
+
+  /// Cooperative automatic passes may hand back the gate at a settled boundary.
+  /// This is queue state only, never authority to overlap or cancel native work.
+  bool get hasWaitingWork => _waiting > 0;
 
   Future<T> run<T>({
     required void Function() validate,
@@ -30,9 +35,11 @@ final class CloudAttachmentSyncGate {
       throw ArgumentError('cloud_sync_gate_wait_timeout_invalid');
     }
     var entered = false;
+    _waiting++;
     try {
       return await _lock.synchronized(() {
         entered = true;
+        _waiting--;
         // An account transition or cancellation may have happened while queued.
         validate();
         return action();
@@ -42,10 +49,12 @@ final class CloudAttachmentSyncGate {
       // Only queue admission timed out. The active owner's work is untouched
       // and this callback cannot run later. Never time out an entered mutation.
       throw const CloudKitOperationInterlockException('cloudkit_interlock_busy');
+    } finally {
+      if (!entered) _waiting--;
     }
   }
 
   /// Called after new work is quiesced, before native client disposal.
   /// Timing out this wait must not release an active operation's lock.
-  Future<void> drain() => _lock.synchronized(() async {});
+  Future<void> drain() => run(validate: () {}, action: () async {});
 }

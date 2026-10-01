@@ -19,9 +19,13 @@ final class CloudSyncLocalSendRuntime {
     Future<void> Function()? prepare,
     Duration debounce = const Duration(seconds: 5),
     this.retryDelay = const Duration(minutes: 1),
+    this.continuationDelay = const Duration(seconds: 5),
   }) : _drain = drain {
     if (retryDelay <= Duration.zero) {
       throw ArgumentError('cloud_sync_local_send_retry_delay_invalid');
+    }
+    if (continuationDelay <= Duration.zero) {
+      throw ArgumentError('cloud_sync_local_send_continuation_delay_invalid');
     }
     _scheduler = CloudSyncScheduler(
       debounce: debounce,
@@ -50,15 +54,18 @@ final class CloudSyncLocalSendRuntime {
         final progressed = result.admitted > 0 ||
             (result.candidateLimitReached && !result.outboxBlocked);
         if (progressed ||
-            (!result.outboxBlocked && result.deferred == 0)) {
+            (!result.yielded && !result.outboxBlocked && result.deferred == 0)) {
           _retryExponent = 0;
         }
         if (!_disposed &&
             !cancellation.isCancelled &&
             (result.outboxBlocked ||
+                result.yielded ||
                 result.admitted > 0 ||
                 result.deferred > 0)) {
-          _scheduleRetry(progressed ? retryDelay : _nextRetryDelay());
+          _scheduleRetry(result.yielded && !result.outboxBlocked
+              ? continuationDelay
+              : progressed ? retryDelay : _nextRetryDelay());
         }
         return CloudSyncRunResult(
           status: result.outboxBlocked
@@ -76,6 +83,7 @@ final class CloudSyncLocalSendRuntime {
 
   final Future<CloudSyncLocalSendConsumerResult> Function() _drain;
   final Duration retryDelay;
+  final Duration continuationDelay;
   late final CloudSyncScheduler _scheduler;
   Timer? _retry;
   bool _disposed = false;

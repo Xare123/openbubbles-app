@@ -465,4 +465,116 @@ void main() {
       });
     },
   );
+
+  test('yielded work resumes after the short continuation delay', () {
+    fakeAsync((time) {
+      var calls = 0;
+      final runtime = CloudSyncLocalSendRuntime(
+        debounce: Duration.zero,
+        drain: () async {
+          calls++;
+          return const CloudSyncLocalSendConsumerResult(yielded: true);
+        },
+        onError: (_, __) => fail('unexpected failure'),
+      );
+      expect(runtime.continuationDelay, const Duration(seconds: 5));
+      runtime.request(CloudSyncTrigger.startup);
+      time.elapse(Duration.zero);
+      time.flushMicrotasks();
+      expect(calls, 1);
+      time.elapse(const Duration(seconds: 4));
+      time.flushMicrotasks();
+      expect(calls, 1);
+      time.elapse(const Duration(seconds: 1));
+      time.flushMicrotasks();
+      expect(calls, 2);
+      unawaited(runtime.dispose());
+      time.flushMicrotasks();
+      time.elapse(const Duration(hours: 1));
+      time.flushMicrotasks();
+      expect(calls, 2);
+    });
+  });
+
+  test('blocked work never uses the short continuation delay', () {
+    fakeAsync((time) {
+      var calls = 0;
+      final runtime = CloudSyncLocalSendRuntime(
+        debounce: Duration.zero,
+        drain: () async {
+          calls++;
+          return const CloudSyncLocalSendConsumerResult(
+            outboxBlocked: true,
+            yielded: true,
+          );
+        },
+        onError: (_, __) => fail('unexpected failure'),
+      );
+      runtime.request(CloudSyncTrigger.startup);
+      time.elapse(Duration.zero);
+      time.flushMicrotasks();
+      expect(calls, 1);
+      time.elapse(const Duration(seconds: 5));
+      time.flushMicrotasks();
+      expect(calls, 1);
+      time.elapse(const Duration(seconds: 55));
+      time.flushMicrotasks();
+      expect(calls, 2);
+      unawaited(runtime.dispose());
+      time.flushMicrotasks();
+    });
+  });
+
+  test('fresh work pre-empts a pending yielded continuation', () {
+    fakeAsync((time) {
+      var calls = 0;
+      final runtime = CloudSyncLocalSendRuntime(
+        debounce: Duration.zero,
+        drain: () async {
+          calls++;
+          if (calls == 1) {
+            return const CloudSyncLocalSendConsumerResult(yielded: true);
+          }
+          return const CloudSyncLocalSendConsumerResult();
+        },
+        onError: (_, __) => fail('unexpected failure'),
+      );
+      runtime.request(CloudSyncTrigger.startup);
+      time.elapse(Duration.zero);
+      time.flushMicrotasks();
+      expect(calls, 1);
+      runtime.request(CloudSyncTrigger.localOutbox);
+      time.elapse(Duration.zero);
+      time.flushMicrotasks();
+      expect(calls, 2);
+      time.elapse(const Duration(minutes: 5));
+      time.flushMicrotasks();
+      expect(calls, 2);
+      unawaited(runtime.dispose());
+      time.flushMicrotasks();
+    });
+  });
+
+  test('cancelled run drops a pending yielded continuation', () {
+    fakeAsync((time) {
+      var calls = 0;
+      final runtime = CloudSyncLocalSendRuntime(
+        debounce: Duration.zero,
+        drain: () async {
+          calls++;
+          return const CloudSyncLocalSendConsumerResult(yielded: true);
+        },
+        onError: (_, __) => fail('unexpected failure'),
+      );
+      runtime.request(CloudSyncTrigger.startup);
+      time.elapse(Duration.zero);
+      time.flushMicrotasks();
+      expect(calls, 1);
+      unawaited(runtime.dispose());
+      time.flushMicrotasks();
+      time.elapse(const Duration(hours: 1));
+      time.flushMicrotasks();
+      expect(calls, 1);
+    });
+  });
 }
