@@ -598,7 +598,10 @@ void main() {
         now: _time(5),
       );
       final old = store.box<CloudSyncLocalSendIntentEntity>().get(id)!
-        ..idsConfirmationVersion = 0;
+        ..idsConfirmationVersion = 0
+        // Older ready rows had neither current IDS proof nor retained auth.
+        // Keeping the modern digest while downgrading IDS is a tamper fixture.
+        ..admittedBindingSha256 = null;
       store.box<CloudSyncLocalSendIntentEntity>().put(old);
       await reopen();
       expect(journal.readReady(), isEmpty);
@@ -1262,10 +1265,11 @@ void main() {
     settleAnotherMutation();
     provisionJournal();
     settleAnotherMutation();
-    await reopen();
-    expect(authoritySnapshot.epoch, intent.writerEpoch + 4);
+    // Exercise the stale-epoch guard while its Store is still open.
     expect(() => stale.readForAdmission(intent.id),
         throwsA(_stateFailure('cloud_sync_local_send_owner_changed')));
+    await reopen();
+    expect(authoritySnapshot.epoch, intent.writerEpoch + 4);
     expect(journal.readReady().single.id, intent.id);
     final retained = journal.readForAdmission(intent.id);
     expect(retained.writerEpoch, original.writerEpoch);
@@ -1285,10 +1289,11 @@ void main() {
     final intent = saveDeferredIdsSuccess(capturedAuth: auth);
     final stale = journal;
     settleAnotherMutation();
-    await reopen();
+    // A disposed journal cannot distinguish an epoch change from a closed DB.
     expect(() => stale.promoteIdsConfirmedDeferred(intentId: intent.id,
         currentAuth: auth, now: _time(9)),
         throwsA(_stateFailure('cloud_sync_local_send_owner_changed')));
+    await reopen();
     expect(journal.readIdsConfirmedDeferred(currentAuth: auth).single.id, intent.id);
     journal.promoteIdsConfirmedDeferred(intentId: intent.id, currentAuth: auth, now: _time(9));
     final row = journal.readReady().single;

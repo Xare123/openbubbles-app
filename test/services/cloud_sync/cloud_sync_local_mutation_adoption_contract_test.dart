@@ -955,7 +955,12 @@ void main() {
       final entered = (await cloudStore.readOutboxEntries(_messageScope))
           .singleWhere((row) => row.operationId == operation.operationId);
       expect(entered.status, CloudOutboxStatus.unknownOutcome);
-      expect(entered.attemptCount, 1);
+      // Submission entry persists UUIDs before any response/failure transition;
+      // that crash boundary does not increment the retry-attempt counter.
+      expect(entered.attemptCount, 0);
+      expect(entered.appleRequestUuid, submission.requestUuid);
+      expect(entered.appleOperationUuid,
+          submission.operationUuids[operation.operationId]);
       journal.validateAdoptedOperation(
         store,
         entered,
@@ -1165,7 +1170,8 @@ void main() {
         final settled = (await cloudStore.readOutboxEntries(_messageScope))
             .singleWhere((row) => row.operationId == adopted.operationId);
         expect(settled.status, CloudOutboxStatus.confirmed);
-        expect(settled.attemptCount, 1);
+        expect(settled.attemptCount, 0,
+            reason: 'Exact readback applies no retry/failure transition');
         expect(store.box<CloudOutboxOperationEntity>().count(), 2);
         await reopen();
         expect(
