@@ -80,6 +80,7 @@ api.MessageInst _mutationWire({
   required String mutationId,
   required String targetGuid,
   int targetPart = 0,
+  String replacement = 'replacement',
 }) => api.MessageInst(
   id: mutationId,
   sender: 'mailto:me@example.invalid',
@@ -91,12 +92,12 @@ api.MessageInst _mutationWire({
     api.EditMessage(
       tuuid: targetGuid,
       editPart: targetPart,
-      newParts: const api.MessageParts(
+      newParts: api.MessageParts(
         field0: [
           api.IndexedMessagePart(
             part_: api.MessagePart.text(
-              'replacement',
-              api.TextFormat.flags(
+              replacement,
+              const api.TextFormat.flags(
                 api.TextFlags(
                   bold: false,
                   italic: false,
@@ -116,17 +117,20 @@ api.MessageInst _mutationWire({
 );
 
 CloudSyncLocalMutationSourceBinding _mutationSource(
-  CloudSyncLocalMutationIdentity identity,
-) => CloudSyncLocalMutationSourceBinding(
+  CloudSyncLocalMutationIdentity identity, {
+  String reference = 'B',
+  String lease = 'b',
+  String payload = 'a',
+}) => CloudSyncLocalMutationSourceBinding(
   accountFingerprint: _account,
   protectedStoreIdentity: 'obcs2.store.${'A' * 43}',
   mutationGuidHash: identity.guidHash,
   targetGuidHash: identity.targetGuidHash,
   targetPart: identity.targetPart,
   sourceSha256: identity.sourceSha256,
-  protectedReference: 'obcs2.ref.${'B' * 43}',
-  leaseReference: 'obcs2.lease.${'b' * 32}',
-  payloadSha256: 'a' * 64,
+  protectedReference: 'obcs2.ref.${reference * 43}',
+  leaseReference: 'obcs2.lease.${lease * 32}',
+  payloadSha256: payload * 64,
   payloadLength: 512,
 );
 
@@ -142,11 +146,15 @@ api.CloudSyncNativeSendReceipt _receipt(
   CloudSyncLocalMutationIdentity identity,
   CloudSyncLocalMutationSourceBinding source, {
   String session = 'native-session',
+  String receiptMarker = 'A',
+  DateTime? preparedAt,
 }) => api.CloudSyncNativeSendReceipt(
-  receiptId: 'obcs2.ids.${'A' * 43}',
+  receiptId: 'obcs2.ids.${receiptMarker * 43}',
   guidHash: identity.guidHash,
   nativeSessionId: session,
-  preparedSentTimestampMs: BigInt.from(1789146004000),
+  preparedSentTimestampMs: BigInt.from(
+    preparedAt?.millisecondsSinceEpoch ?? 1789146004000,
+  ),
   sourceBinding: api.CloudSyncNativeSendSourceBinding(
     kind: api.CloudSyncNativeSendSourceKind.mutation,
     sourceSha256: source.sourceSha256,
@@ -199,6 +207,8 @@ CloudOutboxDraft _updateDraft({
   String logical = _logical,
   String server = _server,
   String payload = 'c',
+  String reference = 'U',
+  String lease = 'c',
   DateTime? createdAt,
 }) => CloudOutboxDraft(
   scope: _messageScope,
@@ -207,10 +217,10 @@ CloudOutboxDraft _updateDraft({
   payloadVersion: cloudSyncMessageUpdatePayloadVersion,
   dependencyOperationIds: const {},
   createdAt: createdAt ?? _time(20),
-  encryptedPayloadReference: 'obcs2.ref.${'U' * 43}',
+  encryptedPayloadReference: 'obcs2.ref.${reference * 43}',
   payloadSha256: payload * 64,
   serverRecordIdHash: server,
-  protectedLeaseReference: 'obcs2.lease.${'c' * 32}',
+  protectedLeaseReference: 'obcs2.lease.${lease * 32}',
 );
 
 void main() {
@@ -751,6 +761,664 @@ void main() {
       expect(row.admittedBindingSha256, isNull);
       expect(store.box<CloudOutboxOperationEntity>().count(), 0);
     }
+
+    List<Object?> immutableProof(int id) {
+      final row = store.box<CloudSyncLocalMutationIntentEntity>().get(id)!;
+      return [
+        row.intentKey,
+        row.accountFingerprint,
+        row.writerEpoch,
+        row.localMessageId,
+        row.localChatId,
+        row.mutationGuidHash,
+        row.targetGuidHash,
+        row.targetPart,
+        row.kind,
+        row.sourceSha256,
+        row.targetSnapshotSha256,
+        row.protectedSourceBinding,
+        row.submissionAuthBindingSha256,
+        row.idsReceiptBindingSha256,
+        row.reflectedSnapshotSha256,
+        row.createdAtMs,
+      ];
+    }
+
+    ({int id, CloudSyncLocalMutationSourceBinding source}) reflectSecond({
+      int at = 6,
+    }) {
+      final wire = _mutationWire(
+        mutationId: _otherMutationId,
+        targetGuid: _targetGuid,
+        replacement: 'second replacement',
+      );
+      final secondIdentity = CloudSyncLocalMutationIdentity.captureWire(wire)!;
+      final secondSource = _mutationSource(
+        secondIdentity,
+        reference: 'D',
+        lease: 'd',
+        payload: 'd',
+      );
+      final id = journal.adoptSource(
+        localMessageId: target.id!,
+        identity: secondIdentity,
+        targetSnapshotSha256: journal.captureTargetSnapshot(
+          localMessageId: target.id!,
+          identity: secondIdentity,
+        ),
+        source: secondSource,
+        capturedAuth: _auth(),
+        stillCurrent: () => true,
+        now: _time(at),
+      );
+      journal.beginSubmission(
+        intentId: id,
+        committedSource: secondSource,
+        capturedAuth: _auth(),
+        stillCurrent: () => true,
+        now: _time(at + 1),
+      );
+      final receipt = _receipt(
+        secondIdentity,
+        secondSource,
+        receiptMarker: 'D',
+        preparedAt: _time(at + 2),
+      );
+      journal.recordNativeReceipt(
+        intentId: id,
+        receipt: receipt,
+        capturedAuth: _auth(),
+        stillCurrent: () => true,
+        now: _time(at + 2),
+      );
+      journal.reflectConfirmed(
+        intentId: id,
+        receipt: receipt,
+        currentAuth: _auth(),
+        stillCurrent: () => true,
+        project: (message, preparedSentTimestampMs) => message
+          ..text = 'second replacement'
+          ..attributedBody = [AttributedBody.raw('second replacement')]
+          ..dateEdited = DateTime.fromMillisecondsSinceEpoch(
+            preparedSentTimestampMs,
+            isUtc: true,
+          ),
+        now: _time(at + 3),
+      );
+      expect(store.box<CloudSyncLocalMutationIntentEntity>().get(id)!.state, 3);
+      return (id: id, source: secondSource);
+    }
+
+    Future<CloudRecordMapEntry> currentPredecessor() async =>
+        (await cloudStore.readRecordMap(
+          _messageScope,
+          logicalEntityKeyHash: _logical,
+          serverRecordIdHash: _server,
+          generation: (await cloudStore.readCheckpoint(_messageScope)).generation,
+        ))!;
+
+    Future<CloudOutboxOperation> settleThroughFence(
+      CloudOutboxOperation operation, {
+      required int mutationIntentId,
+      required CloudRecordMapEntry predecessor,
+      int sequence = 1,
+      bool reopenUnknown = false,
+      void Function()? beforeTerminalize,
+    }) async {
+      // Synthetic native readback evidence; all DB and authority changes use
+      // the real store APIs. No native transport or IDS resend is invoked.
+      for (final zone in [
+        'chatManateeZone',
+        'messageManateeZone',
+        'attachmentManateeZone',
+      ]) {
+        final scope = CloudSyncScope(
+          accountFingerprint: _account,
+          container: _messageScope.container,
+          database: _messageScope.database,
+          zone: zone,
+          persistenceLane: CloudSyncPersistenceLane.semantic,
+        );
+        await cloudStore.readCheckpoint(scope);
+        final row = store.box<CloudSyncCheckpointEntity>().getAll().singleWhere(
+          (row) => row.checkpointKey == cloudSyncPersistentScopeKey(scope),
+        )..lastSuccessfulAtMs = _time(10).millisecondsSinceEpoch;
+        store.box<CloudSyncCheckpointEntity>().put(row);
+      }
+      final at = 30 + (sequence - 1) * 40;
+      final owner = authority.read(_writerScope)!;
+      final permit = authority.issuePermit(
+        _writerScope,
+        expectedOwner: CloudKitWriterOwner.v2,
+      );
+      expect(permit.epoch, owner.epoch);
+      final leaseId = 'continuity-update-$sequence';
+      final leased = await cloudStore.leaseEligibleOutbox(
+        _messageScope,
+        now: _time(at),
+        limit: 1,
+        leaseId: leaseId,
+        leaseDuration: const Duration(minutes: 1),
+        allowedActions: const {CloudOutboxAction.save},
+        allowedPayloadVersions: const {cloudSyncMessageUpdatePayloadVersion},
+      );
+      expect(leased.single.operationId, operation.operationId);
+      final submission = CloudOutboxSubmissionIdentity(
+        requestUuid:
+            'AAAAAAAA-BBBB-4CCC-8DDD-${sequence.toString().padLeft(12, '0')}',
+        operationUuids: {
+          operation.operationId:
+              'AAAAAAAA-BBBB-4CCC-8DDD-${(sequence + 10).toString().padLeft(12, '0')}',
+        },
+      );
+      authority.verifyPermit(permit);
+      await cloudStore.markOutboxSubmissionStarted(
+        _messageScope,
+        leaseId: leaseId,
+        submissionIdentity: submission,
+        now: _time(at),
+      );
+      authority.markMutationUnknown(permit, now: _time(at + 1));
+      final unknown = authority.read(_writerScope)!;
+      expect(unknown.epoch, permit.epoch + 1);
+      expect(unknown.ownershipEpoch, owner.ownershipEpoch);
+      expect(
+        () => authority.issuePermit(
+          _writerScope,
+          expectedOwner: CloudKitWriterOwner.v2,
+        ),
+        throwsA(isA<CloudKitWriterAuthorityFailure>()),
+      );
+      if (reopenUnknown) {
+        await reopen();
+      } else {
+        bind();
+      }
+      final retained = journal.readAdoptedForUpdate(
+        operationId: operation.operationId,
+        currentAuth: _auth(),
+        stillCurrent: () => true,
+      );
+      expect(retained.adoptedOperationId, operation.operationId);
+      expect(
+        retained.writerEpoch,
+        store.box<CloudSyncLocalMutationIntentEntity>().get(mutationIntentId)!.writerEpoch,
+      );
+      expect(
+        journal.readTerminalSourceForCleanup(
+          intentId: mutationIntentId,
+          currentAuth: _auth(),
+          stillCurrent: () => true,
+        ),
+        isNull,
+      );
+      final entered = (await cloudStore.readOutboxEntries(_messageScope))
+          .singleWhere((row) => row.operationId == operation.operationId);
+      expect(entered.status, CloudOutboxStatus.unknownOutcome);
+      expect(entered.attemptCount, 1);
+      journal.validateAdoptedOperation(
+        store,
+        entered,
+        cloudSyncFindRecordMap(
+          store: store,
+          scope: _messageScope,
+          generation: operation.checkpointGeneration,
+          logicalEntityKeyHash: operation.logicalEntityKeyHash,
+          serverRecordIdHash: operation.serverRecordIdHash,
+        )!,
+      );
+      final readback = await cloudStore.commitMessageUpdateReadbackReceipt(
+        _messageScope,
+        leaseId: leaseId,
+        receipt: CloudMessageUpdateReadbackReceipt(
+          operationId: operation.operationId,
+          logicalEntityKeyHash: operation.logicalEntityKeyHash,
+          serverRecordIdHash: operation.serverRecordIdHash!,
+          predecessorEtagHash: predecessor.etagHash!,
+          resultingEtagHash: (sequence == 1 ? 'F' : 'G') * 43,
+          protectedCurrentRawRecordReference:
+              'obcs2.ref.${(sequence == 1 ? 'V' : 'Y') * 43}',
+          protectedCurrentRawRecordLeaseReference:
+              'obcs2.lease.${(sequence == 1 ? 'f' : '9') * 32}',
+          rawGeneration: predecessor.generation,
+          appleRequestUuid: submission.requestUuid,
+          appleOperationUuid: submission.operationUuids[operation.operationId]!,
+        ),
+        now: _time(at + 2),
+      );
+      await cloudStore.finalizeMessageUpdateReadbackLeases(
+        expectedSnapshot: readback,
+        updateStageLeaseCommitted: true,
+        readbackLeaseCommitted: true,
+      );
+      final reconciled = authority.reconcileMutationFence(
+        _writerScope,
+        owner: CloudKitWriterOwner.v2,
+        fencedEpoch: permit.epoch,
+        now: _time(at + 3),
+      );
+      expect(reconciled.epoch, permit.epoch + 2);
+      expect(reconciled.ownershipEpoch, owner.ownershipEpoch);
+      expect(
+        () => authority.verifyPermit(permit),
+        throwsA(isA<CloudKitWriterAuthorityFailure>()),
+      );
+      bind();
+      final confirmed = (await cloudStore.readOutboxEntries(_messageScope))
+          .singleWhere((row) => row.operationId == operation.operationId);
+      expect(confirmed.status, CloudOutboxStatus.confirmed);
+      expect(confirmed.protectedLeaseReference, isNull);
+      beforeTerminalize?.call();
+      journal.markExactReadbackConfirmed(
+        intentId: mutationIntentId,
+        operation: confirmed,
+        currentAuth: _auth(),
+        stillCurrent: () => true,
+        now: _time(at + 4),
+      );
+      expect(
+        store.box<CloudSyncLocalMutationIntentEntity>().get(mutationIntentId)!.state,
+        5,
+      );
+      return confirmed;
+    }
+
+    test(
+      'queued state3 adopts at N+2 and recovers at N+4 with immutable N source',
+      () async {
+        final original = authority.read(_writerScope)!;
+        final staleJournal = journal;
+        final second = reflectSecond();
+        final proof = immutableProof(second.id);
+        expect(original.ownershipEpoch, original.epoch);
+        expect(
+          store.box<CloudSyncLocalMutationIntentEntity>().get(second.id)!.writerEpoch,
+          original.epoch,
+        );
+        expect(
+          () => journal.readReflectedForUpdate(
+            intentId: second.id,
+            currentAuth: _auth(),
+            stillCurrent: () => true,
+          ),
+          throwsA(_mutationFailure('predecessor_not_ready')),
+        );
+        // Refresh the first source's canonical tip after the second reflection.
+        admissionSource = journal.readReflectedForUpdate(
+          intentId: intentId,
+          currentAuth: _auth(),
+          stillCurrent: () => true,
+        );
+        final first = admit();
+        await settleThroughFence(
+          first,
+          mutationIntentId: intentId,
+          predecessor: expectedPredecessor,
+          beforeTerminalize: () {
+            expect(
+              () => journal.readReflectedForUpdate(
+                intentId: second.id,
+                currentAuth: _auth(),
+                stillCurrent: () => true,
+              ),
+              throwsA(_mutationFailure('predecessor_not_ready')),
+            );
+          },
+        );
+        final current = authority.read(_writerScope)!;
+        expect(current.epoch, original.epoch + 2);
+        expect(current.ownershipEpoch, original.epoch);
+        final permit = authority.issuePermit(
+          _writerScope,
+          expectedOwner: CloudKitWriterOwner.v2,
+        );
+        expect(permit.epoch, current.epoch);
+        final secondAdmission = journal.readReflectedForUpdate(
+          intentId: second.id,
+          currentAuth: _auth(),
+          stillCurrent: () => true,
+        );
+        expect(secondAdmission.writerEpoch, original.epoch);
+        expect(secondAdmission.adoptedOperationId, isNull);
+        expectedPredecessor = await currentPredecessor();
+        expect(expectedPredecessor.etagHash, 'F' * 43);
+        expect(expectedPredecessor.encryptedRawRecordReference, 'obcs2.ref.${'V' * 43}');
+        draft = _updateDraft(
+          payload: 'e',
+          reference: 'X',
+          lease: 'e',
+          createdAt: _time(60),
+        );
+        expect(
+          () => staleJournal.readReflectedForUpdate(
+            intentId: second.id,
+            currentAuth: _auth(),
+            stillCurrent: () => true,
+          ),
+          throwsA(_mutationFailure('owner_changed')),
+        );
+        expect(
+          () => cloudStore.admitProtectedLocalMutationUpdate(
+            draft: draft,
+            expectedPredecessor: expectedPredecessor,
+            journal: staleJournal,
+            source: secondAdmission,
+            currentAuth: _auth(),
+            stillCurrent: () => true,
+          ),
+          throwsA(_mutationFailure('owner_changed')),
+        );
+        admissionSource = secondAdmission;
+        expect(
+          () => admit(withPredecessor: _mapEntry()),
+          throwsA(_cloudFailure('protected_message_update_predecessor_changed')),
+        );
+        expect(store.box<CloudOutboxOperationEntity>().count(), 1);
+        authority.verifyPermit(permit);
+        final adopted = admit();
+        authority.verifyPermit(permit);
+        expect(adopted.operationId, isNot(first.operationId));
+        expect(admit().operationId, adopted.operationId);
+        expect(store.box<CloudOutboxOperationEntity>().count(), 2);
+        expect((await cloudStore.readCheckpoint(_messageScope)).mutationRevisionCounter, 2);
+        expect(immutableProof(second.id), proof);
+        expect(
+          () => journal.beginSubmission(
+            intentId: second.id,
+            committedSource: second.source,
+            capturedAuth: _auth(),
+            stillCurrent: () => true,
+            now: _time(61),
+          ),
+          throwsA(_mutationFailure('owner_changed')),
+        );
+        await reopen();
+        expect(authority.read(_writerScope)!.ownershipEpoch, original.epoch);
+        expect(
+          journal.readAdoptedForUpdate(
+            operationId: adopted.operationId,
+            currentAuth: _auth(),
+            stillCurrent: () => true,
+          ).sameReflectedMutationAs(secondAdmission),
+          isTrue,
+        );
+        expect(immutableProof(second.id), proof);
+        expect(store.box<CloudOutboxOperationEntity>().count(), 2);
+        await settleThroughFence(
+          adopted,
+          mutationIntentId: second.id,
+          predecessor: expectedPredecessor,
+          sequence: 2,
+          reopenUnknown: true,
+        );
+        expect(authority.read(_writerScope)!.epoch, original.epoch + 4);
+        expect(authority.read(_writerScope)!.ownershipEpoch, original.epoch);
+        expect(
+          journal.readTerminalSourceForCleanup(
+            intentId: second.id,
+            currentAuth: _auth(),
+            stillCurrent: () => true,
+          )?.encode(),
+          second.source.encode(),
+        );
+        expect(immutableProof(second.id), proof);
+        final settled = (await cloudStore.readOutboxEntries(_messageScope))
+            .singleWhere((row) => row.operationId == adopted.operationId);
+        expect(settled.status, CloudOutboxStatus.confirmed);
+        expect(settled.attemptCount, 1);
+        expect(store.box<CloudOutboxOperationEntity>().count(), 2);
+        await reopen();
+        expect(
+          journal.readTerminalSourceForCleanup(
+            intentId: second.id,
+            currentAuth: _auth(),
+            stillCurrent: () => true,
+          )?.encode(),
+          second.source.encode(),
+        );
+        expect(immutableProof(second.id), proof);
+      },
+    );
+
+    test('terminal cleanup survives a second actual fence to N+4', () async {
+      final original = authority.read(_writerScope)!;
+      final staleJournal = journal;
+      final proof = immutableProof(intentId);
+      final first = admit();
+      await settleThroughFence(
+        first,
+        mutationIntentId: intentId,
+        predecessor: expectedPredecessor,
+      );
+      // Leave the first source/IDS cleanup deferred while another update enters.
+      final second = reflectSecond(at: 40);
+      admissionSource = journal.readReflectedForUpdate(
+        intentId: second.id,
+        currentAuth: _auth(),
+        stillCurrent: () => true,
+      );
+      expect(admissionSource.writerEpoch, original.epoch + 2);
+      expectedPredecessor = await currentPredecessor();
+      draft = _updateDraft(
+        payload: 'e',
+        reference: 'X',
+        lease: 'e',
+        createdAt: _time(60),
+      );
+      final permit = authority.issuePermit(
+        _writerScope,
+        expectedOwner: CloudKitWriterOwner.v2,
+      );
+      expect(permit.epoch, original.epoch + 2);
+      authority.verifyPermit(permit);
+      final next = admit();
+      await settleThroughFence(
+        next,
+        mutationIntentId: second.id,
+        predecessor: expectedPredecessor,
+        sequence: 2,
+      );
+      expect(authority.read(_writerScope)!.epoch, original.epoch + 4);
+      expect(authority.read(_writerScope)!.ownershipEpoch, original.epoch);
+      expect(
+        staleJournal.readTerminalSourceForCleanup(
+          intentId: intentId,
+          currentAuth: _auth(),
+          stillCurrent: () => true,
+        )?.encode(),
+        source.encode(),
+        reason: 'Terminal cleanup rereads current ownership and grants no write permit',
+      );
+      await reopen();
+      expect(
+        journal.readTerminalSourceForCleanup(
+          intentId: intentId,
+          currentAuth: _auth(),
+          stillCurrent: () => true,
+        )?.encode(),
+        source.encode(),
+      );
+      expect(immutableProof(intentId), proof);
+      expect(store.box<CloudSyncLocalMutationIntentEntity>().get(intentId)!.state, 5);
+      expect(store.box<CloudOutboxOperationEntity>().count(), 2);
+    });
+
+    for (final transition in ['reset', 'migration abort']) {
+      test('$transition rejects old queued and terminal ownership lineage', () async {
+        final original = authority.read(_writerScope)!;
+        final second = reflectSecond();
+        final queuedProof = immutableProof(second.id);
+        final terminalProof = immutableProof(intentId);
+        admissionSource = journal.readReflectedForUpdate(
+          intentId: intentId,
+          currentAuth: _auth(),
+          stillCurrent: () => true,
+        );
+        await settleThroughFence(
+          admit(),
+          mutationIntentId: intentId,
+          predecessor: expectedPredecessor,
+        );
+        final queued = journal.readReflectedForUpdate(
+          intentId: second.id,
+          currentAuth: _auth(),
+          stillCurrent: () => true,
+        );
+        final before = authority.read(_writerScope)!;
+        if (transition == 'reset') {
+          final fence = authority.prepareReset(
+            authority.issuePermit(_writerScope, expectedOwner: CloudKitWriterOwner.v2),
+            request: CloudSyncResetRebootstrapRequest(
+              scope: _messageScope,
+              transitionIdHash: '1' * 64,
+              activeIdentityFingerprint: _account,
+              expectedGeneration: 1,
+              protectedRemoteStateProofReference: 'obcs2.ref.${'Z' * 43}',
+            ),
+            now: _time(90),
+          );
+          // Retain the old DB rows to isolate the authority's lineage fence.
+          authority.completeReset(
+            fence,
+            proof: CloudSyncResetCompletionProof(
+              scope: _messageScope,
+              transitionIdHash: '1' * 64,
+              activeIdentityFingerprint: _account,
+              previousGeneration: 1,
+              generation: 2,
+              protectedRemoteStateProofReference: 'obcs2.ref.${'Z' * 43}',
+            ),
+            now: _time(91),
+          );
+        } else {
+          final legacy = ObjectBoxCloudKitWriterAuthority.forTest(
+            store: store,
+            buildDecision: CloudKitWriterOwnership.resolve('legacy'),
+          );
+          final prepared = legacy.prepareMigration(
+            _writerScope,
+            from: CloudKitWriterOwner.v2,
+            to: CloudKitWriterOwner.legacy,
+            expectedEpoch: before.epoch,
+            transitionIdHash: '2' * 64,
+            evidence: const CloudKitWriterTransitionEvidence.forTest(
+              operationsQuiesced: true,
+              activeIdentityRevalidated: true,
+              legacyMutationQueues: LegacyMutationQueueDisposition.empty,
+            ),
+            now: _time(90),
+          );
+          legacy.abortMigration(
+            _writerScope,
+            targetOwner: CloudKitWriterOwner.legacy,
+            expectedEpoch: prepared.epoch,
+            transitionIdHash: '2' * 64,
+            now: _time(91),
+          );
+        }
+        await reopen();
+        final predecessor = await currentPredecessor();
+        final current = authority.read(_writerScope)!;
+        expect(current.owner, CloudKitWriterOwner.v2);
+        expect(current.epoch, original.epoch + 4);
+        expect(current.ownershipEpoch, current.epoch);
+        final permit = authority.issuePermit(
+          _writerScope,
+          expectedOwner: CloudKitWriterOwner.v2,
+        );
+        expect(permit.epoch, current.epoch);
+        authority.verifyPermit(permit);
+        expect(
+          () => journal.readReflectedForUpdate(
+            intentId: second.id,
+            currentAuth: _auth(),
+            stillCurrent: () => true,
+          ),
+          throwsA(_mutationFailure('owner_changed')),
+        );
+        expect(
+          () => cloudStore.admitProtectedLocalMutationUpdate(
+            draft: _updateDraft(createdAt: _time(92)),
+            expectedPredecessor: predecessor,
+            journal: journal,
+            source: queued,
+            currentAuth: _auth(),
+            stillCurrent: () => true,
+          ),
+          throwsA(_mutationFailure('owner_changed')),
+        );
+        expect(
+          () => journal.readTerminalSourceForCleanup(
+            intentId: intentId,
+            currentAuth: _auth(),
+            stillCurrent: () => true,
+          ),
+          throwsA(_mutationFailure('owner_changed')),
+        );
+        expect(immutableProof(second.id), queuedProof);
+        expect(immutableProof(intentId), terminalProof);
+        expect(store.box<CloudSyncLocalMutationIntentEntity>().get(second.id)!.state, 3);
+        expect(store.box<CloudSyncLocalMutationIntentEntity>().get(intentId)!.state, 5);
+        expect(store.box<CloudOutboxOperationEntity>().count(), 1);
+      });
+    }
+
+    test('legacy ownershipEpoch zero cannot adopt a retained state3 source', () async {
+      final second = reflectSecond();
+      final proof = immutableProof(second.id);
+      admissionSource = journal.readReflectedForUpdate(
+        intentId: intentId,
+        currentAuth: _auth(),
+        stillCurrent: () => true,
+      );
+      await settleThroughFence(
+        admit(),
+        mutationIntentId: intentId,
+        predecessor: expectedPredecessor,
+      );
+      final queued = journal.readReflectedForUpdate(
+        intentId: second.id,
+        currentAuth: _auth(),
+        stillCurrent: () => true,
+      );
+      final predecessor = await currentPredecessor();
+      final epoch = authority.read(_writerScope)!.epoch;
+      // Negative legacy/corruption fixture only; positive epochs use real fences.
+      final entity = store.box<CloudKitWriterAuthorityEntity>().getAll().single
+        ..ownershipEpoch = 0;
+      store.box<CloudKitWriterAuthorityEntity>().put(entity);
+      await reopen();
+      expect(authority.read(_writerScope)!.epoch, epoch);
+      expect(authority.read(_writerScope)!.ownershipEpoch, 0);
+      final permit = authority.issuePermit(
+        _writerScope,
+        expectedOwner: CloudKitWriterOwner.v2,
+      );
+      expect(permit.epoch, epoch);
+      authority.verifyPermit(permit);
+      expect(
+        () => journal.readReflectedForUpdate(
+          intentId: second.id,
+          currentAuth: _auth(),
+          stillCurrent: () => true,
+        ),
+        throwsA(_mutationFailure('owner_changed')),
+      );
+      expect(
+        () => cloudStore.admitProtectedLocalMutationUpdate(
+          draft: _updateDraft(createdAt: _time(60)),
+          expectedPredecessor: predecessor,
+          journal: journal,
+          source: queued,
+          currentAuth: _auth(),
+          stillCurrent: () => true,
+        ),
+        throwsA(_mutationFailure('owner_changed')),
+      );
+      expect(immutableProof(second.id), proof);
+      expect(store.box<CloudSyncLocalMutationIntentEntity>().get(second.id)!.state, 3);
+      expect(store.box<CloudOutboxOperationEntity>().count(), 1);
+    });
 
     test('journal and one immutable outbox row commit atomically', () async {
       final operation = admit();

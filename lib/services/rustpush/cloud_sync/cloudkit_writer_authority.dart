@@ -139,6 +139,22 @@ final class CloudKitWriterAuthoritySnapshot {
     return state == CloudKitWriterAuthorityState.stable ? epoch : 0;
   }
 
+  /// Positive persisted ownership, not an ordered-epoch guess or write permit.
+  /// Unknown state is usable only to inspect an already-adopted exact operation;
+  /// its filesystem fence still owns remote reconciliation and fresh admission.
+  bool continuesCapturedEpoch(
+    int capturedEpoch, {
+    bool allowMutationUnknown = false,
+  }) => owner == CloudKitWriterOwner.v2 &&
+      targetOwner == CloudKitWriterOwner.none &&
+      transitionIdHash == null &&
+      (state == CloudKitWriterAuthorityState.stable ||
+          (allowMutationUnknown &&
+              state == CloudKitWriterAuthorityState.mutationUnknown)) &&
+      ownershipEpoch > 0 &&
+      capturedEpoch >= ownershipEpoch &&
+      capturedEpoch <= epoch;
+
   @override
   String toString() =>
       'CloudKitWriterAuthoritySnapshot(owner=${owner.name}, state=${state.name}, epoch=$epoch, redacted)';

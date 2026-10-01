@@ -934,13 +934,13 @@ void main() {
     final identity = CloudSyncAutomaticArchiveIdentity(
       accountFingerprint: scope.accountFingerprint,
       protectedStoreIdentity: 'obcs2.store.${'S' * 43}',
-      writerEpoch: 1,
+      ownershipEpoch: 1,
     );
     String? storedValue;
     var nonce = 'a' * 32;
     final preferences = CloudSyncAutomaticArchivePreferences(
       captureIdentity: () async => identity,
-      currentWriterEpoch: () => 1,
+      currentOwnershipEpoch: () => 1,
       stillCurrent: () => true,
       reload: () async {},
       read: (_) => storedValue,

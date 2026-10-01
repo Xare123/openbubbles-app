@@ -25,7 +25,7 @@ void main() {
   late CloudSyncLocalSendJournal journal;
   late Chat chat;
 
-  void provisionJournal() {
+  void provisionJournal({CloudSyncNativeAuthSnapshot? auth}) {
     authority = ObjectBoxCloudKitWriterAuthority.forTest(
       store: store,
       buildDecision: CloudKitWriterOwnership.resolve('v2'),
@@ -46,6 +46,7 @@ void main() {
       store: store,
       authority: authority,
       authoritySnapshot: authoritySnapshot,
+      currentAuth: auth ?? _auth(Object()),
     );
   }
 
@@ -1215,7 +1216,8 @@ void main() {
     final ready = journal.readReady().single;
     expect(ready.id, intent.id);
     expect(ready.state, 1);
-    expect(ready.admittedBindingSha256, isNull);
+    expect(ready.admittedBindingSha256, intent.admittedBindingSha256,
+        reason: 'Positive durable auth proof must survive promotion');
     expect(
       () => journal.promoteIdsConfirmedDeferred(
         intentId: intent.id,
@@ -1241,6 +1243,142 @@ void main() {
       expect(journal.readReady().single.id, intent.id);
     },
   );
+
+  void settleAnotherMutation() {
+    final permit = authority.issuePermit(_scope, expectedOwner: CloudKitWriterOwner.v2);
+    authority.markMutationUnknown(permit, now: _time(7));
+    authority.reconcileMutationFence(_scope, owner: CloudKitWriterOwner.v2,
+        fencedEpoch: permit.epoch, now: _time(8));
+    expect(() => authority.verifyPermit(permit),
+        throwsA(_authorityFailure('cloudkit_writer_permit_stale')));
+  }
+
+  test('queued plaintext retains positive auth through two reconciliations and restart', () async {
+    final auth = _auth(Object());
+    final intent = saveDeferredIdsSuccess(capturedAuth: auth);
+    journal.promoteIdsConfirmedDeferred(intentId: intent.id, currentAuth: auth, now: _time(4));
+    final original = journal.readForAdmission(intent.id);
+    final stale = journal;
+    settleAnotherMutation();
+    provisionJournal();
+    settleAnotherMutation();
+    await reopen();
+    expect(authoritySnapshot.epoch, intent.writerEpoch + 4);
+    expect(() => stale.readForAdmission(intent.id),
+        throwsA(_stateFailure('cloud_sync_local_send_owner_changed')));
+    expect(journal.readReady().single.id, intent.id);
+    final retained = journal.readForAdmission(intent.id);
+    expect(retained.writerEpoch, original.writerEpoch);
+    expect(retained.sourceSha256, original.sourceSha256);
+    expect(retained.admittedBindingSha256, intent.admittedBindingSha256);
+    expect(retained.admittedOperationId, isNull);
+    expect(journal.validateReadyForCreate(store, _messageUploadScope, retained).guid, _guidA);
+    final permit = authority.issuePermit(_scope, expectedOwner: CloudKitWriterOwner.v2);
+    expect(permit.epoch, intent.writerEpoch + 4);
+    authority.verifyPermit(permit);
+    expect(store.box<CloudSyncLocalSendIntentEntity>().count(), 1);
+    expect(store.box<CloudOutboxOperationEntity>().count(), 0);
+  });
+
+  test('deferred plaintext promotes after a real mutation fence without rewriting origin', () async {
+    final auth = _auth(Object());
+    final intent = saveDeferredIdsSuccess(capturedAuth: auth);
+    final stale = journal;
+    settleAnotherMutation();
+    await reopen();
+    expect(() => stale.promoteIdsConfirmedDeferred(intentId: intent.id,
+        currentAuth: auth, now: _time(9)),
+        throwsA(_stateFailure('cloud_sync_local_send_owner_changed')));
+    expect(journal.readIdsConfirmedDeferred(currentAuth: auth).single.id, intent.id);
+    journal.promoteIdsConfirmedDeferred(intentId: intent.id, currentAuth: auth, now: _time(9));
+    final row = journal.readReady().single;
+    expect(row.writerEpoch, intent.writerEpoch);
+    expect(row.sourceSha256, intent.sourceSha256);
+    expect(row.admittedBindingSha256, intent.admittedBindingSha256);
+    expect(journal.readForAdmission(intent.id).message!.guid, _guidA);
+  });
+
+  test('unknown mutation prevents new plaintext admission and preserves accepted evidence', () {
+    final auth = _auth(Object());
+    final intent = saveDeferredIdsSuccess(capturedAuth: auth);
+    journal.promoteIdsConfirmedDeferred(intentId: intent.id, currentAuth: auth, now: _time(4));
+    final permit = authority.issuePermit(_scope, expectedOwner: CloudKitWriterOwner.v2);
+    authority.markMutationUnknown(permit, now: _time(7));
+    provisionJournal();
+    expect(journal.readReady(), isEmpty);
+    expect(() => journal.readForAdmission(intent.id),
+        throwsA(_stateFailure('cloud_sync_local_send_owner_changed')));
+    expect(() => authority.issuePermit(_scope, expectedOwner: CloudKitWriterOwner.v2),
+        throwsA(isA<CloudKitWriterAuthorityFailure>()));
+    final retained = store.box<CloudSyncLocalSendIntentEntity>().get(intent.id)!;
+    expect(retained.state, 1);
+    expect(retained.admittedBindingSha256, intent.admittedBindingSha256);
+    expect(retained.writerEpoch, intent.writerEpoch);
+  });
+
+  test('changed protected store cannot select or admit older accepted plaintext', () {
+    final auth = _auth(Object());
+    final intent = saveDeferredIdsSuccess(capturedAuth: auth);
+    journal.promoteIdsConfirmedDeferred(intentId: intent.id, currentAuth: auth, now: _time(4));
+    settleAnotherMutation();
+    provisionJournal(auth: _auth(Object(), store: 'obcs2.store.$_otherAccount'));
+    expect(journal.readReady(), isEmpty);
+    expect(() => journal.readForAdmission(intent.id),
+        throwsA(_stateFailure('cloud_sync_local_send_protected_source_missing')));
+    expect(store.box<CloudSyncLocalSendIntentEntity>().get(intent.id)!.state, 1);
+  });
+
+  test('retained plaintext still rejects changed message and downgraded IDS proof', () {
+    final auth = _auth(Object());
+    final intent = saveDeferredIdsSuccess(capturedAuth: auth);
+    journal.promoteIdsConfirmedDeferred(intentId: intent.id, currentAuth: auth, now: _time(4));
+    settleAnotherMutation();
+    provisionJournal();
+    final message = store.box<Message>().get(intent.localMessageId)!
+      ..text = 'different source'
+      ..attributedBody = [AttributedBody.raw('different source')];
+    store.box<Message>().put(message);
+    expect(() => journal.readForAdmission(intent.id),
+        throwsA(_stateFailure('cloud_sync_local_send_source_changed')));
+    final row = store.box<CloudSyncLocalSendIntentEntity>().get(intent.id)!
+      ..idsConfirmationVersion = 0;
+    store.box<CloudSyncLocalSendIntentEntity>().put(row);
+    expect(journal.readReady(), isEmpty);
+    expect(() => journal.readForAdmission(intent.id),
+        throwsA(_stateFailure('cloud_sync_local_send_intent_changed')));
+    expect(store.box<CloudOutboxOperationEntity>().count(), 0);
+  });
+
+  for (final promoted in [false, true]) {
+    test('aborted migration never inherits earlier plaintext admission: promoted=$promoted', () {
+      final auth = _auth(Object());
+      final intent = saveDeferredIdsSuccess(capturedAuth: auth);
+      if (promoted) {
+        journal.promoteIdsConfirmedDeferred(intentId: intent.id, currentAuth: auth, now: _time(4));
+      }
+      final legacy = ObjectBoxCloudKitWriterAuthority.forTest(store: store,
+          buildDecision: CloudKitWriterOwnership.resolve('legacy'));
+      final prepared = legacy.prepareMigration(_scope,
+          from: CloudKitWriterOwner.v2, to: CloudKitWriterOwner.legacy,
+          expectedEpoch: authoritySnapshot.epoch, transitionIdHash: 'c' * 64,
+          evidence: _completeEvidence, now: _time(6));
+      legacy.abortMigration(_scope, targetOwner: CloudKitWriterOwner.legacy,
+          expectedEpoch: prepared.epoch, transitionIdHash: 'c' * 64, now: _time(7));
+      provisionJournal();
+      expect(authoritySnapshot.ownershipEpoch, greaterThan(intent.writerEpoch));
+      expect(journal.readReady(), isEmpty);
+      expect(journal.readIdsConfirmedDeferred(currentAuth: auth), isEmpty);
+      expect(() => promoted ? journal.readForAdmission(intent.id)
+          : journal.promoteIdsConfirmedDeferred(intentId: intent.id,
+              currentAuth: auth, now: _time(9)),
+          throwsA(_stateFailure('cloud_sync_local_send_owner_changed')));
+      final retained = store.box<CloudSyncLocalSendIntentEntity>().get(intent.id)!;
+      expect(retained.state, promoted ? 1 : 3);
+      expect(retained.writerEpoch, intent.writerEpoch);
+      expect(retained.admittedBindingSha256, intent.admittedBindingSha256);
+      expect(store.box<CloudOutboxOperationEntity>().count(), 0);
+    });
+  }
 
   for (final change in <String, CloudSyncNativeAuthSnapshot Function(Object)>{
     'account': (client) => _auth(client, account: _otherAccount),
@@ -2432,6 +2570,11 @@ final _attachmentUploadScope = CloudSyncScope(
   accountFingerprint: _scope.accountFingerprint,
   container: 'com.apple.messages.cloud', database: 'private',
   zone: 'attachmentManateeZone', persistenceLane: CloudSyncPersistenceLane.semantic,
+);
+final _messageUploadScope = CloudSyncScope(
+  accountFingerprint: _scope.accountFingerprint,
+  container: 'com.apple.messages.cloud', database: 'private',
+  zone: 'messageManateeZone', persistenceLane: CloudSyncPersistenceLane.semantic,
 );
 final _scope = CloudKitWriterScope(
   accountFingerprint: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',

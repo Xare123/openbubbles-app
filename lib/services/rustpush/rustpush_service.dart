@@ -9063,6 +9063,7 @@ class RustPushService extends GetxService {
       }
       final journal = CloudSyncLocalSendJournal(
         store: objectBox, authority: authority, authoritySnapshot: owner,
+        currentAuth: auth,
       );
       if (previousStagingGuid != null &&
           !journal.isComposerSubmissionPending(eligible)) {
@@ -9348,6 +9349,7 @@ class RustPushService extends GetxService {
       }
       final journal = CloudSyncLocalSendJournal(
         store: objectBox, authority: authority, authoritySnapshot: authoritySnapshot,
+        currentAuth: auth,
       );
       final identity = isReaction
           ? journal.captureReactionSubmissionWire(
@@ -9544,6 +9546,7 @@ class RustPushService extends GetxService {
     if (owner == null || owner.owner != CloudKitWriterOwner.v2) return;
     final journal = CloudSyncLocalSendJournal(
       store: objectBox, authority: authority, authoritySnapshot: owner,
+      currentAuth: auth,
     );
     // A live callback must remain bound to the exact client generation that
     // initiated the send. A replayed receipt crossed a process boundary by
@@ -11581,6 +11584,7 @@ class RustPushService extends GetxService {
     }
     final journal = CloudSyncLocalSendJournal(
       store: objectBox, authority: authority, authoritySnapshot: owner,
+      currentAuth: auth,
     );
     final query = objectBox.box<CloudSyncLocalSendIntentEntity>().query(
       CloudSyncLocalSendIntentEntity_.accountFingerprint.equals(auth.accountFingerprint)

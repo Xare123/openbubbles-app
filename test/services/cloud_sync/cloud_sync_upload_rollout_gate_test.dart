@@ -25,10 +25,10 @@ void main() {
   // StateError from an earlier disabled-build gate. No client, DB or Apple I/O.
   for (final consent in <String, CloudSyncAutomaticArchiveIdentity?>{
     'missing identity': null,
-    'unprepared writer epoch': CloudSyncAutomaticArchiveIdentity(
+    'unprepared ownership epoch': CloudSyncAutomaticArchiveIdentity(
       accountFingerprint: List.filled(43, 'A').join(),
       protectedStoreIdentity: 'obcs2.store.${List.filled(43, 'B').join()}',
-      writerEpoch: 0,
+      ownershipEpoch: 0,
     ),
   }.entries) {
     test(

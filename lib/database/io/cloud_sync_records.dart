@@ -201,8 +201,9 @@ class CloudSyncLocalSendIntentEntity {
   String? admittedOperationId;
 
   /// State 2: digest of immutable operation/payload metadata, not mutable
-  /// receipts. State 3: digest of the captured account/protected-store
-  /// auth binding. Null in states 0 and 1.
+  /// receipts. States 3 and positively promoted 1: digest of the captured
+  /// account/protected-store auth binding. Null in state 0 and legacy state 1.
+  /// Promotion preserves this proof; adoption replaces it atomically.
   String? admittedBindingSha256;
 
   /// Versioned restored-chat dependency: scoped hashes and local row ID only.

@@ -885,6 +885,7 @@ final class CloudSyncProductionLocalSendAdapter {
     final attachmentInventories = <int, Set<String>>{};
     final journal = CloudSyncLocalSendJournal(
       store: objectBox, authority: authority, authoritySnapshot: owner,
+      currentAuth: auth,
       attachmentParentReadback: (intentId, retainedProof) {
         if (retainedProof != null) {
           uploads.requireParentReadbackProof(

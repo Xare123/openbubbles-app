@@ -273,8 +273,7 @@ final class CloudSyncLocalMutationJournal {
     if (row.state >= 4) {
       _requireRetainedReconciliationOwner(row);
     } else {
-      _requireOwner();
-      if (row.writerEpoch != _owner.epoch) _fail('owner_changed');
+      _requireAcceptedOwner(row);
     }
     final source = validateCloudSyncMutationRow(row);
     _requireAuth(source, currentAuth, stillCurrent);
@@ -303,8 +302,7 @@ final class CloudSyncLocalMutationJournal {
         exactReadbackFinalized: row.state == 5,
       );
     } else {
-      _requireOwner();
-      if (row.writerEpoch != _owner.epoch) _fail('owner_changed');
+      _requireAcceptedOwner(row);
     }
     final source = validateCloudSyncMutationRow(row);
     _requireAuth(source, currentAuth, stillCurrent);
@@ -681,8 +679,7 @@ final class CloudSyncLocalMutationJournal {
     if (row.state == 4) {
       _requireRetainedReconciliationOwner(row);
     } else {
-      _requireOwner();
-      if (row.writerEpoch != _owner.epoch) _fail('owner_changed');
+      _requireAcceptedOwner(row);
     }
     final source = validateCloudSyncMutationRow(row);
     _requireAuth(source, currentAuth, stillCurrent);
@@ -923,7 +920,12 @@ final class CloudSyncLocalMutationJournal {
       _fail('adoption_store_mismatch');
     }
     _requireOwner();
-    final row = _read(expected.intentId, originalEpoch: true);
+    final row = _read(expected.intentId);
+    if (row.state == 4) {
+      _requireRetainedReconciliationOwner(row);
+    } else {
+      _requireAcceptedOwner(row);
+    }
     final source = validateCloudSyncMutationRow(row);
     _requireAuth(source, currentAuth, stillCurrent);
     if (!expected._matches(row) ||
@@ -1173,9 +1175,21 @@ final class CloudSyncLocalMutationJournal {
     // Journaling creates no remote write permit, including when uploads are fenced.
   }
 
-  /// Accepts only the epoch progression produced by one fenced CloudKit
-  /// mutation. This validates recovery evidence for an already-adopted update;
-  /// it never grants authority to stage, adopt, or submit a new mutation.
+  /// An accepted protected source may outlive another exact mutation, but only
+  /// a newly captured current journal in the same persisted ownership can use
+  /// it. Source/auth/IDS/reflection and a fresh outbox permit remain separate.
+  void _requireAcceptedOwner(CloudSyncLocalMutationIntentEntity row) {
+    _requireOwner();
+    if (row.writerEpoch != _owner.epoch &&
+        !_authority.read(_owner.scope)!.continuesCapturedEpoch(row.writerEpoch)) {
+      _fail('owner_changed');
+    }
+  }
+
+  /// Inspect an exact already-adopted update within known ownership. The native
+  /// filesystem fence still validates the actual submission epoch and operation.
+  /// Legacy rows without a lineage marker retain the single-fence fallback;
+  /// a known reset/migration must never fall back to an ordered-epoch exception.
   void _requireRetainedReconciliationOwner(
     CloudSyncLocalMutationIntentEntity row, {
     bool exactReadbackFinalized = false,
@@ -1194,6 +1208,15 @@ final class CloudSyncLocalMutationJournal {
         current.targetOwner != CloudKitWriterOwner.none ||
         current.transitionIdHash != null) {
       _fail('owner_changed');
+    }
+    if (current.ownershipEpoch > 0) {
+      if (!current.continuesCapturedEpoch(
+        row.writerEpoch,
+        allowMutationUnknown: !exactReadbackFinalized,
+      )) {
+        _fail('owner_changed');
+      }
+      return;
     }
     final epochDelta = current.epoch - row.writerEpoch;
     final stable =

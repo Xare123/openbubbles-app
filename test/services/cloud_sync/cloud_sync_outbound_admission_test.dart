@@ -297,7 +297,7 @@ void main() {
       ),
     );
 
-    void bindJournal() {
+    void bindJournal({CloudSyncNativeAuthSnapshot? auth}) {
       authority = ObjectBoxCloudKitWriterAuthority.forTest(
         store: objectBox,
         buildDecision: CloudKitWriterOwnership.resolve('v2'),
@@ -323,6 +323,7 @@ void main() {
         store: objectBox,
         authority: authority,
         authoritySnapshot: authority.read(writerScope)!,
+        currentAuth: auth,
       );
     }
 
@@ -589,6 +590,57 @@ void main() {
         appliedSource: restoredSource,
         now: testEpoch,
       );
+    });
+
+    test('accepted plaintext admits once after another mutation settles and restart', () async {
+      final originalEpoch = authority.read(writerScope)!.epoch;
+      const queuedGuid = '55555555-5555-4555-8555-555555555555';
+      final chat = local.chat.target!;
+      local = Message(guid: 'temp-Queued12345', stagingGuid: queuedGuid,
+          text: 'queued synthetic message', isFromMe: true, dateCreated: testEpoch,
+          attributedBody: [AttributedBody.raw('queued synthetic message')])
+        ..chat.target = chat;
+      journal.saveSubmission(
+          identity: CloudSyncLocalSendIdentity.capture(local, chat, queuedGuid)!,
+          newlyGeneratedGuid: true, persistMessage: () => objectBox.box<Message>().put(local),
+          now: testEpoch);
+      intentId = journal.recordNativeSendConfirmation(stableGuid: queuedGuid,
+          succeeded: true, capturedAuth: currentAuth, stillCurrent: () => true,
+          now: testEpoch)!;
+      journal.promoteIdsConfirmedDeferred(intentId: intentId,
+          currentAuth: currentAuth, now: testEpoch);
+      final original = intent();
+      final stale = journal;
+      final permit = authority.issuePermit(writerScope, expectedOwner: CloudKitWriterOwner.v2);
+      authority.markMutationUnknown(permit, now: testEpoch);
+      authority.reconcileMutationFence(writerScope, owner: CloudKitWriterOwner.v2,
+          fencedEpoch: permit.epoch, now: testEpoch);
+      objectBox.close();
+      objectBox = await openStore(directory: directory.path);
+      bindJournal(auth: currentAuth);
+      store = ObjectBoxCloudSyncStore(store: objectBox, protector: _Protector(),
+          clock: () => testEpoch, localSendJournal: journal);
+      coordinator = CloudSyncOutboundAdmissionCoordinator(store: store, transport: transport,
+          ensureProtectedStoreRecovered: () async => timeline.add('recover'));
+      expect(authority.read(writerScope)!.epoch, originalEpoch + 2);
+      expect(journal.readReady().map((row) => row.id), [intentId],
+          reason: 'The old no-provenance fixture is not manufactured into a candidate');
+      expect(original.admittedBindingSha256, isNotNull);
+      transport.stages.add(_stage('a', 'P', 'L', 'S'));
+      final operation = await admit();
+      expect(intent().state, 2);
+      expect(intent().writerEpoch, originalEpoch);
+      expect(intent().sourceSha256, original.sourceSha256);
+      expect(intent().admittedOperationId, operation.operationId);
+      expect((await admit()).operationId, operation.operationId);
+      expect(encodes, 1);
+      expect(timeline.where((entry) => entry == 'stage'), hasLength(1));
+      expect(objectBox.box<CloudOutboxOperationEntity>().count(), 1);
+      expect(nativeBridge.idsSendCalls, 0);
+      // The stale instance refers to a closed Store. No source was rebound or
+      // authority permit refreshed inside the old journal.
+      expect(stale.isBoundToStore(objectBox), isFalse);
+      expect(() => authority.verifyPermit(permit), throwsA(isA<CloudKitWriterAuthorityFailure>()));
     });
 
     test(

@@ -683,22 +683,30 @@ final class CloudSyncLocalSendJournal {
     required Store store,
     required ObjectBoxCloudKitWriterAuthority authority,
     required CloudKitWriterAuthoritySnapshot authoritySnapshot,
+    CloudSyncNativeAuthSnapshot? currentAuth,
     String Function(int intentId, String? retainedProof)?
     attachmentParentReadback,
   }) : _store = store,
        _authority = authority,
        _binding = authoritySnapshot,
+       _currentAuthBinding = currentAuth == null ? null : _authBinding(currentAuth),
        _attachmentParentReadback = attachmentParentReadback,
        _intents = store.box<CloudSyncLocalSendIntentEntity>(),
        _messages = store.box<Message>() {
     if (!authority.isBoundToStore(store)) {
       throw StateError('cloud_sync_local_send_authority_store_mismatch');
     }
+    if (currentAuth != null &&
+        currentAuth.accountFingerprint != authoritySnapshot.scope.accountFingerprint) {
+      throw StateError('cloud_sync_local_send_auth_changed');
+    }
   }
 
   final Store _store;
   final ObjectBoxCloudKitWriterAuthority _authority;
   final CloudKitWriterAuthoritySnapshot _binding;
+  // Fresh pass-local auth supplies the comparison, not a new durable grant.
+  final String? _currentAuthBinding;
   final Box<CloudSyncLocalSendIntentEntity> _intents;
   final Box<Message> _messages;
   // Synchronous inside the caller's Store transaction. Null proof captures
@@ -1784,15 +1792,24 @@ final class CloudSyncLocalSendJournal {
       throw StateError('cloud_sync_local_send_auth_changed');
     }
     return _store.runInTransaction(TxMode.read, () {
+      _verifyLocalOwnership();
+      var capturedEpochs = CloudSyncLocalSendIntentEntity_.writerEpoch.equals(
+        _binding.epoch,
+      );
+      if (_binding.continuesCapturedEpoch(_binding.epoch)) {
+        capturedEpochs = capturedEpochs.or(
+          CloudSyncLocalSendIntentEntity_.writerEpoch
+              .greaterThan(_binding.ownershipEpoch - 1)
+              .and(CloudSyncLocalSendIntentEntity_.writerEpoch.lessThan(_binding.epoch)),
+        );
+      }
       final query =
           _intents
               .query(
                 CloudSyncLocalSendIntentEntity_.accountFingerprint
                     .equals(_binding.scope.accountFingerprint)
                     .and(
-                      CloudSyncLocalSendIntentEntity_.writerEpoch.equals(
-                        _binding.epoch,
-                      ),
+                      capturedEpochs,
                     )
                     .and(CloudSyncLocalSendIntentEntity_.state.equals(3))
                     .and(
@@ -1817,7 +1834,7 @@ final class CloudSyncLocalSendJournal {
   }
 
   /// Promotes only explicit state-3 IDS evidence. The persisted auth binding,
-  /// active V2 owner and exact writer epoch must all still match. A new process
+  /// active V2 owner and captured ownership must all still match. A new process
   /// may recover this durable evidence; the native client generation is only
   /// an in-flight fence, not a persistent identity. No Message field or GUID
   /// is consulted as evidence that IDS succeeded.
@@ -1838,7 +1855,13 @@ final class CloudSyncLocalSendJournal {
       if (permit.epoch != _binding.epoch) {
         throw StateError('cloud_sync_local_send_owner_changed');
       }
-      final intent = _readBoundIntent(intentId);
+      final retained = _readRetainedIntent(intentId);
+      final intent = retained.writerEpoch == _binding.epoch
+          ? _readBoundIntent(intentId) : retained;
+      if (intent.writerEpoch != _binding.epoch &&
+          !_binding.continuesCapturedEpoch(intent.writerEpoch)) {
+        throw StateError('cloud_sync_local_send_owner_changed');
+      }
       if (intent.state != 3) {
         throw StateError('cloud_sync_local_send_not_deferred');
       }
@@ -1849,7 +1872,6 @@ final class CloudSyncLocalSendJournal {
       }
       intent
         ..state = 1
-        ..admittedBindingSha256 = null
         ..updatedAtMs = now.millisecondsSinceEpoch;
       _intents.put(intent);
     });
@@ -1940,6 +1962,17 @@ final class CloudSyncLocalSendJournal {
     }
     return _store.runInTransaction(TxMode.read, () {
       _verifyLocalOwnership();
+      var retainedOrigin =
+          CloudSyncLocalSendIntentEntity_.protectedSourceBinding.notNull();
+      if (_currentAuthBinding != null &&
+          _binding.continuesCapturedEpoch(_binding.epoch)) {
+        retainedOrigin = retainedOrigin.or(
+          CloudSyncLocalSendIntentEntity_.writerEpoch
+              .greaterThan(_binding.ownershipEpoch - 1)
+              .and(CloudSyncLocalSendIntentEntity_.admittedBindingSha256
+                  .equals(_currentAuthBinding)),
+        );
+      }
       final query =
           _intents
               .query(
@@ -1956,9 +1989,7 @@ final class CloudSyncLocalSendJournal {
                                       .lessThan(_binding.epoch),
                                 )
                                 .and(
-                                  CloudSyncLocalSendIntentEntity_
-                                      .protectedSourceBinding
-                                      .notNull(),
+                                  retainedOrigin,
                                 ),
                           ),
                     )
@@ -2130,7 +2161,7 @@ final class CloudSyncLocalSendJournal {
       ).message;
     }
     _requireCreateAuthority(transactionStore, scope);
-    final intent = _readBoundIntent(expected.intentId);
+    final intent = _readCreateIntent(expected.intentId);
     if (intent.state != 1 || !expected._matches(intent)) {
       throw StateError(
         adopting
@@ -2358,7 +2389,7 @@ final class CloudSyncLocalSendJournal {
         !RegExp(r'^[0-9a-f]{64}$').hasMatch(value[2])) {
       reject();
     }
-    final intent = _readBoundIntent(value[1] as int);
+    final intent = _readCreateIntent(value[1] as int);
     final source = CloudSyncLocalSendAdmissionSource._(intent, null);
     if (intent.state != 1 ||
         _chatCreateBinding(operation, chatId, originIdentity, source) !=
@@ -2464,7 +2495,7 @@ final class CloudSyncLocalSendJournal {
       intent = resume.intent;
       message = resume.message;
     } else {
-      intent = _readBoundIntent(expected.intentId);
+      intent = _readCreateIntent(expected.intentId);
       message = _validatedMessage(intent);
     }
     if (!expected._matches(intent) ||
@@ -2515,7 +2546,7 @@ final class CloudSyncLocalSendJournal {
         chatBinding: chatBinding,
         protectedSourceBinding: intent.protectedSourceBinding,
       );
-    if (retainedAttachmentResume) {
+    if (retainedAttachmentResume || intent.writerEpoch != _binding.epoch) {
       // Retained evidence is not itself current permission: recheck the
       // stable writer permit immediately before persisting the adoption.
       final permit = _authority.issuePermit(
@@ -2905,11 +2936,9 @@ final class CloudSyncLocalSendJournal {
     return retained;
   }
 
-  /// Evidence-row chooser for existing read names. Current-epoch rows take
-  /// the strict reader unchanged. Older rows take the retained reader and,
-  /// for state 1, additionally require a protected attachment source plus
-  /// current IDS confirmation; older rows in any other non-adopted state
-  /// refuse. Fresh plaintext flows keep the strict branch automatically.
+  /// Older ready plaintext needs the positively captured durable auth binding
+  /// and known current ownership, not account equality or an ordered epoch.
+  /// Protected attachments retain their separate parent/readback resume path.
   CloudSyncLocalSendIntentEntity _readEvidenceIntent(int intentId) {
     final peek = intentId > 0 ? _intents.get(intentId) : null;
     if (peek == null ||
@@ -2920,13 +2949,36 @@ final class CloudSyncLocalSendJournal {
     final retained = _readRetainedIntent(intentId);
     if (retained.state == 1) {
       if (retained.protectedSourceBinding == null) {
-        throw StateError('cloud_sync_local_send_protected_source_missing');
+        _requireRetainedPlaintextOrigin(retained);
       }
       _requireIdsConfirmation(retained);
     } else if (retained.state != 2) {
       throw StateError('cloud_sync_local_send_intent_changed');
     }
     return retained;
+  }
+
+  CloudSyncLocalSendIntentEntity _readCreateIntent(int intentId) {
+    final peek = intentId > 0 ? _intents.get(intentId) : null;
+    if (peek == null || peek.writerEpoch == _binding.epoch) {
+      return _readBoundIntent(intentId);
+    }
+    final retained = _readRetainedIntent(intentId);
+    _requireRetainedPlaintextOrigin(retained);
+    return retained;
+  }
+
+  void _requireRetainedPlaintextOrigin(CloudSyncLocalSendIntentEntity intent) {
+    _verifyLocalOwnership();
+    if (intent.state != 1 || intent.protectedSourceBinding != null ||
+        _currentAuthBinding == null ||
+        intent.admittedBindingSha256 != _currentAuthBinding) {
+      throw StateError('cloud_sync_local_send_protected_source_missing');
+    }
+    _requireIdsConfirmation(intent);
+    if (!_binding.continuesCapturedEpoch(intent.writerEpoch)) {
+      throw StateError('cloud_sync_local_send_owner_changed');
+    }
   }
 
   /// Retained-attachment resume validation backing the opt-in resume flag on
@@ -3011,7 +3063,11 @@ final class CloudSyncLocalSendJournal {
               ).hasMatch(intent.admittedBindingSha256 ?? '') &&
               intent.admittedChatBinding == null
         : intent.admittedOperationId == null &&
-              intent.admittedBindingSha256 == null &&
+              (intent.admittedBindingSha256 == null ||
+                  (intent.state == 1 &&
+                      intent.idsConfirmationVersion == cloudSyncIdsConfirmationVersion &&
+                      RegExp(r'^[0-9a-f]{64}$')
+                          .hasMatch(intent.admittedBindingSha256!))) &&
               intent.admittedChatBinding == null;
   }
 
