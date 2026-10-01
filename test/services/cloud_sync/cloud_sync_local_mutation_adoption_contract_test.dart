@@ -644,6 +644,14 @@ void main() {
       bind();
     }
 
+    Future<CloudRecordMapEntry> currentPredecessor() async =>
+        (await cloudStore.readRecordMap(
+          _messageScope,
+          logicalEntityKeyHash: _logical,
+          serverRecordIdHash: _server,
+          generation: (await cloudStore.readCheckpoint(_messageScope)).generation,
+        ))!;
+
     setUp(() async {
       directory = await Directory.systemTemp.createTemp(
         'ob-mutation-outbox-adoption-',
@@ -729,7 +737,7 @@ void main() {
       store.box<CloudRecordMapEntity>().put(
         _mapRow(logical: _logical, server: _server),
       );
-      expectedPredecessor = _mapEntry();
+      expectedPredecessor = await currentPredecessor();
       draft = _updateDraft();
     });
 
@@ -849,14 +857,6 @@ void main() {
       return (id: id, source: secondSource);
     }
 
-    Future<CloudRecordMapEntry> currentPredecessor() async =>
-        (await cloudStore.readRecordMap(
-          _messageScope,
-          logicalEntityKeyHash: _logical,
-          serverRecordIdHash: _server,
-          generation: (await cloudStore.readCheckpoint(_messageScope)).generation,
-        ))!;
-
     Future<CloudOutboxOperation> settleThroughFence(
       CloudOutboxOperation operation, {
       required int mutationIntentId,
@@ -867,6 +867,16 @@ void main() {
     }) async {
       // Synthetic native readback evidence; all DB and authority changes use
       // the real store APIs. No native transport or IDS resend is invoked.
+      final checkpoint = await cloudStore.readCheckpoint(_messageScope);
+      expect(checkpoint.generation, greaterThan(0));
+      expect(operation.checkpointGeneration, checkpoint.generation);
+      expect(predecessor.generation, checkpoint.generation);
+      expect(predecessor.rawRecordGeneration, checkpoint.generation);
+      expect(
+        predecessor.sameDurableSnapshotAs(await currentPredecessor()),
+        isTrue,
+        reason: 'Readback evidence must use the exact persisted predecessor',
+      );
       for (final zone in [
         'chatManateeZone',
         'messageManateeZone',
@@ -985,7 +995,7 @@ void main() {
               'obcs2.ref.${(sequence == 1 ? 'V' : 'Y') * 43}',
           protectedCurrentRawRecordLeaseReference:
               'obcs2.lease.${(sequence == 1 ? 'f' : '9') * 32}',
-          rawGeneration: predecessor.generation,
+          rawGeneration: predecessor.rawRecordGeneration,
           appleRequestUuid: submission.requestUuid,
           appleOperationUuid: submission.operationUuids[operation.operationId]!,
         ),
