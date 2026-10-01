@@ -8382,12 +8382,12 @@ class RustPushService extends GetxService {
         identical(client, state?.icloudServices?.cloudMessagesClient) &&
         identical(store, Database.store) && !store.isClosed() &&
         storage == statePath && !ss.settings.cloudSyncingEnabled.value;
-    int currentEpoch() {
+    int currentOwnershipEpoch() {
       if (!stillCurrent() || capturedAccount == null) return 0;
       final owner = authority.read(CloudKitWriterScope(
         accountFingerprint: capturedAccount!,
       ));
-      return owner?.owner == CloudKitWriterOwner.v2 ? owner!.epoch : 0;
+      return owner?.automaticArchiveEpoch ?? 0;
     }
     final provider = CloudSyncProductionAuthSnapshotProvider(
       readActiveClient: () => state?.icloudServices?.cloudMessagesClient,
@@ -8402,10 +8402,10 @@ class RustPushService extends GetxService {
         return CloudSyncAutomaticArchiveIdentity(
           accountFingerprint: auth.accountFingerprint,
           protectedStoreIdentity: auth.protectedStoreIdentity,
-          writerEpoch: currentEpoch(),
+          ownershipEpoch: currentOwnershipEpoch(),
         );
       },
-      currentWriterEpoch: currentEpoch,
+      currentOwnershipEpoch: currentOwnershipEpoch,
       stillCurrent: stillCurrent,
       reload: ss.prefs.reload,
       read: ss.prefs.get,
@@ -8571,6 +8571,21 @@ class RustPushService extends GetxService {
       _cloudSyncV2LocalSendRuntime = CloudSyncLocalSendRuntime(
         prepare: () async {
           requireIdle();
+          // Recover protected receipts before requiring a fresh stable permit.
+          // A restart during an adopted conditional update leaves unknown/N+1;
+          // provisioning first would strand its exact lookup behind that fence.
+          await _replayCloudSyncV2NativeSendReceipts().timeout(
+            const Duration(seconds: 5),
+            onTimeout: () => Logger.warn(
+              'Cloud Sync V2 native send receipt owner replay timed out',
+            ),
+          );
+          // The timeout observes replay, never cancels its entered native work.
+          // If replay is still active, defer fresh ownership/dispatch admission.
+          requireIdle();
+          if (_cloudSyncV2NativeReceiptReplayInFlight != null) {
+            throw const CloudKitOperationInterlockException('cloudkit_interlock_busy');
+          }
           // Explicit automatic-upload Canary opt-in includes initial writer
           // setup, but never silently migrates legacy ownership or its queues.
           // Release the transition lock before taking the attachment gate.
@@ -8579,15 +8594,6 @@ class RustPushService extends GetxService {
           _cloudSyncV2OutboundProvisioningInFlight = preparation;
           try {
             await preparation;
-            if (!stillCurrent()) {
-              throw StateError('cloud_sync_local_send_identity_changed');
-            }
-            await _replayCloudSyncV2NativeSendReceipts().timeout(
-              const Duration(seconds: 5),
-              onTimeout: () => Logger.warn(
-                'Cloud Sync V2 native send receipt owner replay timed out',
-              ),
-            );
             if (!stillCurrent()) {
               throw StateError('cloud_sync_local_send_identity_changed');
             }
@@ -10208,7 +10214,7 @@ class RustPushService extends GetxService {
               !automaticIdentity.matchesBinding(
                 accountFingerprint: auth.accountFingerprint,
                 protectedStoreIdentity: auth.protectedStoreIdentity,
-                writerEpoch: owner.epoch,
+                ownershipEpoch: owner.automaticArchiveEpoch,
               ))) {
         return;
       }

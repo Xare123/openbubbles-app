@@ -111,6 +111,7 @@ final class CloudKitWriterAuthoritySnapshot {
     required this.owner,
     required this.state,
     required this.epoch,
+    this.ownershipEpoch = 0,
     this.targetOwner = CloudKitWriterOwner.none,
     this.transitionIdHash,
   });
@@ -120,7 +121,23 @@ final class CloudKitWriterAuthoritySnapshot {
   final CloudKitWriterAuthorityState state;
   final CloudKitWriterOwner targetOwner;
   final int epoch;
+  final int ownershipEpoch;
   final String? transitionIdHash;
+
+  /// Consent survives only the same owner's exact mutation reconciliation.
+  /// It is not a write permit: mutationUnknown still rejects issuePermit.
+  /// Legacy stable rows bind only to their current epoch; old grants are not
+  /// migrated across an already-advanced or unresolved epoch.
+  int get automaticArchiveEpoch {
+    if (owner != CloudKitWriterOwner.v2 ||
+        targetOwner != CloudKitWriterOwner.none || transitionIdHash != null ||
+        (state != CloudKitWriterAuthorityState.stable &&
+            state != CloudKitWriterAuthorityState.mutationUnknown)) {
+      return 0;
+    }
+    if (ownershipEpoch > 0) return ownershipEpoch;
+    return state == CloudKitWriterAuthorityState.stable ? epoch : 0;
+  }
 
   @override
   String toString() =>
@@ -268,6 +285,7 @@ final class ObjectBoxCloudKitWriterAuthority {
         ..owner = _ownerCode(owner)
         ..targetOwner = _ownerCode(CloudKitWriterOwner.none)
         ..epoch += 1
+        ..ownershipEpoch = entity.epoch
         ..updatedAtMs = now.millisecondsSinceEpoch;
       _authorities.put(entity);
       return _snapshot(scope, entity);
@@ -321,6 +339,10 @@ final class ObjectBoxCloudKitWriterAuthority {
         );
       }
       entity
+        // Persist the exact pre-mutation ownership before invalidating its
+        // short-lived permit. Never copy or renew a preference grant here.
+        ..ownershipEpoch = current.ownershipEpoch > 0
+            ? current.ownershipEpoch : current.epoch
         ..state = _stateCode(CloudKitWriterAuthorityState.mutationUnknown)
         ..epoch += 1
         ..updatedAtMs = now.millisecondsSinceEpoch;
@@ -383,6 +405,11 @@ final class ObjectBoxCloudKitWriterAuthority {
         // This invalidates the permit which armed the fence even when the
         // process died before it could mark the mutation unknown.
         ..epoch = fencedEpoch + 2
+        // A legacy crash at stable/N retains only that exact stable lineage.
+        // Legacy unknown/N+1 has no saved lineage and cannot inherit N's grant.
+        ..ownershipEpoch = current.ownershipEpoch > 0
+            ? current.ownershipEpoch
+            : (unresolvedStable ? fencedEpoch : fencedEpoch + 2)
         ..updatedAtMs = now.millisecondsSinceEpoch;
       _authorities.put(entity);
       return _snapshot(scope, entity);
@@ -421,6 +448,7 @@ final class ObjectBoxCloudKitWriterAuthority {
         ..targetOwner = _ownerCode(to)
         ..transitionIdHash = transitionIdHash
         ..epoch += 1
+        ..ownershipEpoch = entity.epoch
         ..updatedAtMs = now.millisecondsSinceEpoch;
       _authorities.put(entity);
       return _snapshot(scope, entity);
@@ -455,6 +483,7 @@ final class ObjectBoxCloudKitWriterAuthority {
         ..targetOwner = _ownerCode(CloudKitWriterOwner.none)
         ..transitionIdHash = null
         ..epoch += 1
+        ..ownershipEpoch = entity.epoch
         ..updatedAtMs = now.millisecondsSinceEpoch;
       _authorities.put(entity);
       return _snapshot(scope, entity);
@@ -488,6 +517,7 @@ final class ObjectBoxCloudKitWriterAuthority {
         ..targetOwner = _ownerCode(CloudKitWriterOwner.none)
         ..transitionIdHash = null
         ..epoch += 1
+        ..ownershipEpoch = entity.epoch
         ..updatedAtMs = now.millisecondsSinceEpoch;
       _authorities.put(entity);
       return _snapshot(scope, entity);
@@ -520,6 +550,7 @@ final class ObjectBoxCloudKitWriterAuthority {
         ..resetProofReference = request.protectedRemoteStateProofReference
         ..resetGeneration = request.expectedGeneration
         ..epoch += 1
+        ..ownershipEpoch = entity.epoch
         ..updatedAtMs = now.millisecondsSinceEpoch;
       _authorities.put(entity);
       return CloudKitResetFence._(
@@ -655,6 +686,7 @@ final class ObjectBoxCloudKitWriterAuthority {
         ..resetProofReference = null
         ..resetGeneration = 0
         ..epoch += 1
+        ..ownershipEpoch = entity.epoch
         ..updatedAtMs = now.millisecondsSinceEpoch;
       _authorities.put(entity);
       return _snapshot(fence.scope, entity);
@@ -828,7 +860,8 @@ final class ObjectBoxCloudKitWriterAuthority {
     CloudKitWriterScope scope,
     CloudKitWriterAuthorityEntity entity,
   ) {
-    if (entity.epoch <= 0) {
+    if (entity.epoch <= 0 || entity.ownershipEpoch < 0 ||
+        entity.ownershipEpoch > entity.epoch) {
       throw const CloudKitWriterAuthorityFailure(
         'cloudkit_writer_authority_epoch_invalid',
       );
@@ -893,6 +926,7 @@ final class ObjectBoxCloudKitWriterAuthority {
       state: state,
       targetOwner: target,
       epoch: entity.epoch,
+      ownershipEpoch: entity.ownershipEpoch,
       transitionIdHash: transitionIdHash,
     );
   }

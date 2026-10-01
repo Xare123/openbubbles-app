@@ -10,7 +10,7 @@ CloudSyncAutomaticArchiveIdentity _identity({int epoch = 3}) =>
     CloudSyncAutomaticArchiveIdentity(
       accountFingerprint: 'A' * 43,
       protectedStoreIdentity: 'obcs2.store.${'S' * 43}',
-      writerEpoch: epoch,
+      ownershipEpoch: epoch,
     );
 
 CloudSyncAutomaticArchivePreference _preference({

@@ -1164,6 +1164,9 @@ class CloudKitWriterAuthorityEntity {
   int state;
   int targetOwner;
   int epoch;
+  /// Stable archive-consent lineage. Mutation permits still use [epoch].
+  /// Zero is a pre-upgrade row and never infers an unknown-outcome lineage.
+  int ownershipEpoch;
   String? transitionIdHash;
   String? resetScopeKeyHash;
   String? resetProofReferenceHash;
@@ -1181,6 +1184,7 @@ class CloudKitWriterAuthorityEntity {
     this.state = 0,
     this.targetOwner = 0,
     this.epoch = 1,
+    this.ownershipEpoch = 0,
     this.transitionIdHash,
     this.resetScopeKeyHash,
     this.resetProofReferenceHash,

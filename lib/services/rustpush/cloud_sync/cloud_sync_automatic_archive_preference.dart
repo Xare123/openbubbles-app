@@ -3,27 +3,28 @@ import 'dart:math';
 
 import 'package:crypto/crypto.dart';
 
-/// Local consent only. Native identity, writer ownership and exact receipt
-/// checks remain authoritative for every individual operation.
+/// Local consent only. The ownership lineage survives routine reconciliations;
+/// native identity, per-mutation writer permits and exact receipt checks remain
+/// authoritative for every individual operation.
 final class CloudSyncAutomaticArchiveIdentity {
   CloudSyncAutomaticArchiveIdentity({
     required this.accountFingerprint,
     required this.protectedStoreIdentity,
-    required this.writerEpoch,
+    required this.ownershipEpoch,
   }) {
     if (!RegExp(r'^[A-Za-z0-9_-]{43}$').hasMatch(accountFingerprint) ||
         !RegExp(
           r'^obcs2\.store\.[A-Za-z0-9_-]{43}$',
         ).hasMatch(protectedStoreIdentity) ||
-        writerEpoch < 0) {
+        ownershipEpoch < 0) {
       throw ArgumentError('cloud_sync_automatic_archive_identity_invalid');
     }
   }
 
   final String accountFingerprint;
   final String protectedStoreIdentity;
-  // Zero means there is no V2 owner yet. Reading settings must not create one.
-  final int writerEpoch;
+  // Zero means no proven V2 consent lineage. Reading settings creates none.
+  final int ownershipEpoch;
 
   String get preferenceKey =>
       'cloudSyncV2AutomaticArchive.v1.${sha256.convert(utf8.encode(jsonEncode([accountFingerprint, protectedStoreIdentity])))}';
@@ -33,18 +34,19 @@ final class CloudSyncAutomaticArchiveIdentity {
       protectedStoreIdentity == other.protectedStoreIdentity;
 
   bool sameIdentity(CloudSyncAutomaticArchiveIdentity other) =>
-      sameAccountStore(other) && writerEpoch == other.writerEpoch;
+      sameAccountStore(other) && ownershipEpoch == other.ownershipEpoch;
 
-  /// Match the actual captured native binding, never only a Dart client pointer.
+  /// Match captured native account/store plus durable ownership lineage, never
+  /// only a Dart client pointer or the transient mutation permit epoch.
   bool matchesBinding({
     required String accountFingerprint,
     required String protectedStoreIdentity,
-    required int writerEpoch,
+    required int ownershipEpoch,
   }) =>
-      this.writerEpoch > 0 &&
+      this.ownershipEpoch > 0 &&
       this.accountFingerprint == accountFingerprint &&
       this.protectedStoreIdentity == protectedStoreIdentity &&
-      this.writerEpoch == writerEpoch;
+      this.ownershipEpoch == ownershipEpoch;
 }
 
 final class CloudSyncAutomaticArchivePreference {
@@ -60,7 +62,7 @@ final class CloudSyncAutomaticArchivePreference {
   /// The scope deliberately includes queued and future local-send work. A
   /// future-only switch would require per-source admission AND dispatch proof.
   bool get enabled {
-    if (identity.writerEpoch <= 0 || storedValue is! String) return false;
+    if (identity.ownershipEpoch <= 0 || storedValue is! String) return false;
     try {
       final value = jsonDecode(storedValue! as String);
       return value is List &&
@@ -69,7 +71,7 @@ final class CloudSyncAutomaticArchivePreference {
           value[0] is int &&
           value[1] == 'queued-and-future-local-sends' &&
           value[2] is int &&
-          value[2] == identity.writerEpoch &&
+          value[2] == identity.ownershipEpoch &&
           value[3] is String &&
           RegExp(r'^[a-f0-9]{32}$').hasMatch(value[3]);
     } catch (_) {
@@ -84,7 +86,7 @@ final class CloudSyncAutomaticArchivePreference {
 final class CloudSyncAutomaticArchivePreferences {
   CloudSyncAutomaticArchivePreferences({
     required this.captureIdentity,
-    required this.currentWriterEpoch,
+    required this.currentOwnershipEpoch,
     required this.stillCurrent,
     required this.reload,
     required this.read,
@@ -94,7 +96,7 @@ final class CloudSyncAutomaticArchivePreferences {
   }) : newGrant = newGrant ?? _randomGrant;
 
   final Future<CloudSyncAutomaticArchiveIdentity?> Function() captureIdentity;
-  final int Function() currentWriterEpoch;
+  final int Function() currentOwnershipEpoch;
   final bool Function() stillCurrent;
   final Future<void> Function() reload;
   final Object? Function(String) read;
@@ -140,7 +142,7 @@ final class CloudSyncAutomaticArchivePreferences {
     try {
       return stillCurrent() &&
           expected.enabled &&
-          currentWriterEpoch() == expected.identity.writerEpoch &&
+          currentOwnershipEpoch() == expected.identity.ownershipEpoch &&
           read(expected.identity.preferenceKey) == expected.storedValue;
     } catch (_) {
       return false;
@@ -168,9 +170,9 @@ final class CloudSyncAutomaticArchivePreferences {
       // Only initialOwnerOnly provisioning may turn an absent owner into V2.
       // A replaced pre-existing epoch never inherits the confirmation.
       if (!expected.identity.sameAccountStore(current.identity) ||
-          current.identity.writerEpoch <= 0 ||
-          (expected.identity.writerEpoch > 0 &&
-              current.identity.writerEpoch != expected.identity.writerEpoch) ||
+          current.identity.ownershipEpoch <= 0 ||
+          (expected.identity.ownershipEpoch > 0 &&
+              current.identity.ownershipEpoch != expected.identity.ownershipEpoch) ||
           expected.storedValue != current.storedValue) {
         throw StateError('cloud_sync_automatic_archive_identity_changed');
       }
@@ -183,7 +185,7 @@ final class CloudSyncAutomaticArchivePreferences {
         ? jsonEncode([
             1,
             'queued-and-future-local-sends',
-            current.identity.writerEpoch,
+            current.identity.ownershipEpoch,
             grant,
           ])
         : jsonEncode([1, 'off']);

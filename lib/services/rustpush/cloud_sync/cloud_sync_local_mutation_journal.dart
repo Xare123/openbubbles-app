@@ -294,8 +294,14 @@ final class CloudSyncLocalMutationJournal {
     required bool Function() stillCurrent,
   }) => _store.runInTransaction(TxMode.read, () {
     final row = _read(intentId);
-    if (row.state == 5) {
-      _requireRetainedReconciliationOwner(row, exactReadbackFinalized: true);
+    if (row.state >= 4) {
+      // An adopted update may still be unknown. Inspect its retained lineage
+      // before returning null so the caller can continue exact readback; this
+      // does not authorize a new reflection, adoption, or cloud write.
+      _requireRetainedReconciliationOwner(
+        row,
+        exactReadbackFinalized: row.state == 5,
+      );
     } else {
       _requireOwner();
       if (row.writerEpoch != _owner.epoch) _fail('owner_changed');

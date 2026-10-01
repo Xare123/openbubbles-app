@@ -2417,7 +2417,7 @@ final _entities = <obx_int.ModelEntity>[
   obx_int.ModelEntity(
     id: const obx_int.IdUid(28, 889478301778181246),
     name: 'CloudKitWriterAuthorityEntity',
-    lastPropertyId: const obx_int.IdUid(15, 8451174932715279609),
+    lastPropertyId: const obx_int.IdUid(16, 2024932844516293885),
     flags: 0,
     properties: <obx_int.ModelProperty>[
       obx_int.ModelProperty(
@@ -2510,6 +2510,12 @@ final _entities = <obx_int.ModelEntity>[
         id: const obx_int.IdUid(15, 8451174932715279609),
         name: 'resetProofReference',
         type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(16, 2024932844516293885),
+        name: 'ownershipEpoch',
+        type: 6,
         flags: 0,
       ),
     ],
@@ -6855,7 +6861,7 @@ obx_int.ModelDefinition getObjectBoxModel() {
             final resetProofReferenceOffset = object.resetProofReference == null
                 ? null
                 : fbb.writeString(object.resetProofReference!);
-            fbb.startTable(16);
+            fbb.startTable(17);
             fbb.addInt64(0, object.id);
             fbb.addOffset(1, authorityKeyOffset);
             fbb.addOffset(2, accountFingerprintOffset);
@@ -6871,6 +6877,7 @@ obx_int.ModelDefinition getObjectBoxModel() {
             fbb.addInt64(12, object.resetGeneration);
             fbb.addOffset(13, resetProofReferenceHashOffset);
             fbb.addOffset(14, resetProofReferenceOffset);
+            fbb.addInt64(15, object.ownershipEpoch);
             fbb.finish(fbb.endTable());
             return object.id;
           },
@@ -6919,6 +6926,12 @@ obx_int.ModelDefinition getObjectBoxModel() {
               20,
               0,
             );
+            final ownershipEpochParam = const fb.Int64Reader().vTableGet(
+              buffer,
+              rootOffset,
+              34,
+              0,
+            );
             final transitionIdHashParam = const fb.StringReader(
               asciiOptimization: true,
             ).vTableGetNullable(buffer, rootOffset, 24);
@@ -6953,6 +6966,7 @@ obx_int.ModelDefinition getObjectBoxModel() {
               state: stateParam,
               targetOwner: targetOwnerParam,
               epoch: epochParam,
+              ownershipEpoch: ownershipEpochParam,
               transitionIdHash: transitionIdHashParam,
               resetScopeKeyHash: resetScopeKeyHashParam,
               resetProofReferenceHash: resetProofReferenceHashParam,
@@ -10344,6 +10358,12 @@ class CloudKitWriterAuthorityEntity_ {
   static final resetProofReference =
       obx.QueryStringProperty<CloudKitWriterAuthorityEntity>(
         _entities[19].properties[14],
+      );
+
+  /// See [CloudKitWriterAuthorityEntity.ownershipEpoch].
+  static final ownershipEpoch =
+      obx.QueryIntegerProperty<CloudKitWriterAuthorityEntity>(
+        _entities[19].properties[15],
       );
 }
 

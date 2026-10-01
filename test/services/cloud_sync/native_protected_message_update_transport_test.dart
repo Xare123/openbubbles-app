@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_operation_identity.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_automatic_archive_preference.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_mutation_identity.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_mutation_journal.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_mutation_projection.dart';
@@ -518,6 +519,193 @@ void main() {
   );
 
   for (final kind in CloudSyncLocalMutationKind.values) {
+    test(
+      '${kind.name} unknown recovery preserves consent and never resubmits on restart',
+      () async {
+        final variant = kind == CloudSyncLocalMutationKind.edit
+            ? fixture
+            : await _Fixture.create(kind: kind);
+        Store? reopened;
+        var authority = variant.writerAuthority;
+        final saved = <String, String>{};
+        var preferenceWrites = 0;
+        final preferences = CloudSyncAutomaticArchivePreferences(
+          captureIdentity: () async => CloudSyncAutomaticArchiveIdentity(
+            accountFingerprint: variant.auth.accountFingerprint,
+            protectedStoreIdentity: variant.auth.protectedStoreIdentity,
+            ownershipEpoch: authority
+                .read(variant.writerScope)!
+                .automaticArchiveEpoch,
+          ),
+          currentOwnershipEpoch: () =>
+              authority.read(variant.writerScope)!.automaticArchiveEpoch,
+          stillCurrent: () => true,
+          reload: () async {},
+          read: (key) => saved[key],
+          write: (key, value) async {
+            preferenceWrites++;
+            saved[key] = value;
+            return true;
+          },
+          prepareWriter: () async {},
+          newGrant: () => 'a' * 32,
+        );
+        try {
+          final grant = await preferences.setEnabled(
+            await preferences.load(),
+            true,
+            acknowledgeQueuedUploads: true,
+          );
+          final permit = authority.issuePermit(
+            variant.writerScope,
+            expectedOwner: CloudKitWriterOwner.v2,
+          );
+          // Simulated native result, real ObjectBox journal/authority transitions.
+          final firstTransport = _ExecutorTransport(
+            CloudSyncMessageUpdateReconciliationDisposition.unresolved,
+            onConsume: () =>
+                authority.markMutationUnknown(permit, now: _time(20)),
+          );
+          final firstExecutor = variant.buildExecutor(firstTransport);
+          final admitted = await firstExecutor.admitReflectedUpdate(
+            variant.scope,
+            source: variant.source,
+            predecessor: variant.predecessor,
+            currentAuth: variant.auth,
+            stillCurrent: () => preferences.isGranted(grant),
+            receipt: variant.receipt,
+          );
+          final first = await variant.runV2(
+            () => firstExecutor.runOnce(
+              variant.scope,
+              currentAuth: variant.auth,
+              stillCurrent: () => preferences.isGranted(grant),
+            ),
+          );
+          expect(first.submitted, 1);
+          expect(first.unresolved, 1);
+          expect(firstTransport.consumeCalls, 1);
+          expect(authority.read(variant.writerScope)!.epoch, permit.epoch + 1);
+          expect(preferences.isGranted(grant), isTrue);
+          expect(
+            () => authority.issuePermit(
+              variant.writerScope,
+              expectedOwner: CloudKitWriterOwner.v2,
+            ),
+            throwsA(isA<CloudKitWriterAuthorityFailure>()),
+          );
+          expect(
+            variant.journal.readTerminalSourceForCleanup(
+              intentId: variant.source.intentId,
+              currentAuth: variant.auth,
+              stillCurrent: () => preferences.isGranted(grant),
+            ),
+            isNull,
+          );
+          expect(
+            () => variant.journal.readTerminalSourceForCleanup(
+              intentId: variant.source.intentId,
+              currentAuth: variant.auth,
+              stillCurrent: () => false,
+            ),
+            throwsA(isA<StateError>()),
+          );
+
+          variant.store.close();
+          reopened = await openStore(directory: variant.directory.path);
+          authority = ObjectBoxCloudKitWriterAuthority.forTest(
+            store: reopened,
+            buildDecision: const CloudKitWriterOwnershipDecision(
+              owner: CloudKitWriterOwner.v2,
+              configurationValid: true,
+            ),
+          );
+          final journal = CloudSyncLocalMutationJournal(
+            store: reopened,
+            authority: authority,
+            authoritySnapshot: authority.read(variant.writerScope)!,
+          );
+          expect(
+            journal.readTerminalSourceForCleanup(
+              intentId: variant.source.intentId,
+              currentAuth: variant.auth,
+              stillCurrent: () => preferences.isGranted(grant),
+            ),
+            isNull,
+          );
+          final cloudStore = ObjectBoxCloudSyncStore(
+            store: reopened,
+            protector: _NoProtector(),
+            localMutationJournal: journal,
+            clock: () => _time(55),
+          );
+          final restartTransport = _ExecutorTransport(
+            CloudSyncMessageUpdateReconciliationDisposition.committed,
+            onComplete: () => authority.reconcileMutationFence(
+              variant.writerScope,
+              owner: CloudKitWriterOwner.v2,
+              fencedEpoch: permit.epoch,
+              now: _time(55),
+            ),
+          );
+          final restartExecutor = CloudSyncMessageUpdateExecutor(
+            objectBoxStore: reopened,
+            cloudStore: cloudStore,
+            journal: journal,
+            transport: restartTransport,
+            preparedSubmissionReleaser: restartTransport,
+            leaseTransport: restartTransport,
+            clock: () => _time(55),
+            uuidFactory: _UuidSequence().next,
+          );
+          final result = await variant.runV2(
+            () => restartExecutor.runOnce(
+              variant.scope,
+              currentAuth: variant.auth,
+              stillCurrent: () => preferences.isGranted(grant),
+            ),
+          );
+          expect(result.submitted, 0);
+          expect(result.reconciledUnknown, 1);
+          expect(result.confirmed, 1);
+          expect(restartTransport.stageCalls, 0);
+          expect(restartTransport.consumeCalls, 0);
+          expect(authority.read(variant.writerScope)!.epoch, permit.epoch + 2);
+          expect(preferences.isGranted(grant), isTrue);
+          expect((await preferences.load()).storedValue, grant.storedValue);
+          expect(preferenceWrites, 1);
+          expect(
+            () => authority.verifyPermit(permit),
+            throwsA(isA<CloudKitWriterAuthorityFailure>()),
+          );
+          final exactOperation = (await cloudStore.readOutboxEntries(
+            variant.scope,
+          )).singleWhere((row) => row.operationId == admitted.operationId);
+          journal.markExactReadbackConfirmed(
+            intentId: variant.source.intentId,
+            operation: exactOperation,
+            currentAuth: variant.auth,
+            stillCurrent: () => preferences.isGranted(grant),
+            now: _time(56),
+          );
+          expect(
+            journal.readTerminalSourceForCleanup(
+              intentId: variant.source.intentId,
+              currentAuth: variant.auth,
+              stillCurrent: () => preferences.isGranted(grant),
+            ),
+            isNotNull,
+          );
+          expect(restartTransport.completedStatuses, [
+            CloudOutboxStatus.confirmed,
+          ]);
+        } finally {
+          if (reopened != null && !reopened.isClosed()) reopened.close();
+          if (!identical(variant, fixture)) await variant.close();
+        }
+      },
+    );
+
     test(
       '${kind.name} exact readback stays terminal across executor restart',
       () async {
@@ -1159,11 +1347,19 @@ final class _ExecutorTransport
         CloudSyncMessageUpdateTransport,
         CloudSyncPreparedSubmissionReleaser,
         CloudProtectedPageLeaseTransport {
-  _ExecutorTransport(this.disposition, {this.failAcknowledgement = false});
+  _ExecutorTransport(
+    this.disposition, {
+    this.failAcknowledgement = false,
+    this.onConsume,
+    this.onComplete,
+  });
 
   final CloudSyncMessageUpdateReconciliationDisposition disposition;
   final bool failAcknowledgement;
+  final void Function()? onConsume;
+  final void Function()? onComplete;
   int stageCalls = 0;
+  int consumeCalls = 0;
   int releaseCalls = 0;
   final List<String> committedLeases = <String>[];
   final List<String> acknowledgedLeases = <String>[];
@@ -1216,11 +1412,17 @@ final class _ExecutorTransport
     required CloudOutboxSubmissionIdentity persistedIdentity,
     required CloudOutboxOperation operation,
     required CloudSyncProtectedWriteOperation protectedOperation,
-  }) async => preparedSubmission.claimForConsumption(
-    scope,
-    persistedIdentity: persistedIdentity,
-    protectedOperations: <CloudSyncProtectedWriteOperation>[protectedOperation],
-  );
+  }) async {
+    preparedSubmission.claimForConsumption(
+      scope,
+      persistedIdentity: persistedIdentity,
+      protectedOperations: <CloudSyncProtectedWriteOperation>[
+        protectedOperation,
+      ],
+    );
+    consumeCalls++;
+    onConsume?.call();
+  }
 
   @override
   Future<CloudSyncMessageUpdateReconciliation> reconcileMessageUpdate(
@@ -1258,7 +1460,10 @@ final class _ExecutorTransport
   Future<void> completeMessageUpdateReconciliation(
     CloudSyncScope scope, {
     required CloudOutboxOperation operation,
-  }) async => completedStatuses.add(operation.status);
+  }) async {
+    completedStatuses.add(operation.status);
+    onComplete?.call();
+  }
 
   @override
   Future<bool> releasePreparedSubmission(

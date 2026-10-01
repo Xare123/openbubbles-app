@@ -12,7 +12,7 @@ CloudSyncAutomaticArchiveIdentity _identity({
 }) => CloudSyncAutomaticArchiveIdentity(
   accountFingerprint: account * 43,
   protectedStoreIdentity: 'obcs2.store.${protectedStore * 43}',
-  writerEpoch: epoch,
+  ownershipEpoch: epoch,
 );
 
 String _grantFor(int epoch) =>
@@ -40,7 +40,7 @@ final class _Harness {
       CloudSyncAutomaticArchivePreferences(
         captureIdentity: () async =>
             onCapture?.call() ?? _identity(epoch: _epoch),
-        currentWriterEpoch: () => _epoch,
+        currentOwnershipEpoch: () => _epoch,
         stillCurrent: () => current,
         reload: () async {
           reloads++;
@@ -68,7 +68,7 @@ void main() {
           identity.matchesBinding(
             accountFingerprint: actual.accountFingerprint,
             protectedStoreIdentity: actual.protectedStoreIdentity,
-            writerEpoch: actual.writerEpoch,
+            ownershipEpoch: actual.ownershipEpoch,
           );
       expect(matches(_identity()), isTrue);
       expect(matches(_identity(account: 'B')), isFalse);
@@ -78,7 +78,7 @@ void main() {
         _identity(epoch: 0).matchesBinding(
           accountFingerprint: identity.accountFingerprint,
           protectedStoreIdentity: identity.protectedStoreIdentity,
-          writerEpoch: 0,
+          ownershipEpoch: 0,
         ),
         isFalse,
       );
@@ -198,7 +198,7 @@ void main() {
       acknowledgeQueuedUploads: true,
     );
     expect(saved.enabled, isTrue);
-    expect(saved.identity.writerEpoch, 1);
+    expect(saved.identity.ownershipEpoch, 1);
     expect(harness.prepares, 1);
   });
 

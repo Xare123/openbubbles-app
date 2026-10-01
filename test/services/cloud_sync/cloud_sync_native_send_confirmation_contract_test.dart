@@ -10,6 +10,32 @@ void main() {
   ).readAsStringSync();
 
   test(
+    'automatic startup replays retained receipts before fresh provisioning',
+    () {
+      final start = source.indexOf('void _startCloudSyncV2AutomaticArchive(');
+      expect(start, greaterThanOrEqualTo(0));
+      final prepareStart = source.indexOf('prepare: () async {', start);
+      expect(prepareStart, greaterThan(start));
+      final prepare = source.substring(
+        prepareStart,
+        source.indexOf('drain: () async {', prepareStart),
+      );
+      final replay = prepare.indexOf('_replayCloudSyncV2NativeSendReceipts()');
+      final provision = prepare.indexOf(
+        '.ensureWriterOwned(initialOwnerOnly: true)',
+      );
+      expect(replay, greaterThanOrEqualTo(0));
+      expect(provision, greaterThan(replay));
+      expect(prepare.substring(replay, provision), contains('requireIdle();'));
+    expect(prepare.substring(replay, provision),
+        contains('_cloudSyncV2NativeReceiptReplayInFlight != null'));
+      expect(prepare, isNot(contains('verifyPermit(')));
+      expect(prepare, isNot(contains('setEnabled(')));
+      expect(prepare, isNot(contains('sendMsg(')));
+    },
+  );
+
+  test(
     'ordinary app routes validated mutations through acknowledgment transport',
     () {
       final native = File(

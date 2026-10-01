@@ -839,7 +839,7 @@ final class CloudSyncProductionLocalSendAdapter {
     // unrestricted automatic pass must have a scoped grant before touching DB.
     if (selection == null && historical == null &&
         (_automaticArchiveIdentity == null ||
-            _automaticArchiveIdentity.writerEpoch <= 0)) {
+            _automaticArchiveIdentity.ownershipEpoch <= 0)) {
       throw StateError('cloud_sync_automatic_archive_confirmation_required');
     }
     final objectBox = Database.store;
@@ -871,7 +871,7 @@ final class CloudSyncProductionLocalSendAdapter {
         !_automaticArchiveIdentity!.matchesBinding(
           accountFingerprint: auth.accountFingerprint,
           protectedStoreIdentity: auth.protectedStoreIdentity,
-          writerEpoch: owner.epoch,
+          ownershipEpoch: owner.automaticArchiveEpoch,
         )) {
       throw StateError('cloud_sync_automatic_archive_identity_changed');
     }
