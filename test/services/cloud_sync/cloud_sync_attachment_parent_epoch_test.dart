@@ -911,6 +911,9 @@ void main() {
     await reconcileFence();
     await reopen();
     final source = localSends.readForAdmission(intent);
+    final before = store.box<CloudSyncLocalSendIntentEntity>().get(intent)!;
+    final outboxCount = store.box<CloudOutboxOperationEntity>().count();
+    final mappingCount = store.box<CloudRecordMapEntity>().count();
     expect(
       () => liveStore().admitProtectedLocalSendCreate(
         draft: _messageDraft(),
@@ -920,9 +923,17 @@ void main() {
         attachmentParentChatBinding: null,
         retainedAttachmentResume: false,
       ),
-      throwsA(_stateFailure('cloud_sync_local_send_intent_changed')),
+      // The ordinary create path admits retained plaintext only. A protected
+      // attachment still requires the explicit, independently proven resume path.
+      throwsA(_stateFailure('cloud_sync_local_send_protected_source_missing')),
     );
-    expect(store.box<CloudSyncLocalSendIntentEntity>().get(intent)!.state, 1);
+    final after = store.box<CloudSyncLocalSendIntentEntity>().get(intent)!;
+    expect(after.state, 1);
+    expect(after.writerEpoch, before.writerEpoch);
+    expect(after.protectedSourceBinding, before.protectedSourceBinding);
+    expect(after.admittedOperationId, isNull);
+    expect(store.box<CloudOutboxOperationEntity>().count(), outboxCount);
+    expect(store.box<CloudRecordMapEntity>().count(), mappingCount);
   });
 
   test('store retained admission rejects an unreleased child', () async {
