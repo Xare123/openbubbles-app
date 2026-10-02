@@ -3695,6 +3695,75 @@ fn cloud_sync_password_writer_pause_error(error: rustpush::PushError) -> anyhow:
     }
 }
 
+/// A process/client nonce only. It authorizes neither CloudKit reads nor writes.
+#[frb(sync)]
+pub fn cloud_sync_begin_messages_change_notifications(
+    cloud_messages_client: &Arc<CloudMessagesClient<DefaultAnisetteProvider>>,
+) -> String {
+    cloud_messages_client.begin_change_notifications()
+}
+
+#[frb(sync)]
+pub fn cloud_sync_disable_messages_change_notifications(
+    cloud_messages_client: &Arc<CloudMessagesClient<DefaultAnisetteProvider>>,
+    registration_nonce: Option<String>,
+) -> bool {
+    cloud_messages_client.disable_change_notifications(registration_nonce.as_deref())
+}
+
+#[frb(sync)]
+pub fn cloud_sync_messages_change_notifications_current(
+    cloud_messages_client: &Arc<CloudMessagesClient<DefaultAnisetteProvider>>,
+    registration_nonce: String,
+) -> bool {
+    cloud_messages_client.change_notifications_current(&registration_nonce)
+}
+
+/// Explicitly opted-in server subscription/token metadata, never record writes.
+/// The Dart caller must own identity-maintenance admission and saved read opt-in.
+/// Keep native logout/reset excluded until bounded setup actually terminates.
+pub async fn cloud_sync_configure_messages_change_notifications(
+    state: &SharedPushState,
+    registration_nonce: String,
+    expected_auth: CloudSyncNativeAuthMetadata,
+) -> anyhow::Result<bool> {
+    #[cfg(not(any(target_os = "android", target_os = "windows", test)))]
+    {
+        let _ = (state, registration_nonce, expected_auth);
+        return Err(anyhow!("cloud_sync_change_notification_platform_unsupported"));
+    }
+    #[cfg(any(target_os = "android", target_os = "windows", test))]
+    {
+    let client = state.icloud_services.as_ref()
+        .and_then(|services| services.cloud_messages_client.as_ref())
+        .ok_or_else(|| anyhow!("cloud_sync_change_notification_identity_unavailable"))?;
+    let result = tokio::time::timeout(Duration::from_secs(30), async {
+        let gate = cloudkit_read_authentication_lifecycle_gate(Path::new(&state.conf_dir))?;
+        let _lifecycle = gate.lock().await;
+        let current = cloud_sync_capture_cached_identity(client, state.conf_dir.clone()).await?;
+        if current.native_session_id != expected_auth.native_session_id
+            || current.account_fingerprint != expected_auth.account_fingerprint
+            || current.protected_store_identity != expected_auth.protected_store_identity {
+            return Err(anyhow!("cloud_sync_change_notification_identity_changed"));
+        }
+        let accepted = with_cloudkit_writer_operation(
+            client.configure_change_notifications(&state.conn, &registration_nonce),
+        ).await.map_err(|_| anyhow!("cloud_sync_change_notification_setup_unavailable"))?;
+        let after = cloud_sync_capture_cached_identity(client, state.conf_dir.clone()).await?;
+        if after.native_session_id != expected_auth.native_session_id
+            || after.account_fingerprint != expected_auth.account_fingerprint
+            || after.protected_store_identity != expected_auth.protected_store_identity {
+            return Err(anyhow!("cloud_sync_change_notification_identity_changed"));
+        }
+        Ok(accepted)
+    }).await.unwrap_or_else(|_| Err(anyhow!("cloud_sync_change_notification_setup_timed_out")));
+    if !matches!(&result, Ok(true)) {
+        client.disable_change_notifications(Some(&registration_nonce));
+    }
+    result
+    }
+}
+
 fn cloud_sync_password_writer_resume_error(error: rustpush::PushError) -> anyhow::Error {
     match error {
         rustpush::PushError::IoError(error) if error.kind() == ErrorKind::PermissionDenied => {
@@ -13564,6 +13633,9 @@ pub enum PushMessage {
         beacon: String,
         attributes: BeaconAttributes,
     },
+    /// Content-free invalidation; the current client and saved opt-in must
+    /// still admit this nonce before Android queues an authoritative read.
+    CloudKitChangeHint { registration_nonce: String },
 }
 
 pub async fn sync_passwords(
@@ -14390,6 +14462,11 @@ pub async fn recv_wait(watcher: &mut APSWatcher, state: &Arc<SharedPushState>) -
         msg = watcher.inq_queue.recv() => {
             let msg = msg.unwrap();
             if let Some(icloud) = &state.icloud_services {
+                if let Some(client) = &icloud.cloud_messages_client {
+                    if let Some(registration_nonce) = client.change_notification_nonce(&state.conn, &msg) {
+                        return PollResult::Cont(Some(PushMessage::CloudKitChangeHint { registration_nonce }));
+                    }
+                }
                 if let Some(fmfd) = &icloud.fmfd {
                     match fmfd.handle(msg.clone()).await {
                         Ok(mut items) => {

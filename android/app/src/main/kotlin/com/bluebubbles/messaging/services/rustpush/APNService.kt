@@ -32,6 +32,7 @@ import com.bluebubbles.telephony_plus.receive.SMSObserver
 import com.google.gson.GsonBuilder
 import com.google.gson.ToNumberPolicy
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
@@ -92,6 +93,22 @@ class APNService : Service(), MsgReceiver {
             }
         }
         appleNetworkMonitor.start()
+        // Restore only the already-persisted Canary read registration. Its
+        // headless reader revalidates current account/store opt-in and reattaches
+        // native topic interest. No account data or CloudKit runs on this thread.
+        CloudSyncV2WorkRegistration.current(this)?.let { registration ->
+            scope.launch {
+                try {
+                    CloudSyncV2WorkRegistration.enqueue(
+                        this@APNService, CloudSyncV2WorkKind.METADATA, registration,
+                    )
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (error: Exception) {
+                    Log.w("CloudSyncV2", "startup_wake_unavailable ${error.javaClass.simpleName}")
+                }
+            }
+        }
     }
 
     fun ready() {

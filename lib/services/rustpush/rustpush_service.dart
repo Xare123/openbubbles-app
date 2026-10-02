@@ -5924,6 +5924,12 @@ class RustPushService extends GetxService {
 
   bool authing = false;
   Future handleMsgInner(api.PushMessage push) async {
+    if (push is api.PushMessage_CloudKitChangeHint) {
+      unawaited(enqueueCloudSyncV2AndroidBackgroundReadHint(
+        notificationNonce: push.registrationNonce,
+      ));
+      return;
+    }
     if (push is api.PushMessage_CircleFinishEvent) {
       if (await api.isInClique(
           keychain: pushService.state!.icloudServices!.keychain!)) {
@@ -8254,15 +8260,13 @@ class RustPushService extends GetxService {
         identical(store, Database.store) && !store.isClosed() &&
         storage == statePath && !ss.settings.cloudSyncingEnabled.value &&
         isSyncing.value == null;
-    final provider = CloudSyncProductionAuthSnapshotProvider(
-      readActiveClient: () => state?.icloudServices?.cloudMessagesClient,
-      nativeAuthBinding: FrbCloudSyncNativeAuthBinding(),
-      privateStorageDirectory: storage,
-    );
     return CloudSyncBackgroundReadPreferences(
       captureIdentity: () async {
-        final auth = await provider.capture().timeout(const Duration(seconds: 10));
-        if (auth == null) return null;
+        if (expectedState == null || !stillCurrent()) return null;
+        // Cached composition identity also works after native process restore.
+        // It owns only a local scheduling preference, never current cloud auth.
+        final auth = await api.cloudSyncCaptureReceivedIdentity(state: expectedState)
+            .timeout(const Duration(seconds: 10));
         return CloudSyncBackgroundReadIdentity(
           scopeHash: CloudSyncAndroidBackgroundPolicy.scopeHash(
             CloudSyncAndroidBackgroundPolicy.semanticMessageScope(auth.accountFingerprint),
@@ -8313,7 +8317,9 @@ class RustPushService extends GetxService {
         throw StateError('cloud_sync_background_preference_identity_changed');
       }
       if (saved.enabled && !_cloudSyncV2AndroidBackgroundRegistered) {
-        throw StateError('cloud_sync_background_preference_schedule_pending');
+        throw StateError(_cloudSyncV2AndroidBackgroundRegistration.locallyRegistered
+            ? 'cloud_sync_background_preference_notifications_pending'
+            : 'cloud_sync_background_preference_schedule_pending');
       }
       return saved;
     } finally {
@@ -8332,16 +8338,24 @@ class RustPushService extends GetxService {
       return;
     }
     try {
+      final preferences = _cloudSyncV2BackgroundReadPreferences();
       final outcome = await _cloudSyncV2AndroidBackgroundRegistration.configure(
-        preferences: _cloudSyncV2BackgroundReadPreferences(),
+        preferences: preferences,
         configureNative: (scopeHash) async => await mcs.invokeMethod(
           'cloud-sync-v2-background-control',
           <String, Object>{'action': 'configure', 'scopeHash': scopeHash},
         ) == true,
-        disableNative: () async => await mcs.invokeMethod(
-          'cloud-sync-v2-background-control',
-          const <String, Object>{'action': 'disable'},
-        ) == true,
+        disableNative: () async {
+          _disableCloudSyncV2MessagesChangeNotifications();
+          return await mcs.invokeMethod(
+            'cloud-sync-v2-background-control',
+            const <String, Object>{'action': 'disable'},
+          ) == true;
+        },
+        prepareNotifications: (preference, stillCurrent) =>
+            _prepareCloudSyncV2MessagesChangeNotifications(
+              preferences, preference, stillCurrent,
+            ),
       );
       if (outcome == CloudSyncBackgroundRegistrationOutcome.rejected) {
         Logger.warn('Cloud Sync V2 Android background registration rejected');
@@ -8356,7 +8370,72 @@ class RustPushService extends GetxService {
     }
   }
 
+  void _disableCloudSyncV2MessagesChangeNotifications() {
+    final client = state?.icloudServices?.cloudMessagesClient;
+    if (client != null) {
+      api.cloudSyncDisableMessagesChangeNotifications(
+        cloudMessagesClient: client,
+      );
+    }
+  }
+
+  Future<bool> _prepareCloudSyncV2MessagesChangeNotifications(
+    CloudSyncBackgroundReadPreferences preferences,
+    CloudSyncBackgroundReadPreference preference,
+    bool Function() operationCurrent,
+  ) async {
+    final expectedState = state;
+    final client = expectedState?.icloudServices?.cloudMessagesClient;
+    bool current() => operationCurrent() && preferences.stillCurrent() &&
+        identical(expectedState, state) && client != null;
+    void validate() {
+      if (!current()) throw StateError('cloud_sync_change_notification_identity_changed');
+    }
+    validate();
+    if (!preference.explicitlyEnabled) {
+      // Developer-only local qualification does not create server subscriptions.
+      _disableCloudSyncV2MessagesChangeNotifications();
+      return true;
+    }
+    return _cloudSyncV2LocalSourceOperations.run(
+      validate: validate,
+      action: () => _runCloudKitIdentityMaintenance(() async {
+        validate();
+        final saved = await preferences.load();
+        validate();
+        if (!saved.explicitlyEnabled ||
+            !saved.identity.sameIdentity(preference.identity)) return false;
+        final auth = await api.cloudSyncCaptureReceivedIdentity(state: expectedState!);
+        validate();
+        final nonce = api.cloudSyncBeginMessagesChangeNotifications(
+          cloudMessagesClient: client!,
+        );
+        var keepRegistration = false;
+        try {
+          // Native owns the30s cancellation deadline and releases its lifecycle
+          // and writer permits before this Future completes. No Dart timeout.
+          final accepted = await api.cloudSyncConfigureMessagesChangeNotifications(
+            state: expectedState, registrationNonce: nonce, expectedAuth: auth,
+          );
+          validate();
+          final reloaded = await preferences.load();
+          validate();
+          keepRegistration = accepted && reloaded.explicitlyEnabled &&
+              reloaded.identity.sameIdentity(preference.identity);
+          return keepRegistration;
+        } finally {
+          if (!keepRegistration || !current()) {
+            api.cloudSyncDisableMessagesChangeNotifications(
+              cloudMessagesClient: client, registrationNonce: nonce,
+            );
+          }
+        }
+      }),
+    );
+  }
+
   Future<void> _disableCloudSyncV2AndroidBackgroundRead() async {
+    _disableCloudSyncV2MessagesChangeNotifications();
     final outcome = await _cloudSyncV2AndroidBackgroundRegistration.disable(
       disableNative: () async {
         if (!Platform.isAndroid || !ls.isUiThread || mcs.background ||
@@ -8377,7 +8456,7 @@ class RustPushService extends GetxService {
 
   /// Coalesces one content-free metadata wake. It never invokes CloudKit on
   /// the APNs/network callback and never touches the outbound writer.
-  Future<void> enqueueCloudSyncV2AndroidBackgroundReadHint() async {
+  Future<void> enqueueCloudSyncV2AndroidBackgroundReadHint({String? notificationNonce}) async {
     if (!Platform.isAndroid ||
         !_cloudSyncV2AndroidBackgroundRuntimeAllowed) {
       return;
@@ -8385,13 +8464,22 @@ class RustPushService extends GetxService {
     final uiCaller = ls.isUiThread && !mcs.background;
     final backgroundCaller = !ls.isUiThread && mcs.background;
     if ((!uiCaller && !backgroundCaller) ||
-        (uiCaller && !_cloudSyncV2AndroidBackgroundRegistered)) {
+        (uiCaller && !_cloudSyncV2AndroidBackgroundRegistration.locallyRegistered &&
+            notificationNonce == null)) {
       return;
     }
     try {
       final preferences = _cloudSyncV2BackgroundReadPreferences();
       final preference = await preferences.load();
       if (!preference.enabled || !preferences.stillCurrent()) return;
+      if (notificationNonce != null) {
+        final client = state?.icloudServices?.cloudMessagesClient;
+        if (!preference.explicitlyEnabled || client == null ||
+            !api.cloudSyncMessagesChangeNotificationsCurrent(
+              cloudMessagesClient: client, registrationNonce: notificationNonce,
+            )) return;
+        if (!preferences.stillCurrent()) return;
+      }
       await mcs.invokeMethod(
         'cloud-sync-v2-background-control',
         <String, Object>{
@@ -11349,12 +11437,32 @@ class RustPushService extends GetxService {
       if (expectedClient == null || statePath.isEmpty) {
         throw StateError('cloud_sync_native_auth_account_unavailable');
       }
-      final preference = await _cloudSyncV2BackgroundReadPreferences().load();
+      final preferences = _cloudSyncV2BackgroundReadPreferences();
+      final preference = await preferences.load();
       if (!preference.enabled) {
         throw StateError('cloud_sync_android_background_disabled');
       }
       if (preference.identity.scopeHash != scopeHash) {
         throw StateError('cloud_sync_android_background_scope_mismatch');
+      }
+
+      // Restore notification interest in this bounded metadata worker, not in
+      // latency-sensitive APNs handling or the critical service startup graph.
+      // A failed setup does not discard an otherwise usable authoritative read;
+      // retain a bounded retry disposition until notification setup is ready.
+      var notificationsReady = true;
+      if (preference.explicitlyEnabled) {
+        try {
+          notificationsReady = await _prepareCloudSyncV2MessagesChangeNotifications(
+            preferences, preference, preferences.stillCurrent,
+          );
+        } catch (_) {
+          notificationsReady = false;
+          Logger.warn('Cloud Sync V2 change notification setup unavailable');
+        }
+      }
+      if (!preferences.stillCurrent()) {
+        throw StateError('cloud_sync_background_preference_identity_changed');
       }
 
       final future = _runCloudSyncV2ManualSemanticPull(
@@ -11364,10 +11472,12 @@ class RustPushService extends GetxService {
       _cloudSyncV2SemanticPullInFlight = future;
       try {
         final result = await future;
-        final outcome = CloudSyncAndroidBackgroundPolicy.classifyReadResult(
+        final readOutcome = CloudSyncAndroidBackgroundPolicy.classifyReadResult(
           remoteDrained: result.remoteDrained,
           report: result.lastReport,
         );
+        final outcome = notificationsReady
+            ? readOutcome : CloudSyncAndroidBackgroundOutcome.retry;
         Logger.info('Cloud Sync V2 Android background outcome=${outcome.wireValue}');
         return outcome;
       } finally {
@@ -12560,7 +12670,9 @@ class RustPushService extends GetxService {
     _serviceClosing = true;
     cloudSyncV2Progress.pause();
     cloudSyncV2HistoricalImport.invalidate();
-    unawaited(_disableCloudSyncV2AndroidBackgroundRead());
+    if (ls.isUiThread && !mcs.background) {
+      unawaited(_disableCloudSyncV2AndroidBackgroundRead());
+    }
     _networkRefreshTimer?.cancel();
     _networkSubscription?.cancel();
     for (final timer in _profileRetryTimers.values) {
@@ -12576,13 +12688,15 @@ class RustPushService extends GetxService {
       _cloudSyncV2OutboundConfirmation = null;
     }
     final closingState = state;
-    if (closingState != null) {
+    if (closingState != null && ls.isUiThread && !mcs.background) {
       // onClose is synchronous, so teardown must run asynchronously behind the
       // same process-wide boundary as every CloudKit reader and writer. If the
       // boundary is busy, process teardown or the native finalizers reclaim
       // this instance without releasing handles underneath active work.
       unawaited(_disposeStateAfterServiceClose(closingState));
     }
+    // A headless engine borrows the native service's Arc-backed resources.
+    // Its wrapper finalizers must not close the shared APNs/iMessage clients.
     super.onClose();
   }
 }

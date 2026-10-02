@@ -76,6 +76,9 @@ class _CloudSyncBackgroundReadCardState
                   error.message ==
                       'cloud_sync_background_preference_schedule_pending'
               ? 'Your choice was saved, but background sync could not be scheduled. Tap Start / resume to try again.'
+              : error is StateError && error.message ==
+                  'cloud_sync_background_preference_notifications_pending'
+              ? 'Your choice was saved and local sync is scheduled. Cloud update notifications are not ready yet; setup will retry. Tap Start / resume to check for updates now.'
               : 'The setting could not be confirmed. Reload it before trying again. Saved messages are kept.';
         });
       }

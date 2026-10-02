@@ -128,6 +128,24 @@ void main() {
   );
 
   testWidgets(
+    'notification setup pending does not claim local scheduling failed',
+    (tester) async {
+      save = (_, _) async => throw StateError(
+        'cloud_sync_background_preference_notifications_pending',
+      );
+      await tester.pumpWidget(host());
+      await tester.pumpAndSettle();
+      await tester.tap(find.byType(Switch));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('local sync is scheduled'), findsOneWidget);
+      expect(find.textContaining('setup will retry'), findsOneWidget);
+      expect(find.textContaining('could not be scheduled'), findsNothing);
+      expect(find.textContaining('notifications_pending'), findsNothing);
+      expect(tester.widget<Switch>(find.byType(Switch)).onChanged, isNull);
+    },
+  );
+
+  testWidgets(
     'busy save disables a second request and survives navigation away',
     (tester) async {
       final result = Completer<CloudSyncBackgroundReadPreference>();

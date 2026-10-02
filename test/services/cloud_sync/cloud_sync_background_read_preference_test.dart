@@ -254,7 +254,10 @@ void main() {
       final start = source.indexOf(
         'bool get _cloudSyncV2AndroidBackgroundRuntimeAllowed',
       );
-      final end = source.indexOf('bool get cloudSyncV2AutomaticArchiveVisible', start);
+      final end = source.indexOf(
+        'bool get cloudSyncV2AutomaticArchiveVisible',
+        start,
+      );
       final scheduling = source.substring(start, end);
       expect(
         scheduling,
@@ -271,7 +274,9 @@ void main() {
       );
       expect(
         scheduling,
-        contains('if (!preference.enabled || !preferences.stillCurrent()) return;'),
+        contains(
+          'if (!preference.enabled || !preferences.stillCurrent()) return;',
+        ),
       );
       expect(scheduling, contains('write: ss.prefs.setBool'));
       expect(scheduling, isNot(contains('ensureWriterOwned(')));
@@ -287,4 +292,45 @@ void main() {
       expect(automatic, contains('CloudSyncDevGate.localSendRuntimeEnabled'));
     },
   );
+  test('saved opt-in exposes explicit authorization', () async {
+    disk[identity.preferenceKey] = true;
+    final loaded = await preferences.load();
+    expect(loaded.enabled, isTrue);
+    expect(loaded.explicitlyEnabled, isTrue);
+  });
+  test('developer default never presents explicit authorization', () async {
+    developer = true;
+    final loaded = await preferences.load();
+    expect(loaded.enabled, isTrue);
+    expect(loaded.explicitlyEnabled, isFalse);
+  });
+  test('explicit off never presents explicit authorization', () async {
+    developer = true;
+    disk[identity.preferenceKey] = false;
+    final loaded = await preferences.load();
+    expect(loaded.enabled, isFalse);
+    expect(loaded.explicitlyEnabled, isFalse);
+  });
+  for (final invalid in ['true', 1, <String, Object?>{}]) {
+    test(
+      'malformed stored choice never presents explicit authorization: $invalid',
+      () async {
+        developer = true;
+        disk[identity.preferenceKey] = invalid;
+        final loaded = await preferences.load();
+        expect(loaded.enabled, isFalse);
+        expect(loaded.explicitlyEnabled, isFalse);
+      },
+    );
+  }
+  test('round-trip opt-in sets explicit authorization', () async {
+    var saved = await preferences.setEnabled(await preferences.load(), true);
+    expect(saved.enabled, isTrue);
+    expect(saved.explicitlyEnabled, isTrue);
+    expect((await preferences.load()).explicitlyEnabled, isTrue);
+    saved = await preferences.setEnabled(await preferences.load(), false);
+    expect(saved.enabled, isFalse);
+    expect(saved.explicitlyEnabled, isFalse);
+    expect((await preferences.load()).explicitlyEnabled, isFalse);
+  });
 }

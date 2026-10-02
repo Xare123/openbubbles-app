@@ -29,10 +29,14 @@ final class CloudSyncBackgroundReadPreference {
   const CloudSyncBackgroundReadPreference({
     required this.identity,
     required this.enabled,
+    this.explicitlyEnabled = false,
   });
 
   final CloudSyncBackgroundReadIdentity identity;
   final bool enabled;
+
+  /// Server notification metadata requires saved opt-in, not a developer default.
+  final bool explicitlyEnabled;
 }
 
 /// Uses injected local/native identity boundaries so persistence races can be
@@ -80,6 +84,7 @@ final class CloudSyncBackgroundReadPreferences {
     return CloudSyncBackgroundReadPreference(
       identity: identity,
       enabled: stored == null ? developerDefault() : stored == true,
+      explicitlyEnabled: stored == true,
     );
   }
 

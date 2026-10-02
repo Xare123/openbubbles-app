@@ -14,8 +14,12 @@ enum CloudSyncBackgroundRegistrationOutcome {
 final class CloudSyncBackgroundRegistration {
   int _operation = 0;
   bool _registered = false;
+  bool _locallyRegistered = false;
 
   bool get registered => _registered;
+
+  /// Local metadata wakes remain usable while server notification setup retries.
+  bool get locallyRegistered => _locallyRegistered;
 
   void invalidate() {
     _begin();
@@ -23,6 +27,7 @@ final class CloudSyncBackgroundRegistration {
 
   int _begin() {
     _registered = false;
+    _locallyRegistered = false;
     return ++_operation;
   }
 
@@ -39,6 +44,11 @@ final class CloudSyncBackgroundRegistration {
     required CloudSyncBackgroundReadPreferences preferences,
     required Future<bool> Function(String scopeHash) configureNative,
     required Future<bool> Function() disableNative,
+    Future<bool> Function(
+      CloudSyncBackgroundReadPreference preference,
+      bool Function() stillCurrent,
+    )?
+    prepareNotifications,
   }) async {
     final operation = _begin();
     try {
@@ -52,8 +62,19 @@ final class CloudSyncBackgroundRegistration {
       if (!_current(operation, preferences.stillCurrent)) {
         return CloudSyncBackgroundRegistrationOutcome.stale;
       }
-      _registered = preference.enabled && accepted;
       if (!accepted) return CloudSyncBackgroundRegistrationOutcome.rejected;
+      _locallyRegistered = preference.enabled;
+      if (preference.enabled && prepareNotifications != null) {
+        final ready = await prepareNotifications(
+          preference,
+          () => _current(operation, preferences.stillCurrent),
+        );
+        if (!_current(operation, preferences.stillCurrent)) {
+          return CloudSyncBackgroundRegistrationOutcome.stale;
+        }
+        if (!ready) return CloudSyncBackgroundRegistrationOutcome.unavailable;
+      }
+      _registered = preference.enabled;
       return preference.enabled
           ? CloudSyncBackgroundRegistrationOutcome.registered
           : CloudSyncBackgroundRegistrationOutcome.disabled;
