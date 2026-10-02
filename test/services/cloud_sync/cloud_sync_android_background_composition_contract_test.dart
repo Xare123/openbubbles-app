@@ -186,7 +186,48 @@ void main() {
 
       expect(hint, contains('!ls.isUiThread && mcs.background'));
       expect(hint, contains("'kind': 'METADATA'"));
+      expect(hint, contains("'scopeHash': preference.identity.scopeHash"));
+      final load = hint.indexOf('await preferences.load()');
+      final current = hint.indexOf('!preferences.stillCurrent()');
+      final dispatch = hint.indexOf('await mcs.invokeMethod(');
+      expect(load, greaterThanOrEqualTo(0));
+      expect(current, greaterThan(load));
+      expect(dispatch, greaterThan(current));
       expect(hint, isNot(contains('_queueCloudSyncV2LocalSends(')));
+    },
+  );
+
+  test(
+    'received iMessage wakes are post-processing, nonblocking and account-fenced',
+    () {
+      final source = File(
+        'lib/services/rustpush/rustpush_service.dart',
+      ).readAsStringSync();
+      final start = source.indexOf('Future handleMsg(api.PushMessage push)');
+      final end = source.indexOf('bool authing = false;', start);
+      expect(start, greaterThanOrEqualTo(0));
+      expect(end, greaterThan(start));
+      final handler = source.substring(start, end);
+      final capture = handler.indexOf('final expectedState = state;');
+      final apply = handler.indexOf('await handleMsgInner(push).timeout(');
+      final certify = handler.indexOf('markCertified(push);');
+      final hint = handler.indexOf(
+        'unawaited(enqueueCloudSyncV2AndroidBackgroundReadHint());',
+      );
+      expect(capture, greaterThanOrEqualTo(0));
+      expect(apply, greaterThan(capture));
+      expect(certify, greaterThan(apply));
+      expect(hint, greaterThan(certify));
+      expect(handler, contains('push is api.PushMessage_IMessage'));
+      expect(handler, contains('expectedState != null'));
+      expect(handler, contains('identical(expectedState, state)'));
+      expect(
+        handler,
+        isNot(contains('await enqueueCloudSyncV2AndroidBackgroundReadHint')),
+      );
+      expect(handler, isNot(contains('_queueCloudSyncV2LocalSends(')));
+      expect(handler, isNot(contains('runCloudSyncV2Outbound')));
+      expect(handler, isNot(contains('finally')));
     },
   );
 }

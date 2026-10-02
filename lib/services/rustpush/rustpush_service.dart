@@ -5906,9 +5906,19 @@ class RustPushService extends GetxService {
   }
 
   Future handleMsg(api.PushMessage push) async {
+    final expectedState = state;
     await handleMsgInner(push).timeout(const Duration(minutes: 3));
     // if we complete successfully, mark delivery "certified"
     markCertified(push);
+    // An ordinary or mirrored iMessage is an invalidation hint, not proof of
+    // CloudKit contents. Schedule only the registered read-only metadata work
+    // after local processing, and never make IDS delivery wait for that work.
+    // Account replacement during processing must not wake the new account.
+    if (push is api.PushMessage_IMessage &&
+        expectedState != null &&
+        identical(expectedState, state)) {
+      unawaited(enqueueCloudSyncV2AndroidBackgroundReadHint());
+    }
   }
 
   bool authing = false;
@@ -8370,11 +8380,16 @@ class RustPushService extends GetxService {
       return;
     }
     try {
-      final preference = await _cloudSyncV2BackgroundReadPreferences().load();
-      if (!preference.enabled) return;
+      final preferences = _cloudSyncV2BackgroundReadPreferences();
+      final preference = await preferences.load();
+      if (!preference.enabled || !preferences.stillCurrent()) return;
       await mcs.invokeMethod(
         'cloud-sync-v2-background-control',
-        const <String, Object>{'action': 'hint', 'kind': 'METADATA'},
+        <String, Object>{
+          'action': 'hint',
+          'kind': 'METADATA',
+          'scopeHash': preference.identity.scopeHash,
+        },
       );
     } catch (_) {
       Logger.warn('Cloud Sync V2 Android background hint unavailable');
