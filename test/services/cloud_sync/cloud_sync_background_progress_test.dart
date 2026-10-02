@@ -3,6 +3,9 @@ import 'dart:io';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_background_progress.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_background_status.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_observability.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_progress.dart'
+    show CloudSyncSpeed, CloudSyncSpeedBudget;
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_read_budget.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 CloudSyncEvent event(CloudSyncEventType type, {int count = 0}) =>
@@ -109,7 +112,7 @@ void main() {
     expect(progress.snapshot.downloaded, 8);
   });
 
-  test('service wires presentation only without changing reader policy', () {
+  test('service shares the selected budget and keeps progress presentation-only', () {
     final service = File(
       'lib/services/rustpush/rustpush_service.dart',
     ).readAsStringSync();
@@ -126,9 +129,18 @@ void main() {
     expect(read, contains('progress: progress ?? backgroundProgress'));
     expect(
       read,
-      contains(
-        'readBudget: progress?.speed.readBudget ?? CloudSyncReadBudget.standard',
+      matches(
+        RegExp(
+          r'final\s+readBudget\s*=\s*progress\?\.speed\.readBudget\s*'
+          r'\?\?\s*CloudSyncReadBudget\.background\s*;',
+        ),
       ),
+    );
+    // The adapter and persisted report must use the same selected policy.
+    // Progress presentation cannot restore the old exhaustive internal budget.
+    expect(
+      RegExp(r'readBudget:\s*readBudget\s*,').allMatches(read),
+      hasLength(2),
     );
     expect(read, contains('finishActiveRemotePassOnCancel: progress != null'));
     expect(
@@ -172,6 +184,19 @@ void main() {
         'backgroundStatus: () => pushService.cloudSyncV2BackgroundStatus',
       ),
     );
+  });
+
+  test('bounded internal reads preserve Profile Regular and Turbo sizing', () {
+    expect(CloudSyncReadBudget.background.pagesPerPass, 1);
+    expect(CloudSyncReadBudget.background.retainedReplayEntries, 4);
+    expect(CloudSyncSpeed.regular.readBudget, same(CloudSyncReadBudget.regular));
+    expect(CloudSyncSpeed.regular.readBudget.pagesPerPass, 1);
+    expect(CloudSyncSpeed.regular.readBudget.retainedReplayEntries, 32);
+    expect(CloudSyncSpeed.turbo.readBudget, same(CloudSyncReadBudget.standard));
+    expect(CloudSyncSpeed.turbo.readBudget.pagesPerPass, 4);
+    expect(CloudSyncSpeed.turbo.readBudget.retainedReplayEntries, 150);
+    expect(CloudSyncSpeed.regular.passesPerBatch, 1);
+    expect(CloudSyncSpeed.turbo.passesPerBatch, 16);
   });
 
   test('settled receipt text does not promise the reader can start', () {
