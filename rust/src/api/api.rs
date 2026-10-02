@@ -3738,7 +3738,7 @@ pub async fn cloud_sync_configure_messages_change_notifications(
         .and_then(|services| services.cloud_messages_client.as_ref())
         .ok_or_else(|| anyhow!("cloud_sync_change_notification_identity_unavailable"))?;
     let result = tokio::time::timeout(Duration::from_secs(30), async {
-        let gate = cloudkit_read_authentication_lifecycle_gate(Path::new(&state.conf_dir))?;
+        let gate = cloudkit_read_authentication_lifecycle_gate(std::path::Path::new(&state.conf_dir))?;
         let _lifecycle = gate.lock().await;
         let current = cloud_sync_capture_cached_identity(client, state.conf_dir.clone()).await?;
         if current.native_session_id != expected_auth.native_session_id
