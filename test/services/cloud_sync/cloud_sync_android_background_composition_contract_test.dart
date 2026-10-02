@@ -367,7 +367,7 @@ void main() {
       expect(
         setup,
         contains(
-          'cloudkit_read_authentication_lifecycle_gate(Path::new(&state.conf_dir))',
+          'cloudkit_read_authentication_lifecycle_gate(std::path::Path::new(&state.conf_dir))',
         ),
       );
       expect(setup, contains('with_cloudkit_writer_operation('));
