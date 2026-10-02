@@ -747,6 +747,45 @@ Future<CloudSyncNativeAuthMetadata> cloudSyncCaptureAuthSnapshot({
   storageDirectory: storageDirectory,
 );
 
+/// A process/client nonce only. It authorizes neither CloudKit reads nor writes.
+String cloudSyncBeginMessagesChangeNotifications({
+  required ArcCloudMessagesClientDefaultAnisetteProvider cloudMessagesClient,
+}) => RustLib.instance.api.crateApiApiCloudSyncBeginMessagesChangeNotifications(
+  cloudMessagesClient: cloudMessagesClient,
+);
+
+bool cloudSyncDisableMessagesChangeNotifications({
+  required ArcCloudMessagesClientDefaultAnisetteProvider cloudMessagesClient,
+  String? registrationNonce,
+}) =>
+    RustLib.instance.api.crateApiApiCloudSyncDisableMessagesChangeNotifications(
+      cloudMessagesClient: cloudMessagesClient,
+      registrationNonce: registrationNonce,
+    );
+
+bool cloudSyncMessagesChangeNotificationsCurrent({
+  required ArcCloudMessagesClientDefaultAnisetteProvider cloudMessagesClient,
+  required String registrationNonce,
+}) =>
+    RustLib.instance.api.crateApiApiCloudSyncMessagesChangeNotificationsCurrent(
+      cloudMessagesClient: cloudMessagesClient,
+      registrationNonce: registrationNonce,
+    );
+
+/// Explicitly opted-in server subscription/token metadata, never record writes.
+/// The Dart caller must own identity-maintenance admission and saved read opt-in.
+/// Keep native logout/reset excluded until bounded setup actually terminates.
+Future<bool> cloudSyncConfigureMessagesChangeNotifications({
+  required SharedPushState state,
+  required String registrationNonce,
+  required CloudSyncNativeAuthMetadata expectedAuth,
+}) => RustLib.instance.api
+    .crateApiApiCloudSyncConfigureMessagesChangeNotifications(
+      state: state,
+      registrationNonce: registrationNonce,
+      expectedAuth: expectedAuth,
+    );
+
 /// Pauses every native CloudKit writer workflow for one semantic pull.
 ///
 /// The bridge name is retained for generated-binding compatibility. `token`
@@ -9577,6 +9616,12 @@ sealed class PushMessage with _$PushMessage {
     required String beacon,
     required BeaconAttributes attributes,
   }) = PushMessage_BeaconShared;
+
+  /// Content-free invalidation; the current client and saved opt-in must
+  /// still admit this nonce before Android queues an authoritative read.
+  const factory PushMessage.cloudKitChangeHint({
+    required String registrationNonce,
+  }) = PushMessage_CloudKitChangeHint;
 }
 
 class QuotaInfo {
