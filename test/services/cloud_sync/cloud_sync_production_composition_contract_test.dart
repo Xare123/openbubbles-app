@@ -382,6 +382,59 @@ void main() {
     },
   );
 
+  test('tracked IDS dispatch joins local admission through its native Future only', () {
+    final source = File(
+      'lib/services/rustpush/rustpush_service.dart',
+    ).readAsStringSync();
+    final dispatch = _section(source, 'Future<bool> sendMsg(api.MessageInst msg,',
+        'Future<Chat> createChat(');
+    _expectBefore(dispatch, 'final receiptContext = nativeReceiptContext?.call();',
+        'Future<bool> dispatchNative() => api.send(');
+    for (final capture in ['final sendState = pushService.state!;',
+      'final sendStore = Database.store;', 'final sendStorage = pushService.statePath;']) {
+      _expectBefore(dispatch, capture, 'Future<bool> dispatchNative() => api.send(');
+    }
+    final native = _section(dispatch, 'Future<bool> dispatchNative()',
+        'stillRunning = receiptContext == null');
+    expect(native, matches(RegExp(r'Future<bool> dispatchNative\(\)\s*=> api\.send\(')));
+    expect(native, contains('state: sendState.client'));
+    expect(native, contains('local: sendState.localBroadcast'));
+    expect(native, contains('nativeReceiptContext: receiptContext'));
+    expect(native, isNot(contains('pushService.state!')));
+    final tracked = _section(dispatch, 'stillRunning = receiptContext == null', 'break;');
+    expect(tracked, matches(RegExp(
+        r'receiptContext == null\s*\? await dispatchNative\(\)\s*'
+        r': await pushService\._cloudSyncV2LocalSourceOperations\.run\(')));
+    final validation = _section(tracked, 'validate: () {', 'action: dispatchNative,');
+    for (final fence in ['pushService._serviceClosing', 'pushService.loggingOut',
+      'pushService._cloudSyncV2OutboundQuiescing',
+      '!identical(sendState, pushService.state)', '!identical(sendStore, Database.store)',
+      'sendStore.isClosed()', 'sendStorage != pushService.statePath',
+      "throw StateError('cloud_sync_local_send_identity_changed')"]) {
+      expect(validation, contains(fence));
+    }
+    expect(tracked, contains('action: dispatchNative,'));
+    for (final forbidden in ['unawaited(', '.timeout(', '.complete(']) {
+      expect(tracked, isNot(contains(forbidden)));
+    }
+    expect(dispatch, contains('return stillRunning;'));
+    for (final forbidden in ['_confirmCloudSyncV2NativeSend(',
+      'recordNativeSendConfirmation(', 'cloudSyncAcknowledgeNativeSendReceipt(',
+      'reflectConfirmed(']) {
+      expect(dispatch, isNot(contains(forbidden)),
+          reason: 'the Dart dispatch Future is not native background completion proof');
+    }
+    final operations = File(
+      'lib/services/rustpush/cloud_sync/cloud_sync_local_source_operations.dart',
+    ).readAsStringSync();
+    final run = _section(operations, 'Future<T> run<T>({', 'Future<void> release(');
+    _expectBefore(run, '_active.add(completion);', 'Future<T>.sync(() {');
+    expect(run, contains('return action();'));
+    expect(run, contains('.then(admitted.complete, onError: admitted.completeError)'));
+    expect(run, contains('return admitted.future;'));
+    expect(run, contains('.whenComplete(() => _active.remove(completion))'));
+  });
+
   test('native receipt replay is bound to one exact authenticated runtime', () {
     final source = File(
       'lib/services/rustpush/rustpush_service.dart',
@@ -552,7 +605,7 @@ void main() {
     expect(method, contains('_cloudSyncV2AutomaticCatchUpMaximumBatches'));
     expect(
       method,
-      contains('CloudSyncSemanticDrainController.defaultMaximumPasses'),
+      contains('maximumPasses: progress?.speed.passesPerBatch ?? 1'),
     );
     expect(method, contains('_cloudSyncV2SemanticPullQuiescing'));
     expect(method, contains('loggingOut'));
@@ -1286,6 +1339,7 @@ void main() {
       'await _runCloudKitDestructiveReset(() async {',
     );
     final nativeReset = reset.indexOf('api.resetState(');
+    final nativeDispose = reset.indexOf('disposeState(thisState, hw, setup);');
     final resume = reset.indexOf('resumeAfterAccountTransition()');
 
     expect(pcsQuiesce, greaterThanOrEqualTo(0));
@@ -1308,8 +1362,87 @@ void main() {
     expect(detachState, greaterThan(destructiveBoundary));
     expect(detachState, greaterThan(outboundWait));
     expect(nativeReset, greaterThan(detachState));
+    expect(nativeDispose, greaterThan(nativeReset));
     expect(resume, greaterThan(nativeReset));
+    expect(reset, contains('_cloudSyncV2OutboundQuiescing = true;'));
+    expect(
+      reset.substring(0, destructiveBoundary),
+      isNot(contains('disposeState(')),
+    );
+    _expectBefore(reset, 'resumeAfterAccountTransition()',
+        '_cloudSyncV2LocalSourceOperations.reopen();');
+    _expectBefore(reset, '_cloudSyncV2LocalSourceOperations.reopen();',
+        '_cloudSyncV2OutboundQuiescing = false;');
     expect(reset, contains('finally'));
+  });
+
+  test('destructive reset drains local admission before native client disposal', () {
+    final source = File(
+      'lib/services/rustpush/rustpush_service.dart',
+    ).readAsStringSync();
+    final barrier = _section(source,
+        'Future<T> _runCloudKitDestructiveReset<T>(',
+        'Future<T> _runCloudKitIdentityMaintenance<T>(');
+    _expectBefore(barrier,
+        'await _cloudSyncV2LocalSourceOperations.quiesce().timeout(',
+        'await _cloudSyncV2AttachmentGate.drain().timeout(');
+    _expectBefore(barrier,
+        'await _cloudSyncV2AttachmentGate.drain().timeout(',
+        'return await _runCloudKitOperation(');
+    expect(barrier, contains('_cloudSyncV2SemanticPullQuiescenceTimeout'));
+    final drain = barrier.substring(0, barrier.indexOf('return await'));
+    expect(drain, contains('on TimeoutException'));
+    expect(drain, contains("throw StateError('cloud_sync_attachment_quiescence_timeout')"));
+    final localDrain = _section(barrier,
+        'await _cloudSyncV2LocalSourceOperations.quiesce().timeout(',
+        'await _cloudSyncV2AttachmentGate.drain().timeout(');
+    _expectBefore(localDrain, 'on TimeoutException',
+        '_cloudSyncV2LocalSourceOperations.markQuiescenceTimeout();');
+    _expectBefore(localDrain,
+        '_cloudSyncV2LocalSourceOperations.markQuiescenceTimeout();',
+        "throw StateError('cloud_sync_local_source_quiescence_timeout')");
+    expect(localDrain, isNot(contains('reopen(')));
+    expect(drain, isNot(contains('catch (_)')),
+        reason: 'a sticky local release failure must prevent the destructive action');
+    expect(barrier, contains('kind: CloudKitOperationKind.destructiveReset'));
+    expect(barrier, contains('action: action'));
+    expect(barrier, contains('if (!_serviceClosing && !_cloudSyncV2OutboundQuiescing)'));
+    expect(barrier, contains('_cloudSyncV2LocalSourceOperations.reopen();'));
+    final disposal = _section(source,
+        'void disposeState(api.SharedPushState state, bool hw, bool setup)',
+        'Future configured()');
+    expect(disposal, contains('state.icloudServices?.cloudMessagesClient?.dispose();'));
+  });
+
+  test('local drain timeout keeps admission closed with visible restart state', () {
+    final operations = File(
+      'lib/services/rustpush/cloud_sync/cloud_sync_local_source_operations.dart',
+    ).readAsStringSync();
+    expect(operations, contains('bool get restartRequired => _releaseFailed || _quiescenceTimedOut;'));
+    final marker = _section(operations, 'void markQuiescenceTimeout()', 'bool reopen()');
+    expect(marker, contains('_quiescenceTimedOut = true;'));
+    expect(marker, contains('_quiescing = true;'));
+    for (final forbidden in ['_active.clear(', '_active.remove(',
+      '_quiescenceTimedOut = false;', '_releaseFailed = false;']) {
+      expect(marker, isNot(contains(forbidden)));
+    }
+    final reopen = _section(operations, 'bool reopen()', 'return true;');
+    _expectBefore(reopen, 'if (_active.isNotEmpty || restartRequired) return false;',
+        '_quiescing = false;');
+    expect(reopen, isNot(contains('_quiescenceTimedOut = false;')));
+    final quiesce = _section(operations, 'Future<void> quiesce()',
+        'void markQuiescenceTimeout()');
+    _expectBefore(quiesce, 'await Future.wait(_active.toList(growable: false));',
+        'if (restartRequired)');
+    expect(quiesce, contains('category: CloudFailureCategory.localStorage'));
+    expect(quiesce, contains("safeCode: 'cloud_sync_local_source_quiescence_failed'"));
+    final source = File(
+      'lib/services/rustpush/rustpush_service.dart',
+    ).readAsStringSync();
+    final readiness = _section(source, 'return CloudSyncProfileReadiness.evaluate(',
+        'operationActive:');
+    expect(readiness, contains('restartNeeded:'));
+    expect(readiness, contains('_cloudSyncV2LocalSourceOperations.restartRequired ||'));
   });
 
   test('identity troubleshooting cannot bypass the CloudKit interlock', () {
@@ -1373,8 +1506,33 @@ void main() {
 
     final helper = source.substring(helperStart, closeStart);
     final close = source.substring(closeStart, closeEnd);
+    _expectBefore(helper,
+        'await _cloudSyncV2LocalSourceOperations.quiesce().timeout(',
+        'await cloudSyncV2HistoricalImport.drain()');
+    final localDrain = _section(helper,
+        'await _cloudSyncV2LocalSourceOperations.quiesce().timeout(',
+        'await cloudSyncV2HistoricalImport.drain()');
+    _expectBefore(localDrain, 'on TimeoutException',
+        '_cloudSyncV2LocalSourceOperations.markQuiescenceTimeout();');
+    _expectBefore(localDrain,
+        '_cloudSyncV2LocalSourceOperations.markQuiescenceTimeout();', 'rethrow;');
+    _expectBefore(helper, 'await cloudSyncV2HistoricalImport.drain()',
+        'await _runCloudKitDestructiveReset(() async {');
+    _expectBefore(helper, 'await _runCloudKitDestructiveReset(() async {',
+        'if (!identical(state, closingState)) return;');
+    _expectBefore(helper, 'if (!identical(state, closingState)) return;',
+        'state = null;');
+    _expectBefore(helper, 'state = null;',
+        'disposeState(closingState, true, false);');
+    expect(helper, contains('_cloudSyncV2OutboundQuiescenceTimeout'));
     expect(helper, contains('_runCloudKitDestructiveReset(() async {'));
     expect(helper, contains('disposeState(closingState, true, false);'));
+    expect('disposeState('.allMatches(helper), hasLength(1));
+    expect(helper, isNot(contains('_cloudSyncV2LocalSourceOperations.reopen(')));
+    _expectBefore(close, '_serviceClosing = true;',
+        'unawaited(_disposeStateAfterServiceClose(');
+    _expectBefore(close, '_cloudSyncV2OutboundQuiescing = true;',
+        'unawaited(_disposeStateAfterServiceClose(');
     expect(close, contains('unawaited(_disposeStateAfterServiceClose('));
     expect(close, isNot(contains('disposeState(')));
   });
@@ -1401,7 +1559,26 @@ void main() {
     expect(block, isNot(contains('deletions: true')));
   });
 
-  test('queued mutation preparation shares the attachment gate with pinned identity', () {
+  test('accepted mutation receipts retry typed predecessor waits without resending', () {
+    final source = File(
+      'lib/services/rustpush/rustpush_service.dart',
+    ).readAsStringSync();
+    final start = source.indexOf('Future<void> processMutationReceipt()');
+    final end = source.indexOf(
+      'await _cloudSyncV2AttachmentGate.run<void>(', start,
+    );
+    expect(start, greaterThanOrEqualTo(0));
+    expect(end, greaterThan(start));
+    final receipt = source.substring(start, end);
+    expect(receipt, contains('cloudSyncV2MutationPredecessorNeedsRetry(error)'));
+    expect(receipt, contains('if (!cloudSyncV2MutationPredecessorNeedsRetry(error)) rethrow;'));
+    expect(receipt, contains('stage=predecessor_wait'));
+    expect(receipt, contains('_scheduleCloudSyncV2MessageUpdateRetry(const Duration(seconds: 5))'));
+    expect(receipt, contains('await transport.quiesceNativeOperations();'));
+    expect(receipt, isNot(contains('api.sendMessage(')));
+  });
+
+  test('local mutation admission pins state and store outside the network gate', () {
     final source = File(
       'lib/services/rustpush/rustpush_service.dart',
     ).readAsStringSync();
@@ -1411,14 +1588,19 @@ void main() {
     );
     final afterStart = source.indexOf(
       'Future<_CloudSyncV2LocalMutationContext> '
-      '_prepareCloudSyncV2LocalMutationAfterGate({',
+      '_prepareCloudSyncV2LocalMutationAfterAdmission({',
       methodStart,
     );
     expect(methodStart, greaterThanOrEqualTo(0));
     expect(afterStart, greaterThan(methodStart));
     final method = source.substring(methodStart, afterStart);
-    expect(method, contains('_cloudSyncV2AttachmentGate.run('));
-    expect(method, contains('waitTimeout: const Duration(seconds: 30)'));
+    expect(method, contains('return _cloudSyncV2LocalSourceOperations.run('));
+    expect(method, contains('validate: () {'));
+    expect(method, contains('action: () => _prepareCloudSyncV2LocalMutationAfterAdmission('));
+    _expectBefore(method, 'validate: () {', 'action: () =>');
+    expect(method, isNot(contains('_cloudSyncV2AttachmentGate.run(')));
+    expect(method, isNot(contains('waitTimeout:')));
+    expect(method, isNot(contains('NativeProtectedCloudSyncTransport(')));
     expect(method, contains('final queuedState = state;'));
     expect(method, contains('final queuedStore = Database.store;'));
     expect(method, contains('final queuedStorage = statePath;'));
@@ -1427,8 +1609,10 @@ void main() {
     expect(method, contains('queuedStore.isClosed()'));
     expect(method, contains('queuedStorage != statePath'));
     expect(method, contains('_cloudSyncV2OutboundQuiescing'));
+    expect(method, contains('_serviceClosing'));
+    expect(method, contains('loggingOut'));
     expect(method, contains('!ls.isUiThread'));
-    expect(method, contains('_prepareCloudSyncV2LocalMutationAfterGate('));
+    expect(method, contains('ss.settings.cloudSyncingEnabled.value'));
 
     final fallbackEnd = method.indexOf('final queuedState = state;');
     final fallback = method.substring(0, fallbackEnd);
@@ -1437,6 +1621,94 @@ void main() {
       contains('if (!CloudKitWriterOwnership.v2MutationsEnabled)'),
     );
     expect(fallback, contains('return null;'));
+  });
+
+  test('attachment prepare and restore retain tracked local admission through cleanup', () {
+    final source = File(
+      'lib/services/rustpush/rustpush_service.dart',
+    ).readAsStringSync();
+    final prepare = _section(source,
+        'Future<api.CloudSyncNativeSendReceiptContext> _prepareCloudSyncV2AttachmentSource(',
+        'Future<api.CloudSyncNativeSendReceiptContext>\n  _prepareCloudSyncV2AttachmentSourceAfterAdmission(');
+    final prepareAction = _section(source,
+        'Future<api.CloudSyncNativeSendReceiptContext>\n  _prepareCloudSyncV2AttachmentSourceAfterAdmission(',
+        'Future<api.MessageInst> _restoreCloudSyncV2AttachmentWire(');
+    final restore = _section(source,
+        'Future<api.MessageInst> _restoreCloudSyncV2AttachmentWire(',
+        'Future<api.MessageInst> _restoreCloudSyncV2AttachmentWireAfterAdmission(');
+    final restoreAction = _section(source,
+        'Future<api.MessageInst> _restoreCloudSyncV2AttachmentWireAfterAdmission(',
+        'Future<void> _confirmCloudSyncV2NativeSend(');
+    for (final admission in [prepare, restore]) {
+      expect(admission, contains('_cloudSyncV2LocalSourceOperations.run('));
+      expect(admission, contains('if (_serviceClosing || !context.stillCurrent())'));
+      expect(admission, contains("throw StateError('cloud_sync_local_send_identity_changed')"));
+      _expectBefore(admission, 'validate: () {', 'action: () =>');
+      expect(admission, isNot(contains('NativeProtectedCloudSyncTransport(')));
+    }
+    expect(prepare, contains('action: () => _prepareCloudSyncV2AttachmentSourceAfterAdmission('));
+    expect(restore, contains('action: () => _restoreCloudSyncV2AttachmentWireAfterAdmission('));
+    for (final action in [prepareAction, restoreAction]) {
+      _expectBefore(action,
+          'context.authFence.requireCurrentBinding(context.capturedAuth);',
+          'NativeProtectedCloudSyncTransport(');
+      expect(action, contains('!identical(client, context.capturedAuth.cloudMessagesClient)'));
+      _expectBefore(action, '} finally {',
+          'await _cloudSyncV2LocalSourceOperations.release(');
+      expect(action, contains('transport.quiesceNativeOperations,'));
+      for (final forbidden in ['_cloudSyncV2AttachmentGate.run(',
+        'CloudKitOperationInterlock(', 'exclusion:',
+        'runProtectedStoreExclusive(', 'ensureRecoveredBeforeWrite(']) {
+        expect(action, isNot(contains(forbidden)));
+      }
+    }
+  });
+
+  test('confirmed mutation reflection completes locally before network update admission', () {
+    final source = File(
+      'lib/services/rustpush/rustpush_service.dart',
+    ).readAsStringSync();
+    final confirm = _section(source,
+        'Future<void> _confirmCloudSyncV2NativeSend(',
+        'Future<void> _runCloudSyncV2NativeSendReceiptReplay()');
+    final local = _section(confirm,
+        'Future<CloudSyncLocalMutationAdmissionSource?> reflectMutationReceiptLocally()',
+        '// Durable local reflection');
+    expect(local, contains('_cloudSyncV2LocalSourceOperations.run('));
+    expect(local, contains('if (_serviceClosing || !confirmationBindingCurrent())'));
+    _expectBefore(local, 'validate: () {',
+        'final localTransport = NativeProtectedCloudSyncTransport(');
+    _expectBefore(local, 'await validateMutationIdentity();',
+        'return await localTransport.runLocalProtectedStoreExclusive(');
+    _expectBefore(local, 'return await localTransport.runLocalProtectedStoreExclusive(',
+        ').reflectConfirmed(');
+    expect(local, contains('readTerminalSourceForCleanup('));
+    expect(local, contains('readReflectedForUpdate('));
+    expect(local, contains('readReceiptConfirmedSource('));
+    expect(local, contains('currentAuth: auth'));
+    expect(local, contains('capturedAuth: auth'));
+    expect(local, contains('stillCurrent: confirmationBindingCurrent'));
+    expect(local, contains('replayBinding: replayBinding'));
+    expect(local, contains('transport: localTransport'));
+    _expectBefore(local, '} finally {',
+        'await _cloudSyncV2LocalSourceOperations.release(');
+    expect(local, contains('localTransport.quiesceNativeOperations,'));
+    for (final forbidden in ['_cloudSyncV2AttachmentGate.run(',
+      'interlock.runExclusive(', 'runProtectedStoreExclusive(',
+      'ensureRecoveredBeforeWrite(', 'executor.', 'api.sendMessage(']) {
+      expect(local, isNot(contains(forbidden)));
+    }
+    _expectBefore(confirm,
+        'final reflectedAdmission = await reflectMutationReceiptLocally();',
+        'await _cloudSyncV2AttachmentGate.run<void>(');
+    final remote = _section(confirm, 'Future<void> processMutationReceipt()',
+        'await _cloudSyncV2AttachmentGate.run<void>(');
+    expect(remote, contains('await lifecycle.ensureRecoveredBeforeWrite();'));
+    expect(remote, contains('await interlock.runExclusive('));
+    expect(remote, contains('kind: CloudKitOperationKind.v2ReadWrite'));
+    expect(remote, contains('await executor.admitReflectedUpdate('));
+    expect(remote, contains('await transport.quiesceNativeOperations();'));
+    expect(remote, isNot(contains('.reflectConfirmed(')));
   });
 
   test('semantic attachment composition wires the read-only confirmed-parent bridge', () {
@@ -1459,13 +1731,13 @@ void main() {
     expect(reader, isNot(contains('box<CloudSemanticSnapshotEntity>')));
   });
 
-  test('mutation AfterGate keeps the original admission checks and protected interlock', () {
+  test('mutation preparation keeps admission fences and explicit local cleanup', () {
     final source = File(
       'lib/services/rustpush/rustpush_service.dart',
     ).readAsStringSync();
     final afterStart = source.indexOf(
       'Future<_CloudSyncV2LocalMutationContext> '
-      '_prepareCloudSyncV2LocalMutationAfterGate({',
+      '_prepareCloudSyncV2LocalMutationAfterAdmission({',
     );
     final methodEnd = source.indexOf(
       'Future<_CloudSyncV2LocalSendContext?> _captureCloudSyncV2LocalSend({',
@@ -1490,9 +1762,42 @@ void main() {
     expect(method, contains('cloud_sync_local_mutation_runtime_unavailable'));
     expect(method, contains('cloud_sync_local_mutation_auth_changed'));
     expect(method, contains('cloud_sync_local_mutation_owner_required'));
-    expect(method, contains('CloudKitOperationInterlock('));
-    expect(method, contains('exclusion: interlock'));
+    for (final fence in ['final expectedState = state;',
+      'final objectBox = Database.store;', 'final storagePath = statePath;',
+      '!objectBox.isClosed()', 'identical(objectBox, Database.store)',
+      'identical(expectedState, state)',
+      'identical(client, state?.icloudServices?.cloudMessagesClient)',
+      'storagePath == statePath', 'auth == null || !stillCurrent()',
+      'owner.owner != CloudKitWriterOwner.v2', 'authoritySnapshot: owner',
+      'authFence.requireCurrentBinding(auth);', 'journal.requireClaimedSubmission(']) {
+      expect(method, contains(fence));
+    }
+    expect(method, contains('transport: transport'));
     expect(method, contains('.prepareSubmission('));
+    _expectBefore(method, '.prepareSubmission(',
+        'journal.requireClaimedSubmission(');
+    _expectBefore(method, '} finally {',
+        'await _cloudSyncV2LocalSourceOperations.release(');
+    expect(method, contains('transport.quiesceNativeOperations,'));
+    expect(method, isNot(contains('CloudKitOperationInterlock(')));
+    expect(method, isNot(contains('exclusion:')));
+    expect(method, isNot(contains('runProtectedStoreExclusive(')));
+    expect(method, isNot(contains('ensureRecoveredBeforeWrite(')));
     expect(method, isNot(contains('_cloudSyncV2AttachmentGate.run(')));
   });
+}
+
+String _section(String source, String startMarker, String endMarker) {
+  final normalized = source.replaceAll('\r\n', '\n');
+  final start = normalized.indexOf(startMarker);
+  expect(start, greaterThanOrEqualTo(0), reason: startMarker);
+  final end = normalized.indexOf(endMarker, start);
+  expect(end, greaterThan(start), reason: endMarker);
+  return normalized.substring(start, end);
+}
+
+void _expectBefore(String source, String first, String second) {
+  final start = source.indexOf(first);
+  expect(start, greaterThanOrEqualTo(0), reason: first);
+  expect(source.indexOf(second), greaterThan(start), reason: second);
 }

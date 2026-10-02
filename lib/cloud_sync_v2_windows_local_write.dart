@@ -1186,7 +1186,6 @@ final class CloudSyncWindowsLocalWrite {
               authFence: fence,
               capturedAuth: auth,
               stillCurrent: current,
-              exclusion: interlock,
               transport: transport,
             ).prepare(
               identity: source,
@@ -1406,7 +1405,6 @@ final class CloudSyncWindowsLocalWrite {
         authFence: fence,
         capturedAuth: auth,
         stillCurrent: current,
-        exclusion: interlock,
         transport: transport,
       );
       await CloudProtectedPageLeaseLifecycle(

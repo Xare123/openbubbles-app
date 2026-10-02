@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:bluebubbles/database/models.dart';
@@ -17,11 +18,12 @@ const _descriptor = '<attachment><id>A</id></attachment>';
 void main() {
   late Directory directory;
   late Store store;
+  late ObjectBoxCloudKitWriterAuthority authority;
   late CloudSyncLocalSendJournal journal;
   late Chat chat;
 
   void provisionJournal() {
-    final authority = ObjectBoxCloudKitWriterAuthority.forTest(
+    authority = ObjectBoxCloudKitWriterAuthority.forTest(
       store: store,
       buildDecision: CloudKitWriterOwnership.resolve('v2'),
     );
@@ -70,9 +72,10 @@ void main() {
     CloudSyncLocalSendIdentity identity, {
     CloudSyncNativeAuthSnapshot? auth,
     bool current = true,
+    CloudProtectedPageLeaseTransport? stagingTransport,
   }) {
     final resolvedAuth = auth ?? _auth(Object());
-    CloudSyncNativeAuthSnapshot live = resolvedAuth;
+    CloudSyncNativeAuthSnapshot? live = resolvedAuth;
     final fence = CloudSyncLocalSendAuthFence(
       expected: resolvedAuth,
       capture: () async => live,
@@ -86,8 +89,7 @@ void main() {
       authFence: fence,
       capturedAuth: resolvedAuth,
       stillCurrent: () => current,
-      exclusion: exclusion,
-      transport: transport,
+      transport: stagingTransport ?? transport,
     );
     return _StagingHarness(
       staging: staging,
@@ -118,7 +120,7 @@ void main() {
     currentAuth: _auth(Object()),
   );
 
-  test('stage adopt commit run ordered under both gates', () async {
+  test('stage adopt commit run ordered under the local lease only', () async {
     final message = _attachmentMessage(chat);
     final identity = _attachmentIdentity(message, chat);
     saveAttachmentSubmission(message, identity);
@@ -130,8 +132,8 @@ void main() {
     var validations = 0;
     final expectedRef = _protectedSource(identity).protectedReference;
     h.transport.onCommit = (lease, retained) async {
-      expect(h.exclusion.held, isTrue);
-      expect(h.transport.held, isTrue);
+      expect(h.exclusion.held, isFalse);
+      expect(h.transport.localHeld, isTrue);
       expect(lease, _leaseReference);
       expect(retained, {expectedRef});
       expect(
@@ -144,8 +146,8 @@ void main() {
       stage: () async {
         stages++;
         order.add('stage');
-        expect(h.exclusion.held, isTrue);
-        expect(h.transport.held, isTrue);
+        expect(h.exclusion.held, isFalse);
+        expect(h.transport.localHeld, isTrue);
         return _protectedSource(identity);
       },
       validateWire: () async {
@@ -157,10 +159,10 @@ void main() {
     expect(result.encode(), _protectedSource(identity).encode());
     expect(stages, 1);
     expect(validations, 3);
-    expect(h.exclusion.kinds, [CloudKitOperationKind.v2ReadWrite]);
+    expect(h.exclusion.kinds, isEmpty);
+    expect(h.transport.networkRuns, 0);
     expect(order, [
-      'exclusion',
-      'transport',
+      'local',
       'validate',
       'stage',
       'validate',
@@ -169,7 +171,91 @@ void main() {
     ]);
     expect(adoptedSource(identity)!.encode(), result.encode());
     expect(h.exclusion.held, isFalse);
-    expect(h.transport.held, isFalse);
+    expect(h.transport.localHeld, isFalse);
+  });
+
+  test('attachment preparation finishes while network gates stay held', () async {
+    final message = _attachmentMessage(chat);
+    final identity = _attachmentIdentity(message, chat);
+    saveAttachmentSubmission(message, identity);
+    final h = harness(identity);
+    final entered = Completer<void>();
+    final releaseNetwork = Completer<void>();
+    final network = h.exclusion.runExclusive(
+      kind: CloudKitOperationKind.v2ReadWrite,
+      action: () => h.transport.runProtectedStoreExclusive(() async {
+        entered.complete();
+        await releaseNetwork.future;
+      }),
+    );
+    await entered.future;
+    try {
+      h.transport.onCommit = (_, _) async {
+        expect(h.exclusion.held && h.transport.networkHeld, isTrue);
+        expect(h.transport.localHeld, isTrue);
+        expect(
+          adoptedSource(identity)!.encode(),
+          _protectedSource(identity).encode(),
+        );
+      };
+      final result = await h.staging.prepare(
+        identity: identity,
+        stage: () async {
+          expect(h.exclusion.held && h.transport.networkHeld, isTrue);
+          expect(h.transport.localHeld, isTrue);
+          return _protectedSource(identity);
+        },
+        validateWire: () async {
+          expect(h.transport.localHeld, isTrue);
+          return true;
+        },
+      );
+      expect(result.encode(), _protectedSource(identity).encode());
+      expect(h.exclusion.held && h.transport.networkHeld, isTrue);
+      expect(h.exclusion.kinds, [CloudKitOperationKind.v2ReadWrite]);
+      expect(h.transport.networkRuns, 1);
+      expect(h.transport.localHeld, isFalse);
+      expect(h.transport.events, ['run', 'commit:$_leaseReference']);
+      expect(store.box<CloudSyncLocalSendIntentEntity>().getAll().single.state, 0);
+      expect(store.box<CloudOutboxOperationEntity>().count(), 0);
+    } finally {
+      releaseNetwork.complete();
+      await network;
+    }
+  });
+
+  test('attachment preparation rejects missing local capability', () async {
+    final message = _attachmentMessage(chat);
+    final identity = _attachmentIdentity(message, chat);
+    final messageId = saveAttachmentSubmission(message, identity);
+    final unsupported = _NetworkOnlyTransport();
+    final h = harness(identity, stagingTransport: unsupported);
+    var stages = 0;
+    var validations = 0;
+    await expectLater(
+      h.staging.prepare(
+        identity: identity,
+        stage: () async {
+          stages++;
+          return _protectedSource(identity);
+        },
+        validateWire: () async {
+          validations++;
+          return true;
+        },
+      ),
+      throwsA(
+        _stateFailure('cloud_sync_local_send_local_exclusion_unavailable'),
+      ),
+    );
+    expect(stages, 0);
+    expect(validations, 0);
+    expect(unsupported.networkRuns, 0);
+    expect(h.exclusion.kinds, isEmpty);
+    expect(adoptedSource(identity), isNull);
+    expect(store.box<Message>().get(messageId)!.stagingGuid, _guidA);
+    expect(store.box<CloudSyncLocalSendIntentEntity>().getAll().single.state, 0);
+    expect(store.box<CloudOutboxOperationEntity>().count(), 0);
   });
 
   test(
@@ -193,6 +279,11 @@ void main() {
         throwsA(_stateFailure('synthetic-commit-failure')),
       );
       expect(stages, 1);
+      expect(first.transport.events, isNot(contains('rollback:$_leaseReference')));
+      expect(
+        adoptedSource(identity)!.encode(),
+        _protectedSource(identity).encode(),
+      );
       await reopen();
       final second = harness(identity);
       final result = await second.staging.prepare(
@@ -256,6 +347,81 @@ void main() {
     expect(adoptedSource(identity), isNull);
   });
 
+  for (final fault in ['missing-auth', 'not-current']) {
+    test('local attachment preparation rejects $fault before staging', () async {
+      final message = _attachmentMessage(chat);
+      final identity = _attachmentIdentity(message, chat);
+      saveAttachmentSubmission(message, identity);
+      final h = harness(identity, current: fault != 'not-current');
+      if (fault == 'missing-auth') h.flipAuth(null);
+      var stages = 0;
+      await expectLater(
+        h.staging.prepare(
+          identity: identity,
+          stage: () async {
+            stages++;
+            return _protectedSource(identity);
+          },
+          validateWire: () async => true,
+        ),
+        throwsA(_stateFailure('cloud_sync_local_send_identity_changed')),
+      );
+      expect(stages, 0);
+      expect(h.transport.events, ['run']);
+      expect(h.transport.localHeld, isFalse);
+      expect(adoptedSource(identity), isNull);
+      expect(store.box<CloudSyncLocalSendIntentEntity>().getAll().single.state, 0);
+    });
+  }
+
+  for (final point in ['stage', 'commit']) {
+    test(
+      'local attachment owner change during $point preserves source ownership',
+      () async {
+        final message = _attachmentMessage(chat);
+        final identity = _attachmentIdentity(message, chat);
+        saveAttachmentSubmission(message, identity);
+        final h = harness(identity);
+        void changeOwnerEpoch() => authority.markMutationUnknown(
+          authority.issuePermit(_scope, expectedOwner: CloudKitWriterOwner.v2),
+          now: _time(3),
+        );
+        if (point == 'commit') {
+          h.transport.onCommit = (_, _) async => changeOwnerEpoch();
+        }
+        await expectLater(
+          h.staging.prepare(
+            identity: identity,
+            stage: () async {
+              if (point == 'stage') changeOwnerEpoch();
+              return _protectedSource(identity);
+            },
+            validateWire: () async => true,
+          ),
+          throwsA(_stateFailure('cloud_sync_local_send_owner_changed')),
+        );
+        final intent = store.box<CloudSyncLocalSendIntentEntity>().getAll().single;
+        expect(intent.state, 0);
+        expect(intent.idsConfirmationVersion, 0);
+        expect(
+          intent.protectedSourceBinding,
+          point == 'stage' ? isNull : _protectedSource(identity).encode(),
+        );
+        expect(
+          h.transport.events.contains('rollback:$_leaseReference'),
+          point == 'stage',
+        );
+        expect(
+          h.transport.events.contains('commit:$_leaseReference'),
+          point == 'commit',
+        );
+        expect(h.transport.localHeld, isFalse);
+        expect(h.transport.networkRuns, 0);
+        expect(store.box<CloudOutboxOperationEntity>().count(), 0);
+      },
+    );
+  }
+
   test('post-commit wire mutation retains the owned binding', () async {
     final message = _attachmentMessage(chat);
     final identity = _attachmentIdentity(message, chat);
@@ -278,13 +444,13 @@ void main() {
   });
 
   test(
-    'busy interlock stages nothing and retains the pending message',
+    'busy local lease stages nothing and retains the pending message',
     () async {
       final message = _attachmentMessage(chat);
       final identity = _attachmentIdentity(message, chat);
       final messageId = saveAttachmentSubmission(message, identity);
       final h = harness(identity);
-      h.exclusion.busy = true;
+      h.transport.localBusy = true;
       var stages = 0;
       var validations = 0;
       await expectLater(
@@ -304,6 +470,8 @@ void main() {
       expect(stages, 0);
       expect(validations, 0);
       expect(h.transport.events, isEmpty);
+      expect(h.exclusion.kinds, isEmpty);
+      expect(h.transport.networkRuns, 0);
       final retained = store.box<Message>().get(messageId)!;
       expect(retained.stagingGuid, _guidA);
       expect(adoptedSource(identity), isNull);
@@ -429,7 +597,7 @@ final class _StagingHarness {
   final CloudSyncLocalSendSourceStaging staging;
   final _FakeExclusion exclusion;
   final _FakeTransport transport;
-  final void Function(CloudSyncNativeAuthSnapshot next) flipAuth;
+  final void Function(CloudSyncNativeAuthSnapshot? next) flipAuth;
 }
 
 final class _FakeExclusion implements CloudKitOperationExclusion {
@@ -445,7 +613,7 @@ final class _FakeExclusion implements CloudKitOperationExclusion {
   }) async {
     kinds.add(kind);
     log?.add('exclusion');
-    if (busy) throw StateError('cloudkit_operation_busy');
+    if (busy || held) throw StateError('cloudkit_operation_busy');
     held = true;
     try {
       return await action();
@@ -458,22 +626,42 @@ final class _FakeExclusion implements CloudKitOperationExclusion {
   void poisonUntilProcessRestart() {}
 }
 
-final class _FakeTransport implements CloudProtectedPageLeaseTransport {
+final class _FakeTransport
+    implements
+        CloudProtectedPageLeaseTransport,
+        CloudProtectedLocalLifecycleTransport {
   List<String>? log;
   bool failNextCommit = false;
-  bool held = false;
+  bool localHeld = false;
+  bool localBusy = false;
+  bool networkHeld = false;
+  int networkRuns = 0;
   Future<void> Function(String leaseReference, Set<String> retained)? onCommit;
   final List<String> events = [];
 
   @override
   Future<T> runProtectedStoreExclusive<T>(Future<T> Function() action) async {
-    events.add('run');
-    log?.add('transport');
-    held = true;
+    networkRuns++;
+    expect(localHeld, isFalse);
+    if (networkHeld) throw StateError('unexpected_network_lifecycle_entry');
+    networkHeld = true;
     try {
       return await action();
     } finally {
-      held = false;
+      networkHeld = false;
+    }
+  }
+
+  @override
+  Future<T> runLocalProtectedStoreExclusive<T>(Future<T> Function() action) async {
+    if (localBusy || localHeld) throw StateError('synthetic_local_lease_busy');
+    events.add('run');
+    log?.add('local');
+    localHeld = true;
+    try {
+      return await action();
+    } finally {
+      localHeld = false;
     }
   }
 
@@ -482,6 +670,7 @@ final class _FakeTransport implements CloudProtectedPageLeaseTransport {
     String leaseReference,
     Set<String> retainedReferences,
   ) async {
+    expect(localHeld, isTrue);
     events.add('commit:$leaseReference');
     log?.add('commit');
     await onCommit?.call(leaseReference, retainedReferences);
@@ -493,6 +682,7 @@ final class _FakeTransport implements CloudProtectedPageLeaseTransport {
 
   @override
   Future<void> rollbackProtectedPageLease(String leaseReference) async {
+    expect(localHeld, isTrue);
     events.add('rollback:$leaseReference');
     log?.add('rollback');
   }
@@ -509,15 +699,34 @@ final class _FakeTransport implements CloudProtectedPageLeaseTransport {
   ) => throw UnimplementedError();
 
   @override
-  Future<void> acknowledgeCommittedPageLease(String leaseReference) async {}
+  Future<void> acknowledgeCommittedPageLease(String leaseReference) =>
+      throw StateError('unexpected lease acknowledgement');
 
   @override
-  Future<int> retireProtectedReferences(Set<String> references) async => 0;
+  Future<int> retireProtectedReferences(Set<String> references) =>
+      throw StateError('unexpected reference retirement');
 
   @override
   Future<CloudProtectedGarbageCollectionResult> collectProtectedGarbage(
     CloudProtectedReferenceSnapshot liveReferences,
   ) => throw UnimplementedError();
+}
+
+final class _NetworkOnlyTransport implements CloudProtectedPageLeaseTransport {
+  int networkRuns = 0;
+
+  @override
+  String get protectedPageLeaseRecoveryIdentity => _protectedStore;
+
+  @override
+  Future<T> runProtectedStoreExclusive<T>(Future<T> Function() action) {
+    networkRuns++;
+    throw StateError('unexpected_network_lifecycle_entry');
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) =>
+      throw StateError('unexpected native operation');
 }
 
 CloudSyncLocalSendIdentity _attachmentIdentity(Message message, Chat chat) =>

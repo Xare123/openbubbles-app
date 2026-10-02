@@ -209,6 +209,8 @@ void main() {
 
   test('mutation predecessor rejects drift and unfinished readback', () {
     f.db.box<Message>().put(f.parent..isFromMe = true);
+    final mapCount = f.db.box<CloudRecordMapEntity>().count();
+    final outboxCount = f.db.box<CloudOutboxOperationEntity>().count();
     CloudSyncMessageMutationPredecessor resolve({String? targetGuidHash}) =>
         requireCloudSyncMessageMutationPredecessor(
           store: f.db,
@@ -236,6 +238,28 @@ void main() {
       ..pendingUpdatePredecessorEtagHash = _etag;
     f.db.box<CloudRecordMapEntity>().put(mapping);
     expect(resolve, _blocked);
+    try {
+      resolve();
+      fail('An unfinished predecessor must defer the accepted mutation');
+    } on CloudSyncFailure catch (error) {
+      expect(error.category, CloudFailureCategory.dependency);
+      expect(error.safeCode, 'cloud_sync_local_mutation_predecessor_not_ready');
+      expect(cloudSyncV2MutationPredecessorNeedsRetry(error), isTrue);
+    }
+    expect(f.db.box<CloudRecordMapEntity>().count(), mapCount);
+    expect(f.db.box<CloudOutboxOperationEntity>().count(), outboxCount);
+    final retained = f.db.box<CloudRecordMapEntity>().get(mapping.id)!;
+    expect(retained.protectedReadbackLeaseReference, mapping.protectedReadbackLeaseReference);
+    expect(retained.pendingUpdateOperationId, mapping.pendingUpdateOperationId);
+    // Simulate exact predecessor settlement, not a second IDS submission.
+    f.db.box<CloudRecordMapEntity>().put(retained
+      ..protectedReadbackLeaseReference = null
+      ..pendingUpdateOperationId = null
+      ..pendingUpdatePredecessorEtagHash = null);
+    final resumed = resolve();
+    expect(resumed.recordMapping.serverRecordIdHash, _record);
+    expect(resumed.recordMapping.etagHash, _etag);
+    expect(f.db.box<CloudOutboxOperationEntity>().count(), outboxCount);
   });
 
   test('partial association fields cannot fall through to plaintext', () {

@@ -465,6 +465,11 @@ const _cloudSyncV2SafeFailureCodes = <String>{
   'cloud_sync_local_send_owner_required',
   'cloud_sync_local_send_owner_changed',
   'cloud_sync_local_send_identity_changed',
+  'cloud_sync_local_send_local_exclusion_unavailable',
+  'cloud_sync_local_mutation_local_exclusion_unavailable',
+  'cloud_sync_local_source_quiescing',
+  'cloud_sync_local_source_quiescence_failed',
+  'cloud_sync_local_source_quiescence_timeout',
   'cloud_sync_local_send_source_changed',
   'cloud_sync_local_send_origin_missing',
   'cloud_sync_local_send_intent_changed',
@@ -931,6 +936,16 @@ const _cloudSyncV2SafeFailureCodes = <String>{
   'unsupported_semantic_persistence_lane',
   'unsupported_platform',
 };
+
+/// Retry only an accepted mutation receipt whose exact predecessor is not ready.
+/// This is not permission to retry IDS submission or an expired Undo request.
+bool cloudSyncV2MutationPredecessorNeedsRetry(Object error) {
+  const code = 'cloud_sync_local_mutation_predecessor_not_ready';
+  return error is CloudSyncFailure
+      ? error.category == CloudFailureCategory.dependency &&
+            error.safeCode == code
+      : error is StateError && error.message == code;
+}
 
 /// Returns only a fixed diagnostic code safe for logs and user-visible copy.
 ///

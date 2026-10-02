@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -174,7 +175,7 @@ void main() {
   late _MutationTransport transport;
   late _MutationExclusion exclusion;
   late CloudSyncNativeAuthSnapshot stagingAuth;
-  late CloudSyncNativeAuthSnapshot capturedNow;
+  late CloudSyncNativeAuthSnapshot? capturedNow;
   late bool current;
   late int stageCalls;
   late int restoreCalls;
@@ -200,7 +201,7 @@ void main() {
       api.MessageInst wire,
     })
   >
-  prepare() =>
+  prepare({CloudProtectedPageLeaseTransport? stagingTransport}) =>
       CloudSyncLocalMutationSourceStaging(
         journal: journal,
         authFence: CloudSyncLocalSendAuthFence(
@@ -210,19 +211,18 @@ void main() {
         ),
         capturedAuth: stagingAuth,
         stillCurrent: () => current,
-        exclusion: exclusion,
-        transport: transport,
+        transport: stagingTransport ?? transport,
       ).prepareSubmission(
         localMessageId: target.id!,
         identity: identity,
         stage: () async {
-          expect(exclusion.held && transport.held, isTrue);
+          expect(transport.localHeld, isTrue);
           stageCalls++;
           await duringStage?.call();
           return source;
         },
         restore: (committed) async {
-          expect(exclusion.held && transport.held, isTrue);
+          expect(transport.localHeld, isTrue);
           expect(committed.encode(), source.encode());
           expect(transport.commits, isNotEmpty);
           restoreCalls++;
@@ -241,21 +241,24 @@ void main() {
         ),
         capturedAuth: stagingAuth,
         stillCurrent: () => current,
-        exclusion: exclusion,
         transport: transport,
       ).submitConfirmed(
         localMessageId: target.id!,
         identity: identity,
         stage: () async {
+          expect(transport.localHeld, isTrue);
           stageCalls++;
+          await duringStage?.call();
           return source;
         },
         restore: (_) async {
+          expect(transport.localHeld, isTrue);
           restoreCalls++;
-          return _wire();
+          await duringRestore?.call();
+          return restoredWire?.call() ?? _wire();
         },
         send: (wire, original) {
-          expect(exclusion.held || transport.held, isFalse);
+          expect(transport.localHeld, isFalse);
           expect(original.encode(), source.encode());
           expect(
             CloudSyncLocalMutationIdentity.captureWire(wire)!.sourceSha256,
@@ -384,7 +387,7 @@ void main() {
       expect(row(prepared.intentId).state, 1);
       expect(stageCalls, 1);
       expect(restoreCalls, 1);
-      expect(exclusion.held || transport.held, isFalse);
+      expect(transport.localHeld, isFalse);
       expect(
         journal.recordNativeReceiptIfTracked(
           receipt: _receipt(identity, source),
@@ -442,7 +445,7 @@ void main() {
       expect(store.box<CloudSyncLocalMutationIntentEntity>().count(), 0);
       expect(transport.rollbacks, [source.leaseReference]);
       expect(transport.commits, isEmpty);
-      expect(exclusion.held || transport.held, isFalse);
+      expect(transport.localHeld, isFalse);
     },
   );
 
@@ -496,15 +499,120 @@ void main() {
     },
   );
 
-  test('busy exclusion or wrong store prevents native staging', () async {
-    exclusion.busy = true;
+  test('busy local lease or wrong store prevents native staging', () async {
+    transport.localBusy = true;
     await expectLater(prepare(), throwsStateError);
-    exclusion.busy = false;
+    transport.localBusy = false;
     transport.storeIdentity = 'obcs2.store.${'Z' * 43}';
     await expectLater(prepare(), throwsA(_failure('protected_source_changed')));
     expect(stageCalls, 0);
+    expect(transport.localRuns, 0);
+    expect(transport.networkRuns, 0);
+    expect(exclusion.calls, 0);
     expect(store.box<CloudSyncLocalMutationIntentEntity>().count(), 0);
   });
+
+  test('mutation preparation rejects missing local capability', () async {
+    final unsupported = _MutationNetworkOnlyTransport();
+    await expectLater(
+      prepare(stagingTransport: unsupported),
+      throwsA(_failure('local_exclusion_unavailable')),
+    );
+    expect(stageCalls, 0);
+    expect(restoreCalls, 0);
+    expect(unsupported.networkRuns, 0);
+    expect(exclusion.calls, 0);
+    expect(transport.commits, isEmpty);
+    expect(transport.rollbacks, isEmpty);
+    expect(store.box<CloudSyncLocalMutationIntentEntity>().count(), 0);
+    expect(store.box<Message>().get(target.id!)!.text, 'original');
+  });
+
+  for (final fault in ['missing-auth', 'not-current']) {
+    test(
+      'local mutation submission rejects $fault before staging or sending',
+      () async {
+        if (fault == 'missing-auth') capturedNow = null;
+        if (fault == 'not-current') current = false;
+        var sends = 0;
+        await expectLater(
+          submit(() async {
+            sends++;
+            return _receipt(identity, source);
+          }),
+          throwsStateError,
+        );
+        expect(sends, 0);
+        expect(stageCalls, 0);
+        expect(restoreCalls, 0);
+        expect(transport.commits, isEmpty);
+        expect(transport.rollbacks, isEmpty);
+        expect(transport.localHeld, isFalse);
+        expect(transport.networkRuns, 0);
+        expect(store.box<CloudSyncLocalMutationIntentEntity>().count(), 0);
+      },
+    );
+  }
+
+  for (final fault in [
+    'target-stage',
+    'target-restore',
+    'owner-stage',
+    'owner-restore',
+    'commit',
+  ]) {
+    test(
+      'local mutation $fault cannot submit or roll back an adopted source',
+      () async {
+        Future<void> changeTargetOrOwner() async {
+          if (fault.startsWith('target')) {
+            target.text = 'newer';
+            store.box<Message>().put(target);
+          } else {
+            authority.markMutationUnknown(
+              authority.issuePermit(_scope, expectedOwner: CloudKitWriterOwner.v2),
+              now: _time(3),
+            );
+          }
+        }
+        if (fault.endsWith('stage')) duringStage = changeTargetOrOwner;
+        if (fault.endsWith('restore')) duringRestore = changeTargetOrOwner;
+        transport.failCommit = fault == 'commit';
+        var sends = 0;
+        await expectLater(
+          submit(() async {
+            sends++;
+            return _receipt(identity, source);
+          }),
+          fault == 'commit'
+              ? throwsStateError
+              : throwsA(_failure(
+                  fault.startsWith('target') ? 'target_changed' : 'owner_changed',
+                )),
+        );
+        final beforeAdoption = fault.endsWith('stage');
+        final rows = store.box<CloudSyncLocalMutationIntentEntity>().getAll();
+        expect(sends, 0);
+        expect(rows, beforeAdoption ? isEmpty : hasLength(1));
+        if (!beforeAdoption) expect(rows.single.state, 0);
+        expect(
+          transport.rollbacks,
+          beforeAdoption ? [source.leaseReference] : isEmpty,
+        );
+        expect(
+          transport.commits,
+          beforeAdoption ? isEmpty : [source.leaseReference],
+        );
+        expect(
+          store.box<Message>().get(target.id!)!.text,
+          fault.startsWith('target') ? 'newer' : 'original',
+        );
+        expect(transport.localHeld, isFalse);
+        expect(transport.networkRuns, 0);
+        expect(store.box<CloudOutboxOperationEntity>().count(), 0);
+      },
+    );
+  }
 
   test(
     'receipt routing keeps untracked and attachment receipts separate',
@@ -980,6 +1088,7 @@ void main() {
     int id, {
     api.CloudSyncNativeSendReceipt? receipt,
     Future<api.MessageInst> Function()? restore,
+    CloudProtectedPageLeaseTransport? stagingTransport,
   }) =>
       CloudSyncLocalMutationSourceStaging(
         journal: journal,
@@ -990,18 +1099,91 @@ void main() {
         ),
         capturedAuth: stagingAuth,
         stillCurrent: () => current,
-        exclusion: exclusion,
-        transport: transport,
+        transport: stagingTransport ?? transport,
       ).reflectConfirmed(
         intentId: id,
         source: source,
         receipt: receipt ?? _receipt(identity, source),
         restore: (originalSource) async {
-          expect(exclusion.held && transport.held, isTrue);
+          expect(transport.localHeld, isTrue);
           expect(originalSource.encode(), source.encode());
           return restore == null ? _wire() : await restore();
         },
       );
+
+  test('local submission and reflection finish while network gates stay held', () async {
+    final entered = Completer<void>();
+    final releaseNetwork = Completer<void>();
+    final network = exclusion.runExclusive(
+      kind: CloudKitOperationKind.v2ReadWrite,
+      action: () => transport.runProtectedStoreExclusive(() async {
+        entered.complete();
+        await releaseNetwork.future;
+      }),
+    );
+    await entered.future;
+    var sends = 0;
+    try {
+      duringStage = duringRestore = () async {
+        expect(exclusion.held && transport.networkHeld, isTrue);
+        expect(transport.localHeld, isTrue);
+      };
+      final id = await submit(() async {
+        expect(exclusion.held && transport.networkHeld, isTrue);
+        expect(transport.localHeld, isFalse);
+        sends++;
+        return _receipt(identity, source);
+      });
+      expect(row(id).state, 2);
+      await reflectSource(id, restore: () async {
+        expect(exclusion.held && transport.networkHeld, isTrue);
+        expect(transport.localHeld, isTrue);
+        return _wire();
+      });
+      expect(exclusion.held && transport.networkHeld, isTrue);
+      expect(exclusion.calls, 1);
+      expect(transport.networkRuns, 1);
+      expect(transport.localRuns, 2);
+      expect(transport.localHeld, isFalse);
+      expect(stageCalls, 1);
+      expect(restoreCalls, 1);
+      expect(sends, 1);
+      expect(row(id).state, 3);
+      expect(store.box<Message>().get(target.id!)!.text, 'replacement');
+      expect(transport.commits, [source.leaseReference]);
+      expect(transport.rollbacks, isEmpty);
+      expect(transport.acknowledgements, 0);
+      expect(store.box<CloudOutboxOperationEntity>().count(), 0);
+    } finally {
+      releaseNetwork.complete();
+      await network;
+    }
+  });
+
+  test('reflection rejects missing local capability and retains proof', () async {
+    final id = adopt();
+    claim(id);
+    confirm(id);
+    final proof = row(id).idsReceiptBindingSha256;
+    final unsupported = _MutationNetworkOnlyTransport();
+    var restores = 0;
+    await expectLater(
+      reflectSource(id, stagingTransport: unsupported, restore: () async {
+        restores++;
+        return _wire();
+      }),
+      throwsA(_failure('local_exclusion_unavailable')),
+    );
+    expect(restores, 0);
+    expect(unsupported.networkRuns, 0);
+    expect(exclusion.calls, 0);
+    expect(row(id).state, 2);
+    expect(row(id).idsReceiptBindingSha256, proof);
+    expect(store.box<Message>().get(target.id!)!.text, 'original');
+    expect(transport.rollbacks, isEmpty);
+    expect(transport.acknowledgements, 0);
+    expect(store.box<CloudOutboxOperationEntity>().count(), 0);
+  });
 
   // Real source adoption/receipt/reflection followed by synthetic completed
   // operation rows. This tests a read-only proof, not remote completion itself.
@@ -1494,7 +1676,7 @@ void main() {
         );
         expect(store.box<CloudOutboxOperationEntity>().count(), 0);
         expect(transport.acknowledgements, 0);
-        expect(exclusion.held || transport.held, isFalse);
+        expect(transport.localHeld, isFalse);
         capturedNow = stagingAuth;
         await reopen();
         expect(
@@ -1931,11 +2113,13 @@ class _NoProtector implements CloudSyncProtector {
 final class _MutationExclusion implements CloudKitOperationExclusion {
   bool held = false;
   bool busy = false;
+  int calls = 0;
   @override
   Future<T> runExclusive<T>({
     required CloudKitOperationKind kind,
     required CloudKitOperationBody<T> action,
   }) async {
+    calls++;
     expect(kind, CloudKitOperationKind.v2ReadWrite);
     if (busy || held) throw StateError('cloudkit_operation_busy');
     held = true;
@@ -1950,8 +2134,15 @@ final class _MutationExclusion implements CloudKitOperationExclusion {
   void poisonUntilProcessRestart() => throw StateError('unexpected poison');
 }
 
-final class _MutationTransport implements CloudProtectedPageLeaseTransport {
-  bool held = false;
+final class _MutationTransport
+    implements
+        CloudProtectedPageLeaseTransport,
+        CloudProtectedLocalLifecycleTransport {
+  bool localHeld = false;
+  bool localBusy = false;
+  bool networkHeld = false;
+  int networkRuns = 0;
+  int localRuns = 0;
   bool failCommit = false;
   int acknowledgements = 0;
   String storeIdentity = 'obcs2.store.${'A' * 43}';
@@ -1961,17 +2152,32 @@ final class _MutationTransport implements CloudProtectedPageLeaseTransport {
   String get protectedPageLeaseRecoveryIdentity => storeIdentity;
   @override
   Future<T> runProtectedStoreExclusive<T>(Future<T> Function() action) async {
-    held = true;
+    networkRuns++;
+    expect(localHeld, isFalse);
+    if (networkHeld) throw StateError('unexpected_network_lifecycle_entry');
+    networkHeld = true;
     try {
       return await action();
     } finally {
-      held = false;
+      networkHeld = false;
+    }
+  }
+
+  @override
+  Future<T> runLocalProtectedStoreExclusive<T>(Future<T> Function() action) async {
+    if (localBusy || localHeld) throw StateError('synthetic_local_lease_busy');
+    localRuns++;
+    localHeld = true;
+    try {
+      return await action();
+    } finally {
+      localHeld = false;
     }
   }
 
   @override
   Future<void> commitProtectedPageLease(String lease, Set<String> refs) async {
-    expect(held, isTrue);
+    expect(localHeld, isTrue);
     expect(refs, {'obcs2.ref.${'B' * 43}'});
     commits.add(lease);
     if (failCommit) throw StateError('synthetic_commit_failure');
@@ -1979,13 +2185,31 @@ final class _MutationTransport implements CloudProtectedPageLeaseTransport {
 
   @override
   Future<void> rollbackProtectedPageLease(String lease) async {
-    expect(held, isTrue);
+    expect(localHeld, isTrue);
     rollbacks.add(lease);
   }
 
   @override
   Future<void> acknowledgeCommittedPageLease(String lease) async {
     acknowledgements++;
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) =>
+      throw StateError('unexpected native call');
+}
+
+final class _MutationNetworkOnlyTransport
+    implements CloudProtectedPageLeaseTransport {
+  int networkRuns = 0;
+
+  @override
+  String get protectedPageLeaseRecoveryIdentity => 'obcs2.store.${'A' * 43}';
+
+  @override
+  Future<T> runProtectedStoreExclusive<T>(Future<T> Function() action) {
+    networkRuns++;
+    throw StateError('unexpected_network_lifecycle_entry');
   }
 
   @override

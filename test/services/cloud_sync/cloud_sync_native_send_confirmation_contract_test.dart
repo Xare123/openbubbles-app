@@ -120,7 +120,7 @@ void main() {
     expect(mutation, contains('_scheduleCloudSyncV2MessageUpdateRetry(delay)'));
     final waiting = mutation.substring(
       mutation.indexOf(
-        "if (error.message != 'cloud_sync_local_mutation_predecessor_not_ready')",
+        'if (!cloudSyncV2MutationPredecessorNeedsRetry(error))',
       ),
       mutation.indexOf('await transport.quiesceNativeOperations();'),
     );
@@ -152,7 +152,7 @@ void main() {
     expect(source, contains('return stillRunning;'));
   });
 
-  test('active archival defers only after durable mutation acceptance', () {
+  test('active archival defers only after durable local mutation reflection', () {
     final start = source.indexOf(
       'if (source?.kind == api.CloudSyncNativeSendSourceKind.mutation)',
     );
@@ -161,12 +161,16 @@ void main() {
       source.indexOf('receiptSource =', start),
     );
     final journaled = mutation.indexOf('recordNativeReceiptIntentIfTracked(');
-    final defer = mutation.indexOf('if (replayBinding == null &&');
+    final reflect = mutation.indexOf('await reflectMutationReceiptLocally()');
+    final refresh = mutation.indexOf('await ah.handleUpdatedMessage(localChat');
+    final defer = mutation.indexOf('if (_cloudSyncV2MessageUpdateInFlight != null ||');
     expect(journaled, greaterThanOrEqualTo(0));
-    expect(defer, greaterThan(journaled));
+    expect(reflect, greaterThan(journaled));
+    expect(refresh, greaterThan(reflect));
+    expect(defer, greaterThan(refresh));
     final handoff = mutation.substring(
       defer,
-      mutation.indexOf('final cloudStore'),
+      mutation.indexOf('final updateCompletion', defer),
     );
     expect(handoff, contains('_cloudSyncV2DeveloperRuntimeAllowed'));
     expect(handoff, contains('_cloudSyncV2AutomaticArchiveActive'));
@@ -176,6 +180,47 @@ void main() {
     expect(handoff, isNot(contains('cloudSyncAcknowledgeNativeSendReceipt')));
     expect(handoff, isNot(contains('markExactReadbackConfirmed')));
     expect(handoff, isNot(contains('sendMsg(')));
+  });
+
+  test('local receipt reflection owns its lifetime without remote recovery', () {
+    final start = source.indexOf(
+      'Future<CloudSyncLocalMutationAdmissionSource?> reflectMutationReceiptLocally()',
+    );
+    expect(start, greaterThanOrEqualTo(0));
+    final local = source.substring(start,
+        source.indexOf('final reflectedAdmission =', start));
+    expect(local, contains('_cloudSyncV2LocalSourceOperations.run('));
+    expect(local, contains('_serviceClosing || !confirmationBindingCurrent()'));
+    expect(local, contains('await validateMutationIdentity();'));
+    expect(local, contains('localTransport.runLocalProtectedStoreExclusive('));
+    expect(local, contains('transport: localTransport'));
+    expect(local, contains('.reflectConfirmed('));
+    expect(local, contains('readTerminalSourceForCleanup('));
+    expect(local, contains('_cloudSyncV2LocalSourceOperations.release('));
+    expect(local, contains('localTransport.quiesceNativeOperations'));
+    for (final forbidden in [
+      '_cloudSyncV2AttachmentGate.run', 'ensureRecoveredBeforeWrite(',
+      'executor.runOnce(', 'sendMsg(', 'markExactReadbackConfirmed(',
+    ]) {
+      expect(local, isNot(contains(forbidden)), reason: forbidden);
+    }
+  });
+
+  test('native tracked dispatch joins teardown without locking history', () {
+    final start = source.indexOf('Future<bool> sendMsg(');
+    final send = source.substring(start, source.indexOf('Future<Chat> createChat(', start));
+    expect(send, contains('final receiptContext = nativeReceiptContext?.call();'));
+    expect(send, contains('Future<bool> dispatchNative() => api.send('));
+    expect(send, contains('receiptContext == null'));
+    expect(send, contains('pushService._cloudSyncV2LocalSourceOperations.run('));
+    expect(send, contains('!identical(sendState, pushService.state)'));
+    expect(send, contains('!identical(sendStore, Database.store)'));
+    expect(send, contains('sendStorage != pushService.statePath'));
+    expect(send, contains('action: dispatchNative'));
+    expect(send, contains('return stillRunning;'));
+    expect(send, isNot(contains('runLocalProtectedStoreExclusive(')));
+    expect(send, isNot(contains('_cloudSyncV2AttachmentGate.run(')));
+    expect(send, isNot(contains('cloudSyncAcknowledgeNativeSendReceipt(')));
   });
 
   test(

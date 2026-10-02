@@ -3220,7 +3220,7 @@ void main() {
   );
 
   test(
-    'smaller foreground sessions release and resume exact cursors with debt',
+    'bounded sessions release and resume exact cursors with debt',
     () async {
       const zones = CloudSyncManualSemanticPullSampler.zones;
       final stores = {for (final zone in zones) zone: InMemoryCloudSyncStore()};
@@ -3236,6 +3236,9 @@ void main() {
       final tokens = {for (final zone in zones) zone: <String?>[]};
       final replayLimits = <int>[];
       final reports = <CloudSyncSemanticPullReport>[];
+      expect(CloudSyncReadBudget.background.pagesPerPass, 1);
+      expect(CloudSyncReadBudget.background.retainedReplayEntries, 4);
+      expect(CloudSyncReadBudget.background.freshEntriesPerPass, 50);
       CloudSyncManualSemanticPullSampler makeSampler(
         CloudSyncReadBudget budget,
       ) => _sampler(
@@ -3282,6 +3285,7 @@ void main() {
             ),
       );
       final budgets = [
+        CloudSyncReadBudget.background,
         CloudSyncReadBudget.regular,
         CloudSyncReadBudget.standard,
       ];
@@ -3317,8 +3321,18 @@ void main() {
           action: () async {},
         );
       }
-      expect(reports, hasLength(2));
-      expect(replayLimits, [32, 32, 32, 150, 150, 150]);
+      expect(reports, hasLength(3));
+      expect(replayLimits, [4, 4, 4, 32, 32, 32, 150, 150, 150]);
+      final expectedReplayLimits = [
+        for (final budget in budgets)
+          for (var i = 0; i < zones.length; i++)
+            budget.retainedReplayEntries,
+      ];
+      expect(replayLimits, expectedReplayLimits);
+      expect(
+        reports.map((report) => report.pageLimit).toList(),
+        budgets.map((budget) => budget.pagesPerPass).toList(),
+      );
       for (final zone in zones) {
         expect(tokens[zone], [
           'seed-retained-token-$zone',
@@ -3326,12 +3340,13 @@ void main() {
           'page-2',
           'page-3',
           'page-4',
+          'page-5',
         ]);
         final checkpoint = await stores[zone]!.readCheckpoint(
           _semanticScope(zone),
         );
-        expect(checkpoint.fetchedToken, 'page-5');
-        expect(checkpoint.fetchedSequence, 450);
+        expect(checkpoint.fetchedToken, 'page-6');
+        expect(checkpoint.fetchedSequence, 500);
         expect(checkpoint.pendingBatchId, isNull);
         expect(
           await stores[zone]!.readRetainedUnprojectedInboxCount(

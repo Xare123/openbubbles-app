@@ -92,6 +92,71 @@ void main() {
     expect(controller, contains('cancelCatchUp: sampler.cancelActiveCatchUp'));
   });
 
+  test('bounded internal reads share one background budget and one pass', () {
+    final service = File(
+      'lib/services/rustpush/rustpush_service.dart',
+    ).readAsStringSync();
+    final progress = File(
+      'lib/services/rustpush/cloud_sync/cloud_sync_progress.dart',
+    ).readAsStringSync();
+    final budget = File(
+      'lib/services/rustpush/cloud_sync/cloud_sync_read_budget.dart',
+    ).readAsStringSync();
+    // One shared fallback owns the automatic/internal budget: Profile Regular
+    // and Turbo speeds resolve through their existing per-speed budgets, and
+    // only the progress-absent path falls back to the background budget.
+    expect(
+      service,
+      contains('final readBudget = progress?.speed.readBudget ?? CloudSyncReadBudget.background;'),
+    );
+    expect(service, contains('readBudget: readBudget,'));
+    final adapterStart = service.indexOf(
+      'final adapter = CloudSyncProductionSemanticPullAdapter(',
+    );
+    expect(adapterStart, greaterThanOrEqualTo(0));
+    final adapterWindow = service.substring(adapterStart, adapterStart + 300);
+    expect(adapterWindow, contains('readBudget: readBudget,'));
+    final writerStart = service.indexOf(
+      'final reportWriter = CloudSyncSemanticPullReportFileWriter(',
+    );
+    expect(writerStart, greaterThanOrEqualTo(0));
+    final writerWindow = service.substring(writerStart, writerStart + 400);
+    expect(writerWindow, contains('readBudget: readBudget,'));
+    expect(
+      budget,
+      contains('static const background = CloudSyncReadBudget('),
+    );
+    expect(budget, contains('retainedReplayEntries: 4,'));
+    expect(
+      progress,
+      contains('CloudSyncReadBudget.regular'),
+    );
+    expect(
+      progress,
+      contains('CloudSyncReadBudget.standard'),
+    );
+    // Automatic catch-up without Profile progress skips the exhaustive
+    // retained sweep; explicit Profile requests still pass progress through.
+    expect(service, contains('sweepRetainedAtHead: progress != null,'));
+    // Internal readers hold exactly one pass under one lock: the Android
+    // metadata wake and the progress-absent automatic default.
+    final wakeStart = service.indexOf(
+      'runCloudSyncV2AndroidBackgroundReadOnly({',
+    );
+    expect(wakeStart, greaterThanOrEqualTo(0));
+    final wakeEnd = service.indexOf(
+      '_runCloudSyncV2AutomaticSemanticCatchUp({',
+      wakeStart,
+    );
+    expect(wakeEnd, greaterThan(wakeStart));
+    final wake = service.substring(wakeStart, wakeEnd);
+    expect(wake, contains('maximumPasses: 1,'));
+    expect(
+      service,
+      contains('maximumPasses: progress?.speed.passesPerBatch ?? 1,'),
+    );
+  });
+
   test('headless dispatch waits for the complete service graph', () {
     final methodChannel = File(
       'lib/services/backend/java_dart_interop/method_channel_service.dart',

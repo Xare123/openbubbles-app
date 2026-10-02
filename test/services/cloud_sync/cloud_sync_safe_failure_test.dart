@@ -11,6 +11,58 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_writer_authori
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('local admission and lease diagnostics are exact, not retry permission', () {
+    const codes = <String>{
+      'cloud_sync_local_send_local_exclusion_unavailable',
+      'cloud_sync_local_mutation_local_exclusion_unavailable',
+      'cloud_sync_local_source_quiescing',
+      'cloud_sync_local_source_quiescence_failed',
+      'cloud_sync_local_source_quiescence_timeout',
+    };
+    for (final code in codes) {
+      expect(cloudSyncV2SafeFailureCode(StateError(code)), code);
+      expect(cloudSyncV2SafeFailureCode(CloudSyncFailure(
+        category: CloudFailureCategory.localStorage, safeCode: code)), code);
+      expect(cloudSyncV2MutationPredecessorNeedsRetry(StateError(code)), isFalse);
+      expect(cloudSyncV2SafeFailureCodeForCandidate('$code private body'),
+          'cloud_sync_unknown_failure');
+      expect(cloudSyncV2SafeFailureCodeForCandidate('${code}_unreviewed'),
+          'cloud_sync_unknown_failure');
+    }
+  });
+
+  test('mutation predecessor retry accepts only the exact typed dependency', () {
+    const code = 'cloud_sync_local_mutation_predecessor_not_ready';
+    expect(
+      cloudSyncV2MutationPredecessorNeedsRetry(CloudSyncFailure(
+        category: CloudFailureCategory.dependency, safeCode: code)),
+      isTrue,
+    );
+    expect(cloudSyncV2MutationPredecessorNeedsRetry(StateError(code)), isTrue);
+    for (final category in CloudFailureCategory.values) {
+      if (category == CloudFailureCategory.dependency) continue;
+      expect(
+        cloudSyncV2MutationPredecessorNeedsRetry(CloudSyncFailure(
+          category: category, safeCode: code)),
+        isFalse,
+        reason: category.name,
+      );
+    }
+    for (final error in <Object>[
+      CloudSyncFailure(category: CloudFailureCategory.dependency),
+      CloudSyncFailure(category: CloudFailureCategory.dependency,
+        safeCode: '${code}_unreviewed'),
+      StateError('$code private body'),
+      StateError('cloud_sync_local_mutation_auth_changed'),
+      StateError('cloud_sync_local_mutation_source_changed'),
+      ArgumentError(code),
+      Exception(code),
+      const CloudKitOperationInterlockException('cloudkit_interlock_busy'),
+    ]) {
+      expect(cloudSyncV2MutationPredecessorNeedsRetry(error), isFalse);
+    }
+  });
+
   test('native quarantine reasons are exact reporting codes, not retry permission', () {
     const suffixes = [
       'malformed_required_identity', 'field_presence_mismatch',

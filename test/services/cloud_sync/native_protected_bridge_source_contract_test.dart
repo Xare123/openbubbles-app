@@ -170,7 +170,18 @@ void main() {
       mutationSend,
       contains('final staging = CloudSyncLocalMutationSourceStaging('),
     );
-    expect(mutationSend, contains('exclusion: interlock'));
+    final mutationStaging = _section(mutationSend,
+        'final staging = CloudSyncLocalMutationSourceStaging(',
+        'await CloudProtectedPageLeaseLifecycle(');
+    expect(mutationStaging, isNot(contains('exclusion:')));
+    final mutationIdentity = _section(mutationSend,
+        'final identitySession = CloudSyncWriteChatIdentitySession(', 'try {');
+    expect(mutationIdentity, contains('exclusion: interlock'));
+    expect(mutationIdentity, contains('nativePause: FrbCloudSyncNativeWriterPause()'));
+    expect(mutationSend, contains('writerMutationGuard: mutationGuard'));
+    expect(mutationSend, contains('readCheckpointGeneration: (scope) async =>'));
+    expect(mutationSend, contains('retainConfirmedReceiptsForReplay: true'));
+    expect(mutationSend, contains('await interlock.runExclusive('));
     expect(
       mutationSend,
       contains('final transport = NativeProtectedCloudSyncTransport('),
@@ -198,7 +209,15 @@ void main() {
     }
     expect(mutationSend, contains('cloudSyncAcknowledgeNativeSendReceipt('));
     expect(windowsRun, contains('await CloudSyncLocalSendSourceStaging('));
-    expect(windowsRun, contains('exclusion: interlock'));
+    final attachmentStaging = _section(initialSend,
+        'await CloudSyncLocalSendSourceStaging(', ').prepare(');
+    for (final constructor in [attachmentStaging, mutationStaging]) {
+      expect(constructor, contains('transport: transport'));
+      expect(constructor, contains('authFence: fence'));
+      expect(constructor, contains('capturedAuth: auth'));
+      expect(constructor, contains('stillCurrent: current'));
+      expect(constructor, isNot(contains('exclusion:')));
+    }
     expect(windowsRun, contains('cloudSyncStageIdsAttachmentSource('));
     expect(
       windowsRun.indexOf('await CloudSyncLocalSendSourceStaging('),
@@ -595,20 +614,43 @@ void main() {
     expect(adapter, isNot(contains('sendMsg(')));
   });
 
-  test('runtime transport is restricted to gated local IDS source leases', () {
+  test('runtime IDS sources have exact local and guarded network transport roles', () {
     final service = File(
       'lib/services/rustpush/rustpush_service.dart',
-    ).readAsStringSync();
+    ).readAsStringSync().replaceAll('\r\n', '\n');
     final capture = _section(
       service,
       'Future<_CloudSyncV2LocalSendContext?> _captureCloudSyncV2LocalSend(',
       'Future<api.CloudSyncNativeSendReceiptContext>',
     );
+    final prepareAdmission = _section(
+      service,
+      'Future<api.CloudSyncNativeSendReceiptContext> _prepareCloudSyncV2AttachmentSource(',
+      'Future<api.CloudSyncNativeSendReceiptContext>\n  _prepareCloudSyncV2AttachmentSourceAfterAdmission(',
+    );
     final prepare = _section(
       service,
-      'Future<api.CloudSyncNativeSendReceiptContext>',
+      'Future<api.CloudSyncNativeSendReceiptContext>\n  _prepareCloudSyncV2AttachmentSourceAfterAdmission(',
       'Future<api.MessageInst> _restoreCloudSyncV2AttachmentWire(',
     );
+    final restore = _section(service,
+        'Future<api.MessageInst> _restoreCloudSyncV2AttachmentWireAfterAdmission(',
+        'Future<void> _confirmCloudSyncV2NativeSend(');
+    final mutation = _section(service,
+        'Future<_CloudSyncV2LocalMutationContext> _prepareCloudSyncV2LocalMutationAfterAdmission(',
+        'Future<_CloudSyncV2LocalSendContext?> _captureCloudSyncV2LocalSend(');
+    final confirmation = _section(service,
+        'Future<void> _confirmCloudSyncV2NativeSend(',
+        'Future<void> _runCloudSyncV2NativeSendReceiptReplay()');
+    final updateTransport = _section(confirmation,
+        'final cloudStore = ObjectBoxCloudSyncStore(',
+        'Future<CloudSyncLocalMutationAdmissionSource?> reflectMutationReceiptLocally()');
+    final reflection = _section(confirmation,
+        'Future<CloudSyncLocalMutationAdmissionSource?> reflectMutationReceiptLocally()',
+        '// Durable local reflection');
+    final received = _section(service,
+        'Future<({bool more, bool deferred})> _materializeCloudSyncV2ReceivedSources()',
+        'Future<Message> _captureCloudSyncV2ReceivedMessage(');
     final send = _section(
       service,
       'Future<Message> _sendPreparedMessage(',
@@ -674,12 +716,44 @@ void main() {
       2,
       reason: 'one reviewed caller plus the private declaration',
     );
-    expect(
-      RegExp(r'NativeProtectedCloudSyncTransport\(').allMatches(service).length,
-      4,
-      reason:
-          'attachment staging, mutation staging, receipt-bound conditional update, and local-only received seed materialization; foreground received capture has no file transport',
-    );
+    final compositions = <String, String>{
+      'mutation preparation': mutation,
+      'attachment preparation': prepare,
+      'attachment restore': restore,
+      'local receipt reflection': reflection,
+      'guarded conditional update': updateTransport,
+      'received seed materialization': received,
+    };
+    final constructors = RegExp(r'NativeProtectedCloudSyncTransport\(');
+    for (final composition in compositions.entries) {
+      expect(constructors.allMatches(composition.value), hasLength(1),
+          reason: '${composition.key} owns exactly one reviewed transport');
+    }
+    expect(constructors.allMatches(service), hasLength(compositions.length),
+        reason: 'every runtime constructor must belong to an exact mapped scope');
+    for (final local in [mutation, prepare, restore, reflection]) {
+      expect(local, isNot(contains('writerMutationGuard:')));
+      expect(local, isNot(contains('readCheckpointGeneration:')));
+      expect(local, isNot(contains('nativeWriterPauseToken:')));
+      expect(local, isNot(contains('CloudKitOperationInterlock(')));
+      expect(local, isNot(contains('runProtectedStoreExclusive(')));
+      expect(local, isNot(contains('ensureRecoveredBeforeWrite(')));
+    }
+    expect(updateTransport, contains('CloudKitOperationInterlock('));
+    expect(updateTransport, contains('CloudSyncWriteChatIdentitySession('));
+    expect(updateTransport, contains('exclusion: interlock'));
+    expect(updateTransport, contains('nativePause: FrbCloudSyncNativeWriterPause()'));
+    _expectBefore(updateTransport, 'final mutationGuard = CloudKitWriterMutationGuard(',
+        'final transport = NativeProtectedCloudSyncTransport(');
+    expect(updateTransport, contains('writerMutationGuard: mutationGuard'));
+    expect(updateTransport, contains('reconciliationBinding: bindings'));
+    expect(updateTransport, contains('readCheckpointGeneration: (scope) async =>'));
+    expect(updateTransport, contains('(await cloudStore.readCheckpoint(scope)).generation'));
+    expect(updateTransport, contains('retainConfirmedReceiptsForReplay: true'));
+    expect(updateTransport, contains('CloudProtectedPageLeaseLifecycle('));
+    expect(prepareAdmission, contains('_cloudSyncV2LocalSourceOperations.run('));
+    expect(prepareAdmission, contains('action: () => _prepareCloudSyncV2AttachmentSourceAfterAdmission('));
+    expect(prepareAdmission, isNot(contains('NativeProtectedCloudSyncTransport(')));
 
     expect(
       prepare,
@@ -706,18 +780,19 @@ void main() {
       reason:
           'local leases need neither remote writer authority nor a read-pause capability',
     );
-    expect(prepare, contains('final exclusion = CloudKitOperationInterlock('));
     expect(prepare, contains('CloudSyncLocalSendSourceStaging('));
+    expect(prepare, contains('transport: transport'));
+    expect(prepare, isNot(contains('exclusion:')));
+    expect(RegExp(r'\btransport\b').allMatches(prepare), hasLength(4),
+        reason: 'declaration, staging argument name/value, and tracked cleanup only');
     expect(
-      prepare,
-      matches(RegExp(r'exclusion: exclusion,\s*transport: transport')),
+      RegExp(r'\btransport\.(\w+)').allMatches(prepare)
+          .map((match) => match.group(1)).toSet(),
+      unorderedEquals(['quiesceNativeOperations']),
+      reason: 'only explicit cleanup can call the preparation transport directly',
     );
-    expect(
-      RegExp(r'\btransport\b').allMatches(prepare).length,
-      3,
-      reason:
-          'transport stays local and is passed only to the lease-only helper',
-    );
+    _expectBefore(prepare, '} finally {',
+        'await _cloudSyncV2LocalSourceOperations.release(');
     expect(
       prepare,
       contains('expectedSourceSha256: context.identity.sourceSha256'),
@@ -731,6 +806,37 @@ void main() {
       prepare,
       contains('sourceBinding: api.CloudSyncNativeSendSourceBinding('),
     );
+    expect(restore, matches(RegExp(
+        r'final transport = NativeProtectedCloudSyncTransport\(\s*'
+        r'cloudMessagesClient: client,\s*storageDirectory: receipt.storageDirectory,\s*'
+        r'protectedStoreIdentity: receipt.protectedStoreIdentity,\s*\);')));
+    _expectBefore(restore,
+        'context.authFence.requireCurrentBinding(context.capturedAuth);',
+        'NativeProtectedCloudSyncTransport(');
+    expect(restore, contains('!identical(client, context.capturedAuth.cloudMessagesClient)'));
+    _expectBefore(restore, 'return await transport.runLocalProtectedStoreExclusive(',
+        'await api.cloudSyncRestoreIdsAttachmentSource(');
+    expect(restore, contains('cloudMessagesClient: client, context: receipt'));
+    expect(restore, contains('expectedSourceSha256: context.identity.sourceSha256'));
+    expect(restore, contains('identity?.sourceSha256 != context.identity.sourceSha256'));
+    expect(restore, contains('identity?.guidHash != context.identity.guidHash'));
+    _expectBefore(restore, 'await api.cloudSyncRestoreIdsAttachmentSource(',
+        'final identity = await CloudSyncLocalSendIdentity.captureAttachmentWire(');
+    _expectBefore(restore, 'final identity = await CloudSyncLocalSendIdentity.captureAttachmentWire(',
+        'return restored;');
+    expect(RegExp(r'\btransport\.(\w+)').allMatches(restore)
+        .map((match) => match.group(1)).toSet(),
+        unorderedEquals(['runLocalProtectedStoreExclusive', 'quiesceNativeOperations']));
+    _expectBefore(restore, '} finally {',
+        'await _cloudSyncV2LocalSourceOperations.release(');
+    expect(reflection, matches(RegExp(
+        r'final localTransport = NativeProtectedCloudSyncTransport\(\s*'
+        r'cloudMessagesClient: client,\s*storageDirectory: storagePath,\s*'
+        r'protectedStoreIdentity: auth.protectedStoreIdentity,\s*\);')));
+    expect(RegExp(r'\blocalTransport\.(\w+)').allMatches(reflection)
+        .map((match) => match.group(1)).toSet(),
+        unorderedEquals(['runLocalProtectedStoreExclusive',
+          'acknowledgeCommittedPageLease', 'quiesceNativeOperations']));
 
     final staging = File(
       'lib/services/rustpush/cloud_sync/cloud_sync_local_send_source_staging.dart',
@@ -745,17 +851,14 @@ void main() {
       ).allMatches(staging).map((match) => match.group(1)).toSet(),
       unorderedEquals([
         'protectedPageLeaseRecoveryIdentity',
-        'runProtectedStoreExclusive',
         'commitProtectedPageLease',
         'rollbackProtectedPageLease',
       ]),
       reason: 'no remote fetch, byte upload, record save or outbox admission',
     );
-    expect(staging, contains('kind: CloudKitOperationKind.v2ReadWrite'));
-    expect(
-      staging.indexOf('_exclusion.runExclusive('),
-      lessThan(staging.indexOf('_transport.runProtectedStoreExclusive(')),
-    );
+    expect(staging, contains('.runLocalProtectedStoreExclusive(() async {'));
+    expect(staging, isNot(contains('_exclusion.runExclusive(')));
+    expect(staging, isNot(contains('runProtectedStoreExclusive(')));
     expect(staging, contains('_authFence.requireCurrentBinding(_auth)'));
     expect(staging, contains('if (!await validateWire())'));
     final fresh = staging.substring(
@@ -766,8 +869,15 @@ void main() {
       lessThan(fresh.indexOf('_transport.commitProtectedPageLease(')),
     );
     expect(fresh, contains('if (!adopted)'));
-    for (final source in [prepare, staging]) {
+    for (final origin in ['accountFingerprint: _auth.accountFingerprint',
+      'messageGuidHash: identity.guidHash', 'sourceSha256: identity.sourceSha256',
+      'protectedStoreIdentity: _auth.protectedStoreIdentity']) {
+      expect(fresh, contains(origin));
+    }
+    for (final source in [prepare, restore, reflection, staging]) {
       for (final forbidden in [
+        'api.send(',
+        'sendMsg(',
         'CloudSyncEngine(',
         'flushOutbox(',
         'stageOutboundMessage(',
@@ -810,6 +920,98 @@ void main() {
     ]) {
       expect(nativeStage, isNot(contains(forbidden)));
     }
+  });
+
+  test('IDS dispatch stays outside protected store leases and recovery', () {
+    final service = File(
+      'lib/services/rustpush/rustpush_service.dart',
+    ).readAsStringSync();
+    final dispatch = _section(service, 'Future<bool> sendMsg(api.MessageInst msg,',
+        'Future<Chat> createChat(');
+    expect(RegExp(r'\bapi\.send\(').allMatches(dispatch), hasLength(1),
+        reason: 'one reviewed native dispatch expression, not another send path');
+    for (final forbidden in ['NativeProtectedCloudSyncTransport(',
+      'runLocalProtectedStoreExclusive(', 'runProtectedStoreExclusive(',
+      'CloudKitOperationInterlock(', 'runExclusive(',
+      '_cloudSyncV2AttachmentGate.run(', 'ensureRecoveredBeforeWrite(',
+      'acquireLocalStoreLease(', 'CloudSyncEngine(', 'flushOutbox(']) {
+      expect(dispatch, isNot(contains(forbidden)),
+          reason: 'admission lifetime must not hold a store/network lock across IDS');
+    }
+  });
+
+  test('local source staging constructors fail closed without native local capability', () {
+    const directory = 'lib/services/rustpush/cloud_sync';
+    final send = File('$directory/cloud_sync_local_send_source_staging.dart')
+        .readAsStringSync();
+    final mutation = File('$directory/cloud_sync_local_mutation_source_staging.dart')
+        .readAsStringSync();
+    final helpers = <String, String>{
+      'CloudSyncLocalSendSourceStaging': send,
+      'CloudSyncLocalMutationSourceStaging': mutation,
+    };
+    for (final helper in helpers.entries) {
+      final source = helper.value;
+      final constructor = _section(source, 'const ${helper.key}({',
+          ') : _auth = capturedAuth;');
+      expect(constructor, contains('required this._transport'));
+      expect(constructor, contains('required this._authFence'));
+      expect(constructor, isNot(contains('exclusion')));
+      _expectBefore(source, 'transport is! CloudProtectedLocalLifecycleTransport',
+          '.runLocalProtectedStoreExclusive(');
+      expect(source, isNot(matches(RegExp(r'\b_exclusion\b'))));
+      for (final forbidden in ['CloudKitOperationExclusion',
+        'CloudKitOperationKind', 'runProtectedStoreExclusive(',
+        'ensureRecoveredBeforeWrite(']) {
+        expect(source, isNot(contains(forbidden)));
+      }
+      expect(RegExp(r'\b_transport\.(\w+)').allMatches(source)
+          .map((match) => match.group(1)).toSet(),
+          unorderedEquals(['protectedPageLeaseRecoveryIdentity',
+            'commitProtectedPageLease', 'rollbackProtectedPageLease']));
+    }
+    expect(send, contains('cloud_sync_local_send_local_exclusion_unavailable'));
+    expect(mutation, contains('cloud_sync_local_mutation_local_exclusion_unavailable'));
+    final reflection = _section(mutation, 'Future<void> reflectConfirmed({',
+        'Future<int> submitConfirmed({');
+    _expectBefore(reflection, 'await _runLocalExclusive(',
+        'final original = await restore(source);');
+    _expectBefore(reflection, '_authFence.requireCurrentBinding(_auth);',
+        'final original = await restore(source);');
+    expect(reflection, contains('_journal.reflectSourceConfirmed('));
+    expect(reflection, contains('source.accountFingerprint != _auth.accountFingerprint'));
+    expect(reflection, contains('source.protectedStoreIdentity != _auth.protectedStoreIdentity'));
+    expect(reflection, contains('replayBinding: replayBinding'));
+    final preparationStart = mutation.indexOf('  prepareSubmission({');
+    expect(preparationStart, greaterThanOrEqualTo(0));
+    final preparation = mutation.substring(preparationStart);
+    _expectBefore(preparation, 'return _runLocalExclusive(',
+        '_journal.captureTargetSnapshot(');
+    for (final origin in ['accountFingerprint: _auth.accountFingerprint',
+      'protectedStoreIdentity: _auth.protectedStoreIdentity',
+      'mutationGuidHash: identity.guidHash', 'targetGuidHash: identity.targetGuidHash',
+      'targetPart: identity.targetPart', 'sourceSha256: identity.sourceSha256']) {
+      expect(preparation, contains(origin));
+    }
+    expect(preparation, contains('source.requireOrigin('));
+    expect(preparation, contains('if (!adopted)'));
+    _expectBefore(preparation, '_journal.adoptSource(',
+        'await _transport.commitProtectedPageLease(');
+    _expectBefore(preparation, 'await _transport.commitProtectedPageLease(',
+        'final restored = await restore(source);');
+    _expectBefore(preparation, 'final restored = await restore(source);',
+        '_journal.beginSubmission(');
+    for (final target in ['guidHash', 'targetGuidHash', 'targetPart', 'kind']) {
+      expect(preparation, contains('restoredIdentity?.$target != identity.$target'));
+    }
+    final submission = _section(mutation, 'Future<int> submitConfirmed({',
+        '  prepareSubmission({');
+    _expectBefore(submission, 'final prepared = await prepareSubmission(',
+        'final receipt = await send(prepared.wire, prepared.source);');
+    _expectBefore(submission, 'final receipt = await send(prepared.wire, prepared.source);',
+        '_journal.recordNativeReceipt(');
+    expect(submission, isNot(contains('_runLocalExclusive(')),
+        reason: 'IDS submission cannot be entered while a local lease is held');
   });
 
   test('semantic transport cannot fall back to an unbound fetch', () {
@@ -955,4 +1157,10 @@ String _section(String source, String startMarker, String endMarker) {
   final end = source.indexOf(endMarker, start);
   expect(end, greaterThan(start), reason: endMarker);
   return source.substring(start, end);
+}
+
+void _expectBefore(String source, String first, String second) {
+  final start = source.indexOf(first);
+  expect(start, greaterThanOrEqualTo(0), reason: first);
+  expect(source.indexOf(second), greaterThan(start), reason: second);
 }

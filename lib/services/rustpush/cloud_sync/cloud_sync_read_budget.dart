@@ -10,6 +10,12 @@ final class CloudSyncReadBudget {
     pagesPerPass: 1,
     retainedReplayEntries: 32,
   );
+  // Internal wakes and predecessor reads must yield promptly to the composer.
+  // Keep some dependency replay, but leave exhaustive repair to Profile sync.
+  static const background = CloudSyncReadBudget(
+    pagesPerPass: 1,
+    retainedReplayEntries: 4,
+  );
 
   final int pagesPerPass;
   final int retainedReplayEntries;

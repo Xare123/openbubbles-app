@@ -80,6 +80,7 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_historical_i
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_background_progress.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_background_status.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_profile_readiness.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_source_operations.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_upload_retry_action.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_read_budget.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_pcs_operation.dart';
@@ -833,11 +834,32 @@ class RustPushBackend implements BackendService {
     try {
       while (true) {
         try {
-          stillRunning = await api.send(
-              state: pushService.state!.client,
-              local: pushService.state!.localBroadcast,
+          final receiptContext = nativeReceiptContext?.call();
+          final sendState = pushService.state!;
+          final sendStore = Database.store;
+          final sendStorage = pushService.statePath;
+          Future<bool> dispatchNative() => api.send(
+              state: sendState.client,
+              local: sendState.localBroadcast,
               msg: msg,
-              nativeReceiptContext: nativeReceiptContext?.call());
+              nativeReceiptContext: receiptContext);
+          // Join tracked dispatch before explicit account teardown. No store
+          // lease or history network lock is held across IDS. A true native
+          // return still means its background confirmation owns completion.
+          stillRunning = receiptContext == null
+              ? await dispatchNative()
+              : await pushService._cloudSyncV2LocalSourceOperations.run(
+                  validate: () {
+                    if (pushService._serviceClosing || pushService.loggingOut ||
+                        pushService._cloudSyncV2OutboundQuiescing ||
+                        !identical(sendState, pushService.state) ||
+                        !identical(sendStore, Database.store) || sendStore.isClosed() ||
+                        sendStorage != pushService.statePath) {
+                      throw StateError('cloud_sync_local_send_identity_changed');
+                    }
+                  },
+                  action: dispatchNative,
+                );
           break;
         } catch (e) {
           if (e is AnyhowException) {
@@ -8153,6 +8175,7 @@ class RustPushService extends GetxService {
   bool _cloudSyncV2PcsPreparationQuiescing = false;
   Future<CloudSyncSemanticDrainResult>? _cloudSyncV2SemanticPullInFlight;
   final _cloudSyncV2AttachmentGate = CloudAttachmentSyncGate();
+  final _cloudSyncV2LocalSourceOperations = CloudSyncLocalSourceOperations();
   final cloudSyncV2Progress = CloudSyncProgress();
   final cloudSyncV2HistoricalImport = CloudSyncHistoricalImportController();
   bool _cloudSyncV2SemanticPullQuiescing = false;
@@ -9104,27 +9127,26 @@ class RustPushService extends GetxService {
     final queuedState = state;
     final queuedStore = Database.store;
     final queuedStorage = statePath;
-    // The automatic writer and semantic/media sessions already share this
-    // scheduler. Queue before touching protected mutation state, not by retrying
-    // an entered action or an IDS send. Cross-isolate/native fences still apply.
-    return _cloudSyncV2AttachmentGate.run(
-      waitTimeout: const Duration(seconds: 30),
+    // Local source adoption uses its own native store lease. History/network
+    // work cannot consume the user's edit/undo window. Teardown still joins
+    // admitted local work, including explicit native lease release.
+    return _cloudSyncV2LocalSourceOperations.run(
       validate: () {
         if (!identical(queuedState, state) ||
             !identical(queuedStore, Database.store) || queuedStore.isClosed() ||
-            queuedStorage != statePath || loggingOut ||
+            queuedStorage != statePath || loggingOut || _serviceClosing ||
             _cloudSyncV2OutboundQuiescing || !ls.isUiThread ||
             ss.settings.cloudSyncingEnabled.value) {
           throw StateError('cloud_sync_local_mutation_deferred');
         }
       },
-      action: () => _prepareCloudSyncV2LocalMutationAfterGate(
+      action: () => _prepareCloudSyncV2LocalMutationAfterAdmission(
         target: target, wire: wire,
       ),
     );
   }
 
-  Future<_CloudSyncV2LocalMutationContext> _prepareCloudSyncV2LocalMutationAfterGate({
+  Future<_CloudSyncV2LocalMutationContext> _prepareCloudSyncV2LocalMutationAfterAdmission({
     required Message target,
     required api.MessageInst wire,
   }) async {
@@ -9184,14 +9206,6 @@ class RustPushService extends GetxService {
     final journal = CloudSyncLocalMutationJournal(
       store: objectBox, authority: authority, authoritySnapshot: owner,
     );
-    final cloudStore = ObjectBoxCloudSyncStore(
-      store: objectBox,
-      protector: RustCloudSyncProtector(storageDirectory: storagePath),
-      localMutationJournal: journal,
-    );
-    final interlock = CloudKitOperationInterlock(
-      privateStorageDirectory: storagePath, fenceStore: cloudStore,
-    );
     final transport = NativeProtectedCloudSyncTransport(
       cloudMessagesClient: client,
       storageDirectory: storagePath,
@@ -9220,15 +9234,14 @@ class RustPushService extends GetxService {
       ),
     );
     try {
-      await CloudProtectedPageLeaseLifecycle(
-        store: cloudStore, transport: transport,
-      ).ensureRecoveredBeforeWrite();
+      // This exact local source is committed idempotently below. Whole-store
+      // recovery/GC stays at the exclusive fetch/write maintenance boundary;
+      // it must not run while a history fetch is producing an unadopted page.
       final prepared = await CloudSyncLocalMutationSourceStaging(
         journal: journal,
         authFence: authFence,
         capturedAuth: auth,
         stillCurrent: stillCurrent,
-        exclusion: interlock,
         transport: transport,
       ).prepareSubmission(
         localMessageId: localMessageId,
@@ -9281,7 +9294,9 @@ class RustPushService extends GetxService {
           'code=${cloudSyncV2SafeFailureCode(error)}');
       rethrow;
     } finally {
-      await transport.quiesceNativeOperations();
+      await _cloudSyncV2LocalSourceOperations.release(
+        transport.quiesceNativeOperations,
+      );
     }
   }
 
@@ -9400,6 +9415,23 @@ class RustPushService extends GetxService {
     required Message message,
     required Chat chat,
     required api.MessageInst wire,
+  }) => _cloudSyncV2LocalSourceOperations.run(
+    validate: () {
+      if (_serviceClosing || !context.stillCurrent()) {
+        throw StateError('cloud_sync_local_send_identity_changed');
+      }
+    },
+    action: () => _prepareCloudSyncV2AttachmentSourceAfterAdmission(
+      context, message: message, chat: chat, wire: wire,
+    ),
+  );
+
+  Future<api.CloudSyncNativeSendReceiptContext>
+  _prepareCloudSyncV2AttachmentSourceAfterAdmission(
+    _CloudSyncV2LocalSendContext context, {
+    required Message message,
+    required Chat chat,
+    required api.MessageInst wire,
   }) async {
     context.authFence.requireCurrentBinding(context.capturedAuth);
     final client = state?.icloudServices?.cloudMessagesClient;
@@ -9414,61 +9446,77 @@ class RustPushService extends GetxService {
       storageDirectory: original.storageDirectory,
       protectedStoreIdentity: original.protectedStoreIdentity,
     );
-    final exclusion = CloudKitOperationInterlock(
-      privateStorageDirectory: original.storageDirectory,
-      fenceStore: ObjectBoxCloudSyncStore.fromDatabase(
-        protector: RustCloudSyncProtector(storageDirectory: original.storageDirectory),
-      ),
-    );
-    final source = await CloudSyncLocalSendSourceStaging(
-      journal: context.journal, authFence: context.authFence,
-      capturedAuth: context.capturedAuth, stillCurrent: context.stillCurrent,
-      exclusion: exclusion, transport: transport,
-    ).prepare(
-      identity: context.identity,
-      validateWire: () async {
-        final current = await CloudSyncLocalSendIdentity.captureAttachmentWire(
-          message, chat, wire,
-          expectedSourceSha256: context.identity.sourceSha256,
-          serializeAttachment: (attachment) => api.saveAttachment(att: attachment),
-        );
-        return current?.sourceSha256 == context.identity.sourceSha256;
-      },
-      stage: () async {
-        final native = await api.cloudSyncStageIdsAttachmentSource(
-          cloudMessagesClient: client, context: original,
-          localSourceSha256: context.identity.sourceSha256,
-          message: wire, attachmentGuids: guids,
-        );
-        return CloudSyncLocalSendSourceBinding(
-          accountFingerprint: original.accountFingerprint,
-          protectedStoreIdentity: original.protectedStoreIdentity,
-          messageGuidHash: context.identity.guidHash,
-          sourceSha256: native.sourceSha256,
-          protectedReference: native.protectedReference,
-          leaseReference: native.leaseReference,
-          payloadSha256: native.payloadSha256,
-          payloadLength: native.payloadLength.toInt(),
-        );
-      },
-    );
-    return api.CloudSyncNativeSendReceiptContext(
-      storageDirectory: original.storageDirectory,
-      guidHash: original.guidHash,
-      accountFingerprint: original.accountFingerprint,
-      protectedStoreIdentity: original.protectedStoreIdentity,
-      nativeSessionId: original.nativeSessionId,
-      sourceBinding: api.CloudSyncNativeSendSourceBinding(
-        sourceSha256: source.sourceSha256,
-        protectedReference: source.protectedReference,
-        leaseReference: source.leaseReference,
-        payloadSha256: source.payloadSha256,
-        payloadLength: BigInt.from(source.payloadLength),
-      ),
-    );
+    try {
+      final source = await CloudSyncLocalSendSourceStaging(
+        journal: context.journal, authFence: context.authFence,
+        capturedAuth: context.capturedAuth, stillCurrent: context.stillCurrent,
+        transport: transport,
+      ).prepare(
+        identity: context.identity,
+        validateWire: () async {
+          final current = await CloudSyncLocalSendIdentity.captureAttachmentWire(
+            message, chat, wire,
+            expectedSourceSha256: context.identity.sourceSha256,
+            serializeAttachment: (attachment) => api.saveAttachment(att: attachment),
+          );
+          return current?.sourceSha256 == context.identity.sourceSha256;
+        },
+        stage: () async {
+          final native = await api.cloudSyncStageIdsAttachmentSource(
+            cloudMessagesClient: client, context: original,
+            localSourceSha256: context.identity.sourceSha256,
+            message: wire, attachmentGuids: guids,
+          );
+          return CloudSyncLocalSendSourceBinding(
+            accountFingerprint: original.accountFingerprint,
+            protectedStoreIdentity: original.protectedStoreIdentity,
+            messageGuidHash: context.identity.guidHash,
+            sourceSha256: native.sourceSha256,
+            protectedReference: native.protectedReference,
+            leaseReference: native.leaseReference,
+            payloadSha256: native.payloadSha256,
+            payloadLength: native.payloadLength.toInt(),
+          );
+        },
+      );
+      return api.CloudSyncNativeSendReceiptContext(
+        storageDirectory: original.storageDirectory,
+        guidHash: original.guidHash,
+        accountFingerprint: original.accountFingerprint,
+        protectedStoreIdentity: original.protectedStoreIdentity,
+        nativeSessionId: original.nativeSessionId,
+        sourceBinding: api.CloudSyncNativeSendSourceBinding(
+          sourceSha256: source.sourceSha256,
+          protectedReference: source.protectedReference,
+          leaseReference: source.leaseReference,
+          payloadSha256: source.payloadSha256,
+          payloadLength: BigInt.from(source.payloadLength),
+        ),
+      );
+    } finally {
+      await _cloudSyncV2LocalSourceOperations.release(
+        transport.quiesceNativeOperations,
+      );
+    }
   }
 
   Future<api.MessageInst> _restoreCloudSyncV2AttachmentWire(
+    _CloudSyncV2LocalSendContext context,
+    api.CloudSyncNativeSendReceiptContext receipt, {
+    required Message message,
+    required Chat chat,
+  }) => _cloudSyncV2LocalSourceOperations.run(
+    validate: () {
+      if (_serviceClosing || !context.stillCurrent()) {
+        throw StateError('cloud_sync_local_send_identity_changed');
+      }
+    },
+    action: () => _restoreCloudSyncV2AttachmentWireAfterAdmission(
+      context, receipt, message: message, chat: chat,
+    ),
+  );
+
+  Future<api.MessageInst> _restoreCloudSyncV2AttachmentWireAfterAdmission(
     _CloudSyncV2LocalSendContext context,
     api.CloudSyncNativeSendReceiptContext receipt, {
     required Message message,
@@ -9479,20 +9527,33 @@ class RustPushService extends GetxService {
     if (client == null || !identical(client, context.capturedAuth.cloudMessagesClient)) {
       throw StateError('cloud_sync_local_send_identity_changed');
     }
-    final restored = await api.cloudSyncRestoreIdsAttachmentSource(
-      cloudMessagesClient: client, context: receipt,
+    final transport = NativeProtectedCloudSyncTransport(
+      cloudMessagesClient: client,
+      storageDirectory: receipt.storageDirectory,
+      protectedStoreIdentity: receipt.protectedStoreIdentity,
     );
-    final identity = await CloudSyncLocalSendIdentity.captureAttachmentWire(
-      message, chat, restored,
-      expectedSourceSha256: context.identity.sourceSha256,
-      serializeAttachment: (attachment) => api.saveAttachment(att: attachment),
-    );
-    context.authFence.requireCurrentBinding(context.capturedAuth);
-    if (identity?.sourceSha256 != context.identity.sourceSha256 ||
-        identity?.guidHash != context.identity.guidHash) {
-      throw StateError('cloud_sync_local_send_source_changed');
+    try {
+      return await transport.runLocalProtectedStoreExclusive(() async {
+        final restored = await api.cloudSyncRestoreIdsAttachmentSource(
+          cloudMessagesClient: client, context: receipt,
+        );
+        final identity = await CloudSyncLocalSendIdentity.captureAttachmentWire(
+          message, chat, restored,
+          expectedSourceSha256: context.identity.sourceSha256,
+          serializeAttachment: (attachment) => api.saveAttachment(att: attachment),
+        );
+        context.authFence.requireCurrentBinding(context.capturedAuth);
+        if (identity?.sourceSha256 != context.identity.sourceSha256 ||
+            identity?.guidHash != context.identity.guidHash) {
+          throw StateError('cloud_sync_local_send_source_changed');
+        }
+        return restored;
+      });
+    } finally {
+      await _cloudSyncV2LocalSourceOperations.release(
+        transport.quiesceNativeOperations,
+      );
     }
-    return restored;
   }
 
   Future<void> _confirmCloudSyncV2NativeSend(String stableGuid,
@@ -9565,10 +9626,6 @@ class RustPushService extends GetxService {
       // consumer must retain their native receipt, never reclassify/ack it as
       // an attachment origin merely because its reference fields match.
       if (source?.kind == api.CloudSyncNativeSendSourceKind.mutation) {
-        if (_cloudSyncV2MessageUpdateInFlight != null) {
-          _scheduleCloudSyncV2MessageUpdateRetry(const Duration(seconds: 1));
-          return;
-        }
         final mutationJournal = CloudSyncLocalMutationJournal(
           store: objectBox, authority: authority, authoritySnapshot: owner,
         );
@@ -9600,18 +9657,6 @@ class RustPushService extends GetxService {
           'correlation=$mutationReceiptCorrelation '
           'process=$mutationProcessGeneration attempt=0',
         );
-
-        if (replayBinding == null &&
-            (_cloudSyncV2DeveloperRuntimeAllowed ||
-                _cloudSyncV2AutomaticArchiveActive)) {
-          // Acceptance is durable in both journals. Do not hold the incoming
-          // event handler while a history/upload pass owns CloudKit. Replay
-          // restores this same accepted source; it never sends IDS again.
-          _scheduleCloudSyncV2MessageUpdateRetry(
-            const Duration(milliseconds: 100),
-          );
-          return;
-        }
 
         final cloudStore = ObjectBoxCloudSyncStore(
           store: objectBox,
@@ -9689,83 +9734,138 @@ class RustPushService extends GetxService {
             payloadLength: BigInt.from(mutationSource.payloadLength),
             ),
           );
+        Future<CloudSyncLocalMutationAdmissionSource?> reflectMutationReceiptLocally() =>
+            _cloudSyncV2LocalSourceOperations.run(
+          validate: () {
+            if (_serviceClosing || !confirmationBindingCurrent()) {
+              throw StateError('cloud_sync_local_send_identity_changed');
+            }
+          },
+          action: () async {
+            final localTransport = NativeProtectedCloudSyncTransport(
+              cloudMessagesClient: client,
+              storageDirectory: storagePath,
+              protectedStoreIdentity: auth.protectedStoreIdentity,
+            );
+            try {
+              await validateMutationIdentity();
+              return await localTransport.runLocalProtectedStoreExclusive(() async {
+                final terminalSource =
+                    mutationJournal.readTerminalSourceForCleanup(
+                  intentId: confirmedMutationIntentId,
+                  currentAuth: auth,
+                  stillCurrent: confirmationBindingCurrent,
+                );
+                if (terminalSource != null) {
+                  await localTransport.acknowledgeCommittedPageLease(
+                    terminalSource.leaseReference,
+                  );
+                  api.cloudSyncAcknowledgeNativeSendReceipt(
+                    storageDirectory: storagePath,
+                    expectedAccountFingerprint: auth.accountFingerprint,
+                    expectedProtectedStoreIdentity: auth.protectedStoreIdentity,
+                    receipt: nativeReceipt,
+                  );
+                  Logger.info(
+                    'Cloud Sync V2 mutation stage=terminal_cleanup_complete '
+                    'correlation=$mutationReceiptCorrelation '
+                    'process=$mutationProcessGeneration attempt=0',
+                  );
+                  return null;
+                }
+                CloudSyncLocalMutationAdmissionSource? admission;
+                try {
+                  // State 3/4 already contains the exact atomic local reflection.
+                  // A restart at state 4 must proceed directly to adopted-operation
+                  // reconciliation; restoring and reflecting again would re-enter a
+                  // fresh-write-only authority path while mutationUnknown is armed.
+                  admission = mutationJournal.readReflectedForUpdate(
+                    intentId: confirmedMutationIntentId,
+                    currentAuth: auth,
+                    stillCurrent: confirmationBindingCurrent,
+                    replayBinding: replayBinding,
+                  );
+                } on StateError catch (error) {
+                  if (error.message != 'cloud_sync_local_mutation_update_not_ready') {
+                    rethrow;
+                  }
+                }
+                if (admission == null) {
+                  final mutationSource = mutationJournal.readReceiptConfirmedSource(
+                    intentId: confirmedMutationIntentId,
+                    currentAuth: auth,
+                    stillCurrent: confirmationBindingCurrent,
+                  );
+                  await CloudSyncLocalMutationSourceStaging(
+                    journal: mutationJournal,
+                    authFence: authFence,
+                    capturedAuth: auth,
+                    stillCurrent: confirmationBindingCurrent,
+                    transport: localTransport,
+                  ).reflectConfirmed(
+                    intentId: confirmedMutationIntentId,
+                    source: mutationSource,
+                    receipt: nativeReceipt,
+                    replayBinding: replayBinding,
+                    restore: (restoredSource) => api.cloudSyncRestoreIdsMutationSource(
+                      cloudMessagesClient: client,
+                      context: mutationContext(restoredSource),
+                    ),
+                  );
+                  admission = mutationJournal.readReflectedForUpdate(
+                    intentId: confirmedMutationIntentId,
+                    currentAuth: auth,
+                    stillCurrent: confirmationBindingCurrent,
+                    replayBinding: replayBinding,
+                  );
+                }
+                return admission;
+              });
+            } finally {
+              await _cloudSyncV2LocalSourceOperations.release(
+                localTransport.quiesceNativeOperations,
+              );
+            }
+          },
+        );
+
+        // Durable local reflection uses the original accepted source under
+        // the native local lease, not history's network scheduler. It is not
+        // a CloudKit receipt and cannot authorize remote archival by itself.
+        final reflectedAdmission = await reflectMutationReceiptLocally();
+        if (reflectedAdmission == null) return;
+        final localReflection = objectBox.box<Message>()
+            .get(reflectedAdmission.localMessageId);
+        final localChat = localReflection?.chat.target;
+        if (localReflection != null && localChat != null && ls.isUiThread) {
+          await ah.handleUpdatedMessage(localChat, localReflection, null);
+        }
+        if (_cloudSyncV2MessageUpdateInFlight != null ||
+            (replayBinding == null &&
+                (_cloudSyncV2DeveloperRuntimeAllowed ||
+                    _cloudSyncV2AutomaticArchiveActive))) {
+          // Both journals retain acceptance. Only remote admission is deferred;
+          // replay cannot resend IDS and must revalidate the reflected target.
+          _scheduleCloudSyncV2MessageUpdateRetry(
+            const Duration(milliseconds: 100),
+          );
+          return;
+        }
+
         final updateCompletion = Completer<void>();
         final updateInFlight = updateCompletion.future;
         _cloudSyncV2MessageUpdateInFlight = updateInFlight;
         Future<void> processMutationReceipt() async {
           try {
+            // Whole-store recovery retains its exclusive network/local lock
+            // order. Never run its liveness/GC inventory in the local fast path.
             await lifecycle.ensureRecoveredBeforeWrite();
-            final terminalSource =
-                mutationJournal.readTerminalSourceForCleanup(
+            final admitted = mutationJournal.readReflectedForUpdate(
               intentId: confirmedMutationIntentId,
               currentAuth: auth,
               stillCurrent: confirmationBindingCurrent,
+              replayBinding: replayBinding,
             );
-            if (terminalSource != null) {
-              await transport.acknowledgeCommittedPageLease(
-                terminalSource.leaseReference,
-              );
-              api.cloudSyncAcknowledgeNativeSendReceipt(
-                storageDirectory: storagePath,
-                expectedAccountFingerprint: auth.accountFingerprint,
-                expectedProtectedStoreIdentity: auth.protectedStoreIdentity,
-                receipt: nativeReceipt,
-              );
-              Logger.info(
-                'Cloud Sync V2 mutation stage=terminal_cleanup_complete '
-                'correlation=$mutationReceiptCorrelation '
-                'process=$mutationProcessGeneration attempt=0',
-              );
-              return;
-            }
-            CloudSyncLocalMutationAdmissionSource? admission;
-            try {
-              // State 3/4 already contains the exact atomic local reflection.
-              // A restart at state 4 must proceed directly to adopted-operation
-              // reconciliation; restoring and reflecting again would re-enter a
-              // fresh-write-only authority path while mutationUnknown is armed.
-              admission = mutationJournal.readReflectedForUpdate(
-                intentId: confirmedMutationIntentId,
-                currentAuth: auth,
-                stillCurrent: confirmationBindingCurrent,
-                replayBinding: replayBinding,
-              );
-            } on StateError catch (error) {
-              if (error.message != 'cloud_sync_local_mutation_update_not_ready') {
-                rethrow;
-              }
-            }
-            if (admission == null) {
-              final mutationSource = mutationJournal.readReceiptConfirmedSource(
-                intentId: confirmedMutationIntentId,
-                currentAuth: auth,
-                stillCurrent: confirmationBindingCurrent,
-              );
-              await CloudSyncLocalMutationSourceStaging(
-                journal: mutationJournal,
-                authFence: authFence,
-                capturedAuth: auth,
-                stillCurrent: confirmationBindingCurrent,
-                exclusion: interlock,
-                transport: transport,
-              ).reflectConfirmed(
-                intentId: confirmedMutationIntentId,
-                source: mutationSource,
-                receipt: nativeReceipt,
-                replayBinding: replayBinding,
-                restore: (restoredSource) => api.cloudSyncRestoreIdsMutationSource(
-                  cloudMessagesClient: client,
-                  context: mutationContext(restoredSource),
-                ),
-              );
-              admission = mutationJournal.readReflectedForUpdate(
-                intentId: confirmedMutationIntentId,
-                currentAuth: auth,
-                stillCurrent: confirmationBindingCurrent,
-                replayBinding: replayBinding,
-              );
-            }
-            final admitted = admission;
             final scope = CloudSyncScope(
               accountFingerprint: auth.accountFingerprint,
               container: 'com.apple.messages.cloud',
@@ -9929,10 +10029,8 @@ class RustPushService extends GetxService {
               await ah.handleUpdatedMessage(reflectedChat, reflected, null);
             }
             Logger.info('Cloud Sync V2 mutation update pass completed $result');
-          } on StateError catch (error) {
-            if (error.message != 'cloud_sync_local_mutation_predecessor_not_ready') {
-              rethrow;
-            }
+          } catch (error) {
+            if (!cloudSyncV2MutationPredecessorNeedsRetry(error)) rethrow;
             // The original create or an earlier edit may still be awaiting exact
             // readback. Preserve this positive IDS receipt and let the bounded
             // replay resume it after that dependency settles, without another IDS
@@ -10682,6 +10780,7 @@ class RustPushService extends GetxService {
       platformSupported: abi == ffi.Abi.androidArm64 ||
           abi == ffi.Abi.windowsArm64 || abi == ffi.Abi.windowsX64,
       restartNeeded: cloudSyncV2Progress.restartRequired ||
+          _cloudSyncV2LocalSourceOperations.restartRequired ||
           _cloudSyncV2PcsPreparationQuiescing ||
           CloudKitOperationInterlock.hasPoisonedEngineWork,
       accountReady: ss.settings.finishedSetup.value &&
@@ -11235,7 +11334,7 @@ class RustPushService extends GetxService {
       }
 
       final future = _runCloudSyncV2ManualSemanticPull(
-        maximumPasses: CloudSyncSemanticDrainController.defaultMaximumPasses,
+        maximumPasses: 1,
         allowAndroidBackgroundIsolate: true,
       );
       _cloudSyncV2SemanticPullInFlight = future;
@@ -11286,8 +11385,8 @@ class RustPushService extends GetxService {
       }
 
       final result = await _runCloudSyncV2ManualSemanticPull(
-        maximumPasses: progress?.speed.passesPerBatch ??
-            CloudSyncSemanticDrainController.defaultMaximumPasses,
+        maximumPasses: progress?.speed.passesPerBatch ?? 1,
+        sweepRetainedAtHead: progress != null,
         progress: progress,
       );
       if (progress != null) progress.batches = batch;
@@ -11405,9 +11504,10 @@ class RustPushService extends GetxService {
             CloudSyncProtectorHealthProbe(protector: protector).read,
       );
       final evidenceFactory = _cloudSyncV2EvidenceObserverFactory();
+      final readBudget = progress?.speed.readBudget ?? CloudSyncReadBudget.background;
       final adapter = CloudSyncProductionSemanticPullAdapter(
         progress: progress ?? backgroundProgress,
-        readBudget: progress?.speed.readBudget ?? CloudSyncReadBudget.standard,
+        readBudget: readBudget,
         scheduleSession: <T>(Future<T> Function() action) =>
             _cloudSyncV2AttachmentGate.run<T>(
           validate: () => _validateCloudSyncV2QueuedRead(
@@ -11436,7 +11536,7 @@ class RustPushService extends GetxService {
       final reportWriter = CloudSyncSemanticPullReportFileWriter(
         privateReportDirectory: join(statePath, 'cloud-sync-v2', 'reports'),
         trustedStorageRoot: statePath,
-        readBudget: progress?.speed.readBudget ?? CloudSyncReadBudget.standard,
+        readBudget: readBudget,
       );
       final controller = CloudSyncSemanticDrainController.production(
         sampler: adapter.sampler,
@@ -12070,20 +12170,36 @@ class RustPushService extends GetxService {
   Future<T> _runCloudKitDestructiveReset<T>(
     Future<T> Function() action,
   ) async {
-    // Both callers quiesce admission before arriving here. Drain media as
-    // well as semantic work before disposing its native client. A timed-out
-    // drain is only a barrier, never a queued destructive action.
+    // Account transitions quiesce other admission before arriving here.
+    // Keychain maintenance also uses this local boundary without disposing
+    // the account. A timed-out drain never queues a destructive action.
     try {
-      await _cloudSyncV2AttachmentGate.drain().timeout(
-        _cloudSyncV2SemanticPullQuiescenceTimeout,
+      try {
+        await _cloudSyncV2LocalSourceOperations.quiesce().timeout(
+          _cloudSyncV2SemanticPullQuiescenceTimeout,
+        );
+      } on TimeoutException {
+        _cloudSyncV2LocalSourceOperations.markQuiescenceTimeout();
+        throw StateError('cloud_sync_local_source_quiescence_timeout');
+      }
+      try {
+        await _cloudSyncV2AttachmentGate.drain().timeout(
+          _cloudSyncV2SemanticPullQuiescenceTimeout,
+        );
+      } on TimeoutException {
+        throw StateError('cloud_sync_attachment_quiescence_timeout');
+      }
+      return await _runCloudKitOperation(
+        kind: CloudKitOperationKind.destructiveReset,
+        action: action,
       );
-    } on TimeoutException {
-      throw StateError('cloud_sync_attachment_quiescence_timeout');
+    } finally {
+      // Keychain maintenance also uses this barrier without ending the account.
+      // Real account transitions reopen only from reset's own finalizer.
+      if (!_serviceClosing && !_cloudSyncV2OutboundQuiescing) {
+        _cloudSyncV2LocalSourceOperations.reopen();
+      }
     }
-    return _runCloudKitOperation(
-      kind: CloudKitOperationKind.destructiveReset,
-      action: action,
-    );
   }
 
   Future<T> _runCloudKitIdentityMaintenance<T>(
@@ -12297,6 +12413,7 @@ class RustPushService extends GetxService {
       });
     } finally {
       await shadowOwner?.resumeAfterAccountTransition();
+      _cloudSyncV2LocalSourceOperations.reopen();
       _cloudSyncV2PcsPreparationQuiescing = false;
       _cloudSyncV2SemanticPullQuiescing = false;
       _cloudSyncV2OutboundQuiescing = false;
@@ -12383,6 +12500,14 @@ class RustPushService extends GetxService {
     api.SharedPushState closingState,
   ) async {
     try {
+      try {
+        await _cloudSyncV2LocalSourceOperations.quiesce().timeout(
+          _cloudSyncV2OutboundQuiescenceTimeout,
+        );
+      } on TimeoutException {
+        _cloudSyncV2LocalSourceOperations.markQuiescenceTimeout();
+        rethrow;
+      }
       await cloudSyncV2HistoricalImport.drain()
           .timeout(_cloudSyncV2OutboundQuiescenceTimeout);
       await _cloudSyncV2LocalSendRuntime?.dispose()
