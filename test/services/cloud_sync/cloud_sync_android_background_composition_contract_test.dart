@@ -4,7 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   test(
-    'Android registration is Canary-only and persists only a scope hash',
+    'Android registration is Canary-only and persists no account or message data',
     () {
       final source = File(
         'android/app/src/main/kotlin/com/bluebubbles/messaging/services/'
@@ -13,12 +13,51 @@ void main() {
 
       expect(source, contains('com.bluebubbles.messaging.cloudkitcanary'));
       expect(source, contains('scope_hash'));
-      expect(source, contains(r'^[a-f0-9]{64}$'));
+      final coordinator = File(
+        'android/app/src/main/kotlin/com/bluebubbles/messaging/services/'
+        'rustpush/CloudSyncV2WakeCoordinator.kt',
+      ).readAsStringSync();
+      expect(source, contains('CloudSyncV2WakeRecord.isCanonicalScopeHash'));
+      expect(coordinator, contains(r'^[a-f0-9]{64}$'));
+      expect(source, contains('registration_epoch'));
+      expect(source, contains('requested_generation'));
+      expect(source, contains('active_work_id'));
       expect(source, isNot(contains('accountFingerprint')));
       expect(source, isNot(contains('messageGuid')));
       expect(source, isNot(contains('chatGuid')));
     },
   );
+
+  test('registration results use the tested account and operation fence', () {
+    final service = File(
+      'lib/services/rustpush/rustpush_service.dart',
+    ).readAsStringSync();
+    expect(service, contains('CloudSyncBackgroundRegistration()'));
+    expect(service, contains('_cloudSyncV2AndroidBackgroundRegistration.registered'));
+    expect(service, contains('_cloudSyncV2AndroidBackgroundRegistration.configure('));
+    expect(service, contains('_cloudSyncV2AndroidBackgroundRegistration.disable('));
+    expect(service, isNot(matches(
+      RegExp(r'_cloudSyncV2AndroidBackgroundRegistered\s*=(?!>)'),
+    )));
+  });
+
+  test('durable hints are epoch fenced and enqueue acknowledgments are awaited', () {
+    const native = 'android/app/src/main/kotlin/com/bluebubbles/messaging/'
+        'services/rustpush/';
+    final handler = File('${native}CloudSyncV2WorkControlHandler.kt').readAsStringSync();
+    final scheduler = File('${native}CloudSyncV2WorkScheduler.kt').readAsStringSync();
+    final worker = File('${native}CloudSyncV2Worker.kt').readAsStringSync();
+    expect(handler, contains('expected?.scopeHash != scopeHash'));
+    expect(handler, contains('CoroutineStart.UNDISPATCHED'));
+    expect(scheduler, contains('.result.await()'));
+    expect(scheduler, contains('.getWorkInfoById(workId).await()'));
+    expect(scheduler, contains('INPUT_REGISTRATION_EPOCH'));
+    expect(scheduler, isNot(contains('ExistingWorkPolicy.APPEND')));
+    expect(scheduler, isNot(contains('ExistingWorkPolicy.REPLACE')));
+    expect(worker, contains('CloudSyncV2WorkRegistration.begin('));
+    expect(worker, contains('CloudSyncV2WorkRegistration.seal('));
+    expect(worker, contains('scopeHash!!, epoch'));
+  });
 
   test('worker accepts one metadata wake and has a bounded retry budget', () {
     final worker = File(

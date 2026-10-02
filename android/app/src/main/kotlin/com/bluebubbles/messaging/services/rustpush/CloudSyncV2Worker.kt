@@ -33,12 +33,14 @@ class CloudSyncV2Worker(
         CoroutineScope(Dispatchers.Main.immediate).future {
             val scopeHash = inputData.getString(CloudSyncV2WorkScheduler.INPUT_SCOPE_HASH)
             val kindValue = inputData.getString(CloudSyncV2WorkScheduler.INPUT_WORK_KIND)
+            val epoch = inputData.getLong(CloudSyncV2WorkScheduler.INPUT_REGISTRATION_EPOCH, 0)
             if (!CloudSyncV2WorkRegistration.isCanonicalScopeHash(scopeHash) ||
-                kindValue.isNullOrBlank()) {
+                kindValue.isNullOrBlank() || epoch <= 0) {
                 Log.w(Constants.logTag, "Cloud Sync V2 work rejected: invalid safe input")
                 return@future Result.failure()
             }
-            if (!CloudSyncV2WorkRegistration.matches(applicationContext, scopeHash!!)) {
+            val registration = CloudSyncV2WorkRegistrationSnapshot(scopeHash!!, epoch)
+            if (!CloudSyncV2WorkRegistration.matches(applicationContext, registration)) {
                 Log.i(Constants.logTag, "Cloud Sync V2 stale durable wake discarded")
                 return@future Result.success()
             }
@@ -50,6 +52,15 @@ class CloudSyncV2Worker(
             if (runAttemptCount >= CloudSyncV2WorkOutcomePolicy.MAX_ATTEMPTS) {
                 Log.w(Constants.logTag, "Cloud Sync V2 durable wake exhausted retry budget")
                 return@future Result.failure()
+            }
+
+            val attempt = try {
+                CloudSyncV2WorkRegistration.begin(applicationContext, registration, id)
+            } catch (_: Exception) {
+                return@future retryResult()
+            } ?: return@future Result.success()
+            if (!CloudSyncV2WorkRegistration.matches(applicationContext, registration)) {
+                return@future Result.success()
             }
 
             val outcome = try {
@@ -66,10 +77,28 @@ class CloudSyncV2Worker(
                 "retry"
             }
 
-            when (CloudSyncV2WorkOutcomePolicy.resolve(outcome, runAttemptCount)) {
+            // Never seal/cancel a newer registration after a suspended handoff.
+            if (!CloudSyncV2WorkRegistration.matches(applicationContext, registration)) {
+                return@future Result.success()
+            }
+            val disposition = CloudSyncV2WorkOutcomePolicy.resolve(outcome, runAttemptCount)
+            if (disposition == CloudSyncV2WorkerDisposition.RETRY) return@future Result.retry()
+            val sealed = try {
+                CloudSyncV2WorkRegistration.seal(applicationContext, attempt)
+            } catch (_: Exception) {
+                false
+            }
+            if (!sealed) return@future retryResult()
+            when (disposition) {
                 CloudSyncV2WorkerDisposition.SUCCESS -> Result.success()
                 CloudSyncV2WorkerDisposition.RETRY -> Result.retry()
                 CloudSyncV2WorkerDisposition.FAILURE -> Result.failure()
             }
+        }
+
+    private fun retryResult(): Result =
+        when (CloudSyncV2WorkOutcomePolicy.resolve("retry", runAttemptCount)) {
+            CloudSyncV2WorkerDisposition.RETRY -> Result.retry()
+            else -> Result.failure()
         }
 }

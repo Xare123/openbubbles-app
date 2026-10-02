@@ -41,6 +41,7 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_attachment_produc
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_attachment_sync_gate.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_android_background.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_background_read_preference.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_background_registration.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_automatic_archive_preference.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_dev_gate.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_composer_admission.dart';
@@ -8217,7 +8218,9 @@ class RustPushService extends GetxService {
   String? _cloudSyncV2ReceivedCursor;
   int? _cloudSyncV2ReceivedRoundCeiling;
   bool _cloudSyncV2ReceivedPassDeferred = false;
-  bool _cloudSyncV2AndroidBackgroundRegistered = false;
+  final _cloudSyncV2AndroidBackgroundRegistration = CloudSyncBackgroundRegistration();
+  bool get _cloudSyncV2AndroidBackgroundRegistered =>
+      _cloudSyncV2AndroidBackgroundRegistration.registered;
   Future<CloudSyncBackgroundReadPreference>? _cloudSyncV2BackgroundPreferenceInFlight;
   static const _cloudSyncV2SemanticPullQuiescenceTimeout =
       Duration(seconds: 50);
@@ -8329,39 +8332,45 @@ class RustPushService extends GetxService {
       return;
     }
     try {
-      final preference = await _cloudSyncV2BackgroundReadPreferences().load();
-      if (!preference.enabled) {
-        await _disableCloudSyncV2AndroidBackgroundRead();
-        return;
-      }
-      final accepted = await mcs.invokeMethod(
-        'cloud-sync-v2-background-control',
-        <String, Object>{'action': 'configure', 'scopeHash': preference.identity.scopeHash},
+      final outcome = await _cloudSyncV2AndroidBackgroundRegistration.configure(
+        preferences: _cloudSyncV2BackgroundReadPreferences(),
+        configureNative: (scopeHash) async => await mcs.invokeMethod(
+          'cloud-sync-v2-background-control',
+          <String, Object>{'action': 'configure', 'scopeHash': scopeHash},
+        ) == true,
+        disableNative: () async => await mcs.invokeMethod(
+          'cloud-sync-v2-background-control',
+          const <String, Object>{'action': 'disable'},
+        ) == true,
       );
-      _cloudSyncV2AndroidBackgroundRegistered = accepted == true;
-      if (!_cloudSyncV2AndroidBackgroundRegistered) {
+      if (outcome == CloudSyncBackgroundRegistrationOutcome.rejected) {
         Logger.warn('Cloud Sync V2 Android background registration rejected');
+      } else if (outcome == CloudSyncBackgroundRegistrationOutcome.unavailable) {
+        Logger.warn('Cloud Sync V2 Android background registration unavailable');
       }
     } catch (_) {
-      _cloudSyncV2AndroidBackgroundRegistered = false;
+      // Capturing the service/store can fail before the registration helper is
+      // entered. Fence older replies without dispatching a native command.
+      _cloudSyncV2AndroidBackgroundRegistration.invalidate();
       Logger.warn('Cloud Sync V2 Android background registration unavailable');
     }
   }
 
   Future<void> _disableCloudSyncV2AndroidBackgroundRead() async {
-    _cloudSyncV2AndroidBackgroundRegistered = false;
-    if (!Platform.isAndroid ||
-        !ls.isUiThread ||
-        mcs.background ||
-        !_cloudSyncV2CanaryRuntimeAllowed) {
-      return;
-    }
-    try {
-      await mcs.invokeMethod(
-        'cloud-sync-v2-background-control',
-        const <String, Object>{'action': 'disable'},
-      );
-    } catch (_) {
+    final outcome = await _cloudSyncV2AndroidBackgroundRegistration.disable(
+      disableNative: () async {
+        if (!Platform.isAndroid || !ls.isUiThread || mcs.background ||
+            !_cloudSyncV2CanaryRuntimeAllowed) {
+          return true;
+        }
+        return await mcs.invokeMethod(
+          'cloud-sync-v2-background-control',
+          const <String, Object>{'action': 'disable'},
+        ) == true;
+      },
+    );
+    if (outcome == CloudSyncBackgroundRegistrationOutcome.rejected ||
+        outcome == CloudSyncBackgroundRegistrationOutcome.unavailable) {
       Logger.warn('Cloud Sync V2 Android background disable unavailable');
     }
   }
