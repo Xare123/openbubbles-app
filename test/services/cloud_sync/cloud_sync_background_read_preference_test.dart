@@ -269,7 +269,10 @@ void main() {
         scheduling,
         contains('developerDefault: () => _cloudSyncV2DeveloperRuntimeAllowed'),
       );
-      expect(scheduling, contains('if (!preference.enabled)'));
+      expect(
+        scheduling,
+        contains('if (!preference.enabled || !preferences.stillCurrent()) return;'),
+      );
       expect(scheduling, contains('write: ss.prefs.setBool'));
       expect(scheduling, isNot(contains('ensureWriterOwned(')));
       expect(scheduling, isNot(contains('_queueCloudSyncV2LocalSends(')));

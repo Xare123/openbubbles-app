@@ -256,6 +256,24 @@ class CloudSyncV2WakeCoordinatorTest {
         assertFalse(f.coordinator.hint(before))
     }
 
+    @Test fun `old cancellation failure cannot strand new account reservation`() = runBlocking {
+        val f = Fixture()
+        assertTrue(f.coordinator.configure(f.scope))
+        val old = f.registration
+        val oldId = f.id
+        f.backend.failCancel = true
+        try { f.coordinator.configure(f.otherScope); fail("expected cancel failure") }
+        catch (_: IllegalStateException) { }
+        assertEquals(f.otherScope, f.registration.scopeHash)
+        assertTrue(f.registration.epoch > old.epoch)
+        assertNotEquals(oldId, f.id)
+        // No later hint/configure is needed to actually enqueue the new work.
+        assertEquals(true, f.backend.states[f.id])
+        assertEquals(listOf(oldId, f.id), f.backend.enqueues)
+        assertEquals(listOf(oldId), f.backend.cancels)
+        assertNull(f.coordinator.begin(old, oldId))
+    }
+
     @Test fun `late old completion cannot seal or cancel newer account work`() = runBlocking {
         val f = Fixture()
         f.coordinator.configure(f.scope)

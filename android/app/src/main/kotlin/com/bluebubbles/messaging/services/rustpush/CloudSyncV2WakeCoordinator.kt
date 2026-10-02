@@ -115,10 +115,14 @@ internal class CloudSyncV2WakeCoordinator(
         }
         val reserved = reserve(requested)
         if (!store.commit(reserved)) return@serialized false
+        // Once the old epoch is revoked, cleanup failure must not strand the
+        // new reservation without a wake. The old worker rejects that epoch;
+        // exact-ID cancellation is cleanup, not admission for the new work.
+        val submitted = submit(reserved)
         // Revoke the old epoch before cancellation, and cancel only its exact
         // request. A delayed cancellation cannot affect a newer registration.
         if (!sameRegistration) previous.workId?.let { backend.cancel(it) }
-        submit(reserved)
+        submitted
     }
 
     suspend fun hint(expected: CloudSyncV2WorkRegistrationSnapshot): Boolean = serialized {

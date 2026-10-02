@@ -7,6 +7,7 @@ import androidx.work.WorkerParameters
 import com.bluebubbles.messaging.Constants
 import com.bluebubbles.messaging.services.backend_ui_interop.DartWorker
 import com.google.common.util.concurrent.ListenableFuture
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.TimeoutCancellationException
@@ -56,6 +57,10 @@ class CloudSyncV2Worker(
 
             val attempt = try {
                 CloudSyncV2WorkRegistration.begin(applicationContext, registration, id)
+            } catch (_: TimeoutCancellationException) {
+                return@future retryResult()
+            } catch (error: CancellationException) {
+                throw error
             } catch (_: Exception) {
                 return@future retryResult()
             } ?: return@future Result.success()
@@ -73,6 +78,8 @@ class CloudSyncV2Worker(
                 }
             } catch (_: TimeoutCancellationException) {
                 "retry"
+            } catch (error: CancellationException) {
+                throw error
             } catch (_: Exception) {
                 "retry"
             }
@@ -85,6 +92,10 @@ class CloudSyncV2Worker(
             if (disposition == CloudSyncV2WorkerDisposition.RETRY) return@future Result.retry()
             val sealed = try {
                 CloudSyncV2WorkRegistration.seal(applicationContext, attempt)
+            } catch (_: TimeoutCancellationException) {
+                false
+            } catch (error: CancellationException) {
+                throw error
             } catch (_: Exception) {
                 false
             }

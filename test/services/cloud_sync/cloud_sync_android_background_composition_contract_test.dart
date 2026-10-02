@@ -76,6 +76,26 @@ void main() {
     expect(worker, isNot(contains('AUTOMATIC_MEDIA')));
   });
 
+  test('worker separates bounded timeouts from external cancellation', () {
+    final worker = File(
+      'android/app/src/main/kotlin/com/bluebubbles/messaging/services/'
+      'rustpush/CloudSyncV2Worker.kt',
+    ).readAsStringSync();
+    expect(worker, contains('import kotlinx.coroutines.CancellationException'));
+    // The three suspension boundaries are begin, Dart handoff and terminal
+    // seal. Timeout is a bounded retry; a stopped WorkManager future is not.
+    expect(
+      RegExp(r'catch \(error: CancellationException\) \{\s*throw error')
+          .allMatches(worker),
+      hasLength(3),
+    );
+    expect(
+      RegExp(r'catch \(_: TimeoutCancellationException\)')
+          .allMatches(worker),
+      hasLength(3),
+    );
+  });
+
   test('result-bearing Flutter startup is cancellable and time-bounded', () {
     final source = File(
       'android/app/src/main/kotlin/com/bluebubbles/messaging/services/'
