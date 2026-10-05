@@ -1058,22 +1058,21 @@ jobs:
           uname -a
           df -h
           "$sdk_root/platform-tools/adb" version
-          # Report all unresolved loader dependencies before any large image transfer.
-          for runtime_binary in \
-            "$sdk_root/emulator/emulator" \
-            "$sdk_root/emulator/qemu/linux-x86_64/qemu-system-x86_64"; do
-            test -x "$runtime_binary"
-            if ! dependency_report="$(ldd "$runtime_binary" 2>&1)"; then
-              printf '%s\n' "$dependency_report" >&2
-              exit 1
-            fi
-            printf '%s\n' "$dependency_report"
-            if [[ "$dependency_report" == *'not found'* ]]; then
-              echo "Unresolved emulator host dependencies: $runtime_binary" >&2
-              exit 1
-            fi
-          done
-          "$sdk_root/emulator/emulator" -version
+          # Check the launcher, then execute the same headless engine as the trial.
+          # Google sets bundled library paths in the launcher; raw engine ldd
+          # omits that setup and incorrectly reports bundled libraries as missing.
+          runtime_binary="$sdk_root/emulator/emulator"
+          test -x "$runtime_binary"
+          if ! dependency_report="$(ldd "$runtime_binary" 2>&1)"; then
+            printf '%s\n' "$dependency_report" >&2
+            exit 1
+          fi
+          printf '%s\n' "$dependency_report"
+          if [[ "$dependency_report" == *'not found'* ]]; then
+            echo "Unresolved emulator launcher dependencies: $runtime_binary" >&2
+            exit 1
+          fi
+          timeout --kill-after=5s 30s "$runtime_binary" -no-window -verbose -version
           java -version
 
       - name: Verify runtime adaptation guards once
