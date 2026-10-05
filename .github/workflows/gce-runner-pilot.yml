@@ -67,6 +67,7 @@ on:
           - rustpush-only
           - app-rust-only
           - dart-only
+          - apk-runtime-only
       outbound_writer:
         description: Build the isolated Android Canary with one-message V2 writer controls
         required: true
@@ -171,6 +172,15 @@ jobs:
           if [[ "$AUTOMATIC_UPLOADS" == 'true' && "$OUTBOUND_WRITER" != 'true' ]]; then
             echo 'automatic_uploads requires outbound_writer=true (full Canary qualification).' >&2
             exit 1
+          fi
+          if [[ "$VALIDATION_MODE" == 'apk-runtime-only' ]]; then
+            # Consume the already-qualified APK, not a new source-branch build.
+            if [[ "$SOURCE_REF" != '802e92ded7035c1153e930c9b43e671fa9c400d5' ||
+                  "$BUILD_FLAVOR" != 'canary' || "$RUNNER_LANE" != 'primary' ]]; then
+              echo 'APK runtime requires the pinned 802e92 Canary and primary lane.' >&2
+              exit 1
+            fi
+            exit 0
           fi
           trusted_sha="$(
             git ls-remote \
@@ -376,6 +386,7 @@ jobs:
 
   benchmark-build:
     name: Build ${{ inputs.flavor || 'beta' }} APK on GCE
+    if: ${{ (inputs.validation_mode || 'full') != 'apk-runtime-only' }}
     needs: create-runner
     runs-on: ${{ needs.create-runner.outputs.label }}
     timeout-minutes: 60
@@ -987,6 +998,97 @@ jobs:
         shell: bash
         run: cargo test --manifest-path rustpush/Cargo.toml --lib --features remote-anisette-v3 -- --test-threads=1
 
+  apk-runtime:
+    name: Run qualified 802e92 APK only on GCE
+    if: ${{ inputs.validation_mode == 'apk-runtime-only' }}
+    needs: create-runner
+    runs-on: ${{ needs.create-runner.outputs.label }}
+    timeout-minutes: 55
+    # Match the established root runner's actual home, not a test directory.
+    env:
+      HOME: /root
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - name: Check out reviewed runtime tools
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: runtime-tools
+
+      - name: Check out exact candidate source and submodules without building
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.SOURCE_REF }}
+          submodules: recursive
+          path: source-test
+
+      - name: Set up Java
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          java-version: "21"
+          distribution: temurin
+
+      - name: Set up Android SDK
+        uses: amyu/setup-android@3fe49086b1abd7c9ef865120d5d4d486fe55ba98 # v5
+
+      - name: Install runtime prerequisites only
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libgl1 libpulse0 libnss3 libx11-6 libxcb1 unzip
+          sdkmanager 'platform-tools' 'emulator' 'build-tools;35.0.0' >/dev/null
+          sdk_root="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
+          test -n "$sdk_root"
+          sdk_root="$(readlink -f "$sdk_root")"
+          {
+            echo "OB_RUNTIME_SDK=$sdk_root"
+            echo "OB_RUNTIME_SOURCE=$GITHUB_WORKSPACE/source-test"
+            echo "OB_RUNTIME_ROOT=$RUNNER_TEMP/ob-canary-802e92-GCE"
+            echo "OB_RUNTIME_IMAGE_ZIP=$RUNNER_TEMP/x86_64-30_r16.zip"
+            echo "OB_RUNTIME_METADATA=$RUNNER_TEMP/sys-img2-4.xml"
+            echo "OB_RUNTIME_APK=$RUNNER_TEMP/ob-artifact11226077330/openbubbles-canary-802e92-signed.apk"
+          } >> "$GITHUB_ENV"
+          uname -a
+          df -h
+          "$sdk_root/platform-tools/adb" version
+          "$sdk_root/emulator/emulator" -version
+          java -version
+
+      - name: Verify runtime adaptation guards once
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s runtime-tools/tooling/android-runtime -p 'test_*.py' -v
+
+      - name: Materialize exact already-signed candidate and official image metadata
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        shell: bash
+        run: python3 runtime-tools/tooling/android-runtime/materialize.py
+
+      - name: Prepare one isolated official ARM-translation image
+        shell: bash
+        run: >-
+          python3 runtime-tools/tooling/android-runtime/trial.py prepare
+          --request OB-GCE-APK-802E92-${{ github.run_id }}-PREPARE
+
+      - name: Boot and inspect one blank Canary profile
+        shell: bash
+        run: >-
+          python3 runtime-tools/tooling/android-runtime/trial.py trial
+          --request OB-GCE-APK-802E92-${{ github.run_id }}-TRIAL
+
+      - name: Preserve bounded runtime receipts for supervisor acceptance
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: GCE blank-profile APK runtime 802e92 ${{ github.run_id }}
+          path: runtime-tools/tooling/android-runtime/run/
+          if-no-files-found: warn
+          retention-days: 7
+
   finalize-canary:
     name: Sign and verify Canary on GitHub-hosted runner
     needs: benchmark-build
@@ -1104,6 +1206,7 @@ jobs:
     needs:
       - create-runner
       - benchmark-build
+      - apk-runtime
     if: ${{ always() && needs.create-runner.result != 'skipped' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
