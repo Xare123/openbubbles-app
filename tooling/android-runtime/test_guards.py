@@ -8,6 +8,7 @@ from pathlib import Path
 import stat
 import tempfile
 import unittest
+from unittest.mock import Mock, patch
 import zipfile
 
 HERE = Path(__file__).resolve().parent
@@ -62,6 +63,71 @@ class Guards(unittest.TestCase):
     def test_actual_hard_threshold_overshoot_is_reportable(self):
         G, M = trial.GiB, trial.MiB
         self.assertEqual(len(trial.resource_reasons(5.9*G, 8.1*G, 257*M, False)), 3)
+
+    def test_free_space_uses_configured_runtime_filesystem_before_root_exists(self):
+        with tempfile.TemporaryDirectory(dir=HERE) as tmp:
+            parent = Path(tmp)
+            for root in (parent, parent/"new"/"runtime"):
+                with self.subTest(root=root), patch.object(trial, "ROOT", root), \
+                        patch.object(trial.os, "statvfs") as statvfs:
+                    statvfs.return_value = Mock(f_bavail=23, f_frsize=4096)
+                    self.assertEqual(trial.free_bytes(), 23*4096)
+                    statvfs.assert_called_once_with(parent)
+
+    def test_free_space_errors_are_not_invented_as_available_capacity(self):
+        with tempfile.TemporaryDirectory(dir=HERE) as tmp, \
+                patch.object(trial, "ROOT", Path(tmp)), \
+                patch.object(trial.os, "statvfs", side_effect=PermissionError(13, "denied")):
+            with self.assertRaises(PermissionError):
+                trial.free_bytes()
+
+    def test_initial_watchdog_measurement_failure_retains_a_fatal_receipt(self):
+        parent = dict(pid=51, start=1234, uid=1000, pgid=51)
+        connection, stop, receipt = Mock(), Mock(), Mock()
+        connection.poll.return_value = True
+        connection.recv.return_value = "finished"
+        with patch.object(trial.os, "setsid"), \
+                patch.object(trial, "free_bytes", side_effect=FileNotFoundError(2, "missing", "/absent")), \
+                patch.object(trial, "identity", return_value=parent), \
+                patch.object(trial.time, "monotonic", return_value=0), \
+                patch.object(trial, "descendants", return_value=[]), \
+                patch.object(trial, "terminate"), patch.object(trial, "immutable", receipt):
+            trial.watchdog(parent, connection, "prepare", 10, 40, stop)
+        stop.set.assert_called_once()
+        saved = receipt.call_args.args[1]
+        self.assertEqual(saved["fatal_error"]["stage"], "initial_free_bytes")
+        self.assertEqual(saved["fatal_error"]["errno"], 2)
+        self.assertIsNone(saved["peaks"]["free_min"])
+        self.assertIsNone(saved["overshoot"])
+        self.assertEqual(saved["stop_reason"], "watchdog error: FileNotFoundError")
+
+    def test_closed_watchdog_pipe_and_failed_final_measurement_preserve_failure(self):
+        with tempfile.TemporaryDirectory(dir=HERE) as tmp:
+            run = Path(tmp)
+            trial.immutable(run/"prepare.watchdog.json", {"stop_reason":"watchdog error: FileNotFoundError"})
+            session = trial.Session.__new__(trial.Session)  # No initializer or process spawn.
+            session.parent, session.owners, session.jobs = {}, [], []
+            session.watch, session.send = Mock(), Mock()
+            session.watch.pid, session.watch_owner = 52, {}
+            session.watch.is_alive.return_value = False
+            session.send.send.side_effect = BrokenPipeError(32, "closed")
+            session.phase, session.hard, session.start = "prepare", 1000, 0
+            session.commands, session.observations = [], {}
+            report = dict(result="interrupted_or_failed", error="original preparation failure")
+            with patch.object(trial, "RUN", run), \
+                    patch.object(trial, "session_owners", return_value=[]), \
+                    patch.object(trial, "terminate"), patch.object(trial, "listeners", return_value=[]), \
+                    patch.object(trial, "tree_bytes", return_value=0), \
+                    patch.object(trial.time, "monotonic", return_value=100), \
+                    patch.object(trial, "free_bytes", side_effect=FileNotFoundError(2, "missing", "/absent")):
+                session.finish(report)
+            saved = json.loads((run/"prepare.result.json").read_text())
+            self.assertEqual(saved["error"], "original preparation failure")
+            self.assertEqual(saved["watchdog_pipe_failure"]["errno"], 32)
+            self.assertEqual(saved["final_resource_error"]["errno"], 2)
+            self.assertIsNone(saved["free_bytes"])
+            self.assertFalse(saved["cleanup_verified"])
+            self.assertEqual(saved["result"], "stopped_by_watchdog_or_cleanup_guard")
 
     def entry(self, name, size=3, mode=stat.S_IFREG | 0o644):
         item = zipfile.ZipInfo(name)

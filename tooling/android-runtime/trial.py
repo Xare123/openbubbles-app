@@ -173,7 +173,13 @@ def tree_bytes(path):
 
 
 def free_bytes():
-    v = os.statvfs("/workspace")
+    # Charge the configured runtime filesystem, including before ROOT exists.
+    # /workspace is a managed-host convention, not a GCE runner path.
+    anchor = ROOT
+    while not anchor.exists():
+        require(anchor != anchor.parent, "runtime filesystem anchor unavailable")
+        anchor = anchor.parent
+    v = os.statvfs(anchor)
     return v.f_bavail * v.f_frsize
 
 
@@ -302,9 +308,10 @@ def watchdog(parent, conn, phase, work_end, hard_end, stop):
     """Independent process: can stop children even if the main thread hangs."""
     os.setsid()
     stage, fatal_error = "initial_free_bytes", None
-    owners, peaks, reason = [], dict(avd=0, evidence=0, free_min=free_bytes()), None
+    owners, peaks, reason = [], dict(avd=0, evidence=0, free_min=None), None
     stopping_at = None
     try:
+        peaks["free_min"] = free_bytes()
         while True:
             stage = "receipt_messages"
             while conn.poll():
@@ -384,7 +391,8 @@ def watchdog(parent, conn, phase, work_end, hard_end, stop):
         immutable(RUN / (phase + ".watchdog.json"),
                   dict(phase=phase, peaks=peaks, stop_reason=reason,
                        fatal_error=fatal_error, last_stage=stage,
-                       overshoot=resource_reasons(peaks["free_min"], peaks["avd"], peaks["evidence"], False),
+                       overshoot=(resource_reasons(peaks["free_min"], peaks["avd"], peaks["evidence"], False)
+                                  if peaks["free_min"] is not None else None),
                        owners=owners))
 
 
@@ -536,7 +544,10 @@ class Session:
                 os.waitpid(owner["pid"], os.WNOHANG)
             except ChildProcessError:
                 pass
-        self.send.send("finished")
+        try:
+            self.send.send("finished")
+        except (BrokenPipeError, EOFError, OSError) as error:
+            report["watchdog_pipe_failure"] = watchdog_error_detail("finish_receipt_pipe", error)
         self.watch.join(timeout=max(.01, min(2, self.hard-time.monotonic())))
         if self.watch.is_alive():
             terminate([self.watch_owner], signal.SIGTERM)
@@ -545,14 +556,21 @@ class Session:
         monitor = json.loads(monitor_path.read_text()) if monitor_path.exists() else {}
         remaining = [x for x in owners if live_owner(x)]
         final_ports = [r for r in listeners() if r["port"] in PORTS]
+        try:
+            final_free = free_bytes()
+        except OSError as error:
+            final_free = None
+            report["final_resource_error"] = watchdog_error_detail("finish_free_bytes", error)
         report.update(commands=self.commands, monitor=monitor, remaining_owned_processes=remaining,
                       observations=self.observations,
                       final_listeners=final_ports,
-                      elapsed_seconds=round(time.monotonic()-self.start, 3), free_bytes=free_bytes(),
+                      elapsed_seconds=round(time.monotonic()-self.start, 3), free_bytes=final_free,
                       allocated_avd_bytes=tree_bytes(ROOT), evidence_bytes=tree_bytes(HERE),
-                      cleanup_verified=bool(monitor) and not remaining and not self.watch.is_alive()
+                      cleanup_verified=bool(monitor) and not report.get("watchdog_pipe_failure")
+                          and final_free is not None and not remaining and not self.watch.is_alive()
                           and (self.phase != "trial" or not final_ports))
         if (not report["cleanup_verified"] or monitor.get("stop_reason")
+                or report["free_bytes"] is None
                 or resource_reasons(report["free_bytes"], report["allocated_avd_bytes"], report["evidence_bytes"], False)):
             report["outcome_before_final_guards"] = report["result"]
             report["result"] = "stopped_by_watchdog_or_cleanup_guard"
