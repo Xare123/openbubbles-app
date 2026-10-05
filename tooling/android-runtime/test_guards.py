@@ -33,6 +33,12 @@ class Guards(unittest.TestCase):
             with self.subTest(argv=argv), contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
                 trial.parse_request(argv)
 
+    def test_owned_adb_listener_uses_supported_loopback_server_syntax(self):
+        command = trial.adb_server_command()
+        self.assertEqual(command, [trial.SDK/"platform-tools/adb", "-L",
+                                   "tcp:localhost:5038", "server", "nodaemon"])
+        self.assertNotIn("-a", command)
+
     def test_ownership_rejects_reused_pid_and_changed_uid_or_group(self):
         original = dict(pid=51, start=1234, uid=1000, pgid=51)
         self.assertTrue(trial.same_owner(original, dict(original, state="S")))

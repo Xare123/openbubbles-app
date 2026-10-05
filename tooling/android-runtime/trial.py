@@ -724,6 +724,12 @@ def startup_log_assessment(logs):
     return later, errors
 
 
+def adb_server_command():
+    # ADB's listen parser accepts localhost, not the client form 127.0.0.1.
+    # No -a: this owned server remains loopback-only on its dedicated port.
+    return [SDK/"platform-tools/adb", "-L", "tcp:localhost:5038", "server", "nodaemon"]
+
+
 def trial(s):
     prepared = json.loads((RUN/"prepare.result.json").read_text())
     require(prepared.get("result") == "prepared_not_booted" and prepared.get("cleanup_verified"), "preparation not complete")
@@ -743,7 +749,7 @@ def trial(s):
         check_file(IMAGE/row["name"], row["bytes"], "sha256", row["sha256"])
         require(stat.S_IMODE((IMAGE/row["name"]).stat().st_mode) == row["mode"], "image permissions changed")
     require(preflight(s) == prepared["candidate"], "candidate version changed")
-    s.adb_server = s.spawn([SDK/"platform-tools/adb", "-L", "tcp:127.0.0.1:5038", "server", "nodaemon"], "adb-server", limit=16*MiB)
+    s.adb_server = s.spawn(adb_server_command(), "adb-server", limit=16*MiB)
     until = min(time.monotonic()+10, s.work)
     while not any(r["port"] == 5038 for r in owned_listeners([s.adb_server[1]])):
         s.check()
