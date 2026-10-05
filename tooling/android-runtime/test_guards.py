@@ -1,6 +1,8 @@
 """Pure guard tests: no Session, SDK execution, network, boot, or process spawn."""
 import hashlib
 import importlib.util
+import contextlib
+import io
 import json
 from pathlib import Path
 import stat
@@ -15,6 +17,21 @@ spec.loader.exec_module(trial)
 
 
 class Guards(unittest.TestCase):
+    def test_exact_gce_prepare_and_trial_requests_are_admitted(self):
+        for phase in ("prepare", "trial"):
+            request = f"OB-GCE-APK-802E92-37370562658-{phase.upper()}-T"
+            parsed = trial.parse_request([phase, "--request-id", request])
+            self.assertEqual(parsed.phase, phase)
+            self.assertEqual(parsed.request_id, request)
+            with self.assertRaises(RuntimeError):
+                trial.parse_request([phase, "--request-id", request.removesuffix("-T")])
+
+    def test_cli_rejects_abbreviated_flag_and_invalid_phase(self):
+        request = "OB-GCE-APK-802E92-37370562658-TRIAL-T"
+        for argv in (["trial", "--request", request], ["replay", "--request-id", request]):
+            with self.subTest(argv=argv), contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                trial.parse_request(argv)
+
     def test_ownership_rejects_reused_pid_and_changed_uid_or_group(self):
         original = dict(pid=51, start=1234, uid=1000, pgid=51)
         self.assertTrue(trial.same_owner(original, dict(original, state="S")))

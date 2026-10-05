@@ -816,12 +816,17 @@ def failure_diagnostics(error, phase):
     return detail
 
 
-def main():
-    parser = argparse.ArgumentParser(description=__doc__)
+def parse_request(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__, allow_abbrev=False)
     parser.add_argument("phase", choices=("prepare", "trial"))
     parser.add_argument("--request-id", required=True, help="Distinct supervisor-approved T request; S is implementation only")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     require(re.fullmatch(r"OB-[A-Z0-9-]+-T", args.request_id), "a distinct reviewed T request is required; S does not authorize execution")
+    return args
+
+
+def main():
+    args = parse_request()
     s = Session(args.phase, args.request_id)
     report = dict(result="interrupted_or_failed", phase=args.phase, request=args.request_id)
     def interrupted(*unused):

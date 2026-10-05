@@ -1072,13 +1072,13 @@ jobs:
         shell: bash
         run: >-
           python3 runtime-tools/tooling/android-runtime/trial.py prepare
-          --request OB-GCE-APK-802E92-${{ github.run_id }}-PREPARE
+          --request-id OB-GCE-APK-802E92-${{ github.run_id }}-PREPARE-T
 
       - name: Boot and inspect one blank Canary profile
         shell: bash
         run: >-
           python3 runtime-tools/tooling/android-runtime/trial.py trial
-          --request OB-GCE-APK-802E92-${{ github.run_id }}-TRIAL
+          --request-id OB-GCE-APK-802E92-${{ github.run_id }}-TRIAL-T
 
       - name: Preserve bounded runtime receipts for supervisor acceptance
         if: ${{ always() }}
