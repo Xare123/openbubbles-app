@@ -62,6 +62,10 @@ PINS = {
 GiB = 1024**3
 MiB = 1024**2
 PORTS = {5038, 5556, 5557, 8554}
+GUEST_PROPERTY_KEYS = (
+    "ro.build.version.sdk", "ro.build.fingerprint", "ro.product.cpu.abilist",
+    "ro.product.cpu.abilist64", "ro.dalvik.vm.native.bridge", "ro.dalvik.vm.isa.arm64",
+)
 
 
 def require(ok, message):
@@ -782,6 +786,22 @@ def wait_for_boot(s, emulator):
         time.sleep(clip(time.monotonic(), 2, boot_end))
 
 
+def guest_properties(s):
+    """One readonly AOSP getprop snapshot, never six short per-property RPCs."""
+    code, snapshot = s.adb(["shell", "getprop"], "guest-properties", seconds=30, limit=256*1024)
+    require(code == 0, "guest property snapshot failed")
+    props = {}
+    for line in snapshot.decode("utf-8").splitlines():
+        match = re.fullmatch(r"\[([^\[\]\r\n]+)\]: \[([^\r\n]*)\]", line)
+        require(match, "malformed guest property snapshot")
+        key, value = match.groups()
+        if key in GUEST_PROPERTY_KEYS:
+            require(key not in props, "duplicate guest identity property")
+            props[key] = value
+    require(set(props) == set(GUEST_PROPERTY_KEYS), "incomplete guest identity properties")
+    return props
+
+
 def trial(s):
     prepared = json.loads((RUN/"prepare.result.json").read_text())
     require(prepared.get("result") == "prepared_not_booted" and prepared.get("cleanup_verified"), "preparation not complete")
@@ -813,11 +833,7 @@ def trial(s):
         "-camera-front", "none", "-no-metrics", "-feature", "-Vulkan"], "emulator", limit=96*MiB)
     wait_for_boot(s, emulator)
     report = dict(boot_seconds=round(time.monotonic()-s.start, 3), gates={})
-    props = {}
-    for key in ["ro.build.version.sdk", "ro.build.fingerprint", "ro.product.cpu.abilist",
-                "ro.product.cpu.abilist64", "ro.dalvik.vm.native.bridge", "ro.dalvik.vm.isa.arm64"]:
-        _, value = s.adb(["shell", "getprop", key], "guest-property", seconds=5)
-        props[key] = value.decode().strip()
+    props = guest_properties(s)
     report["guest_properties"] = props
     require(props["ro.build.version.sdk"] == "30" and "arm64-v8a" in props["ro.product.cpu.abilist64"].split(",")
             and props["ro.dalvik.vm.isa.arm64"] == "x86_64", "guest ARM64 admission not established")

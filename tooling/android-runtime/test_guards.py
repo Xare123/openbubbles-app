@@ -191,6 +191,59 @@ class Guards(unittest.TestCase):
             session.adb.assert_called_once()
             sleep.assert_not_called()
 
+    def guest_property_fixture(self):
+        return {
+            "ro.build.version.sdk": "30",
+            "ro.build.fingerprint": "google/test/API30/revision16:userdebug/test-keys",
+            "ro.product.cpu.abilist": "x86_64,x86,arm64-v8a,armeabi-v7a,armeabi",
+            "ro.product.cpu.abilist64": "x86_64,arm64-v8a",
+            "ro.dalvik.vm.native.bridge": "libndk_translation.so",
+            "ro.dalvik.vm.isa.arm64": "x86_64",
+        }
+
+    def test_guest_properties_use_one_bounded_readonly_snapshot(self):
+        expected = self.guest_property_fixture()
+        snapshot = "\r\n".join(f"[{key}]: [{value}]" for key, value in expected.items())
+        snapshot += "\r\n[other.property]: [ignored value]\r\n"
+        session = Mock()
+        session.adb.return_value = (0, snapshot.encode())
+        self.assertEqual(trial.guest_properties(session), expected)
+        session.adb.assert_called_once_with(["shell", "getprop"], "guest-properties",
+                                            seconds=30, limit=256*1024)
+
+    def test_guest_properties_reject_each_missing_required_identity_key(self):
+        for missing in trial.GUEST_PROPERTY_KEYS:
+            snapshot = "\n".join(f"[{key}]: [{value}]" for key, value
+                                 in self.guest_property_fixture().items() if key != missing)
+            session = Mock()
+            session.adb.return_value = (0, snapshot.encode())
+            with self.subTest(missing=missing), self.assertRaisesRegex(RuntimeError, "incomplete"):
+                trial.guest_properties(session)
+            session.adb.assert_called_once()
+
+    def test_guest_properties_reject_duplicate_identity_even_if_values_match(self):
+        snapshot = "\n".join(f"[{key}]: [{value}]" for key, value in self.guest_property_fixture().items())
+        for extra in ("[ro.build.version.sdk]: [30]", "[ro.build.version.sdk]: [31]"):
+            session = Mock()
+            session.adb.return_value = (0, (snapshot+"\n"+extra).encode())
+            with self.subTest(extra=extra), self.assertRaisesRegex(RuntimeError, "duplicate"):
+                trial.guest_properties(session)
+            session.adb.assert_called_once()
+
+    def test_guest_properties_reject_malformed_failed_or_timed_out_reads_without_retry(self):
+        for code, snapshot in ((0, b"not a property"), (0, b"\xff"), (1, b""), (0, b"")):
+            session = Mock()
+            session.adb.return_value = (code, snapshot)
+            with self.subTest(code=code, snapshot=snapshot), \
+                    self.assertRaises((RuntimeError, UnicodeDecodeError)):
+                trial.guest_properties(session)
+            session.adb.assert_called_once()
+        session = Mock()
+        session.adb.side_effect = trial.CommandTimeout("guest-properties")
+        with self.assertRaises(trial.CommandTimeout):
+            trial.guest_properties(session)
+        session.adb.assert_called_once()
+
     def test_early_resource_stops_leave_cleanup_reserve(self):
         G, M = trial.GiB, trial.MiB
         self.assertEqual(trial.resource_reasons(20*G, G, M), [])
