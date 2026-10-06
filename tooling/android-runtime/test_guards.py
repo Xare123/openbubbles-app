@@ -201,6 +201,137 @@ class Guards(unittest.TestCase):
             "ro.dalvik.vm.isa.arm64": "x86_64",
         }
 
+    def test_command_stderr_is_opt_in_and_returned_only_after_drain(self):
+        for selected in (False, True):
+            session, process, _, threads = self.command_fixture()
+            process.returncode = 20
+            process.poll.return_value = 20
+            session.spawn.return_value[3][1].extend(b"cmd: Can't find service: package\n")
+            with self.subTest(selected=selected), patch.object(trial.time, "monotonic", return_value=100):
+                result = session.command(["synthetic-readonly"], "framework-package",
+                                         ok=False, with_stderr=selected)
+            expected = (20, b"", b"cmd: Can't find service: package\n") if selected else (20, b"")
+            self.assertEqual(result, expected)
+            for thread in threads:
+                thread.join.assert_called_once_with(timeout=1)
+            self.assertNotIn("with_stderr", session.spawn.call_args.kwargs)
+
+    def test_framework_probe_accepts_only_observed_ready_services(self):
+        self.assertTrue(trial.framework_probe_ready("package", 0, b"", b""))
+        for value in (b"0\n", b"1\n", b"null\n"):
+            self.assertTrue(trial.framework_probe_ready("settings", 0, value, b""))
+        for service in ("package", "settings"):
+            self.assertFalse(trial.framework_probe_ready(
+                service, 20, b"", ("cmd: Can't find service: " + service + "\n").encode()))
+
+    def test_framework_probe_never_accepts_unknown_error_or_existing_canary(self):
+        cases = (("package", 20, b"", b""), ("package", 1, b"", b"failure"),
+                 ("package", 0, b"", b"failure"),
+                 ("package", 20, b"package:unexpected\n", b"cmd: Can't find service: package\n"),
+                 ("package", 0, ("package:" + trial.PKG + "\n").encode(), b""),
+                 ("settings", 0, b"", b""), ("settings", 0, b"garbage\n", b""),
+                 ("settings", 20, b"", b"cmd: Can't find service: package\n"))
+        for case in cases:
+            with self.subTest(case=case), self.assertRaises(RuntimeError):
+                trial.framework_probe_ready(*case)
+
+    def framework_fixture(self):
+        session = Mock(start=0, work=1470, observations={})
+        emulator = [Mock()]
+        emulator[0].poll.return_value = None
+        return session, emulator
+
+    def test_framework_wait_requires_both_readonly_probes(self):
+        session, emulator = self.framework_fixture()
+        session.adb.side_effect = [(0, b"", b""), (0, b"1\n", b"")]
+        with patch.object(trial.time, "monotonic", return_value=100), \
+                patch.object(trial, "framework_diagnostics") as diagnostics:
+            trial.wait_for_framework(session, emulator)
+        self.assertEqual(session.observations, {"framework_ready_seconds":100})
+        self.assertEqual([c.args[0] for c in session.adb.call_args_list],
+                         [["shell", "pm", "list", "packages", trial.PKG],
+                          ["shell", "settings", "get", "global", "device_provisioned"]])
+        for call in session.adb.call_args_list:
+            self.assertEqual(call.kwargs, dict(seconds=15, deadline=900, ok=False, with_stderr=True))
+        diagnostics.assert_not_called()
+
+    def test_framework_wait_retries_known_missing_services_with_one_diagnostic(self):
+        session, emulator = self.framework_fixture()
+        missing = (20, b"", b"cmd: Can't find service: package\n")
+        session.adb.side_effect = [missing, (0, b"1\n", b"")]*2 + [(0, b"", b""), (0, b"1\n", b"")]
+        with patch.object(trial.time, "monotonic", return_value=100), \
+                patch.object(trial.time, "sleep") as sleep, \
+                patch.object(trial, "framework_diagnostics") as diagnostics:
+            trial.wait_for_framework(session, emulator)
+        diagnostics.assert_called_once_with(session, 900)
+        self.assertEqual(sleep.call_count, 2)
+        self.assertEqual(session.observations["framework_not_ready_polls"], 2)
+        self.assertEqual(session.adb.call_count, 6)
+
+    def test_framework_wait_does_not_treat_missing_settings_as_ready(self):
+        session, emulator = self.framework_fixture()
+        session.adb.side_effect = [(0, b"", b""), (20, b"", b"cmd: Can't find service: settings\n"),
+                                  (0, b"", b""), (0, b"null\n", b"")]
+        with patch.object(trial.time, "monotonic", return_value=100), \
+                patch.object(trial.time, "sleep"), patch.object(trial, "framework_diagnostics"):
+            trial.wait_for_framework(session, emulator)
+        self.assertEqual(session.adb.call_count, 4)
+
+    def test_framework_wait_recovers_only_clean_readonly_timeout(self):
+        session, emulator = self.framework_fixture()
+        session.adb.side_effect = [trial.CommandTimeout("framework-package"), (0, b"1\n", b""),
+                                  (0, b"", b""), (0, b"1\n", b"")]
+        with patch.object(trial.time, "monotonic", return_value=100), \
+                patch.object(trial.time, "sleep"), patch.object(trial, "framework_diagnostics"):
+            trial.wait_for_framework(session, emulator)
+        self.assertEqual(session.observations["framework_poll_timeouts"], 1)
+        self.assertEqual(session.adb.call_count, 4)
+
+    def test_framework_wait_never_recovers_guard_or_unrelated_timeout(self):
+        for error in (RuntimeError("watchdog stopped work"), RuntimeError("command cleanup incomplete"),
+                      RuntimeError("output drain incomplete"), trial.CommandTimeout("install")):
+            session, emulator = self.framework_fixture()
+            session.adb.side_effect = error
+            with self.subTest(error=str(error)), patch.object(trial.time, "monotonic", return_value=100), \
+                    patch.object(trial, "framework_diagnostics") as diagnostics, self.assertRaises(RuntimeError):
+                trial.wait_for_framework(session, emulator)
+            session.adb.assert_called_once()
+            diagnostics.assert_not_called()
+
+    def test_framework_wait_keeps_original_boot_and_global_deadlines(self):
+        for work, expired in ((1470, 901), (120, 121)):
+            session, emulator = self.framework_fixture()
+            session.work = work
+            with self.subTest(work=work), patch.object(trial.time, "monotonic", return_value=expired), \
+                    self.assertRaisesRegex(RuntimeError, "deadline exhausted"):
+                trial.wait_for_framework(session, emulator)
+            session.adb.assert_not_called()
+
+    def test_framework_wait_rechecks_deadline_and_emulator_before_accepting_ready(self):
+        session, emulator = self.framework_fixture()
+        session.adb.side_effect = [(0, b"", b""), (0, b"1\n", b"")]
+        with patch.object(trial.time, "monotonic", side_effect=[100, 901]), \
+                self.assertRaisesRegex(RuntimeError, "deadline exhausted"):
+            trial.wait_for_framework(session, emulator)
+        self.assertNotIn("framework_ready_seconds", session.observations)
+        session, emulator = self.framework_fixture()
+        session.adb.side_effect = [(0, b"", b""), (0, b"1\n", b"")]
+        emulator[0].poll.side_effect = [None, 1]
+        with patch.object(trial.time, "monotonic", return_value=100), \
+                self.assertRaisesRegex(RuntimeError, "emulator exited"):
+            trial.wait_for_framework(session, emulator)
+        self.assertNotIn("framework_ready_seconds", session.observations)
+
+    def test_framework_diagnostics_are_bounded_readonly_and_do_not_retry(self):
+        session, _ = self.framework_fixture()
+        session.adb.side_effect = [(0, b""), trial.CommandTimeout("framework-diagnostic-processes"), (0, b"")]
+        with patch.object(trial.time, "monotonic", return_value=100):
+            trial.framework_diagnostics(session, 900)
+        self.assertEqual(session.adb.call_count, 3)
+        self.assertTrue(session.observations["framework-diagnostic-processes"]["clean_timeout"])
+        for call in session.adb.call_args_list:
+            self.assertEqual(call.kwargs, dict(seconds=15, deadline=900, ok=False, limit=trial.MiB))
+
     def test_guest_properties_use_one_bounded_readonly_snapshot(self):
         expected = self.guest_property_fixture()
         snapshot = "\r\n".join(f"[{key}]: [{value}]" for key, value in expected.items())

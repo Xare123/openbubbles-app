@@ -3,7 +3,7 @@
 
 Adapted from reviewed cloud launcher AA for the existing ephemeral GCE runner.
 Standard library only. No work at import time. Public subcommands require a
-distinct request. No retries, reuse of an AVD, or receipt overwrite.
+distinct request. No mutation retries, reuse of an AVD, or receipt overwrite.
 Resource monitoring is best-effort, not a filesystem quota.
 """
 import argparse
@@ -519,7 +519,7 @@ class Session:
                                   output=[str(x) for x in paths], started=time.monotonic()-self.start))
         return job
 
-    def command(self, cmd, label, seconds=30, deadline=None, ok=True, **kw):
+    def command(self, cmd, label, seconds=30, deadline=None, ok=True, with_stderr=False, **kw):
         now = time.monotonic()
         end = now + clip(now, seconds, self.work, deadline or self.work)
         job = self.spawn(cmd, label, **kw)
@@ -550,7 +550,8 @@ class Session:
             require(interrupted == "timeout", "watchdog stopped command: " + label)
             raise CommandTimeout(label)
         require(not ok or p.returncode == 0, "command failed: " + label)
-        return p.returncode, bytes(buffers[0])
+        result = (p.returncode, bytes(buffers[0]))
+        return (*result, bytes(buffers[1])) if with_stderr else result
 
     def adb(self, args, label, **kw):
         require(self.adb_server and self.adb_server[0].poll() is None
@@ -766,7 +767,7 @@ def adb_server_command():
 
 
 def wait_for_boot(s, emulator):
-    """Only the readonly boot property poll may recover from command timeout."""
+    """Recover only clean timeouts of this readonly boot property poll."""
     boot_end = min(s.start+900, s.work)
     while True:
         s.check()
@@ -804,6 +805,74 @@ def guest_properties(s):
         props[key] = value
     require(set(props) == set(GUEST_PROPERTY_KEYS), "incomplete guest identity properties")
     return props
+
+
+def framework_probe_ready(service, code, output, errors):
+    """Missing Binder service is not a successful empty-package response."""
+    if code == 20 and not output.strip() and errors.strip() == (
+            "cmd: Can't find service: " + service).encode():
+        return False
+    require(code == 0 and not errors.strip(), "framework probe failed: " + service)
+    if service == "package":
+        require(not output.strip(), "Canary/harness package already present")
+    else:
+        require(service == "settings" and output.strip() in (b"0", b"1", b"null"),
+                "settings readiness response invalid")
+    return True
+
+
+def framework_diagnostics(s, deadline):
+    """One bounded, readonly snapshot in the fresh unauthenticated guest."""
+    probes = (("services", ["shell", "service", "list"]),
+              ("processes", ["shell", "ps", "-A"]),
+              ("logcat", ["logcat", "-d", "-t", "400", "-b", "main", "-b", "system",
+                          "-b", "crash", "-v", "threadtime"]))
+    for name, args in probes:
+        label = "framework-diagnostic-" + name
+        try:
+            code, _ = s.adb(args, label, seconds=15, deadline=deadline,
+                            ok=False, limit=MiB)
+            s.observations[label] = dict(exit_code=code)
+        except CommandTimeout as error:
+            require(error.label == label, "unexpected framework diagnostic timeout")
+            s.observations[label] = dict(clean_timeout=True)
+        s.check()
+        clip(time.monotonic(), 1, deadline)
+
+
+def wait_for_framework(s, emulator):
+    """Require live services and empty fresh Canary state within the boot cap."""
+    deadline = min(s.start+900, s.work)
+    diagnosed = False
+    probes = (("package", ["shell", "pm", "list", "packages", PKG]),
+              ("settings", ["shell", "settings", "get", "global", "device_provisioned"]))
+    while True:
+        s.check()
+        clip(time.monotonic(), 1, deadline)
+        require(emulator[0].poll() is None, "emulator exited during framework startup")
+        ready = True
+        for service, args in probes:
+            label = "framework-" + service
+            try:
+                code, output, errors = s.adb(args, label, seconds=15, deadline=deadline,
+                                             ok=False, with_stderr=True)
+                available = framework_probe_ready(service, code, output, errors)
+            except CommandTimeout as error:
+                require(error.label == label, "unexpected framework probe timeout")
+                s.observations["framework_poll_timeouts"] = s.observations.get("framework_poll_timeouts", 0)+1
+                available = False
+            ready = ready and available
+        s.check()
+        clip(time.monotonic(), 1, deadline)
+        require(emulator[0].poll() is None, "emulator exited during framework startup")
+        if ready:
+            s.observations["framework_ready_seconds"] = round(time.monotonic()-s.start, 3)
+            return
+        s.observations["framework_not_ready_polls"] = s.observations.get("framework_not_ready_polls", 0)+1
+        if not diagnosed:
+            framework_diagnostics(s, deadline)
+            diagnosed = True
+        time.sleep(clip(time.monotonic(), 2, deadline))
 
 
 def trial(s):
@@ -849,8 +918,7 @@ def trial(s):
     require(avd_name.decode().splitlines()[0] == AVD, "wrong AVD")
     s.adb(["shell", "cat", "/proc/cpuinfo"], "guest-cpu", limit=MiB)
     s.adb(["get-state"], "device-state")
-    _, packages = s.adb(["shell", "pm", "list", "packages", PKG], "package-absence")
-    require(not packages.strip(), "Canary/harness package already present")
+    wait_for_framework(s, emulator)
     s.adb(["install", "--abi", "arm64-v8a", "--no-streaming", str(APK)], "install",
           seconds=300, deadline=min(s.start+1200, s.work))
     _, package = s.adb(["shell", "dumpsys", "package", PKG], "package-selection")
@@ -887,7 +955,7 @@ def trial(s):
     opened = (mc == 0 and b"objectbox/data.mdb" in maps) or (fc == 0 and b"objectbox/data.mdb" in fds)
     metadata = re.search(rb"app_flutter/objectbox/data\.mdb:([0-9]+):([0-9]+)", db)
     report.update(result="evidence_collected_not_app_qualification", live_pid=pids[0],
-        gates=dict(primary_abi=True, stable_live_pid=True,
+        gates=dict(framework_services_ready=True, primary_abi=True, stable_live_pid=True,
             app_window=bool(re.search(rb"mCurrentFocus=[^\n]*" + re.escape(PKG.encode()), windows)),
             actual_first_screen="requires parent visual review of screenshot/UI; no automatic screen pass",
             loaded_libraries={n:mc == 0 and n.encode() in maps for n in library_names},
