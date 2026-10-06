@@ -107,6 +107,33 @@ class Guards(unittest.TestCase):
         self.assertIsNone(saved["overshoot"])
         self.assertEqual(saved["stop_reason"], "watchdog error: FileNotFoundError")
 
+    def test_rejected_owned_listener_is_retained_and_bounded_without_weakening_stop(self):
+        parent = dict(pid=51, start=1234, uid=1000, pgid=51)
+        owner = dict(pid=52, start=1235, uid=1000, pgid=52)
+        rows = [dict(address="0.0.0.0", port=60000+i, inode=str(i), uid=1000)
+                for i in range(20)]
+        connection, stop, receipt, terminate = Mock(), Mock(), Mock(), Mock()
+        connection.poll.side_effect = [False, True]
+        connection.recv.return_value = "finished"
+        stop.is_set.return_value = False
+        with patch.object(trial.os, "setsid"), \
+                patch.object(trial, "free_bytes", return_value=20*trial.GiB), \
+                patch.object(trial, "identity", return_value=parent), \
+                patch.object(trial, "session_owners", return_value=[owner]), \
+                patch.object(trial, "outside_writable_bytes", return_value=0), \
+                patch.object(trial, "tree_bytes", return_value=0), \
+                patch.object(trial, "owned_listeners", return_value=rows), \
+                patch.object(trial.time, "monotonic", return_value=0), \
+                patch.object(trial.time, "sleep"), \
+                patch.object(trial, "terminate", terminate), \
+                patch.object(trial, "immutable", receipt):
+            trial.watchdog(parent, connection, "trial", 10, 40, stop)
+        saved = receipt.call_args.args[1]
+        self.assertEqual(saved["stop_reason"], "non-loopback owned TCP listener")
+        self.assertEqual(saved["rejected_owned_tcp_listeners"], dict(count=20, rows=rows[:16]))
+        stop.set.assert_called_once()
+        terminate.assert_called_once_with([owner], trial.signal.SIGTERM)
+
     def test_closed_watchdog_pipe_and_failed_final_measurement_preserve_failure(self):
         with tempfile.TemporaryDirectory(dir=HERE) as tmp:
             run = Path(tmp)

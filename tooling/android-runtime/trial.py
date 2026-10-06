@@ -309,6 +309,7 @@ def watchdog(parent, conn, phase, work_end, hard_end, stop):
     os.setsid()
     stage, fatal_error = "initial_free_bytes", None
     owners, peaks, reason = [], dict(avd=0, evidence=0, free_min=None), None
+    rejected_listener_snapshot = None
     stopping_at = None
     try:
         peaks["free_min"] = free_bytes()
@@ -343,7 +344,10 @@ def watchdog(parent, conn, phase, work_end, hard_end, stop):
             stage = "owned_listeners"
             live = owned_listeners(owners)
             stage = "listener_loopback"
-            if any(not ipaddress.ip_address(r["address"]).is_loopback for r in live):
+            rejected = [r for r in live if not ipaddress.ip_address(r["address"]).is_loopback]
+            if rejected:
+                if rejected_listener_snapshot is None:
+                    rejected_listener_snapshot = dict(count=len(rejected), rows=rejected[:16])
                 issues.append("non-loopback owned TCP listener")
             stage = "work_deadline"
             if now >= work_end:
@@ -393,7 +397,7 @@ def watchdog(parent, conn, phase, work_end, hard_end, stop):
                        fatal_error=fatal_error, last_stage=stage,
                        overshoot=(resource_reasons(peaks["free_min"], peaks["avd"], peaks["evidence"], False)
                                   if peaks["free_min"] is not None else None),
-                       owners=owners))
+                       owners=owners, rejected_owned_tcp_listeners=rejected_listener_snapshot))
 
 
 class Session:
