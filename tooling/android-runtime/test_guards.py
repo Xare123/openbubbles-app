@@ -58,6 +58,139 @@ class Guards(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "deadline"):
                 trial.clip(now, 30, 100)
 
+    def command_fixture(self):
+        session = trial.Session.__new__(trial.Session)  # No initializer or spawn.
+        session.start, session.work, session.hard = 0, 1000, 1030
+        session.stop, session.check = Mock(), Mock()
+        session.stop.is_set.return_value = False
+        owner = dict(pid=51, start=1234, uid=1000, pgid=51)
+        process = Mock(returncode=-15)
+        process.poll.return_value = None
+        process.wait.return_value = -15
+        threads = [Mock(), Mock()]
+        for thread in threads:
+            thread.is_alive.return_value = False
+        session.spawn = Mock(return_value=(process, owner, threads, [bytearray(), bytearray()]))
+        session.commands = [dict(label="boot", owner=owner)]
+        return session, process, owner, threads
+
+    def test_command_timeout_waits_and_drains_without_retrying_mutations(self):
+        for label in ("boot", "install"):
+            session, process, owner, threads = self.command_fixture()
+            with self.subTest(label=label), \
+                    patch.object(trial.time, "monotonic", side_effect=[100]+[106]*20), \
+                    patch.object(trial, "descendants", return_value=[owner]), \
+                    patch.object(trial, "live_owner", return_value=False), \
+                    patch.object(trial, "terminate") as terminate, \
+                    self.assertRaises(trial.CommandTimeout) as caught:
+                session.command(["synthetic-command"], label, seconds=5)
+            self.assertEqual(caught.exception.label, label)
+            terminate.assert_called_once_with([owner], trial.signal.SIGTERM)
+            process.wait.assert_called_once_with(timeout=2)
+            for thread in threads:
+                thread.join.assert_called_once_with(timeout=1)
+            session.check.assert_called_once()
+            session.spawn.assert_called_once()
+            self.assertEqual(session.commands[0]["interrupted"], "timeout")
+            self.assertEqual(session.commands[0]["exit_code"], -15)
+            self.assertIn("finished", session.commands[0])
+
+    def test_command_timeout_kill_fallback_also_waits_before_retry_is_possible(self):
+        session, process, owner, _ = self.command_fixture()
+        process.returncode = -9
+        process.wait.side_effect = [trial.subprocess.TimeoutExpired("synthetic-command", 2), -9]
+        with patch.object(trial.time, "monotonic", side_effect=[100]+[106]*20), \
+                patch.object(trial, "descendants", return_value=[owner]), \
+                patch.object(trial, "live_owner", return_value=False), \
+                patch.object(trial, "terminate") as terminate, \
+                self.assertRaises(trial.CommandTimeout):
+            session.command(["synthetic-command"], "boot", seconds=5)
+        self.assertEqual([call.args[1] for call in terminate.call_args_list],
+                         [trial.signal.SIGTERM, trial.signal.SIGKILL])
+        self.assertEqual([call.kwargs["timeout"] for call in process.wait.call_args_list], [2, 1])
+        self.assertEqual(session.commands[0]["exit_code"], -9)
+
+    def test_command_cleanup_failure_is_not_a_retryable_timeout(self):
+        session, _, owner, _ = self.command_fixture()
+        with patch.object(trial.time, "monotonic", side_effect=[100]+[106]*20), \
+                patch.object(trial, "descendants", return_value=[owner]), \
+                patch.object(trial, "live_owner", return_value=True), \
+                patch.object(trial, "terminate"), \
+                self.assertRaisesRegex(RuntimeError, "command cleanup incomplete") as caught:
+            session.command(["synthetic-command"], "boot", seconds=5)
+        self.assertNotIsInstance(caught.exception, trial.CommandTimeout)
+        session.spawn.assert_called_once()
+
+    def test_command_output_drain_failure_is_not_a_retryable_timeout(self):
+        session, _, owner, threads = self.command_fixture()
+        threads[0].is_alive.return_value = True
+        with patch.object(trial.time, "monotonic", side_effect=[100]+[106]*20), \
+                patch.object(trial, "descendants", return_value=[owner]), \
+                patch.object(trial, "live_owner", return_value=False), \
+                patch.object(trial, "terminate"), \
+                self.assertRaisesRegex(RuntimeError, "output drain incomplete") as caught:
+            session.command(["synthetic-command"], "boot", seconds=5)
+        self.assertNotIsInstance(caught.exception, trial.CommandTimeout)
+
+    def test_command_watchdog_resource_and_global_deadline_stops_are_not_retryable(self):
+        for reason, stopped in (("watchdog stopped work", True),
+                                ("resource early stop", False), ("deadline exhausted", False)):
+            session, _, owner, _ = self.command_fixture()
+            session.stop.is_set.return_value = stopped
+            session.check.side_effect = RuntimeError(reason)
+            with self.subTest(reason=reason), \
+                    patch.object(trial.time, "monotonic", side_effect=[100]+[106]*20), \
+                    patch.object(trial, "descendants", return_value=[owner]), \
+                    patch.object(trial, "live_owner", return_value=False), \
+                    patch.object(trial, "terminate"), \
+                    self.assertRaisesRegex(RuntimeError, reason) as caught:
+                session.command(["synthetic-command"], "boot", seconds=5)
+            self.assertNotIsInstance(caught.exception, trial.CommandTimeout)
+            session.spawn.assert_called_once()
+
+    def test_boot_poll_recovers_only_clean_timeout_and_requires_observed_completion(self):
+        session = Mock(start=0, work=1470, observations={})
+        session.adb.side_effect = [trial.CommandTimeout("boot"), (0, b"\n"), (0, b"1\n")]
+        emulator = [Mock()]
+        emulator[0].poll.return_value = None
+        with patch.object(trial.time, "monotonic", return_value=100), \
+                patch.object(trial.time, "sleep") as sleep:
+            trial.wait_for_boot(session, emulator)
+        self.assertEqual(session.observations, {"boot_poll_timeouts": 1})
+        self.assertEqual(session.adb.call_count, 3)
+        for call in session.adb.call_args_list:
+            self.assertEqual(call.args, (["shell", "getprop", "sys.boot_completed"], "boot"))
+            self.assertEqual(call.kwargs, dict(seconds=5, deadline=900, ok=False))
+        self.assertEqual(sleep.call_count, 2)
+
+    def test_boot_poll_never_retries_after_phase_or_global_deadline(self):
+        for work, expired in ((1470, 901), (120, 121)):
+            session = Mock(start=0, work=work, observations={})
+            session.adb.side_effect = trial.CommandTimeout("boot")
+            emulator = [Mock()]
+            emulator[0].poll.return_value = None
+            with self.subTest(work=work), \
+                    patch.object(trial.time, "monotonic", side_effect=[100, expired]), \
+                    patch.object(trial.time, "sleep") as sleep, \
+                    self.assertRaisesRegex(RuntimeError, "deadline exhausted"):
+                trial.wait_for_boot(session, emulator)
+            session.adb.assert_called_once()
+            sleep.assert_not_called()
+
+    def test_boot_poll_does_not_retry_guard_failure_or_unrelated_command_timeout(self):
+        for error in (RuntimeError("watchdog stopped work"), RuntimeError("command cleanup incomplete"),
+                      RuntimeError("output drain incomplete"), trial.CommandTimeout("install")):
+            session = Mock(start=0, work=1470, observations={})
+            session.adb.side_effect = error
+            emulator = [Mock()]
+            emulator[0].poll.return_value = None
+            with self.subTest(error=str(error)), \
+                    patch.object(trial.time, "monotonic", return_value=100), \
+                    patch.object(trial.time, "sleep") as sleep, self.assertRaises(RuntimeError):
+                trial.wait_for_boot(session, emulator)
+            session.adb.assert_called_once()
+            sleep.assert_not_called()
+
     def test_early_resource_stops_leave_cleanup_reserve(self):
         G, M = trial.GiB, trial.MiB
         self.assertEqual(trial.resource_reasons(20*G, G, M), [])

@@ -84,6 +84,13 @@ def clip(now, seconds, *deadlines):
     return remaining
 
 
+class CommandTimeout(RuntimeError):
+    """The owned command has ended and drained; caller decides retry safety."""
+    def __init__(self, label):
+        self.label = label
+        super().__init__("command timeout: " + label)
+
+
 def resource_reasons(free, allocated, evidence, early=True):
     return [label for hit, label in [
         (free <= (6.5 if early else 6) * GiB, "free-space"),
@@ -509,23 +516,35 @@ class Session:
         return job
 
     def command(self, cmd, label, seconds=30, deadline=None, ok=True, **kw):
-        end = time.monotonic() + clip(time.monotonic(), seconds, self.work, deadline or self.work)
+        now = time.monotonic()
+        end = now + clip(now, seconds, self.work, deadline or self.work)
         job = self.spawn(cmd, label, **kw)
         p, owner, threads, buffers = job
+        interrupted = None
         while p.poll() is None:
             if self.stop.is_set() or time.monotonic() >= end:
-                terminate(descendants([owner]), signal.SIGTERM)
+                interrupted = "watchdog_stop" if self.stop.is_set() else "timeout"
+                owned = descendants([owner])
+                terminate(owned, signal.SIGTERM)
                 try:
-                    p.wait(timeout=min(2, max(.01, self.hard-time.monotonic())))
+                    p.wait(timeout=clip(time.monotonic(), 2, self.hard))
                 except subprocess.TimeoutExpired:
-                    terminate(descendants([owner]), signal.SIGKILL)
-                raise RuntimeError("command deadline or watchdog stop: " + label)
+                    terminate(descendants(owned), signal.SIGKILL)
+                    p.wait(timeout=clip(time.monotonic(), 1, self.hard))
+                require(not any(live_owner(x) for x in descendants(owned)),
+                        "command cleanup incomplete: " + label)
+                break
             time.sleep(.1)
         for t in threads:
-            t.join(timeout=1)
+            t.join(timeout=clip(time.monotonic(), 1, self.hard))
         require(not any(t.is_alive() for t in threads), "output drain incomplete")
-        self.check()
         self.commands[-1].update(exit_code=p.returncode, finished=time.monotonic()-self.start)
+        if interrupted:
+            self.commands[-1]["interrupted"] = interrupted
+        self.check()
+        if interrupted:
+            require(interrupted == "timeout", "watchdog stopped command: " + label)
+            raise CommandTimeout(label)
         require(not ok or p.returncode == 0, "command failed: " + label)
         return p.returncode, bytes(buffers[0])
 
@@ -742,6 +761,27 @@ def adb_server_command():
     return [SDK/"platform-tools/adb", "-L", "tcp:localhost:5038", "server", "nodaemon"]
 
 
+def wait_for_boot(s, emulator):
+    """Only the readonly boot property poll may recover from command timeout."""
+    boot_end = min(s.start+900, s.work)
+    while True:
+        s.check()
+        clip(time.monotonic(), 1, boot_end)
+        require(emulator[0].poll() is None, "emulator exited during boot")
+        try:
+            code, value = s.adb(["shell", "getprop", "sys.boot_completed"], "boot",
+                                seconds=5, deadline=boot_end, ok=False)
+        except CommandTimeout as error:
+            require(error.label == "boot", "unexpected command timeout during boot")
+            s.observations["boot_poll_timeouts"] = s.observations.get("boot_poll_timeouts", 0)+1
+            code, value = None, b""
+        s.check()
+        clip(time.monotonic(), 1, boot_end)
+        if code == 0 and value.strip() == b"1":
+            return
+        time.sleep(clip(time.monotonic(), 2, boot_end))
+
+
 def trial(s):
     prepared = json.loads((RUN/"prepare.result.json").read_text())
     require(prepared.get("result") == "prepared_not_booted" and prepared.get("cleanup_verified"), "preparation not complete")
@@ -771,14 +811,7 @@ def trial(s):
         "-no-window", "-no-audio", "-no-boot-anim", "-no-snapshot", "-gpu", "swiftshader",
         "-cores", "2", "-memory", "2048", "-camera-back", "none",
         "-camera-front", "none", "-no-metrics", "-feature", "-Vulkan"], "emulator", limit=96*MiB)
-    boot_end = min(s.start+900, s.work)
-    while True:
-        require(emulator[0].poll() is None, "emulator exited during boot")
-        code, value = s.adb(["shell", "getprop", "sys.boot_completed"], "boot", seconds=5, deadline=boot_end, ok=False)
-        if code == 0 and value.strip() == b"1":
-            break
-        s.check()
-        time.sleep(min(2, clip(time.monotonic(), 2, boot_end)))
+    wait_for_boot(s, emulator)
     report = dict(boot_seconds=round(time.monotonic()-s.start, 3), gates={})
     props = {}
     for key in ["ro.build.version.sdk", "ro.build.fingerprint", "ro.product.cpu.abilist",
