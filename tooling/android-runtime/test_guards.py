@@ -211,6 +211,41 @@ class Guards(unittest.TestCase):
         session.adb.assert_called_once_with(["shell", "getprop"], "guest-properties",
                                             seconds=30, limit=256*1024)
 
+    def test_guest_properties_accept_real_multiline_unrelated_boot_history(self):
+        expected = self.guest_property_fixture()
+        # Exact two-line shape captured in GCE37421427606, not an Android mock
+        # qualification. The required immutable identity rows remain strict.
+        snapshot = "[persist.sys.boot.reason.history]: [reboot,factory_reset,1791267155\nreboot,1791266824]\n"
+        snapshot += "[ro.product.cpu.abilist32]: [x86,armeabi-v7a,armeabi]\n"
+        snapshot += "\n".join(f"[{key}]: [{value}]" for key, value in expected.items())
+        session = Mock()
+        session.adb.return_value = (0, snapshot.encode())
+        self.assertEqual(trial.guest_properties(session), expected)
+        session.adb.assert_called_once()
+
+    def test_guest_properties_reject_malformed_selected_rows_even_after_valid_rows(self):
+        expected = self.guest_property_fixture()
+        baseline = "\n".join(f"[{key}]: [{value}]" for key, value in expected.items())
+        for key, value in expected.items():
+            for extra in (f"[{key}]: {value}", f"[{key}]: [{value}] trailing",
+                          f"[{key}] [{value}]"):
+                session = Mock()
+                session.adb.return_value = (0, (baseline+"\n"+extra).encode())
+                with self.subTest(key=key, extra=extra), self.assertRaisesRegex(RuntimeError, "malformed"):
+                    trial.guest_properties(session)
+                session.adb.assert_called_once()
+
+    def test_guest_properties_reject_multiline_required_identity_values(self):
+        for key in trial.GUEST_PROPERTY_KEYS:
+            expected = self.guest_property_fixture()
+            expected[key] += "\ncontinued"
+            snapshot = "\n".join(f"[{name}]: [{value}]" for name, value in expected.items())
+            session = Mock()
+            session.adb.return_value = (0, snapshot.encode())
+            with self.subTest(key=key), self.assertRaisesRegex(RuntimeError, "malformed"):
+                trial.guest_properties(session)
+            session.adb.assert_called_once()
+
     def test_guest_properties_reject_each_missing_required_identity_key(self):
         for missing in trial.GUEST_PROPERTY_KEYS:
             snapshot = "\n".join(f"[{key}]: [{value}]" for key, value

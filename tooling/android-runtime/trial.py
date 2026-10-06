@@ -792,12 +792,16 @@ def guest_properties(s):
     require(code == 0, "guest property snapshot failed")
     props = {}
     for line in snapshot.decode("utf-8").splitlines():
+        # AOSP does not escape newlines in unrelated values (boot history is
+        # one real example). Admit only complete, unique immutable identity
+        # records; those records must still be well-formed single lines.
+        if not any(line.startswith(f"[{key}]") for key in GUEST_PROPERTY_KEYS):
+            continue
         match = re.fullmatch(r"\[([^\[\]\r\n]+)\]: \[([^\r\n]*)\]", line)
-        require(match, "malformed guest property snapshot")
+        require(match, "malformed guest identity property")
         key, value = match.groups()
-        if key in GUEST_PROPERTY_KEYS:
-            require(key not in props, "duplicate guest identity property")
-            props[key] = value
+        require(key not in props, "duplicate guest identity property")
+        props[key] = value
     require(set(props) == set(GUEST_PROPERTY_KEYS), "incomplete guest identity properties")
     return props
 
