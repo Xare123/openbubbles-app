@@ -107,6 +107,50 @@ class Guards(unittest.TestCase):
         self.assertIsNone(saved["overshoot"])
         self.assertEqual(saved["stop_reason"], "watchdog error: FileNotFoundError")
 
+    def test_listener_classification_accepts_only_native_and_mapped_loopback(self):
+        for address in ("127.0.0.1", "127.255.255.254", "::1", "::ffff:7f00:1",
+                        "::ffff:127.0.0.1", "::ffff:127.255.255.254"):
+            with self.subTest(address=address):
+                self.assertTrue(trial.is_loopback_listener(address))
+        for address in ("0.0.0.0", "::", "::ffff:0.0.0.0", "10.0.0.1",
+                        "::ffff:10.0.0.1", "192.168.1.1", "::ffff:192.168.1.1",
+                        "169.254.1.1", "::ffff:169.254.1.1", "8.8.8.8",
+                        "::ffff:8.8.8.8", "2001:4860:4860::8888",
+                        "::127.0.0.1", "64:ff9b::7f00:1", "::ffff:126.255.255.255"):
+            with self.subTest(address=address):
+                self.assertFalse(trial.is_loopback_listener(address))
+
+    def test_listener_classification_invalid_address_fails_closed(self):
+        for address in ("", "localhost", "127.0.0.1:5038", "not-an-address"):
+            with self.subTest(address=address), self.assertRaises(ValueError):
+                trial.is_loopback_listener(address)
+
+    def test_mapped_loopback_does_not_trigger_watchdog_stop(self):
+        parent = dict(pid=51, start=1234, uid=1000, pgid=51)
+        owner = dict(pid=52, start=1235, uid=1000, pgid=52)
+        rows = [dict(address="::ffff:7f00:1", port=39639, inode="22914", uid=1000)]
+        connection, stop, receipt, terminate = Mock(), Mock(), Mock(), Mock()
+        connection.poll.side_effect = [False, True]
+        connection.recv.return_value = "finished"
+        stop.is_set.return_value = False
+        with patch.object(trial.os, "setsid"), \
+                patch.object(trial, "free_bytes", return_value=20*trial.GiB), \
+                patch.object(trial, "identity", return_value=parent), \
+                patch.object(trial, "session_owners", return_value=[owner]), \
+                patch.object(trial, "outside_writable_bytes", return_value=0), \
+                patch.object(trial, "tree_bytes", return_value=0), \
+                patch.object(trial, "owned_listeners", return_value=rows), \
+                patch.object(trial.time, "monotonic", return_value=0), \
+                patch.object(trial.time, "sleep"), \
+                patch.object(trial, "terminate", terminate), \
+                patch.object(trial, "immutable", receipt):
+            trial.watchdog(parent, connection, "trial", 10, 40, stop)
+        saved = receipt.call_args.args[1]
+        self.assertIsNone(saved["stop_reason"])
+        self.assertIsNone(saved["rejected_owned_tcp_listeners"])
+        stop.set.assert_not_called()
+        terminate.assert_not_called()
+
     def test_rejected_owned_listener_is_retained_and_bounded_without_weakening_stop(self):
         parent = dict(pid=51, start=1234, uid=1000, pgid=51)
         owner = dict(pid=52, start=1235, uid=1000, pgid=52)

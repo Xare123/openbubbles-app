@@ -220,6 +220,14 @@ def redact(text):
                   r"\1=[redacted]", text)
 
 
+def is_loopback_listener(address):
+    """Normalize mapped IPv4 explicitly for older Python loopback semantics."""
+    parsed = ipaddress.ip_address(address)
+    if isinstance(parsed, ipaddress.IPv6Address) and parsed.ipv4_mapped is not None:
+        parsed = parsed.ipv4_mapped
+    return parsed.is_loopback
+
+
 def listeners():
     rows = []
     for name, ipv6 in (("tcp", False), ("tcp6", True)):
@@ -344,7 +352,7 @@ def watchdog(parent, conn, phase, work_end, hard_end, stop):
             stage = "owned_listeners"
             live = owned_listeners(owners)
             stage = "listener_loopback"
-            rejected = [r for r in live if not ipaddress.ip_address(r["address"]).is_loopback]
+            rejected = [r for r in live if not is_loopback_listener(r["address"])]
             if rejected:
                 if rejected_listener_snapshot is None:
                     rejected_listener_snapshot = dict(count=len(rejected), rows=rejected[:16])
