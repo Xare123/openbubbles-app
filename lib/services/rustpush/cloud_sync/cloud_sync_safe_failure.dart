@@ -406,6 +406,9 @@ final class CloudSyncSemanticDrainUnsafeReportException implements Exception {
 
 const _cloudSyncV2SafeFailureCodes = <String>{
   'cloud_sync_windows_native_initialization_failed',
+  'cloud_sync_windows_retained_inspection_disabled',
+  'cloud_sync_windows_retained_report_invalid',
+  'cloud_sync_windows_retained_report_exists',
   'cloud_sync_windows_sender_profile_required',
   'cloud_sync_windows_sender_account_unavailable',
   'cloud_sync_windows_sender_hardware_unavailable',

@@ -69,6 +69,14 @@ Future<void> main(List<String> arguments) async {
   final launch = CloudSyncV2WindowsHarnessLaunch.parse(arguments);
   _harnessLaunchId = launch.launchId;
   final operation = launch.operation;
+  if (operation == CloudSyncV2WindowsHarnessOperation.retainedInspection) {
+    if (Platform.environment['OPENBUBBLES_INSPECT_RETAINED'] != '1') {
+      throw StateError('cloud_sync_windows_retained_inspection_disabled');
+    }
+    cloudSyncV2RetainedInspectionOffset(
+      Platform.environment['OPENBUBBLES_INSPECT_RETAINED_OFFSET'],
+    );
+  }
 
   fs.configureCloudSyncV2WindowsDevProfile();
   // Find My has its own bounded retained-account bootstrap. Never fall through
@@ -156,6 +164,56 @@ int cloudSyncV2RetainedInspectionOffset(String? value) {
   return offset;
 }
 
+/// Persist the existing value-free observation, never the decoded payloads.
+/// Each launch owns one report; a repeated launch must not replace evidence.
+@visibleForTesting
+Future<File> writeCloudSyncV2RetainedInspectionReport({
+  required Directory directory,
+  required String launchId,
+  required int processId,
+  required Map<String, Object?> observation,
+}) async {
+  final cases = observation['cases'];
+  final offset = observation['window_offset'];
+  if (!CloudSyncV2WindowsHarnessLaunch.isValidLaunchId(launchId) ||
+      processId <= 0 ||
+      observation['durable_state_unchanged'] != true ||
+      offset is! int || offset < 0 || offset > 4096 ||
+      observation['limit_per_category'] != 8 ||
+      cases is! List || cases.length > 48 ||
+      cases.any((value) => value is! Map<String, Object?>) ||
+      observation.keys.toSet().difference(const {
+        'durable_state_unchanged', 'window_offset', 'limit_per_category', 'cases',
+      }).isNotEmpty) {
+    throw StateError('cloud_sync_windows_retained_report_invalid');
+  }
+  final bytes = utf8.encode(jsonEncode({
+    'version': 'cloud-sync-v2-retained-observation-v1',
+    'launch_id': launchId,
+    'process_id': processId,
+    'observed_utc': DateTime.now().toUtc().toIso8601String(),
+    ...observation,
+  }));
+  if (bytes.length > 262144) {
+    throw StateError('cloud_sync_windows_retained_report_invalid');
+  }
+  final target = File(path.join(
+    directory.path, 'windows-retained-observation-$launchId.json',
+  ));
+  final temporary = File('${target.path}.$processId.tmp');
+  if (await target.exists() || await temporary.exists()) {
+    throw StateError('cloud_sync_windows_retained_report_exists');
+  }
+  await directory.create(recursive: true);
+  try {
+    await temporary.writeAsBytes(bytes, flush: true);
+    await temporary.rename(target.path);
+  } finally {
+    if (await temporary.exists()) await temporary.delete();
+  }
+  return target;
+}
+
 /// Fixed categories only. Candidate scales diagnose the wire contract; they
 /// never authorize coercing, omitting or changing a stored timestamp.
 @visibleForTesting
@@ -213,6 +271,7 @@ enum CloudSyncV2WindowsHarnessOperation {
   projectionDetailViewer,
   chatIdentityObservation,
   stagedChatIdentityObservation,
+  retainedInspection,
   localWrite,
   historicalImport,
   messageFeedProbe,
@@ -642,6 +701,12 @@ final class CloudSyncV2WindowsHarnessLaunch {
             throw StateError('cloud_sync_windows_dev_launch_mode_invalid');
           }
           operation = CloudSyncV2WindowsHarnessOperation.findMyProbe;
+          operationSeen = true;
+        case 'inspect-retained':
+          if (operationSeen) {
+            throw StateError('cloud_sync_windows_dev_launch_mode_invalid');
+          }
+          operation = CloudSyncV2WindowsHarnessOperation.retainedInspection;
           operationSeen = true;
         case 'observe-chat-identity':
         case 'observe-staged-chat-identity':
@@ -1547,9 +1612,12 @@ class CloudSyncV2WindowsHarnessState extends State<CloudSyncV2WindowsHarness> {
         widget.operation != CloudSyncV2WindowsHarnessOperation.interactive) {
       throw StateError('cloud_sync_windows_dev_test_host_invalid');
     }
-    final offset = cloudSyncV2RetainedInspectionOffset(
+    return _inspectRetained(offset: cloudSyncV2RetainedInspectionOffset(
       Platform.environment['OPENBUBBLES_INSPECT_RETAINED_OFFSET'],
-    );
+    ));
+  }
+
+  Future<Map<String, Object?>> _inspectRetained({required int offset}) async {
     String durableState() => jsonEncode([
       Database.store
           .box<CloudSyncCheckpointEntity>()
@@ -2425,6 +2493,8 @@ class CloudSyncV2WindowsHarnessState extends State<CloudSyncV2WindowsHarness> {
       case CloudSyncV2WindowsHarnessOperation.chatIdentityObservation:
       case CloudSyncV2WindowsHarnessOperation.stagedChatIdentityObservation:
         await _runChatIdentityObservation();
+      case CloudSyncV2WindowsHarnessOperation.retainedInspection:
+        await _runRetainedInspection();
       case CloudSyncV2WindowsHarnessOperation.localWrite:
         await _runLocalWrite();
       case CloudSyncV2WindowsHarnessOperation.historicalImport:
@@ -2444,6 +2514,54 @@ class CloudSyncV2WindowsHarnessState extends State<CloudSyncV2WindowsHarness> {
           state: 'finished',
           detail: jsonEncode(result),
         );
+    }
+  }
+
+  Future<void> _runRetainedInspection() async {
+    if (widget.operation != CloudSyncV2WindowsHarnessOperation.retainedInspection ||
+        !fs.cloudSyncV2WindowsDevProfileActive ||
+        Platform.environment['OPENBUBBLES_INSPECT_RETAINED'] != '1' ||
+        _busy || _adapter == null) {
+      throw StateError('cloud_sync_windows_retained_inspection_disabled');
+    }
+    final offset = cloudSyncV2RetainedInspectionOffset(
+      Platform.environment['OPENBUBBLES_INSPECT_RETAINED_OFFSET'],
+    );
+    _resumeAfterTwoFactor = _CloudSyncV2WindowsHarnessResumeOperation.initialize;
+    setState(() {
+      _busy = true;
+      _status = 'Observing a bounded retained-record window. No writes.';
+    });
+    await _setRuntimeStage('retained-inspection', state: 'running');
+    try {
+      final observation = await _inspectRetained(offset: offset);
+      final report = await writeCloudSyncV2RetainedInspectionReport(
+        directory: Directory(path.join(fs.appDocDir.path, 'cloud-sync-v2', 'reports')),
+        launchId: _harnessLaunchId,
+        processId: pid,
+        observation: observation,
+      );
+      final digest = sha256.convert(await report.readAsBytes()).toString();
+      if (!mounted) return;
+      setState(() {
+        _busy = false;
+        _status = 'Read-only retained-record observation complete.';
+      });
+      await _setRuntimeStage(
+        'retained-inspection-complete',
+        state: 'finished',
+        detail: jsonEncode({
+          'report_file': path.basename(report.path),
+          'report_sha256': digest,
+          'window_offset': offset,
+          'case_count': (observation['cases'] as List).length,
+          'durable_state_unchanged': true,
+        }),
+      );
+      _resumeAfterTwoFactor = null;
+    } catch (error) {
+      if (await _handleMissingReadAuthentication(error)) return;
+      _showFailure(error);
     }
   }
 

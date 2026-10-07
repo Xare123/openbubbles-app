@@ -8,6 +8,148 @@ import 'package:bluebubbles/src/rust/api/api.dart' as api;
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('prebuilt retained inspection is an exclusive read-only launch', () {
+    final launchId = '--launch-id=${'a' * 32}';
+    expect(
+      CloudSyncV2WindowsHarnessLaunch.parse(['inspect-retained', launchId]).operation,
+      CloudSyncV2WindowsHarnessOperation.retainedInspection,
+    );
+    for (final other in [
+      'local-write', 'historical-import', 'run-once', 'drain', 'inspect-retained',
+    ]) {
+      for (final modes in [['inspect-retained', other], [other, 'inspect-retained']]) {
+        expect(
+          () => CloudSyncV2WindowsHarnessLaunch.parse([...modes, launchId]),
+          throwsStateError,
+        );
+      }
+    }
+  });
+
+  test('prebuilt inspection preserves the protected observer and test-host guard', () {
+    final source = File('lib/cloud_sync_v2_windows_harness.dart').readAsStringSync();
+    final testHostStart = source.indexOf('inspectRetainedForTestHost()');
+    final coreStart = source.indexOf('Future<Map<String, Object?>> _inspectRetained(');
+    final coreEnd = source.indexOf('materializeRetainedBodyForTestHost()', coreStart);
+    final testHost = source.substring(testHostStart, coreStart);
+    expect(testHost, contains("OPENBUBBLES_CLOUD_SYNC_V2_TEST_HOST"));
+    expect(testHost, contains('widget.autoStart'));
+    expect(testHost, contains('CloudSyncV2WindowsHarnessOperation.interactive'));
+    expect(testHost, contains('_inspectRetained(offset:'));
+    final core = source.substring(coreStart, coreEnd);
+    expect(core, contains('runConfirmedReadOnlyObservation('));
+    expect(core, contains('validateCloudSyncParentLocator('));
+    expect(core, contains('observeCloudSyncRetainedMessageParent('));
+    expect(core, contains('before == durableState()'));
+    expect(core, contains('afterParent.payloadSha256 != parentRow.payloadSha256'));
+    expect(core, contains('..limit = 8'));
+    final launchStart = source.indexOf('Future<void> _runRetainedInspection()');
+    final launch = source.substring(launchStart, source.indexOf('Future<void> _runHistoricalImport()', launchStart));
+    expect(launch, contains('!fs.cloudSyncV2WindowsDevProfileActive'));
+    expect(launch, contains("OPENBUBBLES_INSPECT_RETAINED"));
+    expect(launch, contains('writeCloudSyncV2RetainedInspectionReport('));
+    expect(launch, contains("'retained-inspection-complete'"));
+    for (final forbidden in ['_runSemanticPull(', '_runLocalWrite(', 'SharedPushState', 'runCloudSyncWindowsHistoricalImport(', 'materializeRetainedBody']) {
+      expect(core, isNot(contains(forbidden)));
+      expect(launch, isNot(contains(forbidden)));
+    }
+  });
+
+  const retainedObservation = <String, Object?>{
+    'durable_state_unchanged': true,
+    'window_offset': 0,
+    'limit_per_category': 8,
+    'cases': <Map<String, Object?>>[
+      {'record_hash': 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 'parent_locator_available': false},
+    ],
+  };
+
+  test('retained report is launch-bound, complete and cannot overwrite evidence', () async {
+    final directory = await Directory.systemTemp.createTemp('ob-retained-report-');
+    try {
+      final report = await writeCloudSyncV2RetainedInspectionReport(
+        directory: directory,
+        launchId: 'a' * 32,
+        processId: 4242,
+        observation: retainedObservation,
+      );
+      final original = await report.readAsBytes();
+      final decoded = jsonDecode(utf8.decode(original)) as Map<String, dynamic>;
+      expect(decoded['version'], 'cloud-sync-v2-retained-observation-v1');
+      expect(decoded['launch_id'], 'a' * 32);
+      expect(decoded['process_id'], 4242);
+      expect(decoded['cases'], retainedObservation['cases']);
+      expect(decoded['durable_state_unchanged'], isTrue);
+      expect(directory.listSync().length, 1);
+      await expectLater(writeCloudSyncV2RetainedInspectionReport(
+        directory: directory, launchId: 'a' * 32, processId: 4242,
+        observation: {...retainedObservation, 'cases': <Map<String, Object?>>[]},
+      ), throwsStateError);
+      expect(await report.readAsBytes(), original);
+    } finally {
+      await directory.delete(recursive: true);
+    }
+  });
+
+  test('retained report rejects invalid bounds and unverified observations before writing', () async {
+    final directory = await Directory.systemTemp.createTemp('ob-retained-invalid-');
+    try {
+      final observations = [
+        {...retainedObservation, 'durable_state_unchanged': false},
+        {...retainedObservation, 'window_offset': -1},
+        {...retainedObservation, 'window_offset': 4097},
+        {...retainedObservation, 'window_offset': '0'},
+        {...retainedObservation, 'limit_per_category': 9},
+        {...retainedObservation, 'cases': List.filled(49, <String, Object?>{})},
+        {...retainedObservation, 'cases': [null]},
+        {...retainedObservation, 'unexpected': 'not admitted'},
+      ];
+      for (final observation in observations) {
+        await expectLater(writeCloudSyncV2RetainedInspectionReport(
+          directory: directory, launchId: 'a' * 32, processId: 4242,
+          observation: observation,
+        ), throwsStateError);
+      }
+      for (final launchId in ['../escape', 'A' * 32, 'a' * 31]) {
+        await expectLater(writeCloudSyncV2RetainedInspectionReport(
+          directory: directory, launchId: launchId, processId: 4242,
+          observation: retainedObservation,
+        ), throwsStateError);
+      }
+      expect(directory.listSync(), isEmpty);
+    } finally {
+      await directory.delete(recursive: true);
+    }
+  });
+
+  test('retained report enforces its byte budget without leaving partial evidence', () async {
+    final directory = await Directory.systemTemp.createTemp('ob-retained-bound-');
+    try {
+      await expectLater(writeCloudSyncV2RetainedInspectionReport(
+        directory: directory, launchId: 'a' * 32, processId: 4242,
+        observation: {
+          ...retainedObservation,
+          'cases': [{'diagnostics': 'x' * 262145}],
+        },
+      ), throwsStateError);
+      expect(directory.listSync(), isEmpty);
+    } finally {
+      await directory.delete(recursive: true);
+    }
+  });
+
+  test('retained-inspection failures retain only their reviewed diagnostic code', () {
+    for (final code in [
+      'cloud_sync_windows_retained_inspection_disabled',
+      'cloud_sync_windows_retained_report_invalid',
+      'cloud_sync_windows_retained_report_exists',
+    ]) {
+      expect(cloudSyncV2WindowsHarnessStartupFailureCode('rust-ready', StateError(code)), code);
+      expect(cloudSyncV2WindowsHarnessStartupFailureCode('rust-ready', StateError('$code: private details')),
+          'cloud_sync_unknown_failure');
+    }
+  });
+
   test('historical import is a distinct exclusive launch, not local sending', () {
     final launchId = '--launch-id=${'a' * 32}';
     expect(CloudSyncV2WindowsHarnessLaunch.parse(['historical-import', launchId]).operation,
