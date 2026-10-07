@@ -41,8 +41,12 @@ try {
         StatusPath = $statusFile; LaunchStartedUtc = [datetime]::UtcNow.AddSeconds(-1)
         BaselineWriteUtc = [datetime]::MinValue; ExpectedLaunchId = $launch
         ExpectedProcessId = $PID; ExpectedBuildIdentifier = $build
+        ExpectedOperation = 'findmy-probe'
     }
     Assert-FindMyContract ($null -ne (Read-FreshHarnessStatus @read)) 'Current status rejected'
+    $read.Remove('ExpectedBuildIdentifier')
+    Assert-FindMyContract ($null -eq (Read-FreshHarnessStatus @read)) 'FindMy accepted missing build expectation'
+    $read.ExpectedBuildIdentifier = $build
     $read.ExpectedBuildIdentifier = 'cf8ae21b61ea-dirty-b3f4575d0e4c'
     Assert-FindMyContract ($null -eq (Read-FreshHarnessStatus @read)) 'Stale build accepted'
     $read.ExpectedBuildIdentifier = $build
@@ -68,6 +72,10 @@ try {
     $payload.detail = $report | ConvertTo-Json -Depth 5 -Compress
     $payload | ConvertTo-Json | Set-Content -LiteralPath $statusFile -Encoding UTF8
     Assert-FindMyContract ($null -ne (Read-FreshHarnessStatus @read)) 'Completed real-read evidence rejected'
+    $payload.stage = 'semantic-pull'
+    $payload | ConvertTo-Json | Set-Content -LiteralPath $statusFile -Encoding UTF8
+    Assert-FindMyContract ($null -eq (Read-FreshHarnessStatus @read)) 'FindMy accepted a different operation terminal stage'
+    $payload.stage = 'findmy-probe-complete'
     $report.devices.state = 'failed'
     $report.devices.fresh_request_completed = $false
     $payload.detail = $report | ConvertTo-Json -Depth 5 -Compress

@@ -313,6 +313,48 @@ try {
     $releasedLock.ReleaseMutex()
     $releasedLock.Dispose()
 
+    # Build correlation is generic transport evidence, not a FindMy report.
+    # Reproduce the retained-observation monitor failure without an app/account.
+    $correlatedStatusPath = Join-Path $testDirectory 'build-bound-status.json'
+    $statusBuildIdentifier = '9e56407b6bbc'
+    $correlatedStatus = [ordered]@{
+        version = 'cloud-sync-v2-windows-harness-status-v2'
+        launch_id = $firstLaunchId; process_id = $PID
+        build_identifier = $statusBuildIdentifier
+        state = 'finished'; stage = 'retained-inspection-complete'
+        updated_utc = [datetime]::UtcNow.ToString('o')
+        detail = '{}'
+    }
+    $correlatedRead = @{
+        StatusPath = $correlatedStatusPath
+        LaunchStartedUtc = [datetime]::UtcNow.AddSeconds(-1)
+        BaselineWriteUtc = [datetime]::MinValue
+        ExpectedLaunchId = $firstLaunchId; ExpectedProcessId = $PID
+        ExpectedBuildIdentifier = $statusBuildIdentifier
+    }
+    foreach ($stage in @(
+        'retained-inspection-complete', 'semantic-pull', 'semantic-drain-complete',
+        'historical-import-pass-complete', 'message-feed-probe-complete'
+    )) {
+        $correlatedStatus.stage = $stage
+        $correlatedStatus | ConvertTo-Json -Compress |
+            Set-Content -LiteralPath $correlatedStatusPath -Encoding UTF8
+        $fresh = Read-FreshHarnessStatus @correlatedRead
+        Assert-True -Condition ($null -ne $fresh -and $fresh.stage -ceq $stage) `
+            -Message "Build-bound CloudKit terminal status incorrectly required FindMy evidence: $stage"
+    }
+    foreach ($changed in @(
+        @{ Name = 'ExpectedBuildIdentifier'; Wrong = '802e92ded703' },
+        @{ Name = 'ExpectedLaunchId'; Wrong = $secondLaunchId },
+        @{ Name = 'ExpectedProcessId'; Wrong = ($PID + 1) }
+    )) {
+        $original = $correlatedRead[$changed.Name]
+        $correlatedRead[$changed.Name] = $changed.Wrong
+        Assert-True -Condition ($null -eq (Read-FreshHarnessStatus @correlatedRead)) `
+            -Message "Generic terminal status lost correlation: $($changed.Name)"
+        $correlatedRead[$changed.Name] = $original
+    }
+
     $timeoutProcess = Start-TestHarnessProcess -Executable $testExecutable
     $children.Add($timeoutProcess)
     $timeoutMessage = Invoke-ExpectedFailure {

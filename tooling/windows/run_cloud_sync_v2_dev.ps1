@@ -509,10 +509,15 @@ function Read-FreshHarnessStatus {
         [Parameter(Mandatory)][datetime] $BaselineWriteUtc,
         [Parameter(Mandatory)][string] $ExpectedLaunchId,
         [Parameter(Mandatory)][int] $ExpectedProcessId,
-        [string] $ExpectedBuildIdentifier
+        [string] $ExpectedBuildIdentifier,
+        [string] $ExpectedOperation
     )
 
     try {
+        if ($ExpectedOperation -eq 'findmy-probe' -and
+            $ExpectedBuildIdentifier -cnotmatch '^[a-f0-9]{7,40}(-dirty-[a-f0-9]{12})?$') {
+            return $null
+        }
         if (-not (Test-Path -LiteralPath $StatusPath -PathType Leaf)) {
             return $null
         }
@@ -527,7 +532,9 @@ function Read-FreshHarnessStatus {
                 [string]$buildProperty.Value -cne $ExpectedBuildIdentifier) {
                 return $null
             }
-            if ($payload.state -eq 'finished') {
+            # A build identifier correlates every harness mode. Only the
+            # selected FindMy operation requires its domain-specific report.
+            if ($payload.state -eq 'finished' -and $ExpectedOperation -eq 'findmy-probe') {
                 $report = $payload.detail | ConvertFrom-Json
                 if ($report.version -cne 'windows-findmy-probe-v1' -or
                     $report.launch_id -cne $ExpectedLaunchId -or
@@ -699,7 +706,8 @@ function Wait-HarnessOperation {
             -BaselineWriteUtc $BaselineWriteUtc `
             -ExpectedLaunchId $ExpectedLaunchId `
             -ExpectedProcessId $Process.Id `
-            -ExpectedBuildIdentifier $ExpectedBuildIdentifier
+            -ExpectedBuildIdentifier $ExpectedBuildIdentifier `
+            -ExpectedOperation $ExpectedOperation
         if ($null -ne $status) {
             if ($status.state -eq 'finished') {
                 $acceptedFinishedStage = if ($ExpectedOperation -eq 'drain') {
