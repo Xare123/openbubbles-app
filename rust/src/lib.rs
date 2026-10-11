@@ -310,5 +310,6 @@ mod cloud_sync_transient_bridge;
 mod frb_generated;
 mod keystore;
 mod native;
+mod registration_validation;
 #[cfg(target_os = "windows")]
 pub mod windows_secret_storage; /* AUTO INJECTED BY flutter_rust_bridge. This line may not be accurate, and you can change it according to your needs. */

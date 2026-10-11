@@ -13403,23 +13403,14 @@ pub async fn config_from_relay(
 }
 
 pub async fn validate_relay(config_ref: &JoinedOSConfig) -> anyhow::Result<Option<String>> {
-    let Err(PushError::RelayError(_, message)) = config_ref.generate_validation_data().await else {
-        return Ok(match config_ref {
-            JoinedOSConfig::MacOS(macos) => None,
-            JoinedOSConfig::Relay(relay) => Some(relay.code.clone()),
-        });
+    let relay_ticket = match config_ref {
+        JoinedOSConfig::MacOS(_) => None,
+        JoinedOSConfig::Relay(relay) => Some(relay.code.as_str()),
     };
-    if !message.contains("Subscription not active!")
-        && !message.contains("Ticket not activated!")
-        && !message.contains("Sorry, your hosted device is currently offline!")
-    {
-        info!("Validation failed {message}");
-        return Ok(None);
-    }
-    Ok(match config_ref {
-        JoinedOSConfig::MacOS(macos) => None,
-        JoinedOSConfig::Relay(relay) => Some(relay.code.clone()),
-    })
+    Ok(crate::registration_validation::relay_ticket_after_validation(
+        config_ref.generate_validation_data().await,
+        relay_ticket,
+    )?)
 }
 
 pub fn parse_transcript_poster(payload: Vec<u8>) -> anyhow::Result<SimplifiedTranscriptPoster> {
