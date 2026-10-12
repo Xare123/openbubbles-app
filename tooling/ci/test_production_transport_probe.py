@@ -133,6 +133,7 @@ class TransportProbeSafety(unittest.TestCase):
         build = workflow.split("  benchmark-build:\n", 1)[1].split("  production-transport:\n", 1)[0]
         condition = next(line for line in build.splitlines() if line.strip().startswith("if:"))
         self.assertIn("!= 'production-transport-only'", condition)
+        self.assertIn("!= 'production-android-build-only'", condition)
         job = workflow.split("  production-transport:\n", 1)[1].split("  apk-runtime:\n", 1)[0]
         self.assertIn("timeout-minutes: 40", job)
         self.assertNotIn("secrets.", job)
@@ -145,10 +146,78 @@ class TransportProbeSafety(unittest.TestCase):
         self.assertIn("      - production-transport\n", cleanup)
         self.assertIn("always()", cleanup)
         self.assertIn("--max-run-duration 75m", workflow)
-        guard = workflow.split('if [[ "$VALIDATION_MODE" == \'production-transport-only\' ]]; then', 1)[1].split('if [[ "$VALIDATION_MODE" == \'apk-runtime-only\' ]]; then', 1)[0]
+        guard = workflow.split('if [[ "$VALIDATION_MODE" == \'production-transport-only\' || "$VALIDATION_MODE" == \'production-android-build-only\' ]]; then', 1)[1].split('if [[ "$VALIDATION_MODE" == \'apk-runtime-only\' ]]; then', 1)[0]
         self.assertIn(PROBE.SOURCE, guard)
         self.assertIn('"$AUTOMATIC_UPLOADS" != \'false\'', guard)
         self.assertIn('"$OUTBOUND_WRITER" != \'false\'', guard)
+
+    def test_android_ranlib_override_is_explicit(self):
+        workflow = (HERE.parents[1] / ".github/workflows/gce-runner-pilot.yml").read_text()
+        job = workflow.split("  production-transport:\n", 1)[1].split("  apk-runtime:\n", 1)[0]
+        self.assertTrue(
+            'export RANLIB_aarch64_linux_android="$ndk/llvm-ranlib"' in job,
+            "Production probe does not select the NDK llvm-ranlib",
+        )
+
+    def test_build_only_does_not_build_or_execute_linux(self):
+        receipt = {"android_executed": False}
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory)
+            with patch.object(PROBE, "command", side_effect=AssertionError("unexpected host command")) as host:
+                with patch.object(PROBE, "build_android_probe", return_value={"android_interpreter": "/system/bin/linker64"}) as android:
+                    self.assertEqual(PROBE.run_platforms(path, path, path, ["cargo"], receipt, android_only=True), 0)
+            host.assert_not_called()
+            android.assert_called_once()
+        self.assertFalse(receipt["linux_probe_executed"])
+        self.assertNotIn("linux_transport_passed", receipt)
+        self.assertFalse(receipt["android_executed"])
+        self.assertEqual(receipt["result"], "android_artifact_ready_transport_unrun")
+
+    def test_full_probe_failed_google_control_stops_android(self):
+        receipt = {}
+        rows = [{"strict_https": False, "http_status": 0}] * 3 + [{"anisette_provider_calls": 0}]
+        success = {"exit_code": 0, "process_group_reaped": True}
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory)
+            with patch.object(PROBE, "command", return_value=success) as commands:
+                with patch.object(PROBE, "elf", return_value={}), patch.object(PROBE, "observations", return_value=rows):
+                    with patch.object(PROBE, "build_android_probe") as android:
+                        with self.assertRaisesRegex(RuntimeError, "Google control"):
+                            PROBE.run_platforms(path, path, path, ["cargo"], receipt)
+            android.assert_not_called()
+            self.assertEqual([call.args[3] for call in commands.call_args_list], ["linux-build", "linux-probe"])
+
+    def test_full_probe_keeps_actual_host_observations(self):
+        receipt = {"android_executed": False}
+        rows = [{"strict_https": True, "http_status": code} for code in (200, 200, 404)] + [{"anisette_provider_calls": 0}]
+        success = {"exit_code": 0, "process_group_reaped": True}
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory)
+            with patch.object(PROBE, "command", return_value=success), patch.object(PROBE, "elf", return_value={}):
+                with patch.object(PROBE, "observations", return_value=rows):
+                    with patch.object(PROBE, "build_android_probe", return_value={}) as android:
+                        self.assertEqual(PROBE.run_platforms(path, path, path, ["cargo"], receipt), 0)
+            android.assert_called_once()
+        self.assertTrue(receipt["linux_probe_executed"])
+        self.assertTrue(receipt["linux_transport_passed"])
+        self.assertEqual(receipt["result"], "probe_and_artifact_ready")
+
+    def test_android_phase_selects_only_exact_target(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory)
+            with patch.object(PROBE, "command", side_effect=RuntimeError("compiler sentinel")) as commands:
+                with self.assertRaisesRegex(RuntimeError, "compiler sentinel"):
+                    PROBE.build_android_probe(path, path, path, ["cargo", "build", "--locked"])
+            self.assertEqual(commands.call_args.args[0], ["cargo", "build", "--locked", "--target", PROBE.TARGET])
+            self.assertEqual(commands.call_args.args[3], "android-build")
+
+    def test_build_only_cli_is_only_admitted_in_native_job(self):
+        workflow = (HERE.parents[1] / ".github/workflows/gce-runner-pilot.yml").read_text()
+        job = workflow.split("  production-transport:\n", 1)[1].split("  apk-runtime:\n", 1)[0]
+        self.assertIn("inputs.validation_mode == 'production-android-build-only'", job)
+        self.assertIn("probe_args+=(--android-only)", job)
+        self.assertIn('test -x "$RANLIB_aarch64_linux_android"', job)
+        self.assertNotIn(".post(", (HERE / "transport_probe/main.rs").read_text())
 
 
 if __name__ == "__main__":

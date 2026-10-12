@@ -1,4 +1,4 @@
-"""One bounded, credential-free Linux run and ARM64 Android console build.
+"""Bounded credential-free Linux transport and/or ARM64 Android console build.
 
 The immutable application's dependency graph is used, not rustpush/Cargo.lock.
 Only temporary diagnostic exports are added. Tracked bytes are restored even
@@ -152,10 +152,56 @@ def observations(path: Path) -> list[dict]:
     return entries
 
 
+def build_android_probe(root: Path, out: Path, target: Path, base: list[str]) -> dict:
+    android = command(base + ["--target", TARGET], root, out, "android-build", 900)
+    if android["exit_code"] != 0 or not android["process_group_reaped"]:
+        raise RuntimeError("Android console build failed; inspect before retry")
+    artifact = out / "ob_strict_tls_probe_android_arm64"
+    shutil.copyfile(target / TARGET / "debug/ob_strict_tls_probe", artifact)
+    binary = elf(artifact, 183)
+    ndk_bin = Path(os.environ["CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER"]).parent
+    inspect = command([str(ndk_bin / "llvm-readelf"), "-h", "-l", "-d", str(artifact)], root, out, "android-elf", 15)
+    elf_text = (out / "android-elf.log").read_text()
+    if (inspect["exit_code"] != 0 or not inspect["process_group_reaped"] or
+            "/system/bin/linker64" not in elf_text or "libc.so.6" in elf_text):
+        raise RuntimeError("Android interpreter or native dependencies not qualified")
+    return {"android_binary": binary, "android_interpreter": "/system/bin/linker64"}
+
+
+def run_platforms(root: Path, out: Path, target: Path, base: list[str],
+                  receipt: dict, *, android_only: bool = False) -> int:
+    receipt["linux_probe_executed"] = False
+    if not android_only:
+        host = command(base, root, out, "linux-build", 600)
+        if host["exit_code"] != 0 or not host["process_group_reaped"]:
+            raise RuntimeError("Linux build failed; inspect evidence before retry")
+        host_binary = target / "debug/ob_strict_tls_probe"
+        receipt["linux_binary"] = elf(host_binary, 62)
+        run = command([str(host_binary)], root, out, "linux-probe", 30)
+        receipt["linux_probe_executed"] = True
+        receipt["linux_observations"] = observations(out / "linux-probe.log")
+        receipt["linux_transport_passed"] = run["exit_code"] == 0 and run["process_group_reaped"]
+        receipt["public_services_not_5xx"] = all(
+            entry.get("strict_https") is True and 200 <= entry.get("http_status", 0) < 500
+            for entry in receipt["linux_observations"][:3]
+        )
+        if receipt["linux_observations"][0].get("strict_https") is not True:
+            raise RuntimeError("Direct-network Google control failed; skip ARM64 work")
+    receipt.update(build_android_probe(root, out, target, base))
+    if android_only:
+        receipt["result"] = "android_artifact_ready_transport_unrun"
+        return 0
+    receipt["result"] = ("probe_and_artifact_ready" if receipt["linux_transport_passed"]
+                         else "linux_transport_failed_android_artifact_ready")
+    return 0 if receipt["linux_transport_passed"] else 2
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--source", type=Path, required=True)
     parser.add_argument("--out", type=Path, required=True)
+    parser.add_argument("--android-only", action="store_true",
+                        help="Build the ARM64 console only; no Linux binary or HTTPS request")
     args = parser.parse_args()
     root, out = args.source.resolve(), args.out.resolve()
     if os.name != "posix" or out.exists() or out == root or root in out.parents:
@@ -165,7 +211,8 @@ def main() -> int:
         raise RuntimeError(f"Diagnostic interrupted by signal {signum}")
     signal.signal(signal.SIGTERM, interrupted)
     signal.signal(signal.SIGINT, interrupted)
-    receipt = {"account_loaded": False, "apk_built": False, "android_executed": False}
+    receipt = {"account_loaded": False, "apk_built": False, "android_executed": False,
+               "android_build_only": args.android_only, "linux_probe_executed": False}
     began = time.monotonic()
     exit_code = 1
     try:
@@ -185,36 +232,9 @@ def main() -> int:
             for name in ("main.rs", "account_client.rs"):
                 shutil.copyfile(TEMPLATES / name, out / name)
             base = ["cargo", "build", "--offline", "--locked", "--manifest-path", "rust/Cargo.toml", "--bin", "ob_strict_tls_probe"]
-            host = command(base, root, out, "linux-build", 600)
-            if host["exit_code"] != 0 or not host["process_group_reaped"]:
-                raise RuntimeError("Linux build failed; inspect evidence before retry")
-            host_binary = target / "debug/ob_strict_tls_probe"
-            receipt["linux_binary"] = elf(host_binary, 62)
-            run = command([str(host_binary)], root, out, "linux-probe", 30)
-            receipt["linux_observations"] = observations(out / "linux-probe.log")
-            receipt["linux_transport_passed"] = run["exit_code"] == 0 and run["process_group_reaped"]
-            receipt["public_services_not_5xx"] = all(
-                entry.get("strict_https") is True and 200 <= entry.get("http_status", 0) < 500
-                for entry in receipt["linux_observations"][:3]
-            )
-            if receipt["linux_observations"][0].get("strict_https") is not True:
-                raise RuntimeError("Direct-network Google control failed; skip ARM64 work")
-            android = command(base + ["--target", TARGET], root, out, "android-build", 900)
-            if android["exit_code"] != 0 or not android["process_group_reaped"]:
-                raise RuntimeError("Android console build failed; inspect before retry")
-            artifact = out / "ob_strict_tls_probe_android_arm64"
-            shutil.copyfile(target / TARGET / "debug/ob_strict_tls_probe", artifact)
-            receipt["android_binary"] = elf(artifact, 183)
-            ndk_bin = Path(os.environ["CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER"]).parent
-            inspect = command([str(ndk_bin / "llvm-readelf"), "-h", "-l", "-d", str(artifact)], root, out, "android-elf", 15)
-            elf_text = (out / "android-elf.log").read_text()
-            if (inspect["exit_code"] != 0 or not inspect["process_group_reaped"] or
-                    "/system/bin/linker64" not in elf_text or "libc.so.6" in elf_text):
-                raise RuntimeError("Android interpreter or native dependencies not qualified")
-            receipt["android_interpreter"] = "/system/bin/linker64"
+            exit_code = run_platforms(root, out, target, base, receipt,
+                                      android_only=args.android_only)
         receipt["after"] = verify_source(root)
-        receipt["result"] = "probe_and_artifact_ready" if receipt["linux_transport_passed"] else "linux_transport_failed_android_artifact_ready"
-        exit_code = 0 if receipt["linux_transport_passed"] else 2
     except Exception as error:
         receipt["result"] = "failed"
         receipt["error"] = str(error)

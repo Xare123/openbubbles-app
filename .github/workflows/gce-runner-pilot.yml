@@ -69,6 +69,7 @@ on:
           - dart-only
           - apk-runtime-only
           - production-transport-only
+          - production-android-build-only
       outbound_writer:
         description: Build the isolated Android Canary with one-message V2 writer controls
         required: true
@@ -174,7 +175,7 @@ jobs:
             echo 'automatic_uploads requires outbound_writer=true (full Canary qualification).' >&2
             exit 1
           fi
-          if [[ "$VALIDATION_MODE" == 'production-transport-only' ]]; then
+          if [[ "$VALIDATION_MODE" == 'production-transport-only' || "$VALIDATION_MODE" == 'production-android-build-only' ]]; then
             if [[ "$SOURCE_REF" != 'ad05e2136a9f722aab74d3381a65483e49f5d1dc' ||
                   "$TRUSTED_SOURCE_BRANCH" != 'agent/cloudkit-v2-received-origin-20260916' ||
                   "$RUNNER_LANE" != 'primary' || "$OUTBOUND_WRITER" != 'false' ||
@@ -396,7 +397,7 @@ jobs:
 
   benchmark-build:
     name: Build ${{ inputs.flavor || 'beta' }} APK on GCE
-    if: ${{ (inputs.validation_mode || 'full') != 'apk-runtime-only' && (inputs.validation_mode || 'full') != 'production-transport-only' }}
+    if: ${{ (inputs.validation_mode || 'full') != 'apk-runtime-only' && (inputs.validation_mode || 'full') != 'production-transport-only' && (inputs.validation_mode || 'full') != 'production-android-build-only' }}
     needs: create-runner
     runs-on: ${{ needs.create-runner.outputs.label }}
     timeout-minutes: 60
@@ -1009,8 +1010,8 @@ jobs:
         run: cargo test --manifest-path rustpush/Cargo.toml --lib --features remote-anisette-v3 -- --test-threads=1
 
   production-transport:
-    name: Qualify production HTTPS clients without an APK or account
-    if: ${{ inputs.validation_mode == 'production-transport-only' }}
+    name: Build or qualify production client probes without an APK or account
+    if: ${{ inputs.validation_mode == 'production-transport-only' || inputs.validation_mode == 'production-android-build-only' }}
     needs: create-runner
     runs-on: ${{ needs.create-runner.outputs.label }}
     timeout-minutes: 40
@@ -1095,7 +1096,13 @@ jobs:
           export CC_aarch64_linux_android="$ndk/aarch64-linux-android24-clang"
           export CXX_aarch64_linux_android="$ndk/aarch64-linux-android24-clang++"
           export AR_aarch64_linux_android="$ndk/llvm-ar"
-          python3 transport-tools/tooling/ci/run_production_transport_probe.py --source candidate --out transport-receipts
+          export RANLIB_aarch64_linux_android="$ndk/llvm-ranlib"
+          test -x "$RANLIB_aarch64_linux_android"
+          probe_args=()
+          if [[ "$VALIDATION_MODE" == 'production-android-build-only' ]]; then
+            probe_args+=(--android-only)
+          fi
+          python3 transport-tools/tooling/ci/run_production_transport_probe.py --source candidate --out transport-receipts "${probe_args[@]}"
 
       - name: Preserve only credential-free observations and native probe
         if: ${{ always() }}
