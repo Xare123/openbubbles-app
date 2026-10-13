@@ -16,6 +16,23 @@ class ValidationMetadata(unittest.TestCase):
         self.assertEqual(event["error_code"], -7)
         self.assertNotIn("error", event)
 
+    def test_fixed_failure_phase_survives_raw_error_redaction(self):
+        raw = json.dumps({"step":"failed","phase":"bag_decode","error":"fixture-private-value"}).encode()
+        event = json.loads(sanitize_output(raw))
+        self.assertEqual(event["phase"], "bag_decode")
+        self.assertEqual(event["error_kind"], "validation_failed")
+        self.assertNotIn("error", event)
+        self.assertNotIn("fixture-private", json.dumps(event))
+
+    def test_numeric_code_and_fixed_phase_survive_together(self):
+        event = json.loads(sanitize_output(b'{"step":"failed","phase":"nac_init","error":"NAC return code -7"}'))
+        self.assertEqual((event["phase"], event["error_code"]), ("nac_init", -7))
+
+    def test_private_value_or_wrong_type_cannot_use_phase_as_a_side_channel(self):
+        for value in ["fixture-private-value", ["bag_decode"], 1, None, {}]:
+            with self.subTest(value=value), self.assertRaisesRegex(ValueError, "value"):
+                sanitize_output(json.dumps({"step":"failed","phase":value,"error":"ignored"}).encode())
+
     def test_unknown_payload_field_is_rejected(self):
         with self.assertRaisesRegex(ValueError, "unapproved"):
             sanitize_output(b'{"step":"sign","proof":"fixture-private-value"}')

@@ -15,11 +15,15 @@ FIELDS = {
     "key_establishment":{"response_bytes","result"},
     "sign":{"proof_bytes","proof_sha256","result","account_acceptance","production_integration"},
     "complete":{"elapsed_seconds"},
-    "failed":{"error","elapsed_seconds"},
+    "failed":{"error","phase","elapsed_seconds"},
 }
 COUNTERS = {"bytes","input_bytes","http_status","request_bytes","response_bytes","proof_bytes"}
 HASHES = {"sha256","input_sha256","proof_sha256"}
 BOOLEANS = {"hash_verified","identity_preserved"}
+FAILURE_PHASES = {"startup","framework","engine","input","hardware","client",
+                  "bag_request","bag_decode","bag_urls","certificate_request",
+                  "certificate_decode","nac_init","session_encode","session_request",
+                  "session_decode","key_establishment","sign"}
 
 
 def sanitize_output(raw, require_complete=False):
@@ -53,7 +57,9 @@ def sanitize_output(raw, require_complete=False):
                     elif status:
                         row.update(error_kind="apple_http_status", http_status=int(status[2]))
                 continue
-            if key in COUNTERS:
+            if key == "phase":
+                valid = isinstance(value, str) and value in FAILURE_PHASES
+            elif key in COUNTERS:
                 valid = type(value) is int and 0 <= value <= 1000000000
             elif key in HASHES:
                 valid = isinstance(value, str) and re.fullmatch(r"[0-9a-f]{64}", value)
