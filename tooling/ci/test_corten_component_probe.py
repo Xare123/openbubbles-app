@@ -54,7 +54,7 @@ class CortenSafety(unittest.TestCase):
             RUN.patch_android_thread_directives("unknown build script")
 
 class PrivateValidationPhase(unittest.TestCase):
-    def phase(self, private=b"private_fixture", validation_exit=0, loader_only=False):
+    def phase(self, private=b"private_fixture", validation_exit=0, loader_only=False, test_exit=0):
         with tempfile.TemporaryDirectory() as directory, ExitStack() as stack:
             root = Path(directory)
             source = root / "source"
@@ -66,6 +66,8 @@ class PrivateValidationPhase(unittest.TestCase):
             calls = []
             def command(args, *positional):
                 calls.append(args)
+                if args[:2] == ["cargo", "test"]:
+                    return {"exit":test_exit}
                 return {"exit": validation_exit if args[-1] == "validate" else 0}
             stack.enter_context(patch.dict(sys.modules, {"resource": types.SimpleNamespace(RLIMIT_CORE=4, setrlimit=lambda *a: None)}))
             stack.enter_context(patch.dict(RUN.os.environ, {"RUNNER_TEMP":str(root)}))
@@ -83,16 +85,18 @@ class PrivateValidationPhase(unittest.TestCase):
                 error = str(caught)
             receipt = json.loads((output / "receipt.json").read_text())
             android.assert_not_called()
-            if loader_only:
+            if loader_only or test_exit:
                 metadata.assert_not_called()
             return calls, receipt, error
 
-    def test_one_validation_without_test_or_android_replay(self):
+    def test_one_validation_after_affected_native_cases_without_android_replay(self):
         calls, receipt, error = self.phase()
         self.assertIsNone(error)
-        self.assertEqual(len(calls), 2)
-        self.assertEqual(calls[0][:2], ["cargo", "build"])
-        self.assertEqual(calls[1][-1], "validate")
+        self.assertEqual(len(calls), 3)
+        self.assertEqual(calls[0][:2], ["cargo", "test"])
+        self.assertIn("nac::tests::", calls[0])
+        self.assertEqual(calls[1][:2], ["cargo", "build"])
+        self.assertEqual(calls[2][-1], "validate")
         self.assertFalse(receipt["account_access"])
         self.assertEqual(receipt["production_integration"], "UNRUN")
         self.assertEqual(receipt["result"], "genuine_challenge_generated_account_acceptance_unrun")
@@ -100,14 +104,14 @@ class PrivateValidationPhase(unittest.TestCase):
     def test_missing_input_cannot_pass(self):
         calls, receipt, error = self.phase(private=None)
         self.assertIn("not supplied", error)
-        self.assertEqual(len(calls), 1)
+        self.assertEqual(len(calls), 2)
         self.assertEqual(receipt["private_hardware"], "UNRUN")
         self.assertEqual(receipt["result"], "failed")
 
     def test_rejected_validation_is_recorded_and_not_retried(self):
         calls, receipt, error = self.phase(validation_exit=2)
         self.assertIn("did not qualify", error)
-        self.assertEqual(len(calls), 2)
+        self.assertEqual(len(calls), 3)
         self.assertEqual(receipt["private_hardware"]["exit"], 2)
         self.assertEqual(receipt["result"], "failed")
 
@@ -122,6 +126,12 @@ class PrivateValidationPhase(unittest.TestCase):
         self.assertFalse(receipt["private_input_access"])
         self.assertEqual(receipt["private_hardware"], "UNRUN")
         self.assertEqual(receipt["result"], "loader_component_qualified_private_validation_unrun")
+
+    def test_failed_native_regression_never_reads_private_input(self):
+        calls, receipt, error = self.phase(test_exit=1)
+        self.assertIn("regressions failed", error)
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(receipt["private_hardware"], "UNRUN")
 
 if __name__ == "__main__":
     unittest.main()

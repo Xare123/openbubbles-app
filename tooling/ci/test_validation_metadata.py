@@ -27,6 +27,20 @@ class ValidationMetadata(unittest.TestCase):
         self.assertEqual(event["error_kind"], "emulator_memory_mapping")
         self.assertNotIn("fixture-private", json.dumps(event))
 
+    def test_timeout_and_instruction_categories_are_distinct(self):
+        for suffix, expected in [("timeout","emulation_timeout"), ("instruction_limit_or_hook","emulation_instruction_limit_or_hook")]:
+            event = json.loads(sanitize_output(json.dumps({"step":"failed","error":"NAC emulation stopped before return: " + suffix}).encode()))
+            self.assertEqual(event["error_kind"], expected)
+
+    def test_only_fixed_hook_index_is_preserved(self):
+        event = json.loads(sanitize_output(b'{"step":"failed","error":"NAC hook panic 26"}'))
+        self.assertEqual(event["error_kind"], "emulation_hook_failure")
+        self.assertEqual(event["hook_index"], 26)
+        for error in ["NAC hook panic 37", "NAC hook panic 99999", "NAC hook panic private-value", "NAC hook panic 26 secret"]:
+            rejected = json.loads(sanitize_output(json.dumps({"step":"failed","error":error}).encode()))
+            self.assertEqual(rejected["error_kind"], "validation_failed")
+            self.assertNotIn("hook_index", rejected)
+
     def test_unknown_fault_name_is_not_a_diagnostic_side_channel(self):
         event = json.loads(sanitize_output(b'{"step":"failed","error":"Emulation error at 0xb1db0: PRIVATE_TOKEN"}'))
         self.assertEqual(event["error_kind"], "validation_failed")

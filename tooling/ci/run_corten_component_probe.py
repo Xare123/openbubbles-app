@@ -210,8 +210,7 @@ def qualify(source, out, android_only=False, private_only=False, loader_only=Fal
         if android_only:
             raise RuntimeError("private and Android-only modes are mutually exclusive")
         receipt["request"] = "OB-CORTEN-PRIVATE-VALIDATION-20261013-D"
-        receipt["linux_tests"] = "SKIPPED_ALREADY_QUALIFIED_38341133825"
-        receipt["engine"] = "SKIPPED_ALREADY_QUALIFIED_38341133825"
+        receipt["engine"] = "COVERED_BY_TARGETED_NAC_TESTS"
         receipt["android_build"] = "SKIPPED_ALREADY_QUALIFIED_38344373713"
     if loader_only:
         receipt["request"] = "OB-CORTEN-LOADER-20261013-F"
@@ -238,11 +237,12 @@ def qualify(source, out, android_only=False, private_only=False, loader_only=Fal
         env.pop("RUSTC_WRAPPER", None)
         manifest = str(prototype / "Cargo.toml")
         if not android_only:
-            if not private_only:
-                test_filter = ["nac::tests::"] if loader_only else []
-                receipt["linux_tests"] = command(["cargo","test","--locked","--manifest-path",manifest,"--lib",*test_filter,"--","--test-threads=1"], source, out / "linux-tests.log", 420, env)
-                if receipt["linux_tests"]["exit"]:
-                    raise RuntimeError("Linux component regressions failed")
+            # The stop-classification change affects the call boundary. Run
+            # its focused native regression batch before any private input.
+            test_filter = ["nac::tests::"] if loader_only or private_only else []
+            receipt["linux_tests"] = command(["cargo","test","--locked","--manifest-path",manifest,"--lib",*test_filter,"--","--test-threads=1"], source, out / "linux-tests.log", 420, env)
+            if receipt["linux_tests"]["exit"]:
+                raise RuntimeError("Linux component regressions failed")
             receipt["linux_build"] = command(["cargo","build","--locked","--manifest-path",manifest], source, out / "linux-build.log", 240, env)
             if receipt["linux_build"]["exit"]:
                 raise RuntimeError("Linux component build failed")

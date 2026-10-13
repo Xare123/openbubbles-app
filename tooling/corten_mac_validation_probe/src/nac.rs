@@ -9,7 +9,7 @@ use std::rc::Rc;
 use goblin::mach::cputype::CPU_TYPE_X86_64;
 use goblin::mach::Mach;
 use serde::{Deserialize, Serialize, Serializer, Deserializer, de};
-use unicorn_engine::unicorn_const::{Arch, Mode, Permission as Prot};
+use unicorn_engine::unicorn_const::{Arch, Mode, Permission as Prot, Query};
 use unicorn_engine::{RegisterX86, Unicorn};
 use crate::AbsintheError;
 // Discard upstream diagnostics, including values from CF/IOKit properties.
@@ -182,6 +182,7 @@ struct EmuState {
     hw_iokit: HashMap<String, CfObj>,
     root_disk_uuid: String,
     eth_iterator_hack: bool,
+    hook_failure: Option<usize>,
 }
 
 impl EmuState {
@@ -242,6 +243,7 @@ impl EmuState {
             hw_iokit: iokit,
             root_disk_uuid: hw.root_disk_uuid.clone(),
             eth_iterator_hack: false,
+            hook_failure: None,
         }
     }
 
@@ -721,6 +723,8 @@ impl ValidationCtx {
         uc.add_code_hook(HOOK_BASE, HOOK_BASE + HOOK_SIZE - 1, move |uc, addr, _size| {
             let mut st = hook_state.borrow_mut();
             if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| dispatch(uc, &mut st, addr))).is_err() {
+                // Public fixed hook index only, never panic text or arguments.
+                st.hook_failure = Some((addr - HOOK_BASE) as usize);
                 let _ = uc.emu_stop();
             }
         })
@@ -741,8 +745,9 @@ impl ValidationCtx {
         uc.mem_write(cert_addr, cert_chain)
             .map_err(|e| AbsintheError::Other(format!("Failed to write cert: {:?}", e)))?;
 
-        let ret = call_func(
+        let ret = call_context_func(
             &mut uc,
+            &state,
             NAC_INIT,
             &[
                 cert_addr,
@@ -784,7 +789,7 @@ impl ValidationCtx {
         }
         let address = self.state.borrow_mut().heap_alloc(response.len() as u64);
         self.uc.mem_write(address, response).map_err(|e| AbsintheError::Other(format!("NAC response write: {e:?}")))?;
-        let ret = call_func(&mut self.uc, NAC_KEY_EST, &[self.validation_ctx_addr, address, response.len() as u64])?;
+        let ret = call_context_func(&mut self.uc, &self.state, NAC_KEY_EST, &[self.validation_ctx_addr, address, response.len() as u64])?;
         if ret != 0 { return Err(AbsintheError::NacError(-(ret as i64 as i32))); }
         self.established = true;
         Ok(())
@@ -798,7 +803,7 @@ impl ValidationCtx {
             let mut st = self.state.borrow_mut();
             (st.heap_alloc(8), st.heap_alloc(8))
         };
-        let ret = call_func(&mut self.uc, NAC_SIGN, &[self.validation_ctx_addr, 0, 0, pointer, length])?;
+        let ret = call_context_func(&mut self.uc, &self.state, NAC_SIGN, &[self.validation_ctx_addr, 0, 0, pointer, length])?;
         if ret != 0 { return Err(AbsintheError::NacError(-(ret as i64 as i32))); }
         let address = uc_read_u64(&self.uc, pointer);
         let count = uc_read_u64(&self.uc, length) as usize;
@@ -879,6 +884,27 @@ mod tests {
         assert!(call_func(&mut uc, 0x1000, &[]).is_err());
     }
     #[test]
+    fn stop_runtime_instruction_limit_is_distinguished_from_timeout() {
+        let mut uc = import_fault_machine(&[0xeb, 0xfe]);
+        let error = call_func_bounded(&mut uc, 0x1000, &[], 1_000_000, 20).unwrap_err();
+        assert_eq!(error.to_string(), "NAC emulation stopped before return: instruction_limit_or_hook");
+    }
+    #[test]
+    fn stop_runtime_timeout_is_distinguished_from_instruction_limit() {
+        let mut uc = import_fault_machine(&[0xeb, 0xfe]);
+        let error = call_func_bounded(&mut uc, 0x1000, &[], 1_000, usize::MAX).unwrap_err();
+        assert_eq!(error.to_string(), "NAC emulation stopped before return: timeout");
+    }
+    #[test]
+    fn stop_classification_hook_failure_cannot_report_success() {
+        assert_eq!(hook_checked(Ok(42), Some(0)).unwrap_err().to_string(), "NAC hook panic 0");
+        assert_eq!(hook_checked(Ok(42), None).unwrap(), 42);
+    }
+    #[test]
+    fn stop_classification_unknown_hook_is_rejected_without_index() {
+        assert_eq!(hook_checked(Ok(42), Some(usize::MAX)).unwrap_err().to_string(), "NAC hook failure index invalid");
+    }
+    #[test]
     fn real_return_reaches_stop_and_reports_result() {
         let mut uc = Unicorn::new(Arch::X86, Mode::MODE_64).unwrap();
         uc.mem_map(0x1000, 0x1000, Prot::ALL).unwrap();
@@ -903,7 +929,25 @@ mod tests {
     }
 }
 
+fn hook_checked(result: Result<u64, AbsintheError>, failed_hook: Option<usize>) -> Result<u64, AbsintheError> {
+    match failed_hook {
+        Some(index) if index < HOOK_SYMBOLS.len() =>
+            Err(AbsintheError::Other(format!("NAC hook panic {index}"))),
+        Some(_) => Err(AbsintheError::Other("NAC hook failure index invalid".into())),
+        None => result,
+    }
+}
+
+fn call_context_func(uc: &mut Unicorn<'static, ()>, state: &RefCell<EmuState>, addr: u64, args: &[u64]) -> Result<u64, AbsintheError> {
+    let result = call_func(uc, addr, args);
+    hook_checked(result, state.borrow().hook_failure)
+}
+
 fn call_func(uc: &mut Unicorn<'static, ()>, addr: u64, args: &[u64]) -> Result<u64, AbsintheError> {
+    call_func_bounded(uc, addr, args, 5_000_000, 50_000_000)
+}
+
+fn call_func_bounded(uc: &mut Unicorn<'static, ()>, addr: u64, args: &[u64], timeout_us: u64, instruction_limit: usize) -> Result<u64, AbsintheError> {
     if args.len() > ARG_REGS.len() {
         return Err(AbsintheError::Other("NAC call exceeds supported register arguments".into()));
     }
@@ -927,11 +971,16 @@ fn call_func(uc: &mut Unicorn<'static, ()>, addr: u64, args: &[u64]) -> Result<u
     }
 
     // Run emulation
-    uc.emu_start(addr, STOP_ADDR, 5_000_000, 50_000_000)
+    uc.emu_start(addr, STOP_ADDR, timeout_us, instruction_limit)
         .map_err(|e| AbsintheError::Other(format!("Emulation error at 0x{:x}: {:?}", addr, e)))?;
 
     if uc.reg_read(RegisterX86::RIP).unwrap_or(0) != STOP_ADDR {
-        return Err(AbsintheError::Other("NAC emulation stopped before return (limit or hook failure)".into()));
+        let reason = match uc.query(Query::TIMEOUT) {
+            Ok(0) => "NAC emulation stopped before return: instruction_limit_or_hook",
+            Ok(_) => "NAC emulation stopped before return: timeout",
+            Err(_) => "NAC emulation stopped before return: unknown_timeout_state",
+        };
+        return Err(AbsintheError::Other(reason.into()));
     }
     if uc.reg_read(RegisterX86::RSP).unwrap_or(0) != saved_rsp {
         return Err(AbsintheError::Other("NAC stop did not consume the expected return stack".into()));

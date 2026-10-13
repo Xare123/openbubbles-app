@@ -28,6 +28,10 @@ EMULATION_FAULTS = {"READ_UNMAPPED", "WRITE_UNMAPPED", "FETCH_UNMAPPED",
                     "READ_PROT", "WRITE_PROT", "FETCH_PROT", "INSN_INVALID",
                     "EXCEPTION", "ARG", "NOMEM", "RESOURCE"}
 NATIVE_ERROR_PREFIXES = {
+    "NAC emulation stopped before return: timeout": "emulation_timeout",
+    "NAC emulation stopped before return: instruction_limit_or_hook": "emulation_instruction_limit_or_hook",
+    "NAC emulation stopped before return: unknown_timeout_state": "emulation_stop_unclassified",
+    "NAC hook failure index invalid": "emulation_hook_failure",
     "Unicorn init failed:": "engine_initialization",
     "Failed to map ": "emulator_memory_mapping",
     "Mach-O parse error:": "framework_parse",
@@ -68,10 +72,13 @@ def sanitize_output(raw, require_complete=False):
                 if isinstance(value, str):
                     code = re.fullmatch(r"NAC return code (-?[0-9]{1,10})", value)
                     status = re.fullmatch(r"(bag|certificate|session) HTTP ([0-9]{3})", value)
+                    hook = re.fullmatch(r"NAC hook panic ([0-9]{1,2})", value)
                     if code:
                         row.update(error_kind="nac_return_code", error_code=int(code[1]))
                     elif status:
                         row.update(error_kind="apple_http_status", http_status=int(status[2]))
+                    elif hook and int(hook[1]) < 37:
+                        row.update(error_kind="emulation_hook_failure", hook_index=int(hook[1]))
                     else:
                         fault = re.fullmatch(r"Emulation error at 0x[0-9a-f]{1,16}: ([A-Z_]+)", value)
                         if fault and fault[1] in EMULATION_FAULTS:
