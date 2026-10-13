@@ -16,6 +16,22 @@ class ValidationMetadata(unittest.TestCase):
         self.assertEqual(event["error_code"], -7)
         self.assertNotIn("error", event)
 
+    def test_unmapped_fault_preserves_only_closed_set_category(self):
+        event = json.loads(sanitize_output(b'{"step":"failed","phase":"nac_init","error":"Emulation error at 0xb1db0: FETCH_UNMAPPED"}'))
+        self.assertEqual(event["emulation_fault"], "FETCH_UNMAPPED")
+        self.assertNotIn("error", event)
+        self.assertNotIn("b1db0", json.dumps(event))
+
+    def test_native_category_discards_all_variable_error_text(self):
+        event = json.loads(sanitize_output(b'{"step":"failed","error":"Failed to map binary: fixture-private-value"}'))
+        self.assertEqual(event["error_kind"], "emulator_memory_mapping")
+        self.assertNotIn("fixture-private", json.dumps(event))
+
+    def test_unknown_fault_name_is_not_a_diagnostic_side_channel(self):
+        event = json.loads(sanitize_output(b'{"step":"failed","error":"Emulation error at 0xb1db0: PRIVATE_TOKEN"}'))
+        self.assertEqual(event["error_kind"], "validation_failed")
+        self.assertNotIn("PRIVATE_TOKEN", json.dumps(event))
+
     def test_fixed_failure_phase_survives_raw_error_redaction(self):
         raw = json.dumps({"step":"failed","phase":"bag_decode","error":"fixture-private-value"}).encode()
         event = json.loads(sanitize_output(raw))

@@ -24,6 +24,22 @@ FAILURE_PHASES = {"startup","framework","engine","input","hardware","client",
                   "bag_request","bag_decode","bag_urls","certificate_request",
                   "certificate_decode","nac_init","session_encode","session_request",
                   "session_decode","key_establishment","sign"}
+EMULATION_FAULTS = {"READ_UNMAPPED", "WRITE_UNMAPPED", "FETCH_UNMAPPED",
+                    "READ_PROT", "WRITE_PROT", "FETCH_PROT", "INSN_INVALID",
+                    "EXCEPTION", "ARG", "NOMEM", "RESOURCE"}
+NATIVE_ERROR_PREFIXES = {
+    "Unicorn init failed:": "engine_initialization",
+    "Failed to map ": "emulator_memory_mapping",
+    "Mach-O parse error:": "framework_parse",
+    "Mach-O imports parse failure:": "framework_import_parse",
+    "Failed to write import:": "framework_import_write",
+    "NAC emulation stopped before return": "emulation_incomplete",
+    "NAC stop did not consume": "emulation_invalid_return",
+    "NACInit output bounds invalid": "nac_init_output_bounds",
+    "NAC image overlaps reserved memory": "framework_layout",
+    "NAC import slot outside image": "framework_import_bounds",
+    "NAC import table exceeds bound": "framework_import_bounds",
+}
 
 
 def sanitize_output(raw, require_complete=False):
@@ -56,6 +72,15 @@ def sanitize_output(raw, require_complete=False):
                         row.update(error_kind="nac_return_code", error_code=int(code[1]))
                     elif status:
                         row.update(error_kind="apple_http_status", http_status=int(status[2]))
+                    else:
+                        fault = re.fullmatch(r"Emulation error at 0x[0-9a-f]{1,16}: ([A-Z_]+)", value)
+                        if fault and fault[1] in EMULATION_FAULTS:
+                            row.update(error_kind="emulation_fault", emulation_fault=fault[1])
+                        else:
+                            for prefix, category in NATIVE_ERROR_PREFIXES.items():
+                                if value.startswith(prefix):
+                                    row["error_kind"] = category
+                                    break
                 continue
             if key == "phase":
                 valid = isinstance(value, str) and value in FAILURE_PHASES

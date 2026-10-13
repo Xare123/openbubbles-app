@@ -73,6 +73,7 @@ on:
           - corten-validator-only
           - corten-android-only
           - corten-private-validation-only
+          - corten-loader-only
       outbound_writer:
         description: Build the isolated Android Canary with one-message V2 writer controls
         required: true
@@ -187,7 +188,7 @@ jobs:
               exit 1
             fi
           fi
-          if [[ "$VALIDATION_MODE" == 'corten-validator-only' || "$VALIDATION_MODE" == 'corten-android-only' || "$VALIDATION_MODE" == 'corten-private-validation-only' ]]; then
+          if [[ "$VALIDATION_MODE" == 'corten-validator-only' || "$VALIDATION_MODE" == 'corten-android-only' || "$VALIDATION_MODE" == 'corten-private-validation-only' || "$VALIDATION_MODE" == 'corten-loader-only' ]]; then
             if [[ "$SOURCE_REF" != 'ad05e2136a9f722aab74d3381a65483e49f5d1dc' ||
                   "$TRUSTED_SOURCE_BRANCH" != 'agent/cloudkit-v2-received-origin-20260916' ||
                   "$RUNNER_LANE" != 'primary' || "$OUTBOUND_WRITER" != 'false' ||
@@ -409,7 +410,7 @@ jobs:
 
   benchmark-build:
     name: Build ${{ inputs.flavor || 'beta' }} APK on GCE
-    if: ${{ (inputs.validation_mode || 'full') != 'apk-runtime-only' && (inputs.validation_mode || 'full') != 'production-transport-only' && (inputs.validation_mode || 'full') != 'production-android-build-only' && (inputs.validation_mode || 'full') != 'corten-validator-only' && (inputs.validation_mode || 'full') != 'corten-android-only' && (inputs.validation_mode || 'full') != 'corten-private-validation-only' }}
+    if: ${{ (inputs.validation_mode || 'full') != 'apk-runtime-only' && (inputs.validation_mode || 'full') != 'production-transport-only' && (inputs.validation_mode || 'full') != 'production-android-build-only' && (inputs.validation_mode || 'full') != 'corten-validator-only' && (inputs.validation_mode || 'full') != 'corten-android-only' && (inputs.validation_mode || 'full') != 'corten-private-validation-only' && (inputs.validation_mode || 'full') != 'corten-loader-only' }}
     needs: create-runner
     runs-on: ${{ needs.create-runner.outputs.label }}
     timeout-minutes: 60
@@ -1127,7 +1128,7 @@ jobs:
 
   corten-validator:
     name: Qualify isolated Corten validator without an APK or account
-    if: ${{ inputs.validation_mode == 'corten-validator-only' || inputs.validation_mode == 'corten-android-only' || inputs.validation_mode == 'corten-private-validation-only' }}
+    if: ${{ inputs.validation_mode == 'corten-validator-only' || inputs.validation_mode == 'corten-android-only' || inputs.validation_mode == 'corten-private-validation-only' || inputs.validation_mode == 'corten-loader-only' }}
     needs: create-runner
     runs-on: ${{ needs.create-runner.outputs.label }}
     timeout-minutes: 35
@@ -1158,22 +1159,22 @@ jobs:
         uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
         with:
           toolchain: 1.98.1
-          targets: ${{ inputs.validation_mode != 'corten-private-validation-only' && 'aarch64-linux-android' || '' }}
+          targets: ${{ (inputs.validation_mode == 'corten-validator-only' || inputs.validation_mode == 'corten-android-only') && 'aarch64-linux-android' || '' }}
       - name: Set up Java for native SDK manager
-        if: ${{ inputs.validation_mode != 'corten-private-validation-only' }}
+        if: ${{ inputs.validation_mode == 'corten-validator-only' || inputs.validation_mode == 'corten-android-only' }}
         uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
         with:
           distribution: temurin
           java-version: '21'
       - name: Set up Android command-line tools only
-        if: ${{ inputs.validation_mode != 'corten-private-validation-only' }}
+        if: ${{ inputs.validation_mode == 'corten-validator-only' || inputs.validation_mode == 'corten-android-only' }}
         uses: amyu/setup-android@3fe49086b1abd7c9ef865120d5d4d486fe55ba98 # v5
       - name: Install one Android native compiler, no emulator or APK
-        if: ${{ inputs.validation_mode != 'corten-private-validation-only' }}
+        if: ${{ inputs.validation_mode == 'corten-validator-only' || inputs.validation_mode == 'corten-android-only' }}
         shell: bash
         run: sdkmanager 'ndk;26.1.10909125' >/dev/null
       - name: Qualify Linux engine, optional private input and Android compilation
-        if: ${{ inputs.validation_mode != 'corten-private-validation-only' }}
+        if: ${{ inputs.validation_mode == 'corten-validator-only' || inputs.validation_mode == 'corten-android-only' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -1184,6 +1185,13 @@ jobs:
             args+=(--android-only)
           fi
           python3 corten-tools/tooling/ci/run_corten_component_probe.py --source candidate --out corten-receipts "${args[@]}"
+      - name: Qualify loader and unsupported-import faults without private input
+        if: ${{ inputs.validation_mode == 'corten-loader-only' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s corten-tools/tooling/ci -p test_corten_component_probe.py
+          python3 corten-tools/tooling/ci/run_corten_component_probe.py --source candidate --out corten-receipts --loader-only
       - name: Run one authorized private Mac validation
         if: ${{ inputs.validation_mode == 'corten-private-validation-only' }}
         shell: bash

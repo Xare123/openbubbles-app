@@ -193,7 +193,9 @@ def fetch_framework(path):
     path.write_bytes(data)
 
 
-def qualify(source, out, android_only=False, private_only=False):
+def qualify(source, out, android_only=False, private_only=False, loader_only=False):
+    if sum((android_only, private_only, loader_only)) > 1:
+        raise RuntimeError("component modes are mutually exclusive")
     import resource
     resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
     out.mkdir(parents=True, exist_ok=False)
@@ -211,6 +213,11 @@ def qualify(source, out, android_only=False, private_only=False):
         receipt["linux_tests"] = "SKIPPED_ALREADY_QUALIFIED_38341133825"
         receipt["engine"] = "SKIPPED_ALREADY_QUALIFIED_38341133825"
         receipt["android_build"] = "SKIPPED_ALREADY_QUALIFIED_38344373713"
+    if loader_only:
+        receipt["request"] = "OB-CORTEN-LOADER-20261013-F"
+        receipt["android_build"] = "UNRUN_LOADER_ONLY"
+        receipt["engine"] = "COVERED_BY_TARGETED_NAC_TESTS"
+        receipt["private_input_access"] = False
     began = time.monotonic()
     temporary = Path(os.environ["RUNNER_TEMP"])
     prototype = source / "tooling/cloud_sync/corten_mac_validation_probe"
@@ -232,7 +239,8 @@ def qualify(source, out, android_only=False, private_only=False):
         manifest = str(prototype / "Cargo.toml")
         if not android_only:
             if not private_only:
-                receipt["linux_tests"] = command(["cargo","test","--locked","--manifest-path",manifest,"--lib","--","--test-threads=1"], source, out / "linux-tests.log", 420, env)
+                test_filter = ["nac::tests::"] if loader_only else []
+                receipt["linux_tests"] = command(["cargo","test","--locked","--manifest-path",manifest,"--lib",*test_filter,"--","--test-threads=1"], source, out / "linux-tests.log", 420, env)
                 if receipt["linux_tests"]["exit"]:
                     raise RuntimeError("Linux component regressions failed")
             receipt["linux_build"] = command(["cargo","build","--locked","--manifest-path",manifest], source, out / "linux-build.log", 240, env)
@@ -243,6 +251,11 @@ def qualify(source, out, android_only=False, private_only=False):
             fetch_framework(framework)
             receipt["framework_sha256"] = FRAMEWORK_SHA256
             receipt["linux_binary_sha256"] = hashlib.sha256(binary.read_bytes()).hexdigest()
+            if loader_only:
+                receipt["imports"] = command([str(binary),"--framework",str(framework),"imports"], source, out / "imports.log", 15, env)
+                if receipt["imports"]["exit"]:
+                    raise RuntimeError("pinned framework import plan failed")
+                return  # No hardware input, Apple request, emulator NAC or Android.
             if not private_only:
                 receipt["engine"] = command([str(binary),"--framework",str(framework),"engine"], source, out / "linux-engine.log", 15, env)
                 if receipt["engine"]["exit"]:
@@ -300,7 +313,7 @@ def qualify(source, out, android_only=False, private_only=False):
         receipt["tracked_source_after"] = git(source, "status", "--porcelain", "--untracked-files=no")
         receipt["owned_process_groups"] = len(OWNED_GROUPS)
         receipt["seconds"] = time.monotonic() - began
-        receipt["result"] = "failed" if failure else ("genuine_challenge_generated_account_acceptance_unrun" if private_only else "source_component_qualified")
+        receipt["result"] = "failed" if failure else ("loader_component_qualified_private_validation_unrun" if loader_only else ("genuine_challenge_generated_account_acceptance_unrun" if private_only else "source_component_qualified"))
         if failure:
             receipt["error"] = failure
         (out / "receipt.json").write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")
@@ -318,8 +331,9 @@ def main():
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--android-only", action="store_true")
     mode.add_argument("--private-only", action="store_true")
+    mode.add_argument("--loader-only", action="store_true")
     args = parser.parse_args()
-    qualify(args.source.resolve(), args.out.resolve(), args.android_only, args.private_only)
+    qualify(args.source.resolve(), args.out.resolve(), args.android_only, args.private_only, args.loader_only)
 
 
 if __name__ == "__main__":

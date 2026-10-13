@@ -141,6 +141,10 @@ const STACK_SIZE: u64 = 0x10_0000;
 const HEAP_BASE: u64 = 0x40_0000;
 const HEAP_SIZE: u64 = 0x10_0000;
 const STOP_ADDR: u64 = 0x90_0000;
+// Keep unresolved imports outside every mapped region. Unused framework APIs
+// must not reject NAC loading; any actual call/read/write through them faults.
+const UNRESOLVED_BASE: u64 = 0xE0_0000;
+const MAX_IMPORTS: usize = 4096;
 
 const NAC_INIT: u64 = 0xB_1DB0;
 const NAC_KEY_EST: u64 = 0xB_1DD0;
@@ -665,8 +669,12 @@ impl ValidationCtx {
         let mut uc = Unicorn::new(Arch::X86, Mode::MODE_64)
             .map_err(|e| AbsintheError::Other(format!("Unicorn init failed: {:?}", e)))?;
 
-        // 4. Map binary at address 0
+        // 4. Map binary at address 0. The pinned image must not overlap the
+        // stack, heap, hooks or intentionally unmapped import targets.
         let bin_pages = round_up(binary.len(), 0x1000);
+        if bin_pages as u64 > STACK_BASE {
+            return Err(AbsintheError::Other("NAC image overlaps reserved memory".into()));
+        }
         uc.mem_map(0, bin_pages, Prot::ALL)
             .map_err(|e| AbsintheError::Other(format!("Failed to map binary: {:?}", e)))?;
         uc.mem_write(0, &binary)
@@ -706,7 +714,7 @@ impl ValidationCtx {
         }
 
         // 10. Resolve Mach-O imports → write hook addresses into GOT
-        resolve_imports(&mut uc, &binary, &state.borrow())?;
+        resolve_imports(&mut uc, &binary)?;
 
         // 11. Add code hook for the hook space
         let hook_state = state.clone();
@@ -805,6 +813,63 @@ impl ValidationCtx {
 mod tests {
     use super::*;
     #[test]
+    fn import_plan_supported_symbol_keeps_its_original_hook() {
+        assert_eq!(import_target("_malloc", 1200).unwrap(), HOOK_BASE);
+        assert_eq!(import_target("_CFRelease", 1200).unwrap(), HOOK_BASE + 36);
+    }
+    #[test]
+    fn import_plan_unknown_symbols_are_distinct_unmapped_targets() {
+        let first = import_target("unused_framework_api", 0).unwrap();
+        let second = import_target("unused_framework_api", 1).unwrap();
+        assert_eq!(first, UNRESOLVED_BASE);
+        assert_eq!(second, first + 8);
+        assert!(first >= HOOK_BASE + HOOK_SIZE);
+        assert!(first >= HEAP_BASE + HEAP_SIZE);
+        assert!(first >= STOP_ADDR + 0x1000);
+    }
+    #[test]
+    fn import_plan_rejects_unbounded_tables() {
+        assert!(import_target("unknown", MAX_IMPORTS).is_err());
+        assert!(import_target("_malloc", MAX_IMPORTS).is_err());
+    }
+    #[test]
+    fn import_plan_rejects_invalid_macho_without_emulation() {
+        assert!(import_plan(b"not a Mach-O").is_err());
+    }
+    fn import_fault_machine(code: &[u8]) -> Unicorn<'static, ()> {
+        let mut uc = Unicorn::new(Arch::X86, Mode::MODE_64).unwrap();
+        uc.mem_map(0x1000, 0x1000, Prot::ALL).unwrap();
+        uc.mem_write(0x1000, code).unwrap();
+        uc.mem_map(STACK_BASE, STACK_SIZE as usize, Prot::ALL).unwrap();
+        uc.mem_map(STOP_ADDR, 0x1000, Prot::ALL).unwrap();
+        uc.reg_write(RegisterX86::RSP, STACK_BASE + STACK_SIZE).unwrap();
+        uc
+    }
+    #[test]
+    fn unresolved_import_execution_fails_closed() {
+        let mut code = vec![0x48, 0xb8]; // mov rax, unresolved; jmp rax
+        code.extend_from_slice(&import_target("unimplemented", 0).unwrap().to_le_bytes());
+        code.extend_from_slice(&[0xff, 0xe0]);
+        let error = call_func(&mut import_fault_machine(&code), 0x1000, &[]).unwrap_err();
+        assert!(error.to_string().contains("FETCH_UNMAPPED"));
+    }
+    #[test]
+    fn unresolved_import_data_read_fails_closed() {
+        let mut code = vec![0x48, 0xa1]; // mov rax, [unresolved]
+        code.extend_from_slice(&import_target("unimplemented", 0).unwrap().to_le_bytes());
+        code.push(0xc3);
+        let error = call_func(&mut import_fault_machine(&code), 0x1000, &[]).unwrap_err();
+        assert!(error.to_string().contains("READ_UNMAPPED"));
+    }
+    #[test]
+    fn unresolved_import_data_write_fails_closed() {
+        let mut code = vec![0x48, 0xa3]; // mov [unresolved], rax
+        code.extend_from_slice(&import_target("unimplemented", 0).unwrap().to_le_bytes());
+        code.push(0xc3);
+        let error = call_func(&mut import_fault_machine(&code), 0x1000, &[]).unwrap_err();
+        assert!(error.to_string().contains("WRITE_UNMAPPED"));
+    }
+    #[test]
     fn instruction_budget_does_not_report_loop_as_success() {
         let mut uc = Unicorn::new(Arch::X86, Mode::MODE_64).unwrap();
         uc.mem_map(0x1000, 0x1000, Prot::ALL).unwrap();
@@ -895,47 +960,47 @@ pub fn engine_selfcheck() -> Result<u64, AbsintheError> {
     step("after_native_call");
     result
 }
-fn resolve_imports(
-    uc: &mut Unicorn<'static, ()>,
-    binary: &[u8],
-    state: &EmuState,
-) -> Result<(), AbsintheError> {
-    let macho = match goblin::mach::MachO::parse(binary, 0) {
-        Ok(m) => m,
-        Err(e) => return Err(AbsintheError::Other(format!("Mach-O parse error: {}", e))),
-    };
-
-    // Build symbol → hook address lookup
-    let mut sym_to_hook: HashMap<&str, u64> = HashMap::new();
-    for (&addr, name) in &state.hook_map {
-        // hook_map has full names like "_malloc", import names also have "_malloc"
-        sym_to_hook.insert(name.as_str(), addr);
+fn import_target(name: &str, index: usize) -> Result<u64, AbsintheError> {
+    if index >= MAX_IMPORTS {
+        return Err(AbsintheError::Other("NAC import table exceeds bound".into()));
     }
+    Ok(match HOOK_SYMBOLS.iter().position(|symbol| *symbol == name) {
+        Some(position) => HOOK_BASE + position as u64,
+        None => UNRESOLVED_BASE + index as u64 * 8,
+    })
+}
 
-    // Process all imports (both lazy and non-lazy binds)
-    match macho.imports() {
-        Ok(imports) => {
-            for import in &imports {
-                if let Some(&hook_addr) = sym_to_hook.get(import.name) {
-                    // import.offset is the file offset where the GOT pointer lives
-                    uc.mem_write(import.offset as u64, &hook_addr.to_le_bytes())
-                        .map_err(|e| {
-                            AbsintheError::Other(format!(
-                                "Failed to write import {} at 0x{:x}: {:?}",
-                                import.name, import.offset, e
-                            ))
-                        })?;
-                    debug!("Bound {} at offset 0x{:x} → hook 0x{:x}", import.name, import.offset, hook_addr);
-                } else {
-                    return Err(AbsintheError::Other(format!("Unsupported NAC import: {}", import.name)));
-                }
-            }
+fn import_plan(binary: &[u8]) -> Result<Vec<(u64, u64)>, AbsintheError> {
+    let macho = goblin::mach::MachO::parse(binary, 0)
+        .map_err(|error| AbsintheError::Other(format!("Mach-O parse error: {error}")))?;
+    let imports = macho.imports()
+        .map_err(|error| AbsintheError::Other(format!("Mach-O imports parse failure: {error}")))?;
+    imports.iter().enumerate().map(|(index, import)| {
+        let offset = import.offset as u64;
+        if offset.checked_add(8).is_none_or(|end| end > binary.len() as u64) {
+            return Err(AbsintheError::Other("NAC import slot outside image".into()));
         }
-        Err(e) => {
-            return Err(AbsintheError::Other(format!("Mach-O imports parse failure: {}", e)));
-        }
+        Ok((offset, import_target(import.name, index)?))
+    }).collect()
+}
+
+/// Static inspection of the exact loader plan, without emulator, hardware,
+/// network or certificate access. Returns supported and unresolved counts.
+pub fn inspect_import_plan(framework: &[u8]) -> Result<(usize, usize), AbsintheError> {
+    let binary = extract_x86_64_slice(framework)?;
+    let plan = import_plan(&binary)?;
+    let supported = plan.iter().filter(|(_, target)| *target < UNRESOLVED_BASE).count();
+    Ok((supported, plan.len() - supported))
+}
+
+fn resolve_imports(uc: &mut Unicorn<'static, ()>, binary: &[u8]) -> Result<(), AbsintheError> {
+    // Original Corten binds the small NAC hook set and leaves unrelated imports
+    // alone. Bind unrelated imports to unmapped addresses instead: loading works,
+    // but using an unsupported API/data symbol still fails, never returns success.
+    for (offset, target) in import_plan(binary)? {
+        uc.mem_write(offset, &target.to_le_bytes())
+            .map_err(|error| AbsintheError::Other(format!("Failed to write import: {error:?}")))?;
     }
-
     Ok(())
 }
 

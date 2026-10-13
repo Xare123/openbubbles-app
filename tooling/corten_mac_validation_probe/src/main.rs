@@ -47,13 +47,18 @@ fn run(phase: &mut &'static str) -> Result<(), Box<dyn Error>> {
         println!("{}", json!({"step":"public_network","certificate_bytes":cert.len(),"hardware":"UNUSED","account_access":false,"session_post":"UNRUN"}));
         return Ok(());
     }
-    if args.len() != 4 || args[1] != "--framework" || !["inspect", "engine", "validate"].contains(&args[3].as_str()) {
-        return Err("usage: corten-mac-validation-probe network OR --framework PATH inspect|engine|validate; binary OABS on stdin for validate".into());
+    if args.len() != 4 || args[1] != "--framework" || !["inspect", "imports", "engine", "validate"].contains(&args[3].as_str()) {
+        return Err("usage: corten-mac-validation-probe network OR --framework PATH inspect|imports|engine|validate; binary OABS on stdin for validate".into());
     }
     *phase = "framework";
     let framework = load_framework(Path::new(&args[2]))?;
     println!("{}", json!({"step":"framework","sha256":FRAMEWORK_SHA256,"bytes":framework.len(),"hash_verified":true}));
     if args[3] == "inspect" { return Ok(()); }
+    if args[3] == "imports" {
+        let (supported, unresolved) = corten_mac_validation_probe::nac::inspect_import_plan(&framework)?;
+        println!("{}", json!({"step":"import_plan","supported":supported,"unresolved":unresolved,"unsupported_policy":"unmapped_fault_on_access","hardware":"UNUSED","network":"UNRUN"}));
+        return Ok(());
+    }
     if args[3] == "engine" {
         *phase = "engine";
         let value = corten_mac_validation_probe::nac::engine_selfcheck()?;

@@ -54,7 +54,7 @@ class CortenSafety(unittest.TestCase):
             RUN.patch_android_thread_directives("unknown build script")
 
 class PrivateValidationPhase(unittest.TestCase):
-    def phase(self, private=b"private_fixture", validation_exit=0):
+    def phase(self, private=b"private_fixture", validation_exit=0, loader_only=False):
         with tempfile.TemporaryDirectory() as directory, ExitStack() as stack:
             root = Path(directory)
             source = root / "source"
@@ -74,15 +74,17 @@ class PrivateValidationPhase(unittest.TestCase):
             stack.enter_context(patch.object(RUN.shutil, "copytree"))
             stack.enter_context(patch.object(RUN, "command", side_effect=command))
             stack.enter_context(patch.object(RUN, "fetch_framework"))
-            stack.enter_context(patch.object(RUN, "metadata_input", return_value=private))
+            metadata = stack.enter_context(patch.object(RUN, "metadata_input", return_value=private))
             android = stack.enter_context(patch.object(RUN, "prepare_android_dependency", side_effect=AssertionError("Android must not run")))
             error = None
             try:
-                RUN.qualify(source, output, private_only=True)
+                RUN.qualify(source, output, private_only=not loader_only, loader_only=loader_only)
             except RuntimeError as caught:
                 error = str(caught)
             receipt = json.loads((output / "receipt.json").read_text())
             android.assert_not_called()
+            if loader_only:
+                metadata.assert_not_called()
             return calls, receipt, error
 
     def test_one_validation_without_test_or_android_replay(self):
@@ -108,6 +110,18 @@ class PrivateValidationPhase(unittest.TestCase):
         self.assertEqual(len(calls), 2)
         self.assertEqual(receipt["private_hardware"]["exit"], 2)
         self.assertEqual(receipt["result"], "failed")
+
+    def test_loader_only_never_reads_private_input_or_runs_android(self):
+        calls, receipt, error = self.phase(loader_only=True)
+        self.assertIsNone(error)
+        self.assertEqual(len(calls), 3)
+        self.assertEqual(calls[0][:2], ["cargo", "test"])
+        self.assertIn("nac::tests::", calls[0])
+        self.assertEqual(calls[1][:2], ["cargo", "build"])
+        self.assertEqual(calls[2][-1], "imports")
+        self.assertFalse(receipt["private_input_access"])
+        self.assertEqual(receipt["private_hardware"], "UNRUN")
+        self.assertEqual(receipt["result"], "loader_component_qualified_private_validation_unrun")
 
 if __name__ == "__main__":
     unittest.main()
