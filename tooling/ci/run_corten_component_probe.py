@@ -195,7 +195,7 @@ def qualify(source, out, android_only=False):
                "account_access":False, "relay_access":False, "apk_build":False,
                "private_hardware":"UNRUN", "android_execution":"UNRUN", "production_integration":"UNRUN"}
     if android_only:
-        receipt["request"] = "OB-CORTEN-ANDROID-20261013-B"
+        receipt["request"] = "OB-CORTEN-ANDROID-20261013-C"
         receipt["linux_tests"] = "SKIPPED_ALREADY_QUALIFIED_38341133825"
         receipt["engine"] = "SKIPPED_ALREADY_QUALIFIED_38341133825"
     began = time.monotonic()
@@ -253,6 +253,11 @@ def qualify(source, out, android_only=False):
             "RANLIB_aarch64_linux_android":str(compiler / "llvm-ranlib"),
             "CMAKE_TOOLCHAIN_FILE_aarch64_linux_android":str(Path(__file__).resolve().parent / "corten_android.cmake"),
         })
+        runtime_path = subprocess.check_output([str(compiler / "aarch64-linux-android24-clang"),"--print-libgcc-file-name"],text=True,timeout=5).strip()
+        runtime = Path(runtime_path)
+        if not runtime.is_file() or runtime.name != "libclang_rt.builtins-aarch64-android.a":
+            raise RuntimeError("expected pinned SDK ARM64 compiler runtime")
+        receipt["android_compiler_runtime"] = {"file":runtime.name,"sha256":hashlib.sha256(runtime.read_bytes()).hexdigest()}
         receipt["android_build"] = command(["cargo","build","--locked","--manifest-path",manifest,"--config",override,"--target","aarch64-linux-android"], source, out / "android-build.log", 600, android_env)
         if receipt["android_build"]["exit"]:
             raise RuntimeError("Android component cross-build failed")
