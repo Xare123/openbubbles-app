@@ -37,6 +37,16 @@ class CortenSafety(unittest.TestCase):
         text = Path(RUN.__file__).read_text()
         self.assertNotIn("uuid.uuid4", text)
         self.assertNotIn("AppleAccount", text)
+    def test_thread_patch_is_android_scoped_and_changes_only_two_directives(self):
+        original = 'prefix\nprintln!("cargo:rustc-link-lib=pthread");\nmiddle\nprintln!("cargo:rustc-link-lib=pthread");\nsuffix'
+        patched = RUN.patch_android_thread_directives(original)
+        self.assertEqual(patched.count('CARGO_CFG_TARGET_OS'),2)
+        self.assertEqual(patched.count('Ok("android")'),2)
+        self.assertTrue(patched.startswith('prefix\n'))
+        self.assertTrue(patched.endswith('\nsuffix'))
+    def test_changed_vendor_layout_is_rejected(self):
+        with self.assertRaisesRegex(RuntimeError, "unexpected"):
+            RUN.patch_android_thread_directives("unknown build script")
 
 if __name__ == "__main__":
     unittest.main()
