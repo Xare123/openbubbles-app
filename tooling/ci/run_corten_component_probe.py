@@ -14,6 +14,7 @@ import time
 import tomllib
 import urllib.error
 import urllib.request
+from validation_metadata import sanitize_output
 
 SOURCE = "ad05e2136a9f722aab74d3381a65483e49f5d1dc"
 NATIVE = "5076fe684b8856886c295e99b623757d9cf6b754"
@@ -126,6 +127,7 @@ def reap(process):
 
 
 def command(args, directory, log, timeout, env=None, private_input=None):
+    private_diagnostics = private_input is not None
     began = time.monotonic()
     process = subprocess.Popen(
         args, cwd=directory, env=env, stdin=subprocess.PIPE if private_input is not None else subprocess.DEVNULL,
@@ -142,6 +144,10 @@ def command(args, directory, log, timeout, env=None, private_input=None):
     reap(process)
     if len(output) > 2 * 1024 * 1024:
         raise RuntimeError("diagnostic output exceeded bound")
+    if private_diagnostics:
+        # Filter before either file or public Actions stdout. Unknown fields and
+        # raw native error messages never become artifacts.
+        output = sanitize_output(output, require_complete=process.returncode == 0)
     log.write_bytes(output)
     text = output.decode("utf-8", errors="replace")
     # Input/proof bytes never reach stdout; the probe emits metadata only.
@@ -187,7 +193,7 @@ def fetch_framework(path):
     path.write_bytes(data)
 
 
-def qualify(source, out, android_only=False):
+def qualify(source, out, android_only=False, private_only=False):
     import resource
     resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
     out.mkdir(parents=True, exist_ok=False)
@@ -198,6 +204,13 @@ def qualify(source, out, android_only=False):
         receipt["request"] = "OB-CORTEN-ANDROID-20261013-C"
         receipt["linux_tests"] = "SKIPPED_ALREADY_QUALIFIED_38341133825"
         receipt["engine"] = "SKIPPED_ALREADY_QUALIFIED_38341133825"
+    if private_only:
+        if android_only:
+            raise RuntimeError("private and Android-only modes are mutually exclusive")
+        receipt["request"] = "OB-CORTEN-PRIVATE-VALIDATION-20261013-D"
+        receipt["linux_tests"] = "SKIPPED_ALREADY_QUALIFIED_38341133825"
+        receipt["engine"] = "SKIPPED_ALREADY_QUALIFIED_38341133825"
+        receipt["android_build"] = "SKIPPED_ALREADY_QUALIFIED_38344373713"
     began = time.monotonic()
     temporary = Path(os.environ["RUNNER_TEMP"])
     prototype = source / "tooling/cloud_sync/corten_mac_validation_probe"
@@ -218,9 +231,10 @@ def qualify(source, out, android_only=False):
         env.pop("RUSTC_WRAPPER", None)
         manifest = str(prototype / "Cargo.toml")
         if not android_only:
-            receipt["linux_tests"] = command(["cargo","test","--locked","--manifest-path",manifest,"--lib","--","--test-threads=1"], source, out / "linux-tests.log", 420, env)
-            if receipt["linux_tests"]["exit"]:
-                raise RuntimeError("Linux component regressions failed")
+            if not private_only:
+                receipt["linux_tests"] = command(["cargo","test","--locked","--manifest-path",manifest,"--lib","--","--test-threads=1"], source, out / "linux-tests.log", 420, env)
+                if receipt["linux_tests"]["exit"]:
+                    raise RuntimeError("Linux component regressions failed")
             receipt["linux_build"] = command(["cargo","build","--locked","--manifest-path",manifest], source, out / "linux-build.log", 240, env)
             if receipt["linux_build"]["exit"]:
                 raise RuntimeError("Linux component build failed")
@@ -229,9 +243,10 @@ def qualify(source, out, android_only=False):
             fetch_framework(framework)
             receipt["framework_sha256"] = FRAMEWORK_SHA256
             receipt["linux_binary_sha256"] = hashlib.sha256(binary.read_bytes()).hexdigest()
-            receipt["engine"] = command([str(binary),"--framework",str(framework),"engine"], source, out / "linux-engine.log", 15, env)
-            if receipt["engine"]["exit"]:
-                raise RuntimeError("Linux engine qualification failed")
+            if not private_only:
+                receipt["engine"] = command([str(binary),"--framework",str(framework),"engine"], source, out / "linux-engine.log", 15, env)
+                if receipt["engine"]["exit"]:
+                    raise RuntimeError("Linux engine qualification failed")
             private = metadata_input()
             if private is not None:
                 receipt["private_hardware"] = command([str(binary),"--framework",str(framework),"validate"], source, out / "private-validation-metadata.log", 75, env, private)
@@ -240,6 +255,12 @@ def qualify(source, out, android_only=False):
                     failure = "genuine Mac challenge-response did not qualify"
             else:
                 receipt["private_hardware_reason"] = "no separately authorized private input supplied during the bounded window"
+                if private_only:
+                    raise RuntimeError("required private input was not supplied")
+            if private_only:
+                if failure:
+                    raise RuntimeError(failure)
+                return  # finally records the genuine exchange, no Android rebuild.
 
         override, receipt["android_dependency"] = prepare_android_dependency(prototype,temporary,source,env,out)
         ndk = Path(env["ANDROID_NDK_HOME"])
@@ -279,7 +300,7 @@ def qualify(source, out, android_only=False):
         receipt["tracked_source_after"] = git(source, "status", "--porcelain", "--untracked-files=no")
         receipt["owned_process_groups"] = len(OWNED_GROUPS)
         receipt["seconds"] = time.monotonic() - began
-        receipt["result"] = "failed" if failure else "source_component_qualified"
+        receipt["result"] = "failed" if failure else ("genuine_challenge_generated_account_acceptance_unrun" if private_only else "source_component_qualified")
         if failure:
             receipt["error"] = failure
         (out / "receipt.json").write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")
@@ -294,9 +315,11 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--source", type=Path, required=True)
     parser.add_argument("--out", type=Path, required=True)
-    parser.add_argument("--android-only", action="store_true")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--android-only", action="store_true")
+    mode.add_argument("--private-only", action="store_true")
     args = parser.parse_args()
-    qualify(args.source.resolve(), args.out.resolve(), args.android_only)
+    qualify(args.source.resolve(), args.out.resolve(), args.android_only, args.private_only)
 
 
 if __name__ == "__main__":

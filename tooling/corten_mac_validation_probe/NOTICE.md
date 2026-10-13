@@ -23,8 +23,11 @@ Cargo source. All dependency licenses and compatibility must be reviewed before
 shipping; this private test does not authorize relicensing. Original Corten used
 2.1.5. This probe pins official 2.1.3 with pre-generated bindings to avoid a new
 libclang install. Local Windows proof targets x64 using existing tooling because
-the MSVC host setup assumes x86; Android/native ARM64 build remains unqualified.
-The external Apple
+the MSVC host setup assumes x86. Android ARM64 cross-compilation passed isolated
+run38344373713; Android execution is still unqualified. The x64 emulator on this
+Windows ARM host terminates before Apple requests. Linux engine execution passed
+run38341133825. None of these results proves genuine Apple validation or account
+acceptance. The external Apple
 IMDAppleServices artifact is not covered by either repository's license. It is
 NOT vendored or redistributed with this source.
 

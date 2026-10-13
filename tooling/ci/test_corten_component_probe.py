@@ -1,8 +1,13 @@
 """Credential-free orchestration guards, not native or account qualification."""
 import importlib.util
+import json
 from pathlib import Path
+import sys
+import tempfile
+import types
 import unittest
-from unittest.mock import patch
+from contextlib import ExitStack
+from unittest.mock import patch, Mock
 SPEC = importlib.util.spec_from_file_location("corten_run", Path(__file__).with_name("run_corten_component_probe.py"))
 RUN = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(RUN)
@@ -47,6 +52,62 @@ class CortenSafety(unittest.TestCase):
     def test_changed_vendor_layout_is_rejected(self):
         with self.assertRaisesRegex(RuntimeError, "unexpected"):
             RUN.patch_android_thread_directives("unknown build script")
+
+class PrivateValidationPhase(unittest.TestCase):
+    def phase(self, private=b"private_fixture", validation_exit=0):
+        with tempfile.TemporaryDirectory() as directory, ExitStack() as stack:
+            root = Path(directory)
+            source = root / "source"
+            source.mkdir()
+            binary = root / "corten-target/debug/corten-mac-validation-probe"
+            binary.parent.mkdir(parents=True)
+            binary.write_bytes(b"only_a_test_fixture_not_executable")
+            output = root / "out"
+            calls = []
+            def command(args, *positional):
+                calls.append(args)
+                return {"exit": validation_exit if args[-1] == "validate" else 0}
+            stack.enter_context(patch.dict(sys.modules, {"resource": types.SimpleNamespace(RLIMIT_CORE=4, setrlimit=lambda *a: None)}))
+            stack.enter_context(patch.dict(RUN.os.environ, {"RUNNER_TEMP":str(root)}))
+            stack.enter_context(patch.object(RUN, "verify_source", return_value=["pinned"]*6))
+            stack.enter_context(patch.object(RUN, "git", return_value=""))
+            stack.enter_context(patch.object(RUN.shutil, "copytree"))
+            stack.enter_context(patch.object(RUN, "command", side_effect=command))
+            stack.enter_context(patch.object(RUN, "fetch_framework"))
+            stack.enter_context(patch.object(RUN, "metadata_input", return_value=private))
+            android = stack.enter_context(patch.object(RUN, "prepare_android_dependency", side_effect=AssertionError("Android must not run")))
+            error = None
+            try:
+                RUN.qualify(source, output, private_only=True)
+            except RuntimeError as caught:
+                error = str(caught)
+            receipt = json.loads((output / "receipt.json").read_text())
+            android.assert_not_called()
+            return calls, receipt, error
+
+    def test_one_validation_without_test_or_android_replay(self):
+        calls, receipt, error = self.phase()
+        self.assertIsNone(error)
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(calls[0][:2], ["cargo", "build"])
+        self.assertEqual(calls[1][-1], "validate")
+        self.assertFalse(receipt["account_access"])
+        self.assertEqual(receipt["production_integration"], "UNRUN")
+        self.assertEqual(receipt["result"], "genuine_challenge_generated_account_acceptance_unrun")
+
+    def test_missing_input_cannot_pass(self):
+        calls, receipt, error = self.phase(private=None)
+        self.assertIn("not supplied", error)
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(receipt["private_hardware"], "UNRUN")
+        self.assertEqual(receipt["result"], "failed")
+
+    def test_rejected_validation_is_recorded_and_not_retried(self):
+        calls, receipt, error = self.phase(validation_exit=2)
+        self.assertIn("did not qualify", error)
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(receipt["private_hardware"]["exit"], 2)
+        self.assertEqual(receipt["result"], "failed")
 
 if __name__ == "__main__":
     unittest.main()
