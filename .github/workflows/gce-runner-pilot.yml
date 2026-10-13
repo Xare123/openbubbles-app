@@ -70,6 +70,7 @@ on:
           - apk-runtime-only
           - production-transport-only
           - production-android-build-only
+          - corten-validator-only
       outbound_writer:
         description: Build the isolated Android Canary with one-message V2 writer controls
         required: true
@@ -181,6 +182,15 @@ jobs:
                   "$RUNNER_LANE" != 'primary' || "$OUTBOUND_WRITER" != 'false' ||
                   "$AUTOMATIC_UPLOADS" != 'false' ]]; then
               echo 'Transport diagnostic requires exact ad05, primary lane and both write flags off.' >&2
+              exit 1
+            fi
+          fi
+          if [[ "$VALIDATION_MODE" == 'corten-validator-only' ]]; then
+            if [[ "$SOURCE_REF" != 'ad05e2136a9f722aab74d3381a65483e49f5d1dc' ||
+                  "$TRUSTED_SOURCE_BRANCH" != 'agent/cloudkit-v2-received-origin-20260916' ||
+                  "$RUNNER_LANE" != 'primary' || "$OUTBOUND_WRITER" != 'false' ||
+                  "$AUTOMATIC_UPLOADS" != 'false' ]]; then
+              echo 'Corten component requires exact ad05, primary lane and both write flags off.' >&2
               exit 1
             fi
           fi
@@ -397,7 +407,7 @@ jobs:
 
   benchmark-build:
     name: Build ${{ inputs.flavor || 'beta' }} APK on GCE
-    if: ${{ (inputs.validation_mode || 'full') != 'apk-runtime-only' && (inputs.validation_mode || 'full') != 'production-transport-only' && (inputs.validation_mode || 'full') != 'production-android-build-only' }}
+    if: ${{ (inputs.validation_mode || 'full') != 'apk-runtime-only' && (inputs.validation_mode || 'full') != 'production-transport-only' && (inputs.validation_mode || 'full') != 'production-android-build-only' && (inputs.validation_mode || 'full') != 'corten-validator-only' }}
     needs: create-runner
     runs-on: ${{ needs.create-runner.outputs.label }}
     timeout-minutes: 60
@@ -1113,6 +1123,66 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
+  corten-validator:
+    name: Qualify isolated Corten validator without an APK or account
+    if: ${{ inputs.validation_mode == 'corten-validator-only' }}
+    needs: create-runner
+    runs-on: ${{ needs.create-runner.outputs.label }}
+    timeout-minutes: 35
+    env:
+      HOME: /root
+      CARGO_HOME: /root/.cargo
+    permissions:
+      contents: read
+    steps:
+      - name: Check out immutable Corten qualification tools
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          path: corten-tools
+      - name: Check out exact unchanged application source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.SOURCE_REF }}
+          path: candidate
+          submodules: recursive
+      - name: Install bounded component build prerequisites
+        shell: bash
+        run: |
+          set -euo pipefail
+          apt-get update
+          apt-get install -y --no-install-recommends build-essential cmake ninja-build pkg-config protobuf-compiler unzip
+      - name: Set up exact Rust compiler and Android standard library
+        uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
+        with:
+          toolchain: 1.98.1
+          targets: aarch64-linux-android
+      - name: Set up Java for native SDK manager
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Set up Android command-line tools only
+        uses: amyu/setup-android@3fe49086b1abd7c9ef865120d5d4d486fe55ba98 # v5
+      - name: Install one Android native compiler, no emulator or APK
+        shell: bash
+        run: sdkmanager 'ndk;26.1.10909125' >/dev/null
+      - name: Qualify Linux engine, optional private input and Android compilation
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s corten-tools/tooling/ci -p test_corten_component_probe.py
+          export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/26.1.10909125"
+          python3 corten-tools/tooling/ci/run_corten_component_probe.py --source candidate --out corten-receipts
+      - name: Preserve sanitized component evidence only
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: Isolated Corten component ${{ github.run_id }}
+          path: corten-receipts/
+          if-no-files-found: warn
+          retention-days: 7
+
   apk-runtime:
     name: Run qualified 802e92 APK only on GCE
     if: ${{ inputs.validation_mode == 'apk-runtime-only' }}
@@ -1342,6 +1412,7 @@ jobs:
       - benchmark-build
       - apk-runtime
       - production-transport
+      - corten-validator
     if: ${{ always() && needs.create-runner.result != 'skipped' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
