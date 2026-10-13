@@ -875,13 +875,14 @@ mod tests {
         assert!(error.to_string().contains("WRITE_UNMAPPED"));
     }
     #[test]
-    fn instruction_budget_does_not_report_loop_as_success() {
+    fn production_deadline_does_not_report_loop_as_success() {
         let mut uc = Unicorn::new(Arch::X86, Mode::MODE_64).unwrap();
         uc.mem_map(0x1000, 0x1000, Prot::ALL).unwrap();
         uc.mem_write(0x1000, &[0xeb, 0xfe]).unwrap();
         uc.mem_map(STACK_BASE, STACK_SIZE as usize, Prot::ALL).unwrap();
         uc.reg_write(RegisterX86::RSP, STACK_BASE + STACK_SIZE).unwrap();
-        assert!(call_func(&mut uc, 0x1000, &[]).is_err());
+        let error = call_func(&mut uc, 0x1000, &[]).unwrap_err();
+        assert_eq!(error.to_string(), "NAC emulation stopped before return: timeout");
     }
     #[test]
     fn stop_runtime_instruction_limit_is_distinguished_from_timeout() {
@@ -944,7 +945,11 @@ fn call_context_func(uc: &mut Unicorn<'static, ()>, state: &RefCell<EmuState>, a
 }
 
 fn call_func(uc: &mut Unicorn<'static, ()>, addr: u64, args: &[u64]) -> Result<u64, AbsintheError> {
-    call_func_bounded(uc, addr, args, 5_000_000, 50_000_000)
+    // uc.c implements count by adding a callback on every guest instruction.
+    // The genuine run exhausted that diagnostic counter before its deadline.
+    // Use the same enforced five-second deadline without the counting overhead;
+    // the independent process timeout and strict RIP/RSP return checks remain.
+    call_func_bounded(uc, addr, args, 5_000_000, 0)
 }
 
 fn call_func_bounded(uc: &mut Unicorn<'static, ()>, addr: u64, args: &[u64], timeout_us: u64, instruction_limit: usize) -> Result<u64, AbsintheError> {
