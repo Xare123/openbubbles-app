@@ -302,6 +302,12 @@ def qualify(source, out, android_only=False, private_only=False, loader_only=Fal
         receipt["android_elf"] = command(["readelf","-h",str(android_binary)], source, out / "android-elf.log", 5, env)
         if receipt["android_elf"]["exit"]:
             raise RuntimeError("Android ELF verification failed")
+        public_key = Path(__file__).with_name("corten_android_recipient.pem")
+        if android_only and public_key.is_file():
+            from sealed_component import seal
+            receipt["sealed_private_component"] = seal(android_binary, public_key,
+                out / "android-component.sealed", SOURCE,
+                git(Path(__file__).resolve().parents[2], "rev-parse", "HEAD"))
     except Exception as error:
         failure = str(error)
     finally:
