@@ -3,6 +3,9 @@ import io
 import json
 import os
 import plistlib
+import socket
+import ssl
+import urllib.error
 import unittest
 from unittest import mock
 
@@ -24,6 +27,25 @@ class Opener:
 
 
 class MachineContractTests(unittest.TestCase):
+    def test_only_pinned_official_roots_preserve_strict_tls(self):
+        context = probe.apple_tls()
+        self.assertTrue(context.check_hostname)
+        self.assertEqual(context.verify_mode, ssl.CERT_REQUIRED)
+
+    def test_network_diagnostics_separate_causes_without_private_details(self):
+        failures = [
+            (ssl.SSLCertVerificationError(1, "secret-url"), "tls-certificate"),
+            (ssl.SSLError(1, "secret-url"), "tls"),
+            (socket.gaierror(-2, "secret-host"), "dns"),
+            (TimeoutError("secret-token"), "timeout"),
+            (ConnectionRefusedError(111, "secret-token"), "connection"),
+        ]
+        for error, kind in failures:
+            with self.subTest(kind=kind), contextlib.redirect_stdout(io.StringIO()) as output:
+                probe.network_failure("lookup", urllib.error.URLError(error))
+            self.assertEqual(json.loads(output.getvalue())["failure"], kind)
+            self.assertNotIn("secret", output.getvalue())
+
     def test_only_exact_apple_https_hosts_and_grandslam_paths(self):
         for url in (probe.LOOKUP, "https://gsd.apple.com/grandslam/start"):
             self.assertEqual(probe.apple_url(url), url)

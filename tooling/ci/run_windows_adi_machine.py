@@ -7,12 +7,15 @@ Opaque handshake buffers and actual host identity remain in private pipes/RAM.
 import argparse
 import base64
 import datetime
+import hashlib
 import json
 import os
+from pathlib import Path
 import platform
 import plistlib
 import queue
 import re
+import socket
 import ssl
 import subprocess
 import threading
@@ -26,6 +29,36 @@ LOOKUP = "https://gsa.apple.com/grandslam/GsService2/lookup"
 
 class ProbeError(Exception):
     pass
+
+
+def apple_tls():
+    # Same public Apple roots as the application's authentication/provisioning
+    # client, not a private/interception CA. Leave hostname and chain checks on.
+    pem = (Path(__file__).parent / "windows_adi_machine" / "apple-roots.pem").read_text(encoding="ascii")
+    certificates = re.findall(r"-----BEGIN CERTIFICATE-----.*?-----END CERTIFICATE-----", pem, re.S)
+    digests = {hashlib.sha256(ssl.PEM_cert_to_DER_cert(item)).hexdigest() for item in certificates}
+    if digests != {
+        "b0b1730ecbc7ff4505142c49f1295e6eda6bcaed7e2c68c5be91b5a11001f024",
+        "63343abfb89a6a03ebb57e9b3f5fa7be7c4f5c756f3017b3a8c488c3653e9179",
+    } or len(certificates) != 2:
+        raise ProbeError("apple-root-fingerprint")
+    context = ssl.create_default_context()
+    context.load_verify_locations(cadata=pem)
+    return context
+
+
+def network_failure(stage, error):
+    reason = error.reason if isinstance(error, urllib.error.URLError) else error
+    if isinstance(reason, ssl.SSLCertVerificationError):
+        report(stage, failure="tls-certificate", verify_code=getattr(reason, "verify_code", None))
+    elif isinstance(reason, ssl.SSLError):
+        report(stage, failure="tls", errno=reason.errno)
+    elif isinstance(reason, socket.gaierror):
+        report(stage, failure="dns", errno=reason.errno)
+    elif isinstance(reason, TimeoutError):
+        report(stage, failure="timeout")
+    else:
+        report(stage, failure="connection", errno=getattr(reason, "errno", None))
 
 
 def apple_url(url):
@@ -89,7 +122,8 @@ def request(opener, stage, url, headers, body=None):
         report(stage, http=error.code)
         error.close()
         raise ProbeError("http-rejected") from None
-    except (urllib.error.URLError, OSError):
+    except (urllib.error.URLError, OSError) as error:
+        network_failure(stage, error)
         raise ProbeError("network-or-tls") from None
     if len(raw) > MAX_BODY:
         raise ProbeError("response-bound")
@@ -107,8 +141,7 @@ def main():
     if (os.name != "nt" or os.environ.get("GITHUB_ACTIONS") != "true"
             or os.environ.get("RUNNER_ENVIRONMENT") != "github-hosted"):
         raise ProbeError("host-not-admitted")
-    # Default Windows certificate trust. No private CA, TLS disable or endpoint rewrite.
-    context = ssl.create_default_context()
+    context = apple_tls()
     opener = urllib.request.build_opener(NoRedirect(), urllib.request.HTTPSHandler(context=context))
     child = subprocess.Popen([args.probe, args.library], stdin=subprocess.PIPE,
                              stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
