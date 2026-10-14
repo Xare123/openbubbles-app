@@ -59,6 +59,12 @@ class PrivateBuildTests(unittest.TestCase):
         self.assertIn('"--target-platform","android-x64","--split-per-abi"',source)
         self.assertIn('app-x86_64-canary-debug.apk',source)
 
+    def test_reviewed_native_and_dart_snapshot_is_checked_before_build(self):
+        source = Path(B.__file__).read_text()
+        self.assertLess(source.index('verify_overlay_source(source)'),
+                        source.index('checked("apk-build"'))
+        self.assertIn('receipt["application_source_hashes"]', source)
+
     def test_only_resolved_plugin_targets_changed_and_restored_on_failure(self):
         with tempfile.TemporaryDirectory() as temporary:
             root=Path(temporary)
@@ -128,6 +134,7 @@ class PrivateBuildTests(unittest.TestCase):
         self.assertIn('runs-on: ubuntu-24.04',job)
         self.assertIn('test -c /dev/kvm',job)
         self.assertIn('--accel on',job)
+        self.assertIn('--disable-vulkan --flutter-software-rendering',job)
         self.assertNotIn('secrets.',job)
         self.assertNotIn('id-token: write',job)
         self.assertNotIn('gcloud',job)

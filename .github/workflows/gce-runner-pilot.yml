@@ -1228,7 +1228,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python3 corten-tools/tooling/ci/run_corten_android_login_runtime.py --apk "$RUNNER_TEMP/login-delivery/app-canary-debug.apk" --network-probe "$RUNNER_TEMP/login-delivery/corten-mac-validation-probe" --sdk "$ANDROID_HOME" --out login-runtime-receipts --accel on
+          python3 corten-tools/tooling/ci/run_corten_android_login_runtime.py --apk "$RUNNER_TEMP/login-delivery/app-canary-debug.apk" --network-probe "$RUNNER_TEMP/login-delivery/corten-mac-validation-probe" --sdk "$ANDROID_HOME" --out login-runtime-receipts --accel on --disable-vulkan --flutter-software-rendering
       - name: Preserve only encrypted binary and credential-free evidence
         if: ${{ always() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

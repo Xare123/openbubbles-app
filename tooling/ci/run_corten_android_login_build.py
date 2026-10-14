@@ -13,7 +13,7 @@ from urllib.request import url2pathname
 import zipfile
 
 from run_corten_login_integration import (SOURCE, NATIVE, TOOLS, OVERLAY, digest,
-    overlay, unchanged_registry_pins, remove_owned_inputs)
+    overlay, unchanged_registry_pins, remove_owned_inputs, verify_overlay_source)
 from run_corten_component_probe import (OWNED_GROUPS, command, git,
     prepare_android_dependency, verify_source)
 from sealed_component import seal, LOGIN_TARGET
@@ -159,6 +159,7 @@ def run(source, out, delivery):
                     files.append(path)
                     target.write((source/f"rustpush/certs/legacy-fairplay/fairplay.{suffix}").read_bytes())
         with overlay(source,out,env) as original_lock:
+            receipt["application_source_hashes"] = verify_overlay_source(source)
             manifest = str(source/"rust/Cargo.toml")
             checked("resolve", ["cargo","fetch","--manifest-path",manifest], 300)
             receipt["added_pins"] = unchanged_registry_pins(original_lock,(source/"rust/Cargo.lock").read_bytes())

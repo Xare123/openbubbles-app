@@ -1,5 +1,288 @@
+diff --git a/lib/app/layouts/setup/pages/rustpush/appleid_login.dart b/lib/app/layouts/setup/pages/rustpush/appleid_login.dart
+index b202e820728505e6f4331f74fe4710447194217f..77eb807950b504479cecaa229aae950d4550804c 100644
+--- a/lib/app/layouts/setup/pages/rustpush/appleid_login.dart
++++ b/lib/app/layouts/setup/pages/rustpush/appleid_login.dart
+@@ -573,17 +573,15 @@ class _AppleIdLoginState extends OptimizedState<AppleIdLogin> {
+         return;
+       }
+       controller.replaceCurrentAppleAccount(account, attempt: attempt);
+-      final user = await controller.withLoginAttemptResources(
+-        attempt,
+-        [account, controller.config],
+-        () => api.tryIcloudLogin(path: pushService.statePath, conf: controller.config!, account: account),
++      await controller.completeAuthenticatedAppleLogin(
++        result,
++        account,
++        attempt: attempt,
+       );
+       if (!controller.isLoginAttemptCurrent(attempt)) {
+         controller.replaceCurrentAppleAccount(account, attempt: attempt);
+         return;
+       }
+-      controller.currentAppleUser = user;
+-
+       result = await controller.updateLoginState(result, attempt: attempt);
+ 
+ 
+diff --git a/lib/app/layouts/setup/pages/rustpush/hw_inp.dart b/lib/app/layouts/setup/pages/rustpush/hw_inp.dart
+index fc3b99fe55f307a5b9859080826e5a275469fbad..ed1b0d9fbdbd464f7d87646c0c9acbe4f8b0da3e 100644
+--- a/lib/app/layouts/setup/pages/rustpush/hw_inp.dart
++++ b/lib/app/layouts/setup/pages/rustpush/hw_inp.dart
+@@ -1151,9 +1151,7 @@ class HwInpState extends OptimizedState<HwInp> {
+       }
+       
+       if (controller.connection == null) {
+-        var data = await api.setupPush(config: controller.config!, identity: controller.identity!, statePath: pushService.statePath, state: controller.cachedState);
+-        controller.connection = data.$1;
+-        controller.anisette = await api.makeAnisette(path: pushService.statePath, config: controller.config!, conn: controller.connection!);
++        await controller.setupConnection();
+       }
+ 
+       var state = await api.getDeviceInfo(config: controller.config!);
+diff --git a/lib/app/layouts/setup/pages/rustpush/phone_number.dart b/lib/app/layouts/setup/pages/rustpush/phone_number.dart
+index b03264b65441358126edcbed4ee2ef339f2635ad..66ac823aa7b352984e05c093aadf04caa80dac72 100644
+--- a/lib/app/layouts/setup/pages/rustpush/phone_number.dart
++++ b/lib/app/layouts/setup/pages/rustpush/phone_number.dart
+@@ -136,10 +136,7 @@ class PhoneNumberState extends OptimizedState<PhoneNumber> {
+         controller.destroyConnection();
+         controller.cachedState = null;
+ 
+-        var data = await api.setupPush(config: controller.config!, identity: controller.identity!, statePath: pushService.statePath, state: controller.cachedState);
+-        controller.connection = data.$1;
+-        controller.anisette?.dispose();
+-        controller.anisette = await api.makeAnisette(path: pushService.statePath, config: controller.config!, conn: controller.connection!);
++        await controller.setupConnection();
+       }
+       var token = await api.getToken(state: controller.connection!);
+ 
+@@ -447,4 +444,4 @@ class PhoneNumberState extends OptimizedState<PhoneNumber> {
+     );
+   }
+ 
+-}
+\ No newline at end of file
++}
+diff --git a/lib/app/layouts/setup/setup_view.dart b/lib/app/layouts/setup/setup_view.dart
+index bfe32b4c0163bb6cbad1a44ed00fff59f4fc97bb..6a2aa50fbe1078c7efe351db762eee2386ee68dd 100644
+--- a/lib/app/layouts/setup/setup_view.dart
++++ b/lib/app/layouts/setup/setup_view.dart
+@@ -260,6 +260,34 @@ class SetupViewController extends StatefulController {
+     _disposeLoginResourceWhenIdle(account);
+   }
+ 
++  Future<void> completeAuthenticatedAppleLogin(
++    api.LoginState loginState,
++    ArcMutexAppleAccountDefaultAnisetteProvider account, {
++    required int attempt,
++  }) async {
++    if (!isLoginAttemptCurrent(attempt)) return;
++    // A pending verification response can already contain tokens. Do not use
++    // their presence to start registration before Apple reports LoggedIn.
++    if (loginState is! api.LoginState_LoggedIn) {
++      currentAppleUser = null;
++      return;
++    }
++    final conf = config;
++    if (conf == null) throw StateError('Apple login configuration is unavailable');
++    final user = await withLoginAttemptResources(
++      attempt,
++      [account, conf],
++      () => api.tryIcloudLogin(path: pushService.statePath, conf: conf, account: account),
++    );
++    if (!isLoginAttemptCurrent(attempt)) {
++      if (!identical(user, currentAppleUser)) {
++        _disposeLoginResourceWhenIdle(user);
++      }
++      return;
++    }
++    currentAppleUser = user;
++  }
++
+   void _retainLoginResource(RustOpaqueInterface resource) {
+     if (resource.isDisposed) {
+       throw StateError('Cannot use a disposed login resource');
+@@ -289,6 +317,22 @@ class SetupViewController extends StatefulController {
+     resource.dispose();
+   }
+ 
++  @visibleForTesting
++  bool hasLiveTrustedDeviceCircleResources() {
++    final circle = circleSession;
++    final receiver = connReceiver;
++    final listener = connListener;
++    final conn = connection;
++    return circle != null &&
++        !circle.isDisposed &&
++        receiver != null &&
++        !receiver.isDisposed &&
++        listener != null &&
++        !listener.isDisposed &&
++        conn != null &&
++        !conn.isDisposed;
++  }
++
+   Future<T> withLoginAttemptResources<T>(
+     int attempt,
+     Iterable<RustOpaqueInterface?> resources,
+@@ -544,16 +588,15 @@ class SetupViewController extends StatefulController {
+         return ret;
+       }
+       replaceCurrentAppleAccount(account, attempt: attempt);
+-      final user = await withLoginAttemptResources(
+-        attempt ?? beginLoginAttempt(),
+-        [account, config],
+-        () => api.tryIcloudLogin(path: pushService.statePath, conf: config!, account: account),
++      await completeAuthenticatedAppleLogin(
++        nextState,
++        account,
++        attempt: attempt ?? beginLoginAttempt(),
+       );
+       if (attempt != null && !isLoginAttemptCurrent(attempt)) {
+         _disposeLoginResourceWhenIdle(account);
+         return nextState;
+       }
+-      currentAppleUser = user;
+       ret = nextState;
+     }
+     if (ret is api.LoginState_NeedsDevice2FA) {
+@@ -583,6 +626,13 @@ class SetupViewController extends StatefulController {
+       isSms.value = false;
+       circleSession = provider;
+     }
++    if (ret is api.LoginState_Needs2FAVerification && circleSession == null) {
++      if (!_isCurrentOrUntracked(attempt)) return ret;
++      // The server is awaiting trusted-device verification. This does not
++      // prove that its code was displayed. Do not create another challenge
++      // or replay the password just to prepare the code-entry page.
++      isSms.value = false;
++    }
+     if (ret is api.LoginState_NeedsSMS2FA) {
+       if (!_isCurrentOrUntracked(attempt)) return ret;
+       mcs.invokeMethod("circle-proximity-session", {
+@@ -948,33 +998,50 @@ class SetupViewController extends StatefulController {
+     final currentConfig = config;
+     final currentReceiver = connReceiver;
+     final currentListener = connListener;
++    final currentCircle = circleSession;
++    final useTrustedCircle = hasLiveTrustedDeviceCircleResources();
++    final directTrusted = state is api.LoginState_Needs2FAVerification && !useTrustedCircle;
+     if (account == null || currentAnisette == null || currentConfig == null) {
+       throw StateError('Apple login resources are unavailable for 2FA');
+     }
+     return withLoginAttemptResources(
+       effectiveAttempt,
+-      [account, currentConnection, currentAnisette, currentConfig, currentReceiver, currentListener, circleSession],
++      [
++        account, currentConfig,
++        if (!directTrusted) ...[
++          currentConnection, currentAnisette, currentReceiver,
++          currentListener, currentCircle,
++        ],
++      ],
+       () async {
++        (api.LoginState, api.IdsUser?)? verification;
+         if (state is api.LoginState_Needs2FAVerification) {
+-          if (circleSession == null || currentReceiver == null || currentListener == null || currentConnection == null) {
+-            throw StateError('Trusted-device 2FA resources are unavailable');
++          if (useTrustedCircle) {
++            verification = await api.verify2Fa(
++              path: pushService.statePath,
++              client: currentCircle!,
++              anisette: currentAnisette,
++              osConfig: currentConfig,
++              watcher: currentReceiver!,
++              idms: currentListener!,
++              account: account,
++              code: code,
++            );
++          } else {
++            // Already-issued challenge with no circle session: direct code
++            // verification only. No push, no premature password replay; the
++            // fresh SRP/PET gate and Windows admission run inside Rust after
++            // the code is accepted.
++            verification = await api.verify2FaDirect(
++              path: pushService.statePath,
++              account: account,
++              osConfig: currentConfig,
++              code: code,
++            );
+           }
+-          var (dart, isAnnoying) = await api.verify2Fa(
+-            path: pushService.statePath,
+-            client: circleSession!,
+-            anisette: currentAnisette,
+-            osConfig: currentConfig,
+-            watcher: currentReceiver,
+-            idms: currentListener,
+-            account: account,
+-            code: code,
+-          );
+-          if (!isLoginAttemptCurrent(effectiveAttempt)) return state;
+-          state = dart;
+-          currentAppleUser = isAnnoying;
+         } else if (state is api.LoginState_NeedsSMS2FAVerification) {
+           var myState = state as api.LoginState_NeedsSMS2FAVerification;
+-          var (dart, isAnnoying) = await api.verify2FaSms(
++          verification = await api.verify2FaSms(
+             path: pushService.statePath,
+             accountMut: account,
+             anisette: currentAnisette,
+@@ -982,9 +1049,17 @@ class SetupViewController extends StatefulController {
+             body: myState.field0,
+             code: code,
+           );
+-          if (!isLoginAttemptCurrent(effectiveAttempt)) return state;
+-          state = dart;
+-          currentAppleUser = isAnnoying;
++        }
++        if (verification != null) {
++          final (nextState, user) = verification;
++          if (!isLoginAttemptCurrent(effectiveAttempt)) {
++            if (!identical(user, currentAppleUser)) {
++              _disposeLoginResourceWhenIdle(user);
++            }
++            return state;
++          }
++          state = nextState;
++          currentAppleUser = user;
+         }
+         return await updateLoginState(state, attempt: effectiveAttempt);
+       },
+@@ -1026,10 +1101,28 @@ class SetupViewController extends StatefulController {
+       await setupConnection();
+   }
+ 
+-  Future<void> setupConnection() async {
+-    var data = await api.setupPush(config: config!, identity: identity!, statePath: pushService.statePath, state: cachedState);
+-    connection = data.$1;
+-    anisette = await api.makeAnisette(path: pushService.statePath, config: config!, conn: connection!);
++  Future<void> setupConnection({
++    Future<(ApsConnection, api.PushError?)> Function()? createPush,
++    Future<ArcAnisetteClientDefaultAnisetteProvider> Function(ApsConnection)? prepareAnisette,
++  }) async {
++    final data = await (createPush ?? () => api.setupPush(config: config!, identity: identity!, statePath: pushService.statePath, state: cachedState))();
++    final candidate = data.$1;
++    final failure = data.$2;
++    if (failure != null) {
++      candidate.dispose();
++      failure.dispose();
++      throw AnyhowException('Unable to connect to Apple Push for device setup. Check your connection and retry. Your saved messages and device details have been kept.');
++    }
++    try {
++      final nextAnisette = await (prepareAnisette ?? (conn) => api.makeAnisette(path: pushService.statePath, config: config!, conn: conn))(candidate);
++      final previousAnisette = anisette;
++      connection = candidate;
++      anisette = nextAnisette;
++      _disposeLoginResourceWhenIdle(previousAnisette);
++    } catch (_) {
++      candidate.dispose();
++      rethrow;
++    }
+   }
+ 
+   void updatePage(int newPage) {
 diff --git a/lib/cloud_sync_v2_windows_harness.dart b/lib/cloud_sync_v2_windows_harness.dart
-index 48482e045..c1b79bb5e 100644
+index 48482e045e367fe7ec2a432d6e2c05c685eedde0..c1b79bb5eb76c71d9dbfcb4f66fe4213077d101d 100644
 --- a/lib/cloud_sync_v2_windows_harness.dart
 +++ b/lib/cloud_sync_v2_windows_harness.dart
 @@ -113,7 +113,7 @@ Future<void> main(List<String> arguments) async {
@@ -12,7 +295,7 @@ index 48482e045..c1b79bb5e 100644
      await _writeHarnessStatus(state: 'initializing', stage: stage);
      await Database.init(cloudSyncV2Harness: true);
 diff --git a/lib/services/rustpush/rustpush_service.dart b/lib/services/rustpush/rustpush_service.dart
-index 0fb078b1b..080e13c1e 100644
+index 0fb078b1be57255456c778c9af1eb6f4a031ed69..080e13c1e5f833df07348100c1153e15d8bf972b 100644
 --- a/lib/services/rustpush/rustpush_service.dart
 +++ b/lib/services/rustpush/rustpush_service.dart
 @@ -7992,8 +7992,8 @@ class RustPushService extends GetxService {
@@ -25,8 +308,310 @@ index 0fb078b1b..080e13c1e 100644
        statePath = (await getApplicationSupportDirectory()).path;
        final vpnDetector = VpnConnectionDetector();
        vpnDetector.vpnConnectionStream.listen((state) {
+diff --git a/lib/src/rust/api/api.dart b/lib/src/rust/api/api.dart
+index 3794a230f0d8641f0df293ce7edc26e1563a7981..beb8754ec33d2928bc343a0d2a5425890c865d5e 100644
+--- a/lib/src/rust/api/api.dart
++++ b/lib/src/rust/api/api.dart
+@@ -2757,6 +2757,24 @@ Future<(LoginState, IdsUser?)> verify2Fa({
+   code: code,
+ );
+ 
++/// Verifies an already-issued trusted-device code without a circle session.
++///
++/// The server reports that it is awaiting verification (e.g. ec0/hsc409
++/// without au mapped to Needs2FAVerification). This performs no additional
++/// push and replays no password before the code is accepted. The fresh SRP
++/// exchange runs only after acceptance, under the same guards as verify_2fa.
++Future<(LoginState, IdsUser?)> verify2FaDirect({
++  required String path,
++  required ArcMutexAppleAccountDefaultAnisetteProvider account,
++  required JoinedOsConfig osConfig,
++  required String code,
++}) => RustLib.instance.api.crateApiApiVerify2FaDirect(
++  path: path,
++  account: account,
++  osConfig: osConfig,
++  code: code,
++);
++
+ Future<(List<TrustedPhoneNumber>, LoginState?)> get2FaSmsOpts({
+   required ArcMutexAppleAccountDefaultAnisetteProvider state,
+ }) => RustLib.instance.api.crateApiApiGet2FaSmsOpts(state: state);
+diff --git a/lib/src/rust/frb_generated.dart b/lib/src/rust/frb_generated.dart
+index 792e5130b4ce2396e8169a23022eec065df0c201..16d1bfc2aa82cee7a81b3fbbb6d04896a5487b2e 100644
+--- a/lib/src/rust/frb_generated.dart
++++ b/lib/src/rust/frb_generated.dart
+@@ -66,7 +66,7 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
+   String get codegenVersion => '2.3.0';
+ 
+   @override
+-  int get rustContentHash => -340070333;
++  int get rustContentHash => -346250373;
+ 
+   static const kDefaultExternalLibraryLoaderConfig =
+       ExternalLibraryLoaderConfig(
+@@ -1976,6 +1976,13 @@ abstract class RustLibApi extends BaseApi {
+     required String code,
+   });
+ 
++  Future<(LoginState, IdsUser?)> crateApiApiVerify2FaDirect({
++    required String path,
++    required ArcMutexAppleAccountDefaultAnisetteProvider account,
++    required JoinedOsConfig osConfig,
++    required String code,
++  });
++
+   Future<(LoginState, IdsUser?)> crateApiApiVerify2FaSms({
+     required String path,
+     required ArcMutexAppleAccountDefaultAnisetteProvider accountMut,
+@@ -15468,7 +15475,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
+         },
+         codec: SseCodec(
+           decodeSuccessData: sse_decode_unit,
+-          decodeErrorData: null,
++          decodeErrorData: sse_decode_AnyhowException,
+         ),
+         constMeta: kCrateApiApiSetIdentityConstMeta,
+         argValues: [statePath, config, identity],
+@@ -15595,7 +15602,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
+         codec: SseCodec(
+           decodeSuccessData:
+               sse_decode_record_auto_owned_rust_opaque_flutter_rust_bridgefor_generated_rust_auto_opaque_inner_aps_connection_opt_box_autoadd_auto_owned_rust_opaque_flutter_rust_bridgefor_generated_rust_auto_opaque_inner_push_error,
+-          decodeErrorData: null,
++          decodeErrorData: sse_decode_AnyhowException,
+         ),
+         constMeta: kCrateApiApiSetupPushConstMeta,
+         argValues: [config, identity, state, statePath],
+@@ -16758,6 +16765,51 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
+     ],
+   );
+ 
++  @override
++  Future<(LoginState, IdsUser?)> crateApiApiVerify2FaDirect({
++    required String path,
++    required ArcMutexAppleAccountDefaultAnisetteProvider account,
++    required JoinedOsConfig osConfig,
++    required String code,
++  }) {
++    return handler.executeNormal(
++      NormalTask(
++        callFfi: (port_) {
++          final serializer = SseSerializer(generalizedFrbRustBinding);
++          sse_encode_String(path, serializer);
++          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcMutexAppleAccountDefaultAnisetteProvider(
++            account,
++            serializer,
++          );
++          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerJoinedOSConfig(
++            osConfig,
++            serializer,
++          );
++          sse_encode_String(code, serializer);
++          pdeCallFfi(
++            generalizedFrbRustBinding,
++            serializer,
++            funcId: 352,
++            port: port_,
++          );
++        },
++        codec: SseCodec(
++          decodeSuccessData:
++              sse_decode_record_login_state_opt_box_autoadd_auto_owned_rust_opaque_flutter_rust_bridgefor_generated_rust_auto_opaque_inner_ids_user,
++          decodeErrorData: sse_decode_AnyhowException,
++        ),
++        constMeta: kCrateApiApiVerify2FaDirectConstMeta,
++        argValues: [path, account, osConfig, code],
++        apiImpl: this,
++      ),
++    );
++  }
++
++  TaskConstMeta get kCrateApiApiVerify2FaDirectConstMeta => const TaskConstMeta(
++    debugName: "verify_2fa_direct",
++    argNames: ["path", "account", "osConfig", "code"],
++  );
++
+   @override
+   Future<(LoginState, IdsUser?)> crateApiApiVerify2FaSms({
+     required String path,
+@@ -16792,7 +16844,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
+           pdeCallFfi(
+             generalizedFrbRustBinding,
+             serializer,
+-            funcId: 352,
++            funcId: 353,
+             port: port_,
+           );
+         },
+@@ -16856,7 +16908,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
+           pdeCallFfi(
+             generalizedFrbRustBinding,
+             serializer,
+-            funcId: 353,
++            funcId: 354,
+             port: port_,
+           );
+         },
+@@ -16942,7 +16994,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
+           pdeCallFfi(
+             generalizedFrbRustBinding,
+             serializer,
+-            funcId: 354,
++            funcId: 355,
+             port: port_,
+           );
+         },
+@@ -17025,7 +17077,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
+           pdeCallFfi(
+             generalizedFrbRustBinding,
+             serializer,
+-            funcId: 355,
++            funcId: 356,
+             port: port_,
+           );
+         },
+diff --git a/rust/Cargo.lock b/rust/Cargo.lock
+index db525707e13c1a19f21a2c791f4576d058ddd34f..fe5095e95e8a45f8c54691da9b0c40eb09b9da15 100644
+--- a/rust/Cargo.lock
++++ b/rust/Cargo.lock
+@@ -735,6 +735,24 @@ dependencies = [
+  "memchr",
+ ]
+ 
++[[package]]
++name = "corten-mac-validation-probe"
++version = "0.1.0"
++dependencies = [
++ "base64 0.21.7",
++ "goblin 0.10.7",
++ "plist",
++ "prost",
++ "prost-build",
++ "rand 0.8.5",
++ "reqwest",
++ "serde",
++ "serde_json",
++ "sha1",
++ "sha2",
++ "unicorn-engine",
++]
++
+ [[package]]
+ name = "cpufeatures"
+ version = "0.2.16"
+@@ -1464,7 +1482,18 @@ checksum = "1b363a30c165f666402fe6a3024d3bec7ebc898f96a4a23bd1c99f8dbf3f4f47"
+ dependencies = [
+  "log",
+  "plain",
+- "scroll",
++ "scroll 0.12.0",
++]
++
++[[package]]
++name = "goblin"
++version = "0.10.7"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "17582616a7718cca54cec18e534a76c7c4aec11a8b9a85695712f262fd15a4c8"
++dependencies = [
++ "log",
++ "plain",
++ "scroll 0.13.0",
+ ]
+ 
+ [[package]]
+@@ -3128,6 +3157,7 @@ dependencies = [
+  "anyhow",
+  "async-recursion",
+  "base64 0.22.1",
++ "corten-mac-validation-probe",
+  "flate2",
+  "flexi_logger",
+  "flutter_rust_bridge",
+@@ -3346,7 +3376,16 @@ version = "0.12.0"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "6ab8598aa408498679922eff7fa985c25d58a90771bd6be794434c5277eab1a6"
+ dependencies = [
+- "scroll_derive",
++ "scroll_derive 0.12.0",
++]
++
++[[package]]
++name = "scroll"
++version = "0.13.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "c1257cd4248b4132760d6524d6dda4e053bc648c9070b960929bf50cfb1e7add"
++dependencies = [
++ "scroll_derive 0.13.2",
+ ]
+ 
+ [[package]]
+@@ -3360,6 +3399,17 @@ dependencies = [
+  "syn 2.0.105",
+ ]
+ 
++[[package]]
++name = "scroll_derive"
++version = "0.13.2"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "e1a36a382ed65dbcc0ab47fd5e9a94112417ccd34560a392ef3b7b0f0ec39148"
++dependencies = [
++ "proc-macro2",
++ "quote",
++ "syn 3.0.9",
++]
++
+ [[package]]
+ name = "sct"
+ version = "0.7.1"
+@@ -3644,6 +3694,17 @@ dependencies = [
+  "unicode-ident",
+ ]
+ 
++[[package]]
++name = "syn"
++version = "3.0.9"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "d78c8dee4c7bf0e14673097256fed6142ce9d3b85a408189d07482442145823b"
++dependencies = [
++ "proc-macro2",
++ "quote",
++ "unicode-ident",
++]
++
+ [[package]]
+ name = "sync_wrapper"
+ version = "0.1.2"
+@@ -4065,6 +4126,19 @@ dependencies = [
+  "tinyvec",
+ ]
+ 
++[[package]]
++name = "unicorn-engine"
++version = "2.1.3"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "827118d4fdedff61086fe435c6bd84f9f7e2f189a7d0fdcffdb788b23cea10d8"
++dependencies = [
++ "bitflags 2.9.1",
++ "cc",
++ "cmake",
++ "libc",
++ "pkg-config",
++]
++
+ [[package]]
+ name = "uniffi"
+ version = "0.28.3"
+@@ -4090,7 +4164,7 @@ dependencies = [
+  "cargo_metadata",
+  "fs-err",
+  "glob",
+- "goblin",
++ "goblin 0.8.2",
+  "heck 0.5.0",
+  "once_cell",
+  "paste",
 diff --git a/rust/Cargo.toml b/rust/Cargo.toml
-index 6a5a3d7b5..373216392 100644
+index 6a5a3d7b59624fa4cc46eba58c8f982726eedf62..373216392edd8f5cd732b899becc6b59065c2baa 100644
 --- a/rust/Cargo.toml
 +++ b/rust/Cargo.toml
 @@ -3,12 +3,18 @@ name = "rust_lib_bluebubbles"
@@ -49,7 +634,7 @@ index 6a5a3d7b5..373216392 100644
  plist = { version = "=1.7.0", features = ["enable_unstable_features_that_may_break_with_minor_version_bumps"] }
  tokio = { version = "1", features = ["full"] }
 diff --git a/rust/src/api/api.rs b/rust/src/api/api.rs
-index 2362b40fe..6b4c6d9cf 100644
+index 2362b40fe6a132526c2cf0417ce988279d57d5dc..08102b7e27489333b3ed3587617faab9d430d195 100644
 --- a/rust/src/api/api.rs
 +++ b/rust/src/api/api.rs
 @@ -267,6 +267,11 @@ pub fn do_first_time_init(path: String) {
@@ -64,8 +649,428 @@ index 2362b40fe..6b4c6d9cf 100644
      #[cfg(target_os = "windows")]
      if let Err(error) = initialize_windows_protected_keystore(&dir) {
          error!("Windows protected keystore initialization failed: {error}");
+@@ -12557,8 +12562,13 @@ impl SharedPushState {
+         let users = restore_users(path.clone())?;
+         let config = &hardware.os_config;
+         let identity = IDSNGMIdentity::restore(hardware.identity.as_ref(), "openbubbles").ok()?;
+-        let (conn, _) =
+-            setup_push(config, &identity, Some(hardware.push.clone()), path.clone()).await;
++        let (conn, _) = match setup_push(config, &identity, Some(hardware.push.clone()), path.clone()).await {
++            Ok(connection) => connection,
++            Err(_) => {
++                error!("Activation identity could not be preserved; stored profile was retained");
++                return None;
++            }
++        };
+         let client = make_imclient(path.clone(), &conn, &users, &identity).await;
+         let anisette = make_anisette(path.clone(), config, &conn).await;
+ 
+@@ -13180,16 +13190,29 @@ pub async fn register_ids(
+     Ok((Some(users), None))
+ }
+ 
+-pub async fn set_identity(state_path: String, config: &JoinedOSConfig, identity: &IDSNGMIdentity) {
+-    let state_path = PathBuf::from_str(&state_path)
+-        .unwrap()
+-        .join("hw_info.plist");
++pub async fn set_identity(
++    state_path: String,
++    config: &JoinedOSConfig,
++    identity: &IDSNGMIdentity,
++) -> anyhow::Result<()> {
++    let directory = PathBuf::from(state_path);
+     let state = SavedHardwareState {
+         push: Default::default(),
+         os_config: config.clone(),
+-        identity: identity.save("openbubbles").expect("failed to save").into(),
++        identity: identity.save("openbubbles").map_err(|_| anyhow!(
++            "The saved device encryption keys could not be accessed. Existing keys and messages have been kept. Unlock this device and retry; do not clear app data."
++        ))?.into(),
+     };
+-    std::fs::write(&state_path, plist_to_string(&state).unwrap()).unwrap();
++    persist_activation_hardware(&directory, &state)
++}
++
++fn persist_activation_hardware(directory: &std::path::Path, state: &SavedHardwareState) -> anyhow::Result<()> {
++    let encoded = plist_to_string(state).map_err(|_| anyhow!(
++        "Device setup could not prepare its saved state. Existing messages and keys have been kept."
++    ))?;
++    persist_login_state_file(directory, "hw_info.plist", encoded.as_bytes()).map_err(|_| anyhow!(
++        "Device setup could not save its state. Check free storage and retry; do not clear app data."
++    ))
+ }
+ 
+ pub async fn setup_push(
+@@ -13197,20 +13220,25 @@ pub async fn setup_push(
+     identity: &IDSNGMIdentity,
+     state: Option<APSState>,
+     state_path: String,
+-) -> (APSConnection, Option<PushError>) {
+-    let state_path = PathBuf::from_str(&state_path)
+-        .unwrap()
+-        .join("hw_info.plist");
++) -> anyhow::Result<(APSConnection, Option<PushError>)> {
++    let directory = PathBuf::from(state_path);
++    // Fail before opening a push connection if restored protected keys cannot
++    // be read. Never replace those keys or report successful activation.
++    let saved_identity = identity.save("openbubbles").map_err(|_| anyhow!(
++        "The saved device encryption keys could not be accessed. Existing keys and messages have been kept. Unlock this device and retry; do not clear app data."
++    ))?;
+     let (conn, error) = APSConnectionResource::new(config.config(), state).await;
+ 
+-    let saved_identity = identity.save("openbubbles").expect("failed to save");
+     if error.is_none() {
+         let state = SavedHardwareState {
+             push: conn.state.read().await.clone(),
+             os_config: config.clone(),
+             identity: saved_identity.clone().into(),
+         };
+-        std::fs::write(&state_path, plist_to_string(&state).unwrap()).unwrap();
++        if let Err(error) = persist_activation_hardware(&directory, &state) {
++            conn.close();
++            return Err(error);
++        }
+     }
+ 
+     let mut to_refresh = conn.generated_signal.subscribe();
+@@ -13229,7 +13257,11 @@ pub async fn setup_push(
+                         os_config: config_ref.clone(),
+                         identity: saved_identity.clone().into(),
+                     };
+-                    std::fs::write(&state_path, plist_to_string(&state).unwrap()).unwrap();
++                    if persist_activation_hardware(&directory, &state).is_err() {
++                        error!("Refreshed activation state could not be saved; closing its connection");
++                        conn.close();
++                        break;
++                    }
+                 }
+                 Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                 Err(broadcast::error::RecvError::Closed) => break,
+@@ -13237,7 +13269,7 @@ pub async fn setup_push(
+         }
+     });
+ 
+-    (conn, error)
++    Ok((conn, error))
+ }
+ 
+ #[derive(Clone, Debug, Serialize)]
+@@ -19521,6 +19553,55 @@ async fn cloud_sync_windows_consume_login_admission(
+     Ok(())
+ }
+ 
++async fn complete_trusted_device_login(
++    path: String,
++    account: &Arc<Mutex<AppleAccount<DefaultAnisetteProvider>>>,
++    os_config: &JoinedOSConfig,
++    verification_state: LoginState,
++) -> anyhow::Result<(LoginState, Option<IDSUser>)> {
++    if !two_factor_verification_authorizes_fresh_login(&verification_state) {
++        return Err(anyhow!(
++            "Trusted-device verification did not authorize a fresh login"
++        ));
++    }
++
++    // Apple can populate the SPD token dictionary before reporting that 2FA
++    // is still required. Those pre-verification tokens are not authenticated
++    // CloudKit authority. Always perform a fresh SRP exchange after the code
++    // is accepted and require an explicit logged-in response with a PET.
++    let login_state = {
++        let mut locked = account.lock().await;
++        let username = locked
++            .username
++            .clone()
++            .ok_or_else(|| anyhow!("Trusted-device verification account is unavailable"))?;
++        let hashed_password = locked
++            .hashed_password
++            .clone()
++            .ok_or_else(|| anyhow!("Trusted-device verification credential is unavailable"))?;
++        locked.login_email_pass(&username, &hashed_password).await?
++    };
++    if !two_factor_fresh_login_is_authenticated(
++        &login_state,
++        account.lock().await.get_pet().is_some(),
++    ) {
++        return Err(anyhow!(
++            "Trusted-device verification did not produce a post-verification login"
++        ));
++    }
++
++    let mut user = None;
++    if is_cloud_sync_windows_dev_profile(&path) {
++        cloud_sync_windows_consume_login_admission(&path, account).await?;
++    } else {
++        let identity = do_login(path, &account, None, os_config).await?;
++        user = Some(identity);
++    }
++    info!("Trusted-device verification completed a fresh authenticated login");
++
++    Ok((login_state, user))
++}
++
+ pub async fn verify_2fa(
+     path: String,
+     client: &mut CircleClientSession<DefaultAnisetteProvider>,
+@@ -19581,47 +19662,23 @@ pub async fn verify_2fa(
+         account.lock().await.verify_2fa(code).await?
+     };
+ 
+-    if !two_factor_verification_authorizes_fresh_login(&verification_state) {
+-        return Err(anyhow!(
+-            "Trusted-device verification did not authorize a fresh login"
+-        ));
+-    }
+-
+-    // Apple can populate the SPD token dictionary before reporting that 2FA
+-    // is still required. Those pre-verification tokens are not authenticated
+-    // CloudKit authority. Always perform a fresh SRP exchange after the code
+-    // is accepted and require an explicit logged-in response with a PET.
+-    let login_state = {
+-        let mut locked = account.lock().await;
+-        let username = locked
+-            .username
+-            .clone()
+-            .ok_or_else(|| anyhow!("Trusted-device verification account is unavailable"))?;
+-        let hashed_password = locked
+-            .hashed_password
+-            .clone()
+-            .ok_or_else(|| anyhow!("Trusted-device verification credential is unavailable"))?;
+-        locked.login_email_pass(&username, &hashed_password).await?
+-    };
+-    if !two_factor_fresh_login_is_authenticated(
+-        &login_state,
+-        account.lock().await.get_pet().is_some(),
+-    ) {
+-        return Err(anyhow!(
+-            "Trusted-device verification did not produce a post-verification login"
+-        ));
+-    }
+-
+-    let mut user = None;
+-    if is_cloud_sync_windows_dev_profile(&path) {
+-        cloud_sync_windows_consume_login_admission(&path, account).await?;
+-    } else {
+-        let identity = do_login(path, &account, None, os_config).await?;
+-        user = Some(identity);
+-    }
+-    info!("Trusted-device verification completed a fresh authenticated login");
++    complete_trusted_device_login(path, account, os_config, verification_state).await
++}
+ 
+-    Ok((login_state, user))
++/// Verifies an already-issued trusted-device code without a circle session.
++///
++/// The server reports that it is awaiting verification (e.g. ec0/hsc409
++/// without au mapped to Needs2FAVerification). This performs no additional
++/// push and replays no password before the code is accepted. The fresh SRP
++/// exchange runs only after acceptance, under the same guards as verify_2fa.
++pub async fn verify_2fa_direct(
++    path: String,
++    account: &Arc<Mutex<AppleAccount<DefaultAnisetteProvider>>>,
++    os_config: &JoinedOSConfig,
++    code: String,
++) -> anyhow::Result<(LoginState, Option<IDSUser>)> {
++    let verification_state = account.lock().await.verify_2fa(code).await?;
++    complete_trusted_device_login(path, account, os_config, verification_state).await
+ }
+ 
+ pub async fn get_2fa_sms_opts(
+diff --git a/rust/src/api/cloud_sync_chat1_correlation.rs b/rust/src/api/cloud_sync_chat1_correlation.rs
+index f3b1e121b63e304c2e8eb43696d44f668af55ca2..3bd5ac4e1c2baa02fff9bfbf991f9d0844603157 100644
+--- a/rust/src/api/cloud_sync_chat1_correlation.rs
++++ b/rust/src/api/cloud_sync_chat1_correlation.rs
+@@ -5241,7 +5241,7 @@ mod windows_standalone_live_tests {
+             Some(hardware.push.clone()),
+             profile_string.clone(),
+         )
+-        .await;
++        .await.expect("chat1_standalone_activation_state_preservation_failed");
+         assert!(push_error.is_none(), "chat1_standalone_aps_setup_failed");
+         let anisette = api::make_anisette(profile_string.clone(), &config, &connection).await;
+         let account = api::restore_account(profile_string.clone(), &anisette, &config, &connection)
+diff --git a/rust/src/frb_generated.rs b/rust/src/frb_generated.rs
+index e737a855fb82fb83460482784768bfe6a2f4e657..217e38763f2031fc736d9a16aaf9b3cdd10d6bf5 100644
+--- a/rust/src/frb_generated.rs
++++ b/rust/src/frb_generated.rs
+@@ -39,7 +39,7 @@ flutter_rust_bridge::frb_generated_boilerplate!(
+     default_rust_auto_opaque = RustAutoOpaqueMoi,
+ );
+ pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_VERSION: &str = "2.3.0";
+-pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = -340070333;
++pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = -346250373;
+ 
+ // Section: executor
+ 
+@@ -17970,7 +17970,7 @@ fn wire__crate__api__api__set_identity_impl(
+             >>::sse_decode(&mut deserializer);
+             deserializer.end();
+             move |context| async move {
+-                transform_result_sse::<_, ()>(
++                transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
+                     (move || async move {
+                         let mut api_config_guard = None;
+                         let mut api_identity_guard = None;
+@@ -18004,14 +18004,12 @@ fn wire__crate__api__api__set_identity_impl(
+                         }
+                         let api_config_guard = api_config_guard.unwrap();
+                         let api_identity_guard = api_identity_guard.unwrap();
+-                        let output_ok = Result::<_, ()>::Ok({
+-                            crate::api::api::set_identity(
+-                                api_state_path,
+-                                &*api_config_guard,
+-                                &*api_identity_guard,
+-                            )
+-                            .await;
+-                        })?;
++                        let output_ok = crate::api::api::set_identity(
++                            api_state_path,
++                            &*api_config_guard,
++                            &*api_identity_guard,
++                        )
++                        .await?;
+                         Ok(output_ok)
+                     })()
+                     .await,
+@@ -18181,7 +18179,7 @@ fn wire__crate__api__api__setup_push_impl(
+             let api_state_path = <String>::sse_decode(&mut deserializer);
+             deserializer.end();
+             move |context| async move {
+-                transform_result_sse::<_, ()>(
++                transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
+                     (move || async move {
+                         let mut api_config_guard = None;
+                         let mut api_identity_guard = None;
+@@ -18215,15 +18213,13 @@ fn wire__crate__api__api__setup_push_impl(
+                         }
+                         let api_config_guard = api_config_guard.unwrap();
+                         let api_identity_guard = api_identity_guard.unwrap();
+-                        let output_ok = Result::<_, ()>::Ok(
+-                            crate::api::api::setup_push(
+-                                &*api_config_guard,
+-                                &*api_identity_guard,
+-                                api_state,
+-                                api_state_path,
+-                            )
+-                            .await,
+-                        )?;
++                        let output_ok = crate::api::api::setup_push(
++                            &*api_config_guard,
++                            &*api_identity_guard,
++                            api_state,
++                            api_state_path,
++                        )
++                        .await?;
+                         Ok(output_ok)
+                     })()
+                     .await,
+@@ -20096,6 +20092,89 @@ fn wire__crate__api__api__verify_2fa_impl(
+         },
+     )
+ }
++fn wire__crate__api__api__verify_2fa_direct_impl(
++    port_: flutter_rust_bridge::for_generated::MessagePort,
++    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
++    rust_vec_len_: i32,
++    data_len_: i32,
++) {
++    FLUTTER_RUST_BRIDGE_HANDLER.wrap_async::<flutter_rust_bridge::for_generated::SseCodec, _, _, _>(
++        flutter_rust_bridge::for_generated::TaskInfo {
++            debug_name: "verify_2fa_direct",
++            port: Some(port_),
++            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
++        },
++        move || {
++            let message = unsafe {
++                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
++                    ptr_,
++                    rust_vec_len_,
++                    data_len_,
++                )
++            };
++            let mut deserializer =
++                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
++            let api_path = <String>::sse_decode(&mut deserializer);
++            let api_account = <RustOpaqueMoi<
++                flutter_rust_bridge::for_generated::RustAutoOpaqueInner<
++                    Arc<Mutex<AppleAccount<DefaultAnisetteProvider>>>,
++                >,
++            >>::sse_decode(&mut deserializer);
++            let api_os_config = <RustOpaqueMoi<
++                flutter_rust_bridge::for_generated::RustAutoOpaqueInner<JoinedOSConfig>,
++            >>::sse_decode(&mut deserializer);
++            let api_code = <String>::sse_decode(&mut deserializer);
++            deserializer.end();
++            move |context| async move {
++                transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
++                    (move || async move {
++                        let mut api_account_guard = None;
++                        let mut api_os_config_guard = None;
++                        let decode_indices_ =
++                            flutter_rust_bridge::for_generated::lockable_compute_decode_order(
++                                vec![
++                                    flutter_rust_bridge::for_generated::LockableOrderInfo::new(
++                                        &api_account,
++                                        0,
++                                        false,
++                                    ),
++                                    flutter_rust_bridge::for_generated::LockableOrderInfo::new(
++                                        &api_os_config,
++                                        1,
++                                        false,
++                                    ),
++                                ],
++                            );
++                        for i in decode_indices_ {
++                            match i {
++                                0 => {
++                                    api_account_guard =
++                                        Some(api_account.lockable_decode_async_ref().await)
++                                }
++                                1 => {
++                                    api_os_config_guard =
++                                        Some(api_os_config.lockable_decode_async_ref().await)
++                                }
++                                _ => unreachable!(),
++                            }
++                        }
++                        let api_account_guard = api_account_guard.unwrap();
++                        let api_os_config_guard = api_os_config_guard.unwrap();
++                        let output_ok = crate::api::api::verify_2fa_direct(
++                            api_path,
++                            &*api_account_guard,
++                            &*api_os_config_guard,
++                            api_code,
++                        )
++                        .await?;
++                        Ok(output_ok)
++                    })()
++                    .await,
++                )
++            }
++        },
++    )
++}
+ fn wire__crate__api__api__verify_2fa_sms_impl(
+     port_: flutter_rust_bridge::for_generated::MessagePort,
+     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+@@ -32558,10 +32637,11 @@ fn pde_ffi_dispatcher_primary_impl(
+ 349 => wire__crate__api__api__validate_targets_impl(port, ptr, rust_vec_len, data_len),
+ 350 => wire__crate__api__api__validate_targets_facetime_impl(port, ptr, rust_vec_len, data_len),
+ 351 => wire__crate__api__api__verify_2fa_impl(port, ptr, rust_vec_len, data_len),
+-352 => wire__crate__api__api__verify_2fa_sms_impl(port, ptr, rust_vec_len, data_len),
+-353 => wire__crate__api__cloud_sync_chat1_correlation__cloud_sync_inspect_chat1_record_name_correlation_under_writer_pause_impl(port, ptr, rust_vec_len, data_len),
+-354 => wire__crate__api__cloud_sync_chat_identity__cloud_sync_observe_protected_chat_identity_impl(port, ptr, rust_vec_len, data_len),
+-355 => wire__crate__api__cloud_sync_dependency__cloud_sync_locate_protected_message_parent_impl(port, ptr, rust_vec_len, data_len),
++352 => wire__crate__api__api__verify_2fa_direct_impl(port, ptr, rust_vec_len, data_len),
++353 => wire__crate__api__api__verify_2fa_sms_impl(port, ptr, rust_vec_len, data_len),
++354 => wire__crate__api__cloud_sync_chat1_correlation__cloud_sync_inspect_chat1_record_name_correlation_under_writer_pause_impl(port, ptr, rust_vec_len, data_len),
++355 => wire__crate__api__cloud_sync_chat_identity__cloud_sync_observe_protected_chat_identity_impl(port, ptr, rust_vec_len, data_len),
++356 => wire__crate__api__cloud_sync_dependency__cloud_sync_locate_protected_message_parent_impl(port, ptr, rust_vec_len, data_len),
+                         _ => unreachable!(),
+                     }
+ }
 diff --git a/rust/src/lib.rs b/rust/src/lib.rs
-index 8753b4f27..861a1a126 100644
+index 8753b4f27a8247fbf04de70bf1c942a19bb9b427..861a1a12626c9d2d328bf02623732801dd836115 100644
 --- a/rust/src/lib.rs
 +++ b/rust/src/lib.rs
 @@ -92,6 +92,9 @@ pub mod bbhwinfo {
@@ -79,7 +1084,7 @@ index 8753b4f27..861a1a126 100644
  mod desktop_native_logging;
  
 diff --git a/test/services/rustpush_startup_readiness_contract_test.dart b/test/services/rustpush_startup_readiness_contract_test.dart
-index 8657b5da5..7a933cec7 100644
+index 8657b5da56ca332db0931c8aa698128172935793..7a933cec70d6609141a9df4caf4a3ccbd7e35eaf 100644
 --- a/test/services/rustpush_startup_readiness_contract_test.dart
 +++ b/test/services/rustpush_startup_readiness_contract_test.dart
 @@ -3,6 +3,29 @@ import 'dart:io';
@@ -113,7 +1118,7 @@ index 8657b5da5..7a933cec7 100644
      final source = File(
        'lib/services/rustpush/rustpush_service.dart',
 diff --git a/rustpush/Cargo.toml b/rustpush/Cargo.toml
-index a0dbacd..e791ffd 100644
+index a0dbacd3e35d59c53f42272ebe33c61753ec73d8..e791ffdc631d37a7d8ad7e34802ec714f35063ec 100644
 --- a/rustpush/Cargo.toml
 +++ b/rustpush/Cargo.toml
 @@ -7,6 +7,9 @@ edition = "2021"
@@ -126,8 +1131,572 @@ index a0dbacd..e791ffd 100644
  aps-proxy-test = []
  default = ["macos-validation-data"]
  
+diff --git a/rustpush/keystore/src/backup.rs b/rustpush/keystore/src/backup.rs
+index 34aa15bb2a75ce75643884681a89c6dce133e00c..4a63bfa31fde5fb5d5d33e5c6a7a4989f6697c7e 100644
+--- a/rustpush/keystore/src/backup.rs
++++ b/rustpush/keystore/src/backup.rs
+@@ -159,14 +159,35 @@ impl<T: Keystore> BackupKeystore<T> {
+         Ok(plist::from_bytes(&cipher).expect("Failed to decrypt!"))
+     }
+ 
+-    fn save_priv_key(&self, alias: &str, key: SoftwareKeystoreKey) -> Result<(), KeystoreError> {
++    fn import_new_key(
++        &self,
++        alias: &str,
++        key: SoftwareKeystoreKey,
++        r#type: KeyType,
++        priv_key: &[u8],
++        access_rules: KeystoreAccessRules,
++    ) -> Result<(), KeystoreError> {
++        // Serialize create/import through publication, including the hardware alias check.
+         let mut state = self.state.write().expect("Failed to read!");
+-
+-        let backup = BackedUpData::new(state.master_key.as_ref(), &plist_to_bin(&key).unwrap())?;
+-
+-        if state.keys.contains_key(alias) {
++        if state.keys.contains_key(alias)
++            || self
++                .hardware
++                .list_keys()?
++                .iter()
++                .any(|existing| existing == alias)
++        {
+             return Err(KeystoreError::KeyAlreadyExists);
+         }
++
++        let encoded = plist_to_bin(&key).map_err(|_| {
++            KeystoreError::KeystoreError("Failed to encode backup key entry".to_string())
++        })?;
++        let backup = BackedUpData::new(state.master_key.as_ref(), &encoded)?;
++        self.hardware
++            .import_key(alias, r#type, priv_key, access_rules)?;
++
++        // All fallible preparation precedes import. The callback has no Result, so a
++        // callback panic or process crash after import remains outside this guarantee.
+         state.keys.insert(alias.to_string(), backup);
+         (self.update_state)(&*state);
+         Ok(())
+@@ -227,11 +248,7 @@ impl<T: Keystore> Keystore for BackupKeystore<T> {
+         let key = SoftwareKeystoreKey::new(r#type)?;
+ 
+         let exported = key.export()?;
+-        self.hardware
+-            .import_key(alias, r#type, &exported, access_rules)?;
+-
+-        self.save_priv_key(alias, key)?;
+-        Ok(())
++        self.import_new_key(alias, key, r#type, &exported, access_rules)
+     }
+ 
+     fn destroy_key(&self, alias: &str) -> Result<(), KeystoreError> {
+@@ -293,11 +310,8 @@ impl<T: Keystore> Keystore for BackupKeystore<T> {
+         priv_key: &[u8],
+         access_rules: KeystoreAccessRules,
+     ) -> Result<(), KeystoreError> {
+-        self.save_priv_key(alias, SoftwareKeystoreKey::import(priv_key, r#type)?)?;
+-
+-        self.hardware
+-            .import_key(alias, r#type, priv_key, access_rules)?;
+-        Ok(())
++        let key = SoftwareKeystoreKey::import(priv_key, r#type)?;
++        self.import_new_key(alias, key, r#type, priv_key, access_rules)
+     }
+ 
+     fn get_key_type(&self, alias: &str) -> Result<Option<KeyType>, KeystoreError> {
+@@ -351,3 +365,325 @@ impl<T: Keystore> Keystore for BackupKeystore<T> {
+         self.hardware.decrypt(alias, ciphertext, mode)
+     }
+ }
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use std::sync::{
++        Arc, Mutex,
++        atomic::{AtomicUsize, Ordering},
++        mpsc,
++    };
++    use std::time::Duration;
++
++    #[derive(Default)]
++    struct TestHardware {
++        keys: RwLock<HashMap<String, Vec<u8>>>,
++        imports: AtomicUsize,
++        fail_import: bool,
++        pause_first_import: Option<(mpsc::Sender<()>, Mutex<mpsc::Receiver<()>>)>,
++    }
++
++    impl Keystore for TestHardware {
++        fn create_key(
++            &self,
++            _: &str,
++            _: KeyType,
++            _: KeystoreAccessRules,
++        ) -> Result<(), KeystoreError> {
++            panic!("backup store must import its prepared key")
++        }
++        fn destroy_key(&self, _: &str) -> Result<(), KeystoreError> {
++            panic!("existing keys must not be deleted")
++        }
++        fn list_keys(&self) -> Result<Vec<String>, KeystoreError> {
++            Ok(self.keys.read().unwrap().keys().cloned().collect())
++        }
++        fn import_key(
++            &self,
++            alias: &str,
++            _: KeyType,
++            key: &[u8],
++            _: KeystoreAccessRules,
++        ) -> Result<(), KeystoreError> {
++            let previous = self.imports.fetch_add(1, Ordering::SeqCst);
++            if previous == 0 {
++                if let Some((entered, release)) = &self.pause_first_import {
++                    entered.send(()).unwrap();
++                    release
++                        .lock()
++                        .unwrap()
++                        .recv_timeout(Duration::from_secs(10))
++                        .unwrap();
++                }
++            }
++            if self.fail_import {
++                return Err(KeystoreError::KeystoreError(
++                    "synthetic import failure".to_string(),
++                ));
++            }
++            // Deliberately permits overwrite, so preservation depends on the wrapper guard.
++            self.keys
++                .write()
++                .unwrap()
++                .insert(alias.to_string(), key.to_vec());
++            Ok(())
++        }
++        fn get_key_type(&self, alias: &str) -> Result<Option<KeyType>, KeystoreError> {
++            Ok(self
++                .keys
++                .read()
++                .unwrap()
++                .get(alias)
++                .map(|key| KeyType::Aes(key.len() as u16 * 8)))
++        }
++        fn set_secret(&self, _: &str, _: &[u8]) -> Result<(), KeystoreError> {
++            panic!("test must not write secrets")
++        }
++        fn get_secret(&self, _: &str) -> Result<Option<Vec<u8>>, KeystoreError> {
++            Err(KeystoreError::NotSupported)
++        }
++        fn delete_secret(&self, _: &str) -> Result<(), KeystoreError> {
++            panic!("test must not delete secrets")
++        }
++        fn sign(
++            &self,
++            _: &str,
++            _: KeystoreDigest,
++            _: KeystorePadding,
++            _: &[u8],
++        ) -> Result<Vec<u8>, KeystoreError> {
++            Err(KeystoreError::NotSupported)
++        }
++        fn verify(
++            &self,
++            _: &str,
++            _: KeystoreDigest,
++            _: KeystorePadding,
++            _: &[u8],
++            _: &[u8],
++        ) -> Result<bool, KeystoreError> {
++            Err(KeystoreError::NotSupported)
++        }
++        fn get_public_key(&self, _: &str) -> Result<Vec<u8>, KeystoreError> {
++            Err(KeystoreError::NotSupported)
++        }
++        fn derive(&self, _: &str, _: &[u8]) -> Result<Vec<u8>, KeystoreError> {
++            Err(KeystoreError::NotSupported)
++        }
++        fn encrypt(
++            &self,
++            alias: &str,
++            data: &[u8],
++            _: &mut EncryptMode,
++        ) -> Result<Vec<u8>, KeystoreError> {
++            let keys = self.keys.read().unwrap();
++            contained_gcm_encrypt(keys.get(alias).ok_or(KeystoreError::KeyNotFound)?, data)
++        }
++        fn decrypt(
++            &self,
++            alias: &str,
++            data: &[u8],
++            _: &EncryptMode,
++        ) -> Result<Vec<u8>, KeystoreError> {
++            let keys = self.keys.read().unwrap();
++            contained_gcm_decrypt(keys.get(alias).ok_or(KeystoreError::KeyNotFound)?, data)
++        }
++    }
++
++    fn test_store(hardware: TestHardware) -> (BackupKeystore<TestHardware>, Arc<AtomicUsize>) {
++        // Only ephemeral synthetic material; no platform keystore or filesystem access.
++        let group = EcGroup::from_curve_name(Nid::X9_62_PRIME256V1).unwrap();
++        let master = PKey::from_ec_key(EcKey::generate(&group).unwrap()).unwrap();
++        let updates = Arc::new(AtomicUsize::new(0));
++        let update_count = updates.clone();
++        let store = BackupKeystore {
++            state: RwLock::new(BackupKeystoreState {
++                keys: HashMap::new(),
++                secrets: HashMap::new(),
++                master_key: master.public_key_to_der().unwrap().into(),
++                encrypted_master_key: vec![0; 16].into(),
++            }),
++            update_state: Box::new(move |_| {
++                update_count.fetch_add(1, Ordering::SeqCst);
++            }),
++            hardware,
++            unlocked_key: RwLock::new(Some(master)),
++        };
++        (store, updates)
++    }
++
++    fn snapshot(store: &BackupKeystore<TestHardware>) -> Vec<u8> {
++        plist_to_bin(&*store.state.read().unwrap()).unwrap()
++    }
++
++    fn create_or_import(
++        store: &BackupKeystore<TestHardware>,
++        create: bool,
++    ) -> Result<(), KeystoreError> {
++        if create {
++            store.create_key("test:identity", KeyType::Aes(256), Default::default())
++        } else {
++            store.import_key(
++                "test:identity",
++                KeyType::Aes(256),
++                &[7; 32],
++                Default::default(),
++            )
++        }
++    }
++
++    #[test]
++    fn restored_backup_without_hardware_rejects_create_and_import() {
++        let (store, updates) = test_store(TestHardware::default());
++        {
++            let mut state = store.state.write().unwrap();
++            let encoded = plist_to_bin(&SoftwareKeystoreKey::Aes(vec![9; 32])).unwrap();
++            let backup = BackedUpData::new(state.master_key.as_ref(), &encoded).unwrap();
++            state.keys.insert("test:identity".to_string(), backup);
++        }
++        *store.unlocked_key.write().unwrap() = None;
++        let before = snapshot(&store);
++        for create in [true, false] {
++            assert!(matches!(
++                create_or_import(&store, create),
++                Err(KeystoreError::KeyAlreadyExists)
++            ));
++        }
++        assert!(matches!(
++            store.ensure_exists("test:identity", KeyType::Aes(256), Default::default()),
++            Err(KeystoreError::KeyAlreadyExists)
++        ));
++        assert_eq!(snapshot(&store), before);
++        assert_eq!(updates.load(Ordering::SeqCst), 0);
++        assert_eq!(store.hardware.imports.load(Ordering::SeqCst), 0);
++        assert!(store.hardware.keys.read().unwrap().is_empty());
++    }
++
++    #[test]
++    fn existing_hardware_alias_is_not_overwritten_or_backed_up() {
++        let (store, updates) = test_store(TestHardware::default());
++        store
++            .hardware
++            .keys
++            .write()
++            .unwrap()
++            .insert("test:identity".to_string(), vec![9; 32]);
++        let before = snapshot(&store);
++        for create in [true, false] {
++            assert!(matches!(
++                create_or_import(&store, create),
++                Err(KeystoreError::KeyAlreadyExists)
++            ));
++        }
++        assert_eq!(snapshot(&store), before);
++        assert_eq!(updates.load(Ordering::SeqCst), 0);
++        assert_eq!(store.hardware.imports.load(Ordering::SeqCst), 0);
++        assert_eq!(
++            store.hardware.keys.read().unwrap()["test:identity"],
++            vec![9; 32]
++        );
++    }
++
++    #[test]
++    fn hardware_import_error_leaves_serialized_backup_unchanged() {
++        let (store, updates) = test_store(TestHardware {
++            fail_import: true,
++            ..Default::default()
++        });
++        let before = snapshot(&store);
++        for create in [true, false] {
++            assert!(matches!(
++                create_or_import(&store, create),
++                Err(KeystoreError::KeystoreError(message)) if message == "synthetic import failure"
++            ));
++            assert_eq!(snapshot(&store), before);
++            assert_eq!(updates.load(Ordering::SeqCst), 0);
++            assert!(store.hardware.keys.read().unwrap().is_empty());
++        }
++        assert_eq!(store.hardware.imports.load(Ordering::SeqCst), 2);
++    }
++
++    #[test]
++    fn backup_preparation_error_does_not_import_hardware() {
++        let (store, updates) = test_store(TestHardware::default());
++        store.state.write().unwrap().master_key = vec![0; 4].into();
++        let before = snapshot(&store);
++        for create in [true, false] {
++            assert!(matches!(
++                create_or_import(&store, create),
++                Err(KeystoreError::SoftwareError(_))
++            ));
++        }
++        assert_eq!(snapshot(&store), before);
++        assert_eq!(updates.load(Ordering::SeqCst), 0);
++        assert_eq!(store.hardware.imports.load(Ordering::SeqCst), 0);
++        assert!(store.hardware.keys.read().unwrap().is_empty());
++    }
++
++    #[test]
++    fn valid_backup_create_and_import_preserve_key_material() {
++        for create in [true, false] {
++            let (store, updates) = test_store(TestHardware::default());
++            create_or_import(&store, create).unwrap();
++            let saved = store.get_priv_key("test:identity").unwrap().export().unwrap();
++            assert_eq!(store.hardware.keys.read().unwrap()["test:identity"], saved);
++            if !create {
++                assert_eq!(saved, vec![7; 32]);
++            }
++            let before = snapshot(&store);
++            store
++                .ensure_exists("test:identity", KeyType::Aes(256), Default::default())
++                .unwrap();
++            for duplicate_create in [true, false] {
++                assert!(matches!(
++                    create_or_import(&store, duplicate_create),
++                    Err(KeystoreError::KeyAlreadyExists)
++                ));
++            }
++            assert_eq!(store.hardware.keys.read().unwrap()["test:identity"], saved);
++            let ciphertext = store
++                .encrypt("test:identity", b"synthetic", &mut EncryptMode::Gcm)
++                .unwrap();
++            assert_eq!(
++                store.decrypt("test:identity", &ciphertext, &EncryptMode::Gcm).unwrap(),
++                b"synthetic"
++            );
++            assert_eq!(snapshot(&store), before);
++            assert_eq!(updates.load(Ordering::SeqCst), 1);
++            assert_eq!(store.hardware.imports.load(Ordering::SeqCst), 1);
++        }
++    }
++
++    #[test]
++    fn concurrent_create_and_import_of_same_alias_do_not_overwrite() {
++        let (entered_tx, entered_rx) = mpsc::channel();
++        let (release_tx, release_rx) = mpsc::channel();
++        let (store, updates) = test_store(TestHardware {
++            pause_first_import: Some((entered_tx, Mutex::new(release_rx))),
++            ..Default::default()
++        });
++        let (created, imported, held_lock) = std::thread::scope(|scope| {
++            let create = scope.spawn(|| create_or_import(&store, true));
++            entered_rx.recv_timeout(Duration::from_secs(10)).unwrap();
++            // Observe the critical section while hardware is paused, without timing sleeps.
++            let held_lock = matches!(
++                store.state.try_write(),
++                Err(std::sync::TryLockError::WouldBlock)
++            );
++            let import = scope.spawn(|| create_or_import(&store, false));
++            release_tx.send(()).unwrap();
++            (create.join().unwrap(), import.join().unwrap(), held_lock)
++        });
++        assert!(held_lock);
++        created.unwrap();
++        assert!(matches!(imported, Err(KeystoreError::KeyAlreadyExists)));
++        assert_eq!(store.hardware.imports.load(Ordering::SeqCst), 1);
++        assert_eq!(updates.load(Ordering::SeqCst), 1);
++        assert_eq!(store.state.read().unwrap().keys.len(), 1);
++        assert_eq!(
++            store.hardware.keys.read().unwrap()["test:identity"],
++            store.get_priv_key("test:identity").unwrap().export().unwrap()
++        );
++    }
++}
+diff --git a/rustpush/keystore/src/software.rs b/rustpush/keystore/src/software.rs
+index 0ba955276152811daa9663a1b5604b8854d1bc38..abb2f856ddcbfaf7aa30ec892066b04ccef8fc9a 100644
+--- a/rustpush/keystore/src/software.rs
++++ b/rustpush/keystore/src/software.rs
+@@ -313,11 +313,20 @@ pub(crate) fn contained_gcm_decrypt(key: &[u8], text: &[u8]) -> Result<Vec<u8>,
+ 
+ impl<T: SoftwareKeystoreEncryptor> SoftwareKeystore<T> {
+     fn get_key(&self, alias: &str) -> Result<SoftwareKeystoreKey, KeystoreError> {
++        self.get_key_if_present(alias)?
++            .ok_or(KeystoreError::KeyNotFound)
++    }
++
++    fn get_key_if_present(&self, alias: &str) -> Result<Option<SoftwareKeystoreKey>, KeystoreError> {
+         let state = self.state.read().expect("Failed to read!");
+-        let key = state.keys.get(alias).ok_or(KeystoreError::KeyNotFound)?;
++        let Some(key) = state.keys.get(alias) else {
++            return Ok(None);
++        };
+ 
++        // A missing wrapping key is an error for a present entry, not permission to replace it.
+         let cipher = self.encryptor.decrypt(&key.as_ref())?;
+         plist::from_bytes(&cipher)
++            .map(Some)
+             .map_err(|_| KeystoreError::KeystoreError("Invalid software key entry".to_string()))
+     }
+ 
+@@ -481,9 +490,7 @@ impl<T: SoftwareKeystoreEncryptor + Send + Sync + 'static> Keystore for Software
+     }
+ 
+     fn get_key_type(&self, alias: &str) -> Result<Option<KeyType>, KeystoreError> {
+-        let state = self.get_key(alias).ok();
+-
+-        Ok(state.map(|k| k.get_type()))
++        Ok(self.get_key_if_present(alias)?.map(|key| key.get_type()))
+     }
+ 
+     fn get_public_key(&self, alias: &str) -> Result<Vec<u8>, KeystoreError> {
+@@ -577,6 +584,128 @@ impl<T: SoftwareKeystoreEncryptor + Send + Sync + 'static> Keystore for Software
+ mod tests {
+     use super::*;
+ 
++    struct LookupOnlyEncryptor<T>(T);
++
++    impl<T: SoftwareKeystoreEncryptor> SoftwareKeystoreEncryptor for LookupOnlyEncryptor<T> {
++        fn encrypt(&self, _data: &[u8]) -> Result<Vec<u8>, KeystoreError> {
++            panic!("lookup must not wrap a replacement key")
++        }
++
++        fn decrypt(&self, data: &[u8]) -> Result<Vec<u8>, KeystoreError> {
++            self.0.decrypt(data)
++        }
++    }
++
++    struct MissingWrappingKey;
++
++    impl SoftwareKeystoreEncryptor for MissingWrappingKey {
++        fn encrypt(&self, _data: &[u8]) -> Result<Vec<u8>, KeystoreError> {
++            panic!("missing wrapping key must not be replaced")
++        }
++
++        fn decrypt(&self, _data: &[u8]) -> Result<Vec<u8>, KeystoreError> {
++            Err(KeystoreError::KeyNotFound)
++        }
++    }
++
++    fn lookup_store<T: SoftwareKeystoreEncryptor>(
++        wrapped: Vec<u8>,
++        encryptor: T,
++    ) -> SoftwareKeystore<LookupOnlyEncryptor<T>> {
++        SoftwareKeystore {
++            state: RwLock::new(SoftwareKeystoreState {
++                keys: HashMap::from([("test:restored".to_string(), wrapped.into())]),
++                secrets: HashMap::new(),
++            }),
++            update_state: Box::new(|_| panic!("lookup must not persist replacement state")),
++            encryptor: LookupOnlyEncryptor(encryptor),
++        }
++    }
++
++    #[test]
++    fn get_key_type_returns_none_only_for_absent_alias() {
++        let store = lookup_store(vec![1, 2, 3], MissingWrappingKey);
++        assert!(matches!(store.get_key_type("test:absent"), Ok(None)));
++        assert!(matches!(
++            store.get_key("test:absent"),
++            Err(KeystoreError::KeyNotFound)
++        ));
++        assert!(matches!(
++            store.get_key_type("test:restored"),
++            Err(KeystoreError::KeyNotFound)
++        ));
++    }
++
++    #[test]
++    fn missing_wrapping_key_does_not_trigger_replacement() {
++        let encoded = plist_to_bin(&SoftwareKeystoreKey::Aes(vec![9; 32])).unwrap();
++        let wrapped = SoftwareEncryptor([1; 32]).encrypt(&encoded).unwrap();
++        let store = lookup_store(wrapped, MissingWrappingKey);
++        let before = plist_to_bin(&*store.state.read().unwrap()).unwrap();
++        for _ in 0..2 {
++            assert!(matches!(
++                store.ensure_exists("test:restored", KeyType::Aes(256), Default::default()),
++                Err(KeystoreError::KeyNotFound)
++            ));
++        }
++        assert_eq!(plist_to_bin(&*store.state.read().unwrap()).unwrap(), before);
++    }
++
++    #[test]
++    fn unreadable_software_entries_do_not_trigger_replacement() {
++        let encoded = plist_to_bin(&SoftwareKeystoreKey::Aes(vec![9; 32])).unwrap();
++        let cases = [
++            (
++                SoftwareEncryptor([1; 32]).encrypt(&encoded).unwrap(),
++                "Software-encryption authentication failed",
++            ),
++            (
++                SoftwareEncryptor([2; 32])
++                    .encrypt(b"invalid plist")
++                    .unwrap(),
++                "Invalid software key entry",
++            ),
++        ];
++        for (wrapped, expected) in cases {
++            let store = lookup_store(wrapped, SoftwareEncryptor([2; 32]));
++            let before = plist_to_bin(&*store.state.read().unwrap()).unwrap();
++            assert!(matches!(
++                store.get_key_type("test:restored"),
++                Err(KeystoreError::KeystoreError(message)) if message == expected
++            ));
++            for _ in 0..2 {
++                assert!(matches!(
++                    store.ensure_exists("test:restored", KeyType::Aes(256), Default::default()),
++                    Err(KeystoreError::KeystoreError(message)) if message == expected
++                ));
++            }
++            assert_eq!(plist_to_bin(&*store.state.read().unwrap()).unwrap(), before);
++        }
++    }
++
++    #[test]
++    fn valid_software_entry_is_reused() {
++        let encoded = plist_to_bin(&SoftwareKeystoreKey::Aes(vec![9; 32])).unwrap();
++        let encryptor = SoftwareEncryptor([1; 32]);
++        let store = lookup_store(encryptor.encrypt(&encoded).unwrap(), encryptor);
++        let before = plist_to_bin(&*store.state.read().unwrap()).unwrap();
++        assert!(matches!(
++            store.get_key_type("test:restored"),
++            Ok(Some(KeyType::Aes(256)))
++        ));
++        store
++            .ensure_exists("test:restored", KeyType::Aes(256), Default::default())
++            .unwrap();
++        let ciphertext =
++            Keystore::encrypt(&store, "test:restored", b"synthetic", &mut EncryptMode::Gcm)
++                .unwrap();
++        assert_eq!(
++            Keystore::decrypt(&store, "test:restored", &ciphertext, &EncryptMode::Gcm).unwrap(),
++            b"synthetic"
++        );
++        assert_eq!(plist_to_bin(&*store.state.read().unwrap()).unwrap(), before);
++    }
++
+     #[test]
+     fn contained_gcm_rejects_truncated_and_tampered_payloads() {
+         let key = [7_u8; 32];
 diff --git a/rustpush/src/lib.rs b/rustpush/src/lib.rs
-index 92598e8..814d27c 100644
+index 92598e826efc7766e651409d324b199957b94aeb..814d27c54fe78a2ad2431d282df4135b47191cf1 100644
 --- a/rustpush/src/lib.rs
 +++ b/rustpush/src/lib.rs
 @@ -26,6 +26,9 @@ pub use util::CompactECKey;
@@ -141,10 +1710,10 @@ index 92598e8..814d27c 100644
  
  pub mod mmcsp {
 diff --git a/rustpush/src/macos.rs b/rustpush/src/macos.rs
-index 0b3a95e..6258422 100644
+index 0b3a95eaadcd5eb1d367665abae3023a111621b8..62584223118349f1e0bb97cf3e51692789150d3a 100644
 --- a/rustpush/src/macos.rs
 +++ b/rustpush/src/macos.rs
-@@ -111,5 +111,9 @@ impl OSConfig for MacOSConfig {
+@@ -111,6 +111,10 @@ impl OSConfig for MacOSConfig {
      async fn generate_validation_data(&self) -> Result<Vec<u8>, PushError> {
          #[cfg(not(target_os = "macos"))]
          {
@@ -154,3 +1723,377 @@ index 0b3a95e..6258422 100644
 +            }
              return Err(PushError::MacValidationUnavailable);
          }
+ 
+diff --git a/rustpush/apple-private-apis/icloud-auth/src/client.rs b/rustpush/apple-private-apis/icloud-auth/src/client.rs
+index 4f074853020ba1c66e324a1415839602e580dc38..4d10759914748f0aafb423f0bb0d86df5b34130f 100644
+--- a/rustpush/apple-private-apis/icloud-auth/src/client.rs
++++ b/rustpush/apple-private-apis/icloud-auth/src/client.rs
+@@ -24,6 +24,31 @@ use uuid::Uuid;
+ const GSA_ENDPOINT: &str = "https://gsa.apple.com/grandslam/GsService2";
+ const APPLE_ROOT: &[u8] = include_bytes!("./apple_root.der");
+ 
++#[derive(Clone, Copy)]
++enum AuthResponseStage {
++    SrpInit,
++    SrpComplete,
++    TrustedDeviceVerification,
++}
++
++impl AuthResponseStage {
++    fn label(self) -> &'static str {
++        match self {
++            Self::SrpInit => "srp-init",
++            Self::SrpComplete => "srp-complete",
++            Self::TrustedDeviceVerification => "trusted-device-verification",
++        }
++    }
++}
++
++// Only fixed stage names and numeric status may enter this diagnostic. Never
++// include the response dictionary, server message, account name or SRP material.
++fn auth_status_summary(stage: AuthResponseStage, code: Option<i64>, hsc: Option<i64>) -> String {
++    let code = code.map(|value| value.to_string()).unwrap_or_else(|| "missing-or-invalid".to_string());
++    let hsc = hsc.map(|value| value.to_string()).unwrap_or_else(|| "absent-or-invalid".to_string());
++    format!("stage={}; code={code}; hsc={hsc}", stage.label())
++}
++
+ #[derive(Debug, Serialize, Deserialize)]
+ pub struct InitRequestBody {
+     #[serde(rename = "A2k")]
+@@ -235,15 +260,20 @@ fn classify_html_page(body: &str) -> &'static str {
+     }
+ }
+ 
+-fn safe_response_url(response: &Response) -> String {
+-    let url = response.url();
+-    format!("{}://{}", url.scheme(), url.host_str().unwrap_or("unknown-host"))
++fn safe_response_origin(value: &str) -> String {
++    match reqwest::Url::parse(value) {
++        Ok(url) if matches!(url.scheme(), "https" | "http") && url.host_str().is_some() => {
++            format!("{}://{}", url.scheme(), url.host_str().unwrap())
++        }
++        _ => "unknown-origin".to_string(),
++    }
+ }
+ 
+ fn unexpected_response_summary(stage: &str, status: reqwest::StatusCode, content_type: &str, final_url: &str, body: &str) -> String {
+     let digest = format!("{:x}", Sha256::digest(body.as_bytes()));
++    let final_origin = safe_response_origin(final_url);
+     format!(
+-        "stage={stage}; status={}; content_type={}; final_origin={final_url}; body_kind=html; page={}; bytes={}; sha256={}",
++        "stage={stage}; status={}; content_type={}; final_origin={final_origin}; body_kind=html; page={}; bytes={}; sha256={}",
+         status.as_u16(), content_type.split(';').next().unwrap_or("unknown"), classify_html_page(body),
+         body.len(), &digest[..16]
+     )
+@@ -252,7 +282,7 @@ fn unexpected_response_summary(stage: &str, status: reqwest::StatusCode, content
+ async fn parse_response(stage: &str, res: Result<Response, reqwest::Error>) -> Result<plist::Dictionary, crate::Error> {
+     let response = res?;
+     let status = response.status();
+-    let final_url = safe_response_url(&response);
++    let final_url = safe_response_origin(response.url().as_str());
+     let content_type = response.headers().get(CONTENT_TYPE)
+         .and_then(|value| value.to_str().ok()).unwrap_or("unknown").to_string();
+     let body = response.text().await?;
+@@ -357,6 +387,10 @@ fn map_login_state(status: &Dictionary) -> LoginState {
+             "secondaryAuth" => LoginState::NeedsSMS2FA,
+             unk => LoginState::NeedsExtraStep(unk.to_string()),
+         },
++        // Apple can omit `au` when a trusted-device verification challenge was
++        // already sent. A valid SRP proof is not completed two-factor login.
++        _ if status.get("hsc").and_then(Value::as_signed_integer) == Some(409) =>
++            LoginState::Needs2FAVerification,
+         _ => LoginState::LoggedIn,
+     }
+ }
+@@ -774,19 +808,13 @@ impl<T: AnisetteProvider> AppleAccount<T> {
+         Ok(LoginState::LoggedIn)
+     }
+ 
+-    pub async fn login_email_pass(
+-        &mut self,
++    async fn request_srp_init(
++        &self,
+         username: &str,
+-        hashed_password: &[u8],
+-    ) -> Result<LoginState, Error> {
+-        let srp_client = SrpClient::<Sha256>::new(&G_2048);
+-        let a: Vec<u8> = (0..32).map(|_| rand::random::<u8>()).collect();
+-        let a_pub = srp_client.compute_public_ephemeral(&a);
+-
+-        self.username = Some(username.to_string());
+-
+-        let valid_anisette = self.get_anisette().await?;
+-
++        a_pub: Vec<u8>,
++        valid_anisette: &AnisetteData,
++        request_id: &str,
++    ) -> Result<(Dictionary, HeaderMap), Error> {
+         let mut gsa_headers = HeaderMap::new();
+         gsa_headers.insert(
+             "Content-Type",
+@@ -795,14 +823,12 @@ impl<T: AnisetteProvider> AppleAccount<T> {
+         gsa_headers.insert("Accept", HeaderValue::from_str("*/*").unwrap());
+         gsa_headers.extend(valid_anisette.get_gsservice_headers().into_iter().map(|(a, b)| (HeaderName::from_str(&a).unwrap(), HeaderValue::from_str(&b).unwrap())));
+ 
+-        let request_id = Uuid::new_v4().to_string().to_uppercase();
+-
+         let header = RequestHeader {
+             version: "1.0.1".to_string(),
+         };
+         let body = InitRequestBody {
+             a_pub: plist::Value::Data(a_pub),
+-            cpd: valid_anisette.get_cpd_data(&request_id),
++            cpd: valid_anisette.get_cpd_data(request_id),
+             operation: "init".to_string(),
+             ps: vec!["s2k".to_string(), "s2k_fo".to_string()],
+             username: username.to_string(),
+@@ -827,8 +853,28 @@ impl<T: AnisetteProvider> AppleAccount<T> {
+             .body(buffer)
+             .send().await;
+ 
+-        let res = parse_response("srp-init", res).await?;
+-        Self::check_error(&res)?;
++        let stage = AuthResponseStage::SrpInit;
++        let res = parse_response(stage.label(), res).await?;
++        Self::check_error_at_stage(stage, &res)?;
++        Ok((res, gsa_headers))
++    }
++
++    pub async fn login_email_pass(
++        &mut self,
++        username: &str,
++        hashed_password: &[u8],
++    ) -> Result<LoginState, Error> {
++        let srp_client = SrpClient::<Sha256>::new(&G_2048);
++        let a: Vec<u8> = (0..32).map(|_| rand::random::<u8>()).collect();
++        let a_pub = srp_client.compute_public_ephemeral(&a);
++
++        self.username = Some(username.to_string());
++        let valid_anisette = self.get_anisette().await?;
++        let request_id = Uuid::new_v4().to_string().to_uppercase();
++        let header = RequestHeader { version: "1.0.1".to_string() };
++        let (res, gsa_headers) = self.request_srp_init(
++            username, a_pub, &valid_anisette, &request_id,
++        ).await?;
+         // println!("{:?}", res);
+         let init = srp_init_params(&res)?;
+         let salt = init.salt;
+@@ -888,8 +934,9 @@ impl<T: AnisetteProvider> AppleAccount<T> {
+             .body(buffer)
+             .send().await;
+ 
+-        let res = parse_response("srp-complete", res).await?;
+-        Self::check_error(&res)?;
++        let stage = AuthResponseStage::SrpComplete;
++        let res = parse_response(stage.label(), res).await?;
++        Self::check_error_at_stage(stage, &res)?;
+         // println!("{:?}", res);
+         let (m2, spd, status) = srp_complete_parts(&res)?;
+         verifier
+@@ -985,6 +1032,7 @@ impl<T: AnisetteProvider> AppleAccount<T> {
+             .json(&body)
+             .send().await?;
+ 
++        debug!("Apple authentication HTTP: stage=sms-request; status={}", res.status().as_u16());
+         if !res.status().is_success() {
+             return Err(Error::AuthSrp);
+         }
+@@ -1001,6 +1049,7 @@ impl<T: AnisetteProvider> AppleAccount<T> {
+             .header("Accept", "application/json")
+             .send().await?;
+         let status = req.status().as_u16();
++        debug!("Apple authentication HTTP: stage=trusted-phone-options; status={status}");
+         if status == 403 {
+             warn!("Failed to retrieve GSA authentication extras (HTTP 403)");
+             return Err(Error::FailedGetting2FAConfig);
+@@ -1087,7 +1136,7 @@ impl<T: AnisetteProvider> AppleAccount<T> {
+         let res: plist::Dictionary =
+             plist::from_bytes(res.text().await?.as_bytes())?;
+ 
+-        Self::check_error(&res)?;
++        Self::check_error_at_stage(AuthResponseStage::TrustedDeviceVerification, &res)?;
+ 
+         // this endpoint is stupid
+         // in the SMS 2fa endpoint, all tokens have format ID:TOKEN:DURATION:EXP (MS SINCE EPOCH)
+@@ -1200,6 +1249,21 @@ impl<T: AnisetteProvider> AppleAccount<T> {
+         Ok(())
+     }
+ 
++    fn check_error_at_stage(stage: AuthResponseStage, res: &plist::Dictionary) -> Result<(), Error> {
++        let result = Self::check_error(res);
++        let status = res.get("Status").and_then(Value::as_dictionary).unwrap_or(res);
++        let hsc = status.get("hsc").and_then(plist_i64);
++        match &result {
++            Ok(()) => debug!("Apple authentication status: {}", auth_status_summary(stage, Some(0), hsc)),
++            Err(Error::AuthSrpWithMessage(code, _)) => {
++                warn!("Apple authentication status: {}", auth_status_summary(stage, Some(*code), hsc));
++            }
++            Err(_) => warn!("Apple authentication status: {}", auth_status_summary(stage, None, hsc)),
++        }
++        // Preserve the existing error variant, message and retry behavior.
++        result
++    }
++
+     // pub async 
+ 
+     fn two_factor_identity(
+@@ -1255,11 +1319,15 @@ impl<T: AnisetteProvider> AppleAccount<T> {
+     }
+ }
+ 
++#[cfg(all(test, feature = "remote-anisette-v3"))]
++#[path = "auth_probe.rs"]
++mod auth_probe;
++
+ #[cfg(test)]
+ mod tests {
+     use super::{
+         AppleAccount, map_login_state, spd_account_name, srp_complete_parts,
+-        srp_init_params, unexpected_response_summary, LoginState,
++        srp_init_params, unexpected_response_summary, auth_status_summary, AuthResponseStage, LoginState,
+     };
+     use crate::Error;
+     use plist::{Dictionary, Value};
+@@ -1333,6 +1401,24 @@ mod tests {
+         assert!(!summary.contains("123456"));
+     }
+ 
++    #[test]
++    fn unexpected_html_response_strips_url_credentials_path_query_and_fragment() {
++        let summary = unexpected_response_summary(
++            "srp-init", StatusCode::FORBIDDEN, "text/html",
++            "https://synthetic-user:synthetic-password@gsa.apple.com/private-path?account=person@example.test#synthetic-code",
++            "<html>Sign in</html>",
++        );
++        assert!(summary.contains("final_origin=https://gsa.apple.com;"));
++        for private in ["synthetic-user", "synthetic-password", "private-path", "person@example.test", "synthetic-code"] {
++            assert!(!summary.contains(private));
++        }
++        for invalid in ["not-a-url-with-synthetic-secret", "data:text/plain,synthetic-secret"] {
++            let summary = unexpected_response_summary("srp-init", StatusCode::OK, "text/html", invalid, "<html></html>");
++            assert!(summary.contains("final_origin=unknown-origin;"));
++            assert!(!summary.contains("synthetic-secret"));
++        }
++    }
++
+     fn wellformed_srp_init() -> Dictionary {
+         let mut res = Dictionary::new();
+         res.insert("s".to_string(), Value::Data(vec![1, 2, 3, 4]));
+@@ -1452,6 +1538,64 @@ mod tests {
+         ));
+     }
+ 
++    #[test]
++    fn auth_status_summary_distinguishes_fixed_stages_without_response_contents() {
++        for (stage, expected) in [
++            (AuthResponseStage::SrpInit, "srp-init"),
++            (AuthResponseStage::SrpComplete, "srp-complete"),
++            (AuthResponseStage::TrustedDeviceVerification, "trusted-device-verification"),
++        ] {
++            assert_eq!(auth_status_summary(stage, Some(-80045), None), format!("stage={expected}; code=-80045; hsc=absent-or-invalid"));
++            assert_eq!(auth_status_summary(stage, Some(0), Some(409)), format!("stage={expected}; code=0; hsc=409"));
++            assert_eq!(auth_status_summary(stage, None, Some(434)), format!("stage={expected}; code=missing-or-invalid; hsc=434"));
++        }
++    }
++
++    #[test]
++    fn auth_stage_diagnostics_preserve_server_rejection_and_success() {
++        type Provider = omnisette::DefaultAnisetteProvider;
++        for stage in [AuthResponseStage::SrpInit, AuthResponseStage::SrpComplete, AuthResponseStage::TrustedDeviceVerification] {
++            let response = Dictionary::from_iter([(
++                "Status".to_string(),
++                Value::Dictionary(Dictionary::from_iter([
++                    ("ec".to_string(), Value::Integer((-80045).into())),
++                    ("hsc".to_string(), Value::Integer(434.into())),
++                    ("em".to_string(), Value::String("synthetic account@example.test response".to_string())),
++                    ("X-Apple-I-MD-DATA".to_string(), Value::String("synthetic-challenge-secret".to_string())),
++                ])),
++            )]);
++            match AppleAccount::<Provider>::check_error_at_stage(stage, &response) {
++                Err(Error::AuthSrpWithMessage(code, message)) => {
++                    assert_eq!(code, -80045);
++                    assert_eq!(message, "synthetic account@example.test response");
++                    let diagnostic = auth_status_summary(stage, Some(code), Some(434));
++                    assert!(!diagnostic.contains(&message));
++                    assert!(!diagnostic.contains("account@example.test"));
++                    assert!(!diagnostic.contains("synthetic-challenge-secret"));
++                }
++                other => panic!("expected unchanged server rejection, got {other:?}"),
++            }
++            let success = Dictionary::from_iter([("ec".to_string(), Value::Integer(0.into()))]);
++            assert!(AppleAccount::<Provider>::check_error_at_stage(stage, &success).is_ok());
++        }
++    }
++
++    #[test]
++    fn auth_stage_diagnostics_preserve_malformed_status_failure() {
++        type Provider = omnisette::DefaultAnisetteProvider;
++        for invalid in [Value::String("synthetic-secret".to_string()), Value::Data(vec![1, 2, 3])] {
++            let response = Dictionary::from_iter([("ec".to_string(), invalid)]);
++            assert!(matches!(
++                AppleAccount::<Provider>::check_error_at_stage(AuthResponseStage::SrpInit, &response),
++                Err(Error::Parse)
++            ));
++        }
++        assert!(matches!(
++            AppleAccount::<Provider>::check_error_at_stage(AuthResponseStage::SrpComplete, &Dictionary::new()),
++            Err(Error::Parse)
++        ));
++    }
++
+     #[test]
+     fn check_error_maps_server_status_without_panicking() {
+         type Provider = omnisette::DefaultAnisetteProvider;
+@@ -1517,6 +1661,20 @@ mod tests {
+         }
+     }
+ 
++    #[test]
++    fn already_sent_challenge_is_not_treated_as_logged_in() {
++        let mut status = Dictionary::from_iter([
++            ("ec".to_string(), Value::Integer(0.into())),
++            ("hsc".to_string(), Value::Integer(409.into())),
++        ]);
++        assert!(matches!(map_login_state(&status), LoginState::Needs2FAVerification));
++        status.insert("au".to_string(), Value::String("secondaryAuth".to_string()));
++        assert!(matches!(map_login_state(&status), LoginState::NeedsSMS2FA));
++        status.remove("au");
++        status.insert("hsc".to_string(), Value::Integer(200.into()));
++        assert!(matches!(map_login_state(&status), LoginState::LoggedIn));
++    }
++
+     #[test]
+     fn spd_account_name_and_login_state_mapping_are_preserved() {
+         let mut spd = Dictionary::new();
+@@ -1560,4 +1718,13 @@ mod tests {
+         status.insert("au".to_string(), Value::Integer(1.into()));
+         assert!(matches!(map_login_state(&status), LoginState::LoggedIn));
+     }
++
++    #[test]
++    fn unavailable_verification_options_do_not_instruct_security_downgrade() {
++        for error in [Error::FailedGetting2FAConfig, Error::HardwareKeyError] {
++            let message = error.to_string();
++            assert!(!message.to_lowercase().contains("disable"));
++            assert!(message.contains("trusted-device verification code"));
++        }
++    }
+ }
+diff --git a/rustpush/apple-private-apis/icloud-auth/src/lib.rs b/rustpush/apple-private-apis/icloud-auth/src/lib.rs
+index a730830103f734ebde09bbc25648ae4f24709cee..6cd950c6ec90fa7a2616de578336cc18b4d07b3d 100644
+--- a/rustpush/apple-private-apis/icloud-auth/src/lib.rs
++++ b/rustpush/apple-private-apis/icloud-auth/src/lib.rs
+@@ -30,11 +30,11 @@ pub enum Error {
+     ReqwestError(#[from] reqwest::Error),
+     #[error("Failed getting anisette data {0}")]
+     ErrorGettingAnisette(#[from] omnisette::AnisetteError),
+-    #[error("Disable Advanced Data Protection")]
++    #[error("Apple could not provide verification options. Try again later or use a trusted-device verification code if available.")]
+     FailedGetting2FAConfig,
+     #[error("Serde Error")]
+     SerdeError(#[from] serde_json::Error),
+-    #[error("Disable hardware authentication keys and try again!")]
++    #[error("Apple did not return a supported trusted phone number. Use a trusted-device verification code if available.")]
+     HardwareKeyError,
+     #[error("Malformed Apple SRP init response: missing or invalid '{0}'")]
+     MalformedSrpInit(&'static str),

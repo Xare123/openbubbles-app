@@ -19,16 +19,55 @@ from run_corten_component_probe import (SOURCE, NATIVE, OWNED_GROUPS, command,
 
 TOOLS = Path(__file__).resolve().parents[1]
 OVERLAY = TOOLS / "corten_login_integration"
-TRACKED = ("rust/Cargo.toml", "rust/src/api/api.rs", "rust/src/lib.rs",
-           "rustpush/Cargo.toml", "rustpush/src/lib.rs", "rustpush/src/macos.rs",
-           "rust/Cargo.lock", "lib/services/rustpush/rustpush_service.dart",
-           "lib/cloud_sync_v2_windows_harness.dart",
-           "test/services/rustpush_startup_readiness_contract_test.dart")
-ADDED = {"rust/src/corten_dev_validation.rs":"corten_dev_validation.rs",
-         "rustpush/src/mac_validation_provider.rs":"mac_validation_provider.rs"}
+TRACKED = (
+    "lib/cloud_sync_v2_windows_harness.dart",
+    "lib/services/rustpush/rustpush_service.dart",
+    "lib/app/layouts/setup/setup_view.dart",
+    "lib/app/layouts/setup/pages/rustpush/appleid_login.dart",
+    "lib/app/layouts/setup/pages/rustpush/hw_inp.dart",
+    "lib/app/layouts/setup/pages/rustpush/phone_number.dart",
+    "lib/src/rust/api/api.dart",
+    "lib/src/rust/frb_generated.dart",
+    "rust/Cargo.toml",
+    "rust/Cargo.lock",
+    "rust/src/api/api.rs",
+    "rust/src/api/cloud_sync_chat1_correlation.rs",
+    "rust/src/frb_generated.rs",
+    "rust/src/lib.rs",
+    "test/services/rustpush_startup_readiness_contract_test.dart",
+    "rustpush/Cargo.toml",
+    "rustpush/src/lib.rs",
+    "rustpush/src/macos.rs",
+    "rustpush/keystore/src/software.rs",
+    "rustpush/keystore/src/backup.rs",
+    "rustpush/apple-private-apis/icloud-auth/src/client.rs",
+    "rustpush/apple-private-apis/icloud-auth/src/lib.rs",
+)
+ADDED = {
+    "rust/src/corten_dev_validation.rs": "corten_dev_validation.rs",
+    "rustpush/src/mac_validation_provider.rs": "mac_validation_provider.rs",
+    "test/app/layouts/setup/setup_connection_failure_test.dart": "setup_connection_failure_test.dart",
+    "test/app/layouts/setup/trusted_device_verification_test.dart": "trusted_device_verification_test.dart",
+    "rustpush/apple-private-apis/icloud-auth/src/auth_probe.rs": "auth_probe.rs"
+}
 
 def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def verify_overlay_source(source):
+    """Require the exact reviewed text snapshot, including both FFI sides."""
+    manifest = json.loads((OVERLAY / "source-manifest.json").read_text())
+    if (manifest.get("format_version") != 1 or manifest.get("source") != SOURCE
+            or manifest.get("native") != NATIVE
+            or manifest.get("normalization") != "utf8-crlf-to-lf"
+            or set(manifest.get("files", {})) != set(TRACKED) | set(ADDED)):
+        raise RuntimeError("Integration source manifest does not match admitted scope")
+    for name, expected in manifest["files"].items():
+        actual = hashlib.sha256((source/name).read_bytes().replace(b"\r\n", b"\n")).hexdigest()
+        if actual != expected:
+            raise RuntimeError("Integration source differs from reviewed snapshot: " + name)
+    return manifest["files"]
 
 def remove_owned_inputs(source, directories, files):
     """Only inputs created by this invocation, never evidence or existing work."""
@@ -69,7 +108,9 @@ def overlay(source, out, env):
         if applied["exit"]:
             raise RuntimeError("Integration patch did not apply")
         for destination, template in ADDED.items():
+            (source / destination).parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(OVERLAY / template, source / destination)
+        verify_overlay_source(source)
         yield originals["rust/Cargo.lock"]
     finally:
         for name, original in originals.items():
@@ -115,6 +156,7 @@ def run(source, out):
                     with (source / f"rustpush/certs/legacy-fairplay/fairplay.{suffix}").open("rb") as original:
                         shutil.copyfileobj(original, fixture)
         with overlay(source,out,env) as original_lock:
+            receipt["application_source_hashes"] = verify_overlay_source(source)
             manifest = str(source / "rust/Cargo.toml")
             # Preserve every existing registry pin; allow only additive engine
             # packages before freezing this one private integration graph.

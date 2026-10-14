@@ -1,5 +1,7 @@
 """Bounded orchestration checks, not app or Apple execution evidence."""
 from contextlib import ExitStack
+import hashlib
+import json
 import os
 from pathlib import Path
 import subprocess
@@ -32,7 +34,7 @@ class IntegrationSafety(unittest.TestCase):
                 path.write_bytes(originals[name])
             for name in run.ADDED.values():
                 (templates/name).write_text("// fixture only\n")
-            with patch.object(run, "OVERLAY", templates), patch.object(run, "command", return_value={"exit":0}):
+            with patch.object(run, "OVERLAY", templates), patch.object(run, "command", return_value={"exit":0}), patch.object(run, "verify_overlay_source"):
                 with self.assertRaisesRegex(RuntimeError, "injected"):
                     with run.overlay(source, root, {}):
                         (source/"rust/Cargo.lock").write_bytes(b"changed")
@@ -85,9 +87,14 @@ class IntegrationSafety(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             fixture = Path(directory)
             for name in run.TRACKED:
-                native = name.startswith("rustpush/")
-                repository = source/"rustpush" if native else source
-                rel = name.removeprefix("rustpush/") if native else name
+                if name.startswith("rustpush/apple-private-apis/"):
+                    repository = source/"rustpush/apple-private-apis"
+                    rel = name.removeprefix("rustpush/apple-private-apis/")
+                elif name.startswith("rustpush/"):
+                    repository = source/"rustpush"
+                    rel = name.removeprefix("rustpush/")
+                else:
+                    repository, rel = source, name
                 blob = subprocess.check_output(["git", "-C", str(repository), "show", "HEAD:"+rel])
                 path = fixture/name
                 path.parent.mkdir(parents=True, exist_ok=True)
@@ -95,6 +102,45 @@ class IntegrationSafety(unittest.TestCase):
             result = subprocess.run(["git", "apply", "--check", str(run.OVERLAY/"application.patch")],
                                     cwd=fixture, capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stderr)
+            subprocess.run(["git", "apply", str(run.OVERLAY/"application.patch")],
+                           cwd=fixture, check=True, capture_output=True)
+            for name, template in run.ADDED.items():
+                target = fixture/name
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes((run.OVERLAY/template).read_bytes())
+            hashes = run.verify_overlay_source(fixture)
+            self.assertEqual(len(hashes), len(run.TRACKED) + len(run.ADDED))
+            for native_boundary in ["rust/src/frb_generated.rs", "lib/src/rust/frb_generated.dart",
+                                    "rustpush/apple-private-apis/icloud-auth/src/client.rs"]:
+                self.assertIn(native_boundary, hashes)
+
+    def test_manifest_verifies_content_preserves_escaped_newlines_and_rejects_scope_drift(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source, templates = root/"source", root/"templates"
+            templates.mkdir()
+            payload = b"line one\r\ncontains literal \\r\\n\r\n"
+            hashes = {}
+            for name in (*run.TRACKED, *run.ADDED):
+                target = source/name
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(payload)
+                hashes[name] = hashlib.sha256(payload.replace(b"\r\n", b"\n")).hexdigest()
+            manifest = {"format_version":1, "source":run.SOURCE, "native":run.NATIVE,
+                        "normalization":"utf8-crlf-to-lf", "files":hashes}
+            receipt = templates/"source-manifest.json"
+            receipt.write_text(json.dumps(manifest))
+            with patch.object(run, "OVERLAY", templates):
+                self.assertEqual(run.verify_overlay_source(source), hashes)
+                altered = source/"lib/src/rust/frb_generated.dart"
+                altered.write_bytes(payload.replace(b"\\r\\n", b"\\n"))
+                with self.assertRaisesRegex(RuntimeError, "differs from reviewed snapshot"):
+                    run.verify_overlay_source(source)
+                altered.write_bytes(payload)
+                del hashes["rust/src/frb_generated.rs"]
+                receipt.write_text(json.dumps(manifest))
+                with self.assertRaisesRegex(RuntimeError, "admitted scope"):
+                    run.verify_overlay_source(source)
 
     def test_workflow_integration_does_not_fall_through_to_apk_or_exchange(self):
         workflow = (run.TOOLS.parent/".github/workflows/gce-runner-pilot.yml").read_text()

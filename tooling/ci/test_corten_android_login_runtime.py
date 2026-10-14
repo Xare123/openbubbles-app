@@ -33,9 +33,37 @@ class RuntimeTests(unittest.TestCase):
                              (0, raw.replace(b'900', b'0'))):
             self.assertEqual(R.network_result(code, output)['status'], 'FAIL')
 
+    def test_vulkan_fallback_is_explicit_and_keeps_normal_dns(self):
+        regular = R.emulator_command(Path('/sdk'), 'owned', 'on')
+        fallback = R.emulator_command(Path('/sdk'), 'owned', 'on', True)
+        self.assertNotIn('-Vulkan', regular)
+        self.assertEqual(fallback[-2:], ['-feature', '-Vulkan'])
+        self.assertNotIn('-dns-server', fallback)
+
+    def test_guest_crash_stream_starts_before_launch_and_disconnection_is_distinct(self):
+        source = Path(R.__file__).read_text()
+        self.assertLess(source.index('runner.spawn("guest-startup-live"'),
+                        source.index('runner.adb("launch"'))
+        self.assertIn('host emulator exited during app launch; not an app-only failure', source)
+        self.assertIn('Android connection lost during app launch; app status unknown', source)
+        self.assertIn('processes_before_cleanup', source)
+
+    def test_software_renderer_uses_standard_flutter_debug_launch_extras(self):
+        source = Path(R.__file__).read_text()
+        self.assertIn('"--ez", "enable-software-rendering", "true"', source)
+        self.assertIn('"--ez", "enable-impeller", "false"', source)
+        self.assertIn('if args.flutter_software_rendering else []', source)
+
     def test_live_process_alone_does_not_qualify_app(self):
         result = R.app_result(b'', b'', b'', b'', True, True)
         self.assertEqual(result['status'], 'FAIL')
+
+    def test_focus_uses_full_service_and_private_hold_stops_log_capture(self):
+        source = Path(R.__file__).read_text()
+        self.assertIn('runner.adb("windows", "shell", "dumpsys", "window")', source)
+        self.assertIn('0 <= args.hold_seconds <= 1800', source)
+        self.assertLess(source.index('require(stop_owned(log_stream)'),
+                        source.index('(out / "session-ready.json")'))
 
     def test_app_requires_open_database_native_libraries_and_no_startup_failure(self):
         maps = b'libflutter.so librust_lib_bluebubbles.so libobjectbox-jni.so objectbox/data.mdb'
