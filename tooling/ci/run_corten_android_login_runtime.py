@@ -203,6 +203,52 @@ class Runner:
         return results
 
 
+def boot_owned_runtime(runner, accel, disable_vulkan=False):
+    """Shared real-Android startup for app qualification and cleanup checks."""
+    sdk = runner.sdk
+    require((sdk / "system-images/android-30/google_apis/x86_64").is_dir(), "pinned SDK image missing")
+    avd = sdk / "cmdline-tools/latest/bin/avdmanager"
+    require(avd.is_file(), "SDK latest avdmanager missing")
+    for port in (ADB_PORT, EMULATOR_PORT, EMULATOR_PORT + 1):
+        with socket.socket() as sock:
+            sock.bind(("127.0.0.1", port))
+    if accel == "on":
+        require(os.access("/dev/kvm", os.R_OK | os.W_OK), "KVM unavailable; no software fallback")
+        runner.call("acceleration", [sdk / "emulator/emulator", "-accel-check"])
+    runner.call("create-avd", [avd, "create", "avd", "-n", "ob-blank-login", "-p",
+                Path(runner.env["ANDROID_AVD_HOME"]) / "device", "-k", SYSTEM_IMAGE,
+                "-d", "pixel"], timeout=60, data=b"no\n")
+    server = runner.spawn("adb-server", [str(sdk / "platform-tools/adb"), "-L",
+                          f"tcp:localhost:{ADB_PORT}", "server", "nodaemon"])
+    until = time.monotonic() + 10
+    while True:
+        require(server.poll() is None, "owned ADB server exited")
+        try:
+            with socket.create_connection(("127.0.0.1", ADB_PORT), timeout=1):
+                break
+        except OSError:
+            require(time.monotonic() < until, "owned ADB server failed to listen")
+            time.sleep(0.2)
+    emulator = runner.spawn("emulator", emulator_command(
+        sdk, "ob-blank-login", accel, disable_vulkan))
+    until = time.monotonic() + BOOT_SECONDS
+    while True:
+        require(server.poll() is None and emulator.poll() is None, "emulator or ADB exited during boot")
+        try:
+            code, raw = runner.adb(None, "shell", "getprop", "sys.boot_completed", timeout=10, required=False)
+        except subprocess.TimeoutExpired:
+            code, raw = 1, b""
+        if code == 0 and raw.strip() == b"1":
+            break
+        require(time.monotonic() < until, "Android boot exceeded nine minutes")
+        time.sleep(2)
+    _, raw = runner.adb("guest-abi", "shell", "getprop", "ro.product.cpu.abi")
+    require(raw.strip() == b"x86_64", "guest must be native x64, no ARM translation")
+    runner.adb("binder-packages", "shell", "cmd", "package", "list", "packages", timeout=20)
+    runner.adb("binder-settings", "shell", "settings", "get", "global", "device_provisioned", timeout=20)
+    return server, emulator
+
+
 def qualify(args):
     require(sys.platform == "linux", "Linux runner required; no local emulator execution")
     require(0 <= args.hold_seconds <= 1800, "session hold must be bounded to 30 minutes")
@@ -217,51 +263,9 @@ def qualify(args):
         report["apk"] = check_apk(args.apk)
         require(args.network_probe.is_file() and not args.network_probe.is_symlink(), "network probe missing")
         sdk = args.sdk.resolve()
-        require((sdk / "system-images/android-30/google_apis/x86_64").is_dir(), "pinned SDK image missing")
-        avd = sdk / "cmdline-tools/latest/bin/avdmanager"
-        require(avd.is_file(), "SDK latest avdmanager missing")
-        for port in (ADB_PORT, EMULATOR_PORT, EMULATOR_PORT + 1):
-            with socket.socket() as sock:
-                sock.bind(("127.0.0.1", port))
-        if args.accel == "on":
-            require(os.access("/dev/kvm", os.R_OK | os.W_OK), "KVM unavailable; no software fallback")
         runner = Runner(sdk, out, Path(work_context.name))
-        if args.accel == "on":
-            runner.call("acceleration", [sdk / "emulator/emulator", "-accel-check"])
-        runner.call("create-avd", [avd, "create", "avd", "-n", "ob-blank-login", "-p",
-                    Path(runner.env["ANDROID_AVD_HOME"]) / "device", "-k", SYSTEM_IMAGE,
-                    "-d", "pixel"], timeout=60, data=b"no\n")
-        server = runner.spawn("adb-server", [str(sdk / "platform-tools/adb"), "-L",
-                              f"tcp:localhost:{ADB_PORT}", "server", "nodaemon"])
-        # Prove our loopback server is listening before a client can auto-start it.
-        until = time.monotonic() + 10
-        while True:
-            require(server.poll() is None, "owned ADB server exited")
-            try:
-                with socket.create_connection(("127.0.0.1", ADB_PORT), timeout=1):
-                    break
-            except OSError:
-                require(time.monotonic() < until, "owned ADB server failed to listen")
-                time.sleep(0.2)
-        emulator = runner.spawn("emulator", emulator_command(
-            sdk, "ob-blank-login", args.accel, args.disable_vulkan))
-        until = time.monotonic() + BOOT_SECONDS
-        while True:
-            require(server.poll() is None and emulator.poll() is None, "emulator or ADB exited during boot")
-            try:
-                code, raw = runner.adb(None, "shell", "getprop", "sys.boot_completed", timeout=10, required=False)
-            except subprocess.TimeoutExpired:
-                code, raw = 1, b""
-            if code == 0 and raw.strip() == b"1":
-                break
-            require(time.monotonic() < until, "Android boot exceeded nine minutes")
-            time.sleep(2)
+        server, emulator = boot_owned_runtime(runner, args.accel, args.disable_vulkan)
         report["boot_seconds"] = round(time.monotonic() - start, 3)
-        _, raw = runner.adb("guest-abi", "shell", "getprop", "ro.product.cpu.abi")
-        require(raw.strip() == b"x86_64", "guest must be native x64, no ARM translation")
-        # Boot property alone is insufficient. Binder and settings must respond.
-        runner.adb("binder-packages", "shell", "cmd", "package", "list", "packages", timeout=20)
-        runner.adb("binder-settings", "shell", "settings", "get", "global", "device_provisioned", timeout=20)
         runner.adb("install", "install", "--no-streaming", str(args.apk.resolve()), timeout=180)
         runner.adb("network-push", "push", str(args.network_probe.resolve()), "/data/local/tmp/ob-network", timeout=60)
         runner.adb("network-mode", "shell", "chmod", "700", "/data/local/tmp/ob-network")

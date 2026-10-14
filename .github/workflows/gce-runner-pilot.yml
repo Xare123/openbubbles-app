@@ -79,6 +79,7 @@ on:
           - corten-host-readiness-only
           - corten-windows-readiness-only
           - corten-windows-machine-only
+          - corten-android-cleanup-only
       outbound_writer:
         description: Build the isolated Android Canary with one-message V2 writer controls
         required: true
@@ -130,7 +131,7 @@ env:
 jobs:
   create-runner:
     name: Create ephemeral Google Cloud runner
-    if: ${{ inputs.validation_mode != 'corten-android-login-only' && inputs.validation_mode != 'corten-host-readiness-only' && inputs.validation_mode != 'corten-windows-readiness-only' && inputs.validation_mode != 'corten-windows-machine-only' }}
+    if: ${{ inputs.validation_mode != 'corten-android-login-only' && inputs.validation_mode != 'corten-host-readiness-only' && inputs.validation_mode != 'corten-windows-readiness-only' && inputs.validation_mode != 'corten-windows-machine-only' && inputs.validation_mode != 'corten-android-cleanup-only' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -1175,6 +1176,52 @@ jobs:
         with:
           name: Native host readiness ${{ github.run_id }}
           path: host-readiness-receipts/
+          if-no-files-found: warn
+          retention-days: 7
+
+  corten-android-cleanup:
+    name: Credential-free real Android shutdown qualification
+    if: ${{ inputs.validation_mode == 'corten-android-cleanup-only' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out exact runtime tooling only
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Require acceleration and install small host prerequisites
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -c /dev/kvm
+          sudo setfacl -m "u:$(id -un):rw" /dev/kvm
+          test -r /dev/kvm && test -w /dev/kvm
+          test "$OUTBOUND_WRITER" = false
+          test "$AUTOMATIC_UPLOADS" = false
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends python3-cryptography libpulse0 libgl1
+      - name: Set up Java for Android tooling
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Set up Android SDK
+        uses: amyu/setup-android@3fe49086b1abd7c9ef865120d5d4d486fe55ba98 # v5
+      - name: Install only one emulator image
+        run: sdkmanager 'platform-tools' 'emulator' 'system-images;android-30;google_apis;x86_64' >/dev/null
+      - name: Check affected contracts and execute actual emulator cleanup
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s tooling/ci -p test_corten_android_cleanup.py
+          python3 tooling/ci/run_corten_android_cleanup.py --sdk "$ANDROID_HOME" --out android-cleanup-receipts
+      - name: Preserve credential-free runtime and cleanup evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: Real Android cleanup ${{ github.run_id }}
+          path: android-cleanup-receipts/
           if-no-files-found: warn
           retention-days: 7
 
