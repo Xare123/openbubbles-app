@@ -1,7 +1,8 @@
 # Credential-free dependency readiness on an owned, disposable GitHub runner.
-# No OTP, provisioning, account login, security change or Apple binary artifact.
+# No OTP, account login, security change or Apple binary artifact. Optional
+# MachineProvision exercises only a fresh machine slot and removes that state.
 [CmdletBinding()]
-param([Parameter(Mandatory)][string]$OutRoot)
+param([Parameter(Mandatory)][string]$OutRoot, [switch]$MachineProvision)
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 if ($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted' -or
@@ -52,6 +53,28 @@ try {
     }
     $report.library_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $library.FullName).Hash.ToLowerInvariant()
     $report.library_version = $library.VersionInfo.FileVersion
+    if ($MachineProvision) {
+        $report.provisioning = $true
+        $env:CARGO_TARGET_DIR = Join-Path $work 'cargo-target'
+        $manifest = Join-Path $PSScriptRoot 'windows_adi_machine/Cargo.toml'
+        & cargo test --manifest-path $manifest --locked --jobs 2
+        if ($LASTEXITCODE -ne 0) { throw 'Machine probe offline tests failed' }
+        & cargo build --manifest-path $manifest --locked --jobs 2
+        if ($LASTEXITCODE -ne 0) { throw 'Machine probe build failed' }
+        $probe = Join-Path $env:CARGO_TARGET_DIR 'debug/ob-windows-adi-machine-probe.exe'
+        & python -m unittest discover -s $PSScriptRoot -p test_windows_adi_machine.py
+        if ($LASTEXITCODE -ne 0) { throw 'Machine controller contract tests failed' }
+        $controller = Join-Path $PSScriptRoot 'run_windows_adi_machine.py'
+        $child = Start-Process -FilePath (Get-Command python).Source -ArgumentList @(
+            ('"'+$controller+'"'), '--probe', ('"'+$probe+'"'), '--library', ('"'+$library.FullName+'"')
+        ) -PassThru -WindowStyle Hidden -RedirectStandardOutput (Join-Path $out 'machine.log') `
+            -RedirectStandardError (Join-Path $out 'error.log')
+        if (-not $child.WaitForExit(120000)) { $child.Kill($true); $child.WaitForExit(); throw 'Machine handshake deadline' }
+        $report.exit = $child.ExitCode
+        Get-Content -LiteralPath (Join-Path $out 'machine.log')
+        if ($child.ExitCode -ne 0) { throw 'Machine handshake failed; no account retry authorized by this result' }
+        $report.result = 'native_machine_handshake_not_account_or_sms'
+    } else {
     $source = Join-Path $PSScriptRoot 'windows_adi_readiness.rs'
     $report.probe_source_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $source).Hash.ToLowerInvariant()
     $tests = Join-Path $work 'readiness-tests.exe'
@@ -70,6 +93,7 @@ try {
     Get-Content -LiteralPath (Join-Path $out 'error.log')
     if ($child.ExitCode -ne 0) { throw 'Native library readiness failed; do not relax loading or security' }
     $report.result = 'native_readiness_only_not_account_or_sms'
+    }
 } catch {
     $report.result = 'FAIL'
     $report.failure = $_.Exception.Message

@@ -1,0 +1,13 @@
+[package]
+name = "ob-windows-adi-machine-probe"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[dependencies]
+adi = { git = "https://github.com/Dadoum/apple-crates", rev = "f9cbefde2bf72fa9becfedc8da64827d4549849a" }
+library-coreadi = { git = "https://github.com/Dadoum/apple-crates", rev = "f9cbefde2bf72fa9becfedc8da64827d4549849a" }
+base64 = "=0.22.1"
+serde_json = "=1.0.145"
