@@ -18,6 +18,8 @@ SYSTEM_IMAGE = "system-images;android-30;google_apis;x86_64"
 ADB_PORT, EMULATOR_PORT = 5039, 5558
 TOTAL_SECONDS, BOOT_SECONDS = 900, 540
 OUTPUT_LIMIT = 16 * 1024 * 1024
+TERM_GRACE_SECONDS, KILL_GRACE_SECONDS = 25, 5
+GROUP_POLL_SECONDS = 0.1
 
 
 def require(condition, message):
@@ -81,26 +83,55 @@ def app_result(maps, fds, db, logs, focused, stable):
 
 def stop_owned(process):
     """Terminate only a group created with start_new_session, then verify exit."""
-    for sig in (signal.SIGTERM, signal.SIGKILL):
-        try:
-            os.killpg(process.pid, sig)
-        except ProcessLookupError:
-            break
-        try:
-            process.wait(timeout=4)
-        except subprocess.TimeoutExpired:
-            continue
-        # A parent may exit before descendants. Check the entire owned group.
-        try:
-            os.killpg(process.pid, 0)
-        except ProcessLookupError:
-            break
-    process.poll()
-    try:
-        os.killpg(process.pid, 0)
+    group = getattr(process, '_ob_owned_pgid', None)
+    if type(group) is not int or group <= 1 or group != process.pid:
         return False
-    except ProcessLookupError:
+    if getattr(process, '_ob_group_reaped', False) is True:
         return process.returncode is not None
+    if group in (os.getpid(), os.getpgrp()):
+        return False
+
+    def group_exited():
+        process.poll()  # Reap the direct child even when its descendants linger.
+        try:
+            os.killpg(group, 0)
+        except ProcessLookupError:
+            return process.returncode is not None
+        return False
+
+    def await_group_exit(seconds):
+        deadline = time.monotonic() + seconds
+        while True:
+            if group_exited():
+                process._ob_group_reaped = True
+                return True
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return False
+            time.sleep(min(GROUP_POLL_SECONDS, remaining))
+
+    try:
+        try:
+            if os.getpgid(process.pid) != group:
+                return False
+        except ProcessLookupError:
+            pass  # A recorded owned group's parent can exit before descendants.
+        if await_group_exit(0):
+            return True
+        for sig, grace in ((signal.SIGTERM, TERM_GRACE_SECONDS),
+                           (signal.SIGKILL, KILL_GRACE_SECONDS)):
+            try:
+                os.killpg(group, sig)
+            except ProcessLookupError:
+                pass
+            # The emulator explicitly allows 20s for graceful shutdown. Waiting
+            # only for its parent is insufficient, including after SIGKILL.
+            if await_group_exit(grace):
+                return True
+        return False
+    except OSError:
+        # Access denied or an unobservable group is not proof of cleanup.
+        return False
 
 
 class Runner:
@@ -132,6 +163,7 @@ class Runner:
             proc = subprocess.Popen([str(x) for x in cmd], env=self.env,
                 stdin=subprocess.PIPE if data is not None else subprocess.DEVNULL,
                 stdout=output, stderr=subprocess.STDOUT, start_new_session=True)
+            proc._ob_owned_pgid = proc.pid
             try:
                 proc.communicate(input=data, timeout=self.remaining(timeout))
             except BaseException:
@@ -154,6 +186,7 @@ class Runner:
         self.streams.append((handle, path))
         proc = subprocess.Popen(cmd, env=self.env, stdin=subprocess.DEVNULL,
                                 stdout=handle, stderr=subprocess.STDOUT, start_new_session=True)
+        proc._ob_owned_pgid = proc.pid
         self.processes.append(proc)
         return proc
 

@@ -84,12 +84,94 @@ class RuntimeTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 R.resolve_activity(invalid)
 
-    def test_cleanup_checks_actual_owned_group_not_empty_registry(self):
-        proc = Mock(pid=401, returncode=0)
-        with patch.object(R.signal, 'SIGKILL', 9, create=True), patch.object(R.os, 'killpg', create=True, side_effect=[None, ProcessLookupError(), ProcessLookupError()]):
-            self.assertTrue(R.stop_owned(proc))
-        with patch.object(R.signal, 'SIGKILL', 9, create=True), patch.object(R.os, 'killpg', create=True, return_value=None):
-            self.assertFalse(R.stop_owned(proc))
+    def _cleanup_case(self, *, term_delay=None, kill_delay=None, gone=False,
+                      parent_exit_at=0, parent_missing=False):
+        proc = Mock(pid=401, returncode=None, _ob_owned_pgid=401)
+        now, gone_at, signals = [0.0], [0.0 if gone else None], []
+
+        def poll():
+            if now[0] >= parent_exit_at:
+                proc.returncode = 0
+            return proc.returncode
+
+        def signal_group(group, sig):
+            self.assertEqual(group, 401)
+            if gone_at[0] is not None and now[0] >= gone_at[0]:
+                raise ProcessLookupError()
+            if sig:
+                signals.append((sig, now[0]))
+                delay = term_delay if sig == R.signal.SIGTERM else kill_delay
+                if delay is not None:
+                    gone_at[0] = now[0] + delay
+
+        proc.poll.side_effect = poll
+        with patch.object(R.signal, 'SIGKILL', 9, create=True), \
+             patch.object(R.os, 'getpgrp', return_value=999, create=True), \
+             patch.object(R.os, 'getpgid', return_value=401,
+                          side_effect=ProcessLookupError() if parent_missing else None, create=True), \
+             patch.object(R.os, 'killpg', side_effect=signal_group, create=True) as kill, \
+             patch.object(R.time, 'monotonic', side_effect=lambda: now[0]), \
+             patch.object(R.time, 'sleep', side_effect=lambda delay: now.__setitem__(0, now[0] + delay)):
+            result = R.stop_owned(proc)
+            if result:
+                calls = kill.call_count
+                self.assertTrue(R.stop_owned(proc))
+                self.assertEqual(kill.call_count, calls)  # Never signal a reused group on repeat.
+        return result, signals, now[0], proc
+
+    def test_cleanup_waits_for_descendants_after_parent_already_exited(self):
+        result, signals, elapsed, proc = self._cleanup_case(term_delay=20, parent_missing=True)
+        self.assertTrue(result)
+        self.assertEqual([sig for sig, _ in signals], [R.signal.SIGTERM])
+        self.assertGreaterEqual(elapsed, 20)
+        self.assertLessEqual(elapsed, R.TERM_GRACE_SECONDS)
+        self.assertIsNotNone(proc.returncode)
+
+    def test_cleanup_reaps_parent_but_waits_for_delayed_group_exit(self):
+        result, signals, elapsed, _ = self._cleanup_case(term_delay=20, parent_exit_at=1)
+        self.assertTrue(result)
+        self.assertEqual(len(signals), 1)
+        self.assertGreaterEqual(elapsed, 20)
+
+    def test_cleanup_escalates_only_after_grace_and_waits_after_kill(self):
+        result, signals, elapsed, _ = self._cleanup_case(kill_delay=2)
+        self.assertTrue(result)
+        self.assertEqual([sig for sig, _ in signals], [R.signal.SIGTERM, 9])
+        self.assertEqual(signals[1][1], R.TERM_GRACE_SECONDS)
+        self.assertGreaterEqual(elapsed, R.TERM_GRACE_SECONDS + 2)
+
+    def test_cleanup_surviving_group_stays_failure_with_bounded_wait(self):
+        result, signals, elapsed, _ = self._cleanup_case()
+        self.assertFalse(result)
+        self.assertEqual(len(signals), 2)
+        self.assertEqual(elapsed, R.TERM_GRACE_SECONDS + R.KILL_GRACE_SECONDS)
+
+    def test_cleanup_already_gone_is_idempotent_without_signalling(self):
+        result, signals, elapsed, _ = self._cleanup_case(gone=True, parent_missing=True)
+        self.assertTrue(result)
+        self.assertEqual(signals, [])
+        self.assertEqual(elapsed, 0)
+
+    def test_cleanup_refuses_unowned_invalid_or_current_group(self):
+        with patch.object(R.os, 'getpgrp', return_value=999, create=True), \
+             patch.object(R.os, 'killpg', create=True) as kill:
+            for group in (None, 0, 1, -401, True, '401', 999, R.os.getpid()):
+                proc = Mock(pid=group, returncode=0, _ob_owned_pgid=group)
+                self.assertFalse(R.stop_owned(proc))
+            self.assertFalse(R.stop_owned(Mock(pid=401, returncode=0)))
+            kill.assert_not_called()
+
+    def test_cleanup_refuses_changed_group_or_inaccessible_group(self):
+        with patch.object(R.os, 'getpgrp', return_value=999, create=True), \
+             patch.object(R.os, 'getpgid', return_value=402, create=True), \
+             patch.object(R.os, 'killpg', create=True) as kill:
+            self.assertFalse(R.stop_owned(Mock(pid=401, returncode=0, _ob_owned_pgid=401)))
+            kill.assert_not_called()
+        with patch.object(R.os, 'getpgrp', return_value=999, create=True), \
+             patch.object(R.os, 'getpgid', return_value=401, create=True), \
+             patch.object(R.os, 'killpg', side_effect=PermissionError(), create=True) as kill:
+            self.assertFalse(R.stop_owned(Mock(pid=401, returncode=0, _ob_owned_pgid=401)))
+            self.assertEqual([call.args[1] for call in kill.call_args_list], [0])
 
     def test_non_linux_execution_is_refused_before_creating_output(self):
         with patch.object(R.sys, 'platform', 'win32'):
@@ -104,6 +186,8 @@ class RuntimeTests(unittest.TestCase):
             with patch.object(R.subprocess, 'Popen', return_value=child) as spawn:
                 runner.call(None, ['test'], data=b'no\n')
                 self.assertEqual(spawn.call_args.kwargs['stdin'], subprocess.PIPE)
+                self.assertTrue(spawn.call_args.kwargs['start_new_session'])
+                self.assertEqual(child._ob_owned_pgid, child.pid)
                 child.communicate.assert_called_once()
             child.communicate.side_effect = subprocess.TimeoutExpired('test', 1)
             with patch.object(R.subprocess, 'Popen', return_value=child), patch.object(R, 'stop_owned') as stop:
