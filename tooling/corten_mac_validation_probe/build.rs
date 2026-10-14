@@ -5,7 +5,13 @@ fn main() {
     prost_build::compile_protos(&[schema], &["../../../rust/src"])
         .expect("compile exact production hardware-transfer schema");
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("android") {
-        assert_eq!(std::env::var("CARGO_CFG_TARGET_ARCH").as_deref(), Ok("aarch64"));
+        // Android x64 uses the native x86 host backend and needs no ARM cache
+        // maintenance helper. Preserve the real NDK runtime on ARM64.
+        let architecture = std::env::var("CARGO_CFG_TARGET_ARCH").unwrap();
+        if architecture == "x86_64" {
+            return;
+        }
+        assert_eq!(architecture, "aarch64", "unqualified Android architecture");
         let compiler = std::env::var("CC_aarch64_linux_android").expect("pinned NDK compiler required");
         let output = std::process::Command::new(compiler).arg("--print-libgcc-file-name")
             .output().expect("query NDK compiler runtime");
