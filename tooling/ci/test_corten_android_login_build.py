@@ -33,6 +33,7 @@ class PrivateBuildTests(unittest.TestCase):
                     self.assertIn('corten-dev-validation', config['cargo']['debug']['extra_flags'])
                     self.assertIn('--locked', config['cargo']['debug']['extra_flags'])
                     self.assertIn('1.98.1',(root/B.EXTRA_TRACKED[4]).read_text())
+                    self.assertNotIn('abiFilters',(root/'android/app/build.gradle').read_text())
                     (root/'pubspec.lock').write_text('changed')
                     raise RuntimeError('injected')
             self.assertEqual({name:(root/name).read_bytes() for name in original},original)
@@ -52,6 +53,34 @@ class PrivateBuildTests(unittest.TestCase):
         for text in ('absent','old old'):
             with self.assertRaisesRegex(RuntimeError,'differs'):
                 B.replace_once(text,'old','new')
+
+    def test_flutter_packaging_is_explicit_without_conflicting_ndk_filters(self):
+        source = Path(B.__file__).read_text()
+        self.assertIn('"--target-platform","android-x64","--split-per-abi"',source)
+        self.assertIn('app-x86_64-canary-debug.apk',source)
+
+    def test_only_resolved_plugin_targets_changed_and_restored_on_failure(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary)
+            cache=root/'cache'
+            (root/'.dart_tool').mkdir()
+            packages=[]
+            files=[]
+            for name in ('irondash_engine_context','super_native_extensions'):
+                package=cache/name
+                plugin=package/'cargokit/gradle/plugin.gradle'
+                plugin.parent.mkdir(parents=True)
+                plugin.write_bytes(b'if (buildType == "debug") {\n original\r\n')
+                files.append(plugin)
+                packages.append({'name':name,'rootUri':package.as_uri()})
+            (root/'.dart_tool/package_config.json').write_text(json.dumps({'packages':packages}))
+            originals=[f.read_bytes() for f in files]
+            with self.assertRaisesRegex(RuntimeError,'injected'):
+                with B.single_target_pub_plugins(root,cache):
+                    for file in files:
+                        self.assertIn('target-platform',file.read_text())
+                    raise RuntimeError('injected')
+            self.assertEqual([f.read_bytes() for f in files],originals)
 
     def test_real_x64_apk_required_and_extra_abi_rejected(self):
         with tempfile.TemporaryDirectory() as temporary:

@@ -8,6 +8,8 @@ import shutil
 import signal
 import subprocess
 import time
+from urllib.parse import urlparse
+from urllib.request import url2pathname
 import zipfile
 
 from run_corten_login_integration import (SOURCE, NATIVE, TOOLS, OVERLAY, digest,
@@ -32,6 +34,34 @@ def replace_once(text, old, new):
 
 
 @contextmanager
+def single_target_pub_plugins(source, pub_cache):
+    """Suppress unused debug x86 builds in the two resolved plugin copies."""
+    originals = {}
+    cache = pub_cache.resolve()
+    packages = json.loads((source/".dart_tool/package_config.json").read_text())["packages"]
+    try:
+        for name in ("irondash_engine_context", "super_native_extensions"):
+            matches = [p for p in packages if p["name"] == name]
+            if len(matches) != 1:
+                raise RuntimeError("resolved CargoKit plugin missing: " + name)
+            uri = urlparse(matches[0]["rootUri"])
+            if uri.scheme != "file" or uri.netloc:
+                raise RuntimeError("expected local resolved pub package")
+            plugin = Path(url2pathname(uri.path))/"cargokit/gradle/plugin.gradle"
+            if not plugin.resolve().is_relative_to(cache) or plugin.is_symlink():
+                raise RuntimeError("plugin escaped isolated pub cache")
+            raw = plugin.read_bytes()
+            changed = replace_once(raw.decode(), 'if (buildType == "debug") {',
+                'if (buildType == "debug" && !flutterProject.hasProperty("target-platform")) {')
+            originals[plugin] = raw
+            plugin.write_text(changed)
+        yield
+    finally:
+        for path, raw in originals.items():
+            path.write_bytes(raw)
+
+
+@contextmanager
 def build_overlay(source, override):
     originals = {name:(source/name).read_bytes() if (source/name).is_file() else None
                  for name in EXTRA_TRACKED}
@@ -51,8 +81,6 @@ def build_overlay(source, override):
         gradle = source/"android/app/build.gradle"
         content = replace_once(gradle.read_text(), "    compileSdk 36",
             '    compileSdk 36\n    ndkVersion "28.2.13676358"')
-        content = replace_once(content, "    defaultConfig {",
-            '    defaultConfig {\n        ndk { abiFilters "x86_64" }')
         gradle.write_text(content)
         props = source/"android/gradle.properties"
         lines = [line for line in props.read_text().splitlines()
@@ -105,7 +133,10 @@ def run(source, out, delivery):
     directories, files = [], []
     code = 1
     def checked(name, args, seconds, cwd=source):
+        print(json.dumps({"build_phase":name,"state":"started"}),flush=True)
         receipt[name] = command(args, cwd, out/(name+".log"), seconds, env)
+        print(json.dumps({"build_phase":name,"state":"finished","exit":receipt[name]["exit"],
+                          "seconds":receipt[name]["seconds"]}),flush=True)
         if receipt[name]["exit"]:
             raise RuntimeError(name + " failed; see bounded log")
     try:
@@ -147,11 +178,12 @@ def run(source, out, delivery):
             with build_overlay(source,override):
                 checked("pub-get", ["flutter","pub","get","--enforce-lockfile"],300)
                 checked("cargokit-patch", ["bash","tooling/android/patch_pub_cache_cargokit.sh"],60)
-                checked("apk-build", ["flutter","build","apk","--no-pub","--flavor","canary","--debug",
-                    "--target-platform","android-x64", "--dart-define=OPENBUBBLES_CLOUD_SYNC_V2_SAMPLER=true",
-                    "--dart-define=OPENBUBBLES_CLOUD_SYNC_V2_SEMANTIC_PULL=true",
-                    "--dart-define=OPENBUBBLES_BUILD_COMMIT="+SOURCE],1800)
-                apk = source/"build/app/outputs/flutter-apk/app-canary-debug.apk"
+                with single_target_pub_plugins(source,Path(env["PUB_CACHE"])):
+                    checked("apk-build", ["flutter","build","apk","--no-pub","--flavor","canary","--debug",
+                        "--target-platform","android-x64","--split-per-abi", "--dart-define=OPENBUBBLES_CLOUD_SYNC_V2_SAMPLER=true",
+                        "--dart-define=OPENBUBBLES_CLOUD_SYNC_V2_SEMANTIC_PULL=true",
+                        "--dart-define=OPENBUBBLES_BUILD_COMMIT="+SOURCE],1800)
+                apk = source/"build/app/outputs/flutter-apk/app-x86_64-canary-debug.apk"
                 receipt["apk"] = check_apk(apk)
                 checked("network-probe-build", ["cargo","build","--offline","--locked","--manifest-path",
                     str(prototype/"Cargo.toml"),"--config",override,"--target","x86_64-linux-android"],300)
