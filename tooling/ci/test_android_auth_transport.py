@@ -43,8 +43,8 @@ class TransportTests(unittest.TestCase):
             root = Path(directory)
             binary = root/'auth-test'
             binary.touch()
-            row = {'reason': 'compiler-artifact', 'target': {'name': 'icloud_auth'},
-                   'profile': {'test': True}, 'executable': str(binary)}
+            row = {'reason': 'compiler-artifact', 'target': {'name': transport.BINARY, 'kind': ['bin']},
+                   'profile': {'test': False}, 'executable': str(binary)}
             self.assertEqual(transport.test_executable(json.dumps(row), root), binary.resolve())
             with self.assertRaises(RuntimeError):
                 transport.test_executable(json.dumps(row)+'\n'+json.dumps(row), root)

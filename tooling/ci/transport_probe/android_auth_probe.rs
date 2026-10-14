@@ -1,6 +1,5 @@
-// Temporary test-only addition to the exact candidate's client.rs. Never ship.
-#[cfg(test)]
-mod ob_android_public_transport {
+// Temporary diagnostic addition to the exact candidate's client.rs. Never ship.
+pub mod ob_android_public_transport {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -12,9 +11,8 @@ mod ob_android_public_transport {
         }
     }
 
-    #[test]
-    #[ignore = "Explicit credential-free Android transport qualification only"]
-    fn production_auth_client_reaches_public_endpoints() {
+    pub fn observe_public_endpoints() {
+        assert_eq!(std::env::args_os().len(), 1, "No account, identity or URL input accepted");
         assert_eq!(std::env::consts::OS, "android");
         assert_eq!(std::env::consts::ARCH, "x86_64");
         let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();

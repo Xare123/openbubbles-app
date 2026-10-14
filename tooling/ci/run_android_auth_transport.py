@@ -17,9 +17,9 @@ from run_corten_login_integration import (SOURCE, NATIVE, TOOLS, overlay,
 from run_production_transport_probe import elf
 
 AUTH = 'rustpush/apple-private-apis/icloud-auth/src/client.rs'
-TEST = 'client::ob_android_public_transport::production_auth_client_reaches_public_endpoints'
 TARGET = 'x86_64-linux-android'
-TEMPLATE = Path(__file__).with_name('transport_probe') / 'android_auth_test.rs'
+BINARY = 'ob_android_auth_transport'
+TEMPLATE = Path(__file__).with_name('transport_probe') / 'android_auth_probe.rs'
 
 
 def test_executable(raw, target):
@@ -29,8 +29,9 @@ def test_executable(raw, target):
             continue
         entry = json.loads(line)
         if (entry.get('reason') == 'compiler-artifact'
-                and entry.get('target', {}).get('name') == 'icloud_auth'
-                and entry.get('profile', {}).get('test') is True
+                and entry.get('target', {}).get('name') == BINARY
+                and entry.get('target', {}).get('kind') == ['bin']
+                and entry.get('profile', {}).get('test') is False
                 and entry.get('executable')):
             matches.append(Path(entry['executable']).resolve())
     if (len(matches) != 1 or not matches[0].is_relative_to(target.resolve())
@@ -108,12 +109,20 @@ def run(source, sdk, out):
             report['resolved_lock_sha256'] = digest(source/'rust/Cargo.lock')
             auth = source/AUTH
             before = auth.read_bytes()
+            library = auth.with_name('lib.rs')
+            original_library = library.read_bytes()
+            entrypoint = auth.parent/'bin'/(BINARY+'.rs')
+            runtime.require(not entrypoint.exists(), 'Refuse existing diagnostic binary')
+            created_bin_dir = not entrypoint.parent.exists()
             report['auth_source_sha256'] = hashlib.sha256(before.replace(b'\r\n', b'\n')).hexdigest()
             report['test_overlay_sha256'] = digest(TEMPLATE)
             try:
                 auth.write_bytes(before + b'\n' + TEMPLATE.read_bytes())
-                checked('build', ['cargo', 'test', '--offline', '--locked', '--manifest-path', manifest,
-                    '-p', 'icloud_auth', '--lib', '--no-run', '--target', TARGET, '--message-format=json'], 900)
+                library.write_bytes(original_library + b'\npub use client::ob_android_public_transport::observe_public_endpoints;\n')
+                entrypoint.parent.mkdir(exist_ok=True)
+                entrypoint.write_text('fn main() { icloud_auth::observe_public_endpoints(); }\n')
+                checked('build', ['cargo', 'build', '--offline', '--locked', '--manifest-path', manifest,
+                    '-p', 'icloud_auth', '--bin', BINARY, '--target', TARGET, '--message-format=json'], 900)
                 binary = test_executable((out/'build.log').read_text(), target)
                 report['binary'] = elf(binary, 62)
                 checked('elf', [str(compiler/'llvm-readelf'), '-l', '-d', str(binary)], 20)
@@ -122,6 +131,10 @@ def run(source, sdk, out):
                                 'Not an Android-linked binary')
             finally:
                 auth.write_bytes(before)
+                library.write_bytes(original_library)
+                entrypoint.unlink(missing_ok=True)
+                if created_bin_dir and entrypoint.parent.exists():
+                    entrypoint.parent.rmdir()
             verify_overlay_source(source)
         report['restored_pins'] = verify_source(source)
         runner = runtime.Runner(sdk, out, work)
@@ -134,8 +147,8 @@ def run(source, sdk, out):
         remote = '/data/local/tmp/ob-auth-public-transport'
         runner.adb('push', 'push', str(binary), remote, timeout=60)
         runner.adb('mode', 'shell', 'chmod', '700', remote)
-        code, raw = runner.adb('android-auth-transport', 'shell', remote, '--exact', TEST,
-            '--ignored', '--nocapture', '--test-threads=1', timeout=45, required=False)
+        code, raw = runner.adb('android-auth-transport', 'shell', remote,
+            timeout=45, required=False)
         report['network'] = observations(code, raw)
         runner.adb('remove-owned-probe', 'shell', 'rm', remote)
     except Exception as error:
