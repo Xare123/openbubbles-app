@@ -114,6 +114,16 @@ class IntegrationSafety(unittest.TestCase):
         self.assertNotIn("AppleAccount", script)
         self.assertIn('"apple_requests":False', script)
 
+    def test_every_android_integration_prerequisite_admits_the_mode(self):
+        workflow = (run.TOOLS.parent/".github/workflows/gce-runner-pilot.yml").read_text()
+        job = workflow.split("  corten-validator:", 1)[1].split("\n  apk-runtime:", 1)[0]
+        for name in ["Set up exact Rust compiler and Android standard library",
+                     "Set up Java for native SDK manager",
+                     "Set up Android command-line tools only",
+                     "Install one Android native compiler, no emulator or APK"]:
+            step = job.split("      - name: " + name, 1)[1].split("      - name:", 1)[0]
+            self.assertIn("corten-login-integration-only", step, name)
+
 
 if __name__ == "__main__":
     unittest.main()

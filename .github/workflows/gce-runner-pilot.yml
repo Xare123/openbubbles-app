@@ -1178,7 +1178,7 @@ jobs:
           distribution: temurin
           java-version: '21'
       - name: Set up Android command-line tools only
-        if: ${{ inputs.validation_mode == 'corten-validator-only' || inputs.validation_mode == 'corten-android-only' }}
+        if: ${{ inputs.validation_mode == 'corten-validator-only' || inputs.validation_mode == 'corten-android-only' || inputs.validation_mode == 'corten-login-integration-only' }}
         uses: amyu/setup-android@3fe49086b1abd7c9ef865120d5d4d486fe55ba98 # v5
       - name: Install one Android native compiler, no emulator or APK
         if: ${{ inputs.validation_mode == 'corten-validator-only' || inputs.validation_mode == 'corten-android-only' || inputs.validation_mode == 'corten-login-integration-only' }}
