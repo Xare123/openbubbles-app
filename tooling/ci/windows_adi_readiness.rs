@@ -45,13 +45,28 @@ fn request_payload(operation: u32) -> Option<Vec<u8>> {
 
 fn call(dispatch: Dispatcher, operation: u32) -> Result<i32, i32> {
     let mut bytes = request_payload(operation).expect("readiness operation allowlist");
-    let parameters = Parameters {
+    let mut parameters = Parameters {
         payload: bytes.as_mut_ptr(), input_size: bytes.len() as u32,
         output_size: 4, flags: 0,
     };
-    let transport = unsafe { dispatch(operation, &parameters) };
+    let transport = unsafe { dispatch(operation, &mut parameters) };
+    println!("windows_adi_dispatch={operation:08x}; status={transport}");
     if transport < 0 { return Err(transport); }
     Ok(i32::from_be_bytes(bytes[..4].try_into().unwrap()))
+}
+
+fn initialized_or_finalized(result: &Result<i32, i32>) -> bool {
+    // Match CoreADIADIProxy initialize/finalize: only negative results fail.
+    // Machine-slot readiness below has a different, exact-value contract.
+    matches!(result, Ok(code) if *code >= 0)
+}
+
+fn machine_readiness(result: Result<i32, i32>) -> Result<bool, &'static str> {
+    match result {
+        Ok(0) => Ok(true),
+        Ok(-45061) | Err(-45061) => Ok(false),
+        _ => Err("machine readiness query failed"),
+    }
 }
 
 fn run() -> Result<(), &'static str> {
@@ -72,16 +87,15 @@ fn run() -> Result<(), &'static str> {
     println!("windows_adi_library_loaded=true");
     let initialized = call(dispatch, INITIALIZE);
     println!("windows_adi_initialize={initialized:?}");
-    if !matches!(initialized, Ok(0)) { return Err("initialization not successful"); }
+    if !initialized_or_finalized(&initialized) { return Err("initialization not successful"); }
     let provisioned = call(dispatch, IS_PROVISIONED);
     println!("windows_adi_machine_slot={provisioned:?}");
     let finalized = call(dispatch, FINALIZE);
     println!("windows_adi_finalize={finalized:?}");
-    if !matches!(finalized, Ok(0)) { return Err("finalization not successful"); }
-    match provisioned {
-        Ok(0) => println!("windows_adi_readiness=provisioned"),
-        Ok(-45061) | Err(-45061) => println!("windows_adi_readiness=not-provisioned"),
-        _ => return Err("machine readiness query failed"),
+    if !initialized_or_finalized(&finalized) { return Err("finalization not successful"); }
+    match machine_readiness(provisioned)? {
+        true => println!("windows_adi_readiness=provisioned"),
+        false => println!("windows_adi_readiness=not-provisioned"),
     }
     Ok(())
 }
@@ -96,6 +110,22 @@ fn main() -> std::process::ExitCode {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn initialization_and_finalization_follow_nonnegative_status_contract() {
+        assert!(initialized_or_finalized(&Ok(0)));
+        assert!(initialized_or_finalized(&Ok(1)));
+        assert!(!initialized_or_finalized(&Ok(-1)));
+        assert!(!initialized_or_finalized(&Err(0)));
+        assert!(!initialized_or_finalized(&Err(-1)));
+    }
+    #[test]
+    fn readiness_does_not_treat_positive_status_as_provisioning_success() {
+        assert_eq!(machine_readiness(Ok(0)), Ok(true));
+        assert_eq!(machine_readiness(Ok(-45061)), Ok(false));
+        assert_eq!(machine_readiness(Err(-45061)), Ok(false));
+        assert!(machine_readiness(Ok(1)).is_err());
+        assert!(machine_readiness(Err(-1)).is_err());
+    }
     #[test]
     fn permits_only_three_readiness_operations() {
         assert!(request_payload(0).is_none());

@@ -77,6 +77,7 @@ on:
           - corten-login-integration-only
           - corten-android-login-only
           - corten-host-readiness-only
+          - corten-windows-readiness-only
       outbound_writer:
         description: Build the isolated Android Canary with one-message V2 writer controls
         required: true
@@ -128,7 +129,7 @@ env:
 jobs:
   create-runner:
     name: Create ephemeral Google Cloud runner
-    if: ${{ inputs.validation_mode != 'corten-android-login-only' && inputs.validation_mode != 'corten-host-readiness-only' }}
+    if: ${{ inputs.validation_mode != 'corten-android-login-only' && inputs.validation_mode != 'corten-host-readiness-only' && inputs.validation_mode != 'corten-windows-readiness-only' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -1146,7 +1147,7 @@ jobs:
 
   corten-windows-provider-readiness:
     name: Credential-free native Windows provider readiness
-    if: ${{ inputs.validation_mode == 'corten-host-readiness-only' }}
+    if: ${{ inputs.validation_mode == 'corten-host-readiness-only' || inputs.validation_mode == 'corten-windows-readiness-only' }}
     runs-on: windows-2022
     timeout-minutes: 8
     steps:
