@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 pub mod nac;
+pub mod exchange;
 use std::{error::Error, fmt, io::Read, path::Path};
 use prost::Message;
 use sha1::{Digest, Sha1};
@@ -83,14 +84,7 @@ pub fn decode_transfer(bytes: &[u8]) -> Result<nac::HardwareConfig, Box<dyn Erro
         return Err("transfer lacks production software metadata".into());
     }
     let hw = info.inner.ok_or("transfer has no inner hardware")?;
-    for value in [&hw.product_name, &hw.platform_serial_number, &hw.platform_uuid, &hw.root_disk_uuid, &hw.board_id, &hw.os_build_num, &hw.mlb] {
-        if value.is_empty() || value.len() > 512 { return Err("hardware text field absent or oversized".into()); }
-    }
-    for value in [&hw.platform_serial_number_enc, &hw.platform_uuid_enc, &hw.root_disk_uuid_enc, &hw.rom_enc, &hw.mlb_enc] {
-        if value.is_empty() || value.len() > 256 { return Err("requires genuine pre-enriched encrypted hardware fields".into()); }
-    }
-    if hw.rom.is_empty() || hw.rom.len() > 256 { return Err("ROM absent or oversized".into()); }
-    Ok(nac::HardwareConfig {
+    let hardware = nac::HardwareConfig {
         product_name: hw.product_name,
         io_mac_address: hw.io_mac_address.try_into().map_err(|_| "MAC must be six bytes")?,
         platform_serial_number: hw.platform_serial_number, platform_uuid: hw.platform_uuid,
@@ -98,7 +92,20 @@ pub fn decode_transfer(bytes: &[u8]) -> Result<nac::HardwareConfig, Box<dyn Erro
         platform_serial_number_enc: hw.platform_serial_number_enc,
         platform_uuid_enc: hw.platform_uuid_enc, root_disk_uuid_enc: hw.root_disk_uuid_enc,
         rom: hw.rom, rom_enc: hw.rom_enc, mlb: hw.mlb, mlb_enc: hw.mlb_enc,
-    })
+    };
+    validate_hardware(&hardware)?;
+    Ok(hardware)
+}
+
+pub fn validate_hardware(hw: &nac::HardwareConfig) -> Result<(), Box<dyn Error>> {
+    for value in [&hw.product_name, &hw.platform_serial_number, &hw.platform_uuid, &hw.root_disk_uuid, &hw.board_id, &hw.os_build_num, &hw.mlb] {
+        if value.is_empty() || value.len() > 512 { return Err("hardware text field absent or oversized".into()); }
+    }
+    for value in [&hw.platform_serial_number_enc, &hw.platform_uuid_enc, &hw.root_disk_uuid_enc, &hw.rom_enc, &hw.mlb_enc] {
+        if value.is_empty() || value.len() > 256 { return Err("requires genuine pre-enriched encrypted hardware fields".into()); }
+    }
+    if hw.rom.is_empty() || hw.rom.len() > 256 { return Err("ROM absent or oversized".into()); }
+    Ok(())
 }
 #[cfg(test)]
 mod tests {

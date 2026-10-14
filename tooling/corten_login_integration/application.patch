@@ -1,0 +1,156 @@
+diff --git a/lib/cloud_sync_v2_windows_harness.dart b/lib/cloud_sync_v2_windows_harness.dart
+index 48482e045..c1b79bb5e 100644
+--- a/lib/cloud_sync_v2_windows_harness.dart
++++ b/lib/cloud_sync_v2_windows_harness.dart
+@@ -113,7 +113,7 @@ Future<void> main(List<String> arguments) async {
+     await Logger.init();
+     stage = 'logger-ready';
+     await _writeHarnessStatus(state: 'initializing', stage: stage);
+-    api.doFirstTimeInit(path: fs.appDocDir.path);
++    await api.doFirstTimeInit(path: fs.appDocDir.path);
+     stage = 'protected-keystore-ready';
+     await _writeHarnessStatus(state: 'initializing', stage: stage);
+     await Database.init(cloudSyncV2Harness: true);
+diff --git a/lib/services/rustpush/rustpush_service.dart b/lib/services/rustpush/rustpush_service.dart
+index 0fb078b1b..080e13c1e 100644
+--- a/lib/services/rustpush/rustpush_service.dart
++++ b/lib/services/rustpush/rustpush_service.dart
+@@ -7992,8 +7992,8 @@ class RustPushService extends GetxService {
+   Future<void> onInit() async {
+     super.onInit();
+     _watchNetworkChanges();
+-    api.doFirstTimeInit(path: fs.appDocDir.path);
+     initFuture = (() async {
++      await api.doFirstTimeInit(path: fs.appDocDir.path);
+       statePath = (await getApplicationSupportDirectory()).path;
+       final vpnDetector = VpnConnectionDetector();
+       vpnDetector.vpnConnectionStream.listen((state) {
+diff --git a/rust/Cargo.toml b/rust/Cargo.toml
+index 6a5a3d7b5..373216392 100644
+--- a/rust/Cargo.toml
++++ b/rust/Cargo.toml
+@@ -3,12 +3,18 @@ name = "rust_lib_bluebubbles"
+ version = "0.1.0"
+ edition = "2021"
+ 
++[features]
++# Private development builds only. Framework and genuine hardware input must
++# also be explicitly provisioned inside the isolated profile, never bundled.
++corten-dev-validation = ["dep:corten-mac-validation-probe", "rustpush/external-mac-validation"]
++
+ [lib]
+ crate-type = ["cdylib", "staticlib"]
+ 
+ [dependencies]
+ flutter_rust_bridge = "=2.3.0"
+ rustpush = { path = "../rustpush", features = ["macos-validation-data", "remote-anisette-v3"] }
++corten-mac-validation-probe = { path = "../tooling/cloud_sync/corten_mac_validation_probe", optional = true }
+ keystore = { path = "../rustpush/keystore" }
+ plist = { version = "=1.7.0", features = ["enable_unstable_features_that_may_break_with_minor_version_bumps"] }
+ tokio = { version = "1", features = ["full"] }
+diff --git a/rust/src/api/api.rs b/rust/src/api/api.rs
+index 2362b40fe..6b4c6d9cf 100644
+--- a/rust/src/api/api.rs
++++ b/rust/src/api/api.rs
+@@ -267,6 +267,11 @@ pub fn do_first_time_init(path: String) {
+     // only. Shared filtering suppresses credential/raw-response messages.
+     init_logger(&dir);
+ 
++    #[cfg(feature = "corten-dev-validation")]
++    if crate::corten_dev_validation::initialize(&dir).is_err() {
++        error!("Isolated Mac validation setup failed; validation disabled until restart");
++    }
++
+     #[cfg(target_os = "windows")]
+     if let Err(error) = initialize_windows_protected_keystore(&dir) {
+         error!("Windows protected keystore initialization failed: {error}");
+diff --git a/rust/src/lib.rs b/rust/src/lib.rs
+index 8753b4f27..861a1a126 100644
+--- a/rust/src/lib.rs
++++ b/rust/src/lib.rs
+@@ -92,6 +92,9 @@ pub mod bbhwinfo {
+     include!(concat!(env!("OUT_DIR"), "/bbhwinfo.rs"));
+ }
+ 
++#[cfg(feature = "corten-dev-validation")]
++mod corten_dev_validation;
++
+ #[cfg(not(target_os = "android"))]
+ mod desktop_native_logging;
+ 
+diff --git a/test/services/rustpush_startup_readiness_contract_test.dart b/test/services/rustpush_startup_readiness_contract_test.dart
+index 8657b5da5..7a933cec7 100644
+--- a/test/services/rustpush_startup_readiness_contract_test.dart
++++ b/test/services/rustpush_startup_readiness_contract_test.dart
+@@ -3,6 +3,29 @@ import 'dart:io';
+ import 'package:flutter_test/flutter_test.dart';
+ 
+ void main() {
++  test('profile native initialization completes before desktop restore', () {
++    final service = File(
++      'lib/services/rustpush/rustpush_service.dart',
++    ).readAsStringSync();
++    final barrier = service.indexOf('initFuture = (() async {');
++    final initialized = service.indexOf(
++      'await api.doFirstTimeInit(path: fs.appDocDir.path);', barrier,
++    );
++    final restore = service.indexOf(
++      'await api.SharedPushState.restore(', barrier,
++    );
++    expect(initialized, greaterThan(barrier));
++    expect(restore, greaterThan(initialized));
++
++    final harness = File('lib/cloud_sync_v2_windows_harness.dart')
++        .readAsStringSync();
++    final nativeInit = harness.indexOf(
++      'await api.doFirstTimeInit(path: fs.appDocDir.path);',
++    );
++    expect(nativeInit, greaterThanOrEqualTo(0));
++    expect(harness.indexOf('await Database.init('), greaterThan(nativeInit));
++  });
++
+   test('incoming push readiness excludes optional iCloud maintenance', () {
+     final source = File(
+       'lib/services/rustpush/rustpush_service.dart',
+diff --git a/rustpush/Cargo.toml b/rustpush/Cargo.toml
+index a0dbacd..e791ffd 100644
+--- a/rustpush/Cargo.toml
++++ b/rustpush/Cargo.toml
+@@ -7,6 +7,9 @@ edition = "2021"
+ remote-anisette-v3 = ["omnisette/remote-anisette-v3", "icloud_auth/remote-anisette-v3"]
+ remote-clearadi = ["omnisette/remote-clearadi", "icloud_auth/remote-clearadi"]
+ macos-validation-data = ["dep:open-absinthe"]
++# Explicitly enabled only by the isolated development runtime. Ordinary builds
++# retain MacValidationUnavailable on non-macOS platforms.
++external-mac-validation = ["macos-validation-data"]
+ aps-proxy-test = []
+ default = ["macos-validation-data"]
+ 
+diff --git a/rustpush/src/lib.rs b/rustpush/src/lib.rs
+index 92598e8..814d27c 100644
+--- a/rustpush/src/lib.rs
++++ b/rustpush/src/lib.rs
+@@ -26,6 +26,9 @@ pub use util::CompactECKey;
+ #[cfg(feature = "macos-validation-data")]
+ pub mod macos;
+ 
++#[cfg(feature = "external-mac-validation")]
++pub mod mac_validation_provider;
++
+ mod relay;
+ 
+ pub mod mmcsp {
+diff --git a/rustpush/src/macos.rs b/rustpush/src/macos.rs
+index 0b3a95e..6258422 100644
+--- a/rustpush/src/macos.rs
++++ b/rustpush/src/macos.rs
+@@ -111,5 +111,9 @@ impl OSConfig for MacOSConfig {
+     async fn generate_validation_data(&self) -> Result<Vec<u8>, PushError> {
+         #[cfg(not(target_os = "macos"))]
+         {
++            #[cfg(feature = "external-mac-validation")]
++            if let Some(provider) = crate::mac_validation_provider::current() {
++                return provider.generate(self.inner.clone()).await;
++            }
+             return Err(PushError::MacValidationUnavailable);
+         }

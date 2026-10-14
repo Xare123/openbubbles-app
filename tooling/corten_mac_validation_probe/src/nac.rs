@@ -96,7 +96,7 @@ where
 // HardwareConfig
 // ============================================================================
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct HardwareConfig {
     pub product_name: String,
     #[serde(serialize_with = "bin_serialize", deserialize_with = "bin_deserialize_mac")]

@@ -17,7 +17,7 @@ from cryptography.hazmat.primitives.asymmetric import padding, rsa
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 MAGIC = b"OB-CORTEN-SEALED-1\x00"
-LIMIT = 64 * 1024 * 1024
+LIMIT = 256 * 1024 * 1024
 
 
 def public_bytes(key):
