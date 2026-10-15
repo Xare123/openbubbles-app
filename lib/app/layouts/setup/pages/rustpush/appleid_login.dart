@@ -573,17 +573,15 @@ class _AppleIdLoginState extends OptimizedState<AppleIdLogin> {
         return;
       }
       controller.replaceCurrentAppleAccount(account, attempt: attempt);
-      final user = await controller.withLoginAttemptResources(
-        attempt,
-        [account, controller.config],
-        () => api.tryIcloudLogin(path: pushService.statePath, conf: controller.config!, account: account),
+      await controller.completeAuthenticatedAppleLogin(
+        result,
+        account,
+        attempt: attempt,
       );
       if (!controller.isLoginAttemptCurrent(attempt)) {
         controller.replaceCurrentAppleAccount(account, attempt: attempt);
         return;
       }
-      controller.currentAppleUser = user;
-
       result = await controller.updateLoginState(result, attempt: attempt);
 
 

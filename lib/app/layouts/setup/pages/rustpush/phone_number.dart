@@ -136,10 +136,7 @@ class PhoneNumberState extends OptimizedState<PhoneNumber> {
         controller.destroyConnection();
         controller.cachedState = null;
 
-        var data = await api.setupPush(config: controller.config!, identity: controller.identity!, statePath: pushService.statePath, state: controller.cachedState);
-        controller.connection = data.$1;
-        controller.anisette?.dispose();
-        controller.anisette = await api.makeAnisette(path: pushService.statePath, config: controller.config!, conn: controller.connection!);
+        await controller.setupConnection();
       }
       var token = await api.getToken(state: controller.connection!);
 

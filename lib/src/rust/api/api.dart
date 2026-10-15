@@ -2757,6 +2757,24 @@ Future<(LoginState, IdsUser?)> verify2Fa({
   code: code,
 );
 
+/// Verifies an already-issued trusted-device code without a circle session.
+///
+/// The server reports that it is awaiting verification (e.g. ec0/hsc409
+/// without au mapped to Needs2FAVerification). This performs no additional
+/// push and replays no password before the code is accepted. The fresh SRP
+/// exchange runs only after acceptance, under the same guards as verify_2fa.
+Future<(LoginState, IdsUser?)> verify2FaDirect({
+  required String path,
+  required ArcMutexAppleAccountDefaultAnisetteProvider account,
+  required JoinedOsConfig osConfig,
+  required String code,
+}) => RustLib.instance.api.crateApiApiVerify2FaDirect(
+  path: path,
+  account: account,
+  osConfig: osConfig,
+  code: code,
+);
+
 Future<(List<TrustedPhoneNumber>, LoginState?)> get2FaSmsOpts({
   required ArcMutexAppleAccountDefaultAnisetteProvider state,
 }) => RustLib.instance.api.crateApiApiGet2FaSmsOpts(state: state);

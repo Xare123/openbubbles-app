@@ -12557,8 +12557,13 @@ impl SharedPushState {
         let users = restore_users(path.clone())?;
         let config = &hardware.os_config;
         let identity = IDSNGMIdentity::restore(hardware.identity.as_ref(), "openbubbles").ok()?;
-        let (conn, _) =
-            setup_push(config, &identity, Some(hardware.push.clone()), path.clone()).await;
+        let (conn, _) = match setup_push(config, &identity, Some(hardware.push.clone()), path.clone()).await {
+            Ok(connection) => connection,
+            Err(_) => {
+                error!("Activation identity could not be preserved; stored profile was retained");
+                return None;
+            }
+        };
         let client = make_imclient(path.clone(), &conn, &users, &identity).await;
         let anisette = make_anisette(path.clone(), config, &conn).await;
 
@@ -13180,16 +13185,29 @@ pub async fn register_ids(
     Ok((Some(users), None))
 }
 
-pub async fn set_identity(state_path: String, config: &JoinedOSConfig, identity: &IDSNGMIdentity) {
-    let state_path = PathBuf::from_str(&state_path)
-        .unwrap()
-        .join("hw_info.plist");
+pub async fn set_identity(
+    state_path: String,
+    config: &JoinedOSConfig,
+    identity: &IDSNGMIdentity,
+) -> anyhow::Result<()> {
+    let directory = PathBuf::from(state_path);
     let state = SavedHardwareState {
         push: Default::default(),
         os_config: config.clone(),
-        identity: identity.save("openbubbles").expect("failed to save").into(),
+        identity: identity.save("openbubbles").map_err(|_| anyhow!(
+            "The saved device encryption keys could not be accessed. Existing keys and messages have been kept. Unlock this device and retry; do not clear app data."
+        ))?.into(),
     };
-    std::fs::write(&state_path, plist_to_string(&state).unwrap()).unwrap();
+    persist_activation_hardware(&directory, &state)
+}
+
+fn persist_activation_hardware(directory: &std::path::Path, state: &SavedHardwareState) -> anyhow::Result<()> {
+    let encoded = plist_to_string(state).map_err(|_| anyhow!(
+        "Device setup could not prepare its saved state. Existing messages and keys have been kept."
+    ))?;
+    persist_login_state_file(directory, "hw_info.plist", encoded.as_bytes()).map_err(|_| anyhow!(
+        "Device setup could not save its state. Check free storage and retry; do not clear app data."
+    ))
 }
 
 pub async fn setup_push(
@@ -13197,20 +13215,25 @@ pub async fn setup_push(
     identity: &IDSNGMIdentity,
     state: Option<APSState>,
     state_path: String,
-) -> (APSConnection, Option<PushError>) {
-    let state_path = PathBuf::from_str(&state_path)
-        .unwrap()
-        .join("hw_info.plist");
+) -> anyhow::Result<(APSConnection, Option<PushError>)> {
+    let directory = PathBuf::from(state_path);
+    // Fail before opening a push connection if restored protected keys cannot
+    // be read. Never replace those keys or report successful activation.
+    let saved_identity = identity.save("openbubbles").map_err(|_| anyhow!(
+        "The saved device encryption keys could not be accessed. Existing keys and messages have been kept. Unlock this device and retry; do not clear app data."
+    ))?;
     let (conn, error) = APSConnectionResource::new(config.config(), state).await;
 
-    let saved_identity = identity.save("openbubbles").expect("failed to save");
     if error.is_none() {
         let state = SavedHardwareState {
             push: conn.state.read().await.clone(),
             os_config: config.clone(),
             identity: saved_identity.clone().into(),
         };
-        std::fs::write(&state_path, plist_to_string(&state).unwrap()).unwrap();
+        if let Err(error) = persist_activation_hardware(&directory, &state) {
+            conn.close();
+            return Err(error);
+        }
     }
 
     let mut to_refresh = conn.generated_signal.subscribe();
@@ -13229,7 +13252,11 @@ pub async fn setup_push(
                         os_config: config_ref.clone(),
                         identity: saved_identity.clone().into(),
                     };
-                    std::fs::write(&state_path, plist_to_string(&state).unwrap()).unwrap();
+                    if persist_activation_hardware(&directory, &state).is_err() {
+                        error!("Refreshed activation state could not be saved; closing its connection");
+                        conn.close();
+                        break;
+                    }
                 }
                 Err(broadcast::error::RecvError::Lagged(_)) => continue,
                 Err(broadcast::error::RecvError::Closed) => break,
@@ -13237,7 +13264,7 @@ pub async fn setup_push(
         }
     });
 
-    (conn, error)
+    Ok((conn, error))
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -19521,6 +19548,55 @@ async fn cloud_sync_windows_consume_login_admission(
     Ok(())
 }
 
+async fn complete_trusted_device_login(
+    path: String,
+    account: &Arc<Mutex<AppleAccount<DefaultAnisetteProvider>>>,
+    os_config: &JoinedOSConfig,
+    verification_state: LoginState,
+) -> anyhow::Result<(LoginState, Option<IDSUser>)> {
+    if !two_factor_verification_authorizes_fresh_login(&verification_state) {
+        return Err(anyhow!(
+            "Trusted-device verification did not authorize a fresh login"
+        ));
+    }
+
+    // Apple can populate the SPD token dictionary before reporting that 2FA
+    // is still required. Those pre-verification tokens are not authenticated
+    // CloudKit authority. Always perform a fresh SRP exchange after the code
+    // is accepted and require an explicit logged-in response with a PET.
+    let login_state = {
+        let mut locked = account.lock().await;
+        let username = locked
+            .username
+            .clone()
+            .ok_or_else(|| anyhow!("Trusted-device verification account is unavailable"))?;
+        let hashed_password = locked
+            .hashed_password
+            .clone()
+            .ok_or_else(|| anyhow!("Trusted-device verification credential is unavailable"))?;
+        locked.login_email_pass(&username, &hashed_password).await?
+    };
+    if !two_factor_fresh_login_is_authenticated(
+        &login_state,
+        account.lock().await.get_pet().is_some(),
+    ) {
+        return Err(anyhow!(
+            "Trusted-device verification did not produce a post-verification login"
+        ));
+    }
+
+    let mut user = None;
+    if is_cloud_sync_windows_dev_profile(&path) {
+        cloud_sync_windows_consume_login_admission(&path, account).await?;
+    } else {
+        let identity = do_login(path, &account, None, os_config).await?;
+        user = Some(identity);
+    }
+    info!("Trusted-device verification completed a fresh authenticated login");
+
+    Ok((login_state, user))
+}
+
 pub async fn verify_2fa(
     path: String,
     client: &mut CircleClientSession<DefaultAnisetteProvider>,
@@ -19581,47 +19657,23 @@ pub async fn verify_2fa(
         account.lock().await.verify_2fa(code).await?
     };
 
-    if !two_factor_verification_authorizes_fresh_login(&verification_state) {
-        return Err(anyhow!(
-            "Trusted-device verification did not authorize a fresh login"
-        ));
-    }
+    complete_trusted_device_login(path, account, os_config, verification_state).await
+}
 
-    // Apple can populate the SPD token dictionary before reporting that 2FA
-    // is still required. Those pre-verification tokens are not authenticated
-    // CloudKit authority. Always perform a fresh SRP exchange after the code
-    // is accepted and require an explicit logged-in response with a PET.
-    let login_state = {
-        let mut locked = account.lock().await;
-        let username = locked
-            .username
-            .clone()
-            .ok_or_else(|| anyhow!("Trusted-device verification account is unavailable"))?;
-        let hashed_password = locked
-            .hashed_password
-            .clone()
-            .ok_or_else(|| anyhow!("Trusted-device verification credential is unavailable"))?;
-        locked.login_email_pass(&username, &hashed_password).await?
-    };
-    if !two_factor_fresh_login_is_authenticated(
-        &login_state,
-        account.lock().await.get_pet().is_some(),
-    ) {
-        return Err(anyhow!(
-            "Trusted-device verification did not produce a post-verification login"
-        ));
-    }
-
-    let mut user = None;
-    if is_cloud_sync_windows_dev_profile(&path) {
-        cloud_sync_windows_consume_login_admission(&path, account).await?;
-    } else {
-        let identity = do_login(path, &account, None, os_config).await?;
-        user = Some(identity);
-    }
-    info!("Trusted-device verification completed a fresh authenticated login");
-
-    Ok((login_state, user))
+/// Verifies an already-issued trusted-device code without a circle session.
+///
+/// The server reports that it is awaiting verification (e.g. ec0/hsc409
+/// without au mapped to Needs2FAVerification). This performs no additional
+/// push and replays no password before the code is accepted. The fresh SRP
+/// exchange runs only after acceptance, under the same guards as verify_2fa.
+pub async fn verify_2fa_direct(
+    path: String,
+    account: &Arc<Mutex<AppleAccount<DefaultAnisetteProvider>>>,
+    os_config: &JoinedOSConfig,
+    code: String,
+) -> anyhow::Result<(LoginState, Option<IDSUser>)> {
+    let verification_state = account.lock().await.verify_2fa(code).await?;
+    complete_trusted_device_login(path, account, os_config, verification_state).await
 }
 
 pub async fn get_2fa_sms_opts(

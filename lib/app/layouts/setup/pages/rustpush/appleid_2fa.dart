@@ -350,7 +350,7 @@ class _AppleId2FAState extends OptimizedState<AppleId2FA> {
     try {
       await controller.updateLoginState(const api.LoginState.needsSms2Fa(), attempt: attempt);
     } catch (e) {
-      if (e is StaleLoginAttemptException) return;
+      if (!mounted || !controller.isLoginAttemptCurrent(attempt) || e is StaleLoginAttemptException) return;
       controller.updateConnectError("$e");
       rethrow;
     } finally {
@@ -392,7 +392,7 @@ class _AppleId2FAState extends OptimizedState<AppleId2FA> {
         FocusManager.instance.primaryFocus?.unfocus();
       }
     } catch (e) {
-      if (e is StaleLoginAttemptException) return;
+      if (!mounted || !controller.isLoginAttemptCurrent(attempt) || e is StaleLoginAttemptException) return;
       if (e is AnyhowException) {
         if (e.message.contains("MOBILEME_TERMS_OF_SERVICE_UPDATE")) {
           await controller.updateAccountUi((finished) => setState(() { 

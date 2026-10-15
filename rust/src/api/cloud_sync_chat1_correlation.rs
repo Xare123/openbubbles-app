@@ -5241,7 +5241,7 @@ mod windows_standalone_live_tests {
             Some(hardware.push.clone()),
             profile_string.clone(),
         )
-        .await;
+        .await.expect("chat1_standalone_activation_state_preservation_failed");
         assert!(push_error.is_none(), "chat1_standalone_aps_setup_failed");
         let anisette = api::make_anisette(profile_string.clone(), &config, &connection).await;
         let account = api::restore_account(profile_string.clone(), &anisette, &config, &connection)

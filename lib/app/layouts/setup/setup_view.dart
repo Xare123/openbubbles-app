@@ -260,6 +260,34 @@ class SetupViewController extends StatefulController {
     _disposeLoginResourceWhenIdle(account);
   }
 
+  Future<void> completeAuthenticatedAppleLogin(
+    api.LoginState loginState,
+    ArcMutexAppleAccountDefaultAnisetteProvider account, {
+    required int attempt,
+  }) async {
+    if (!isLoginAttemptCurrent(attempt)) return;
+    // A pending verification response can already contain tokens. Do not use
+    // their presence to start registration before Apple reports LoggedIn.
+    if (loginState is! api.LoginState_LoggedIn) {
+      currentAppleUser = null;
+      return;
+    }
+    final conf = config;
+    if (conf == null) throw StateError('Apple login configuration is unavailable');
+    final user = await withLoginAttemptResources(
+      attempt,
+      [account, conf],
+      () => api.tryIcloudLogin(path: pushService.statePath, conf: conf, account: account),
+    );
+    if (!isLoginAttemptCurrent(attempt)) {
+      if (!identical(user, currentAppleUser)) {
+        _disposeLoginResourceWhenIdle(user);
+      }
+      return;
+    }
+    currentAppleUser = user;
+  }
+
   void _retainLoginResource(RustOpaqueInterface resource) {
     if (resource.isDisposed) {
       throw StateError('Cannot use a disposed login resource');
@@ -287,6 +315,22 @@ class SetupViewController extends StatefulController {
       return;
     }
     resource.dispose();
+  }
+
+  @visibleForTesting
+  bool hasLiveTrustedDeviceCircleResources() {
+    final circle = circleSession;
+    final receiver = connReceiver;
+    final listener = connListener;
+    final conn = connection;
+    return circle != null &&
+        !circle.isDisposed &&
+        receiver != null &&
+        !receiver.isDisposed &&
+        listener != null &&
+        !listener.isDisposed &&
+        conn != null &&
+        !conn.isDisposed;
   }
 
   Future<T> withLoginAttemptResources<T>(
@@ -544,16 +588,15 @@ class SetupViewController extends StatefulController {
         return ret;
       }
       replaceCurrentAppleAccount(account, attempt: attempt);
-      final user = await withLoginAttemptResources(
-        attempt ?? beginLoginAttempt(),
-        [account, config],
-        () => api.tryIcloudLogin(path: pushService.statePath, conf: config!, account: account),
+      await completeAuthenticatedAppleLogin(
+        nextState,
+        account,
+        attempt: attempt ?? beginLoginAttempt(),
       );
       if (attempt != null && !isLoginAttemptCurrent(attempt)) {
         _disposeLoginResourceWhenIdle(account);
         return nextState;
       }
-      currentAppleUser = user;
       ret = nextState;
     }
     if (ret is api.LoginState_NeedsDevice2FA) {
@@ -583,27 +626,51 @@ class SetupViewController extends StatefulController {
       isSms.value = false;
       circleSession = provider;
     }
+    if (ret is api.LoginState_Needs2FAVerification && circleSession == null) {
+      if (!_isCurrentOrUntracked(attempt)) return ret;
+      // The server is awaiting trusted-device verification. This does not
+      // prove that its code was displayed. Do not create another challenge
+      // or replay the password just to prepare the code-entry page.
+      isSms.value = false;
+    }
     if (ret is api.LoginState_NeedsSMS2FA) {
       if (!_isCurrentOrUntracked(attempt)) return ret;
+      final smsAttempt = attempt ?? beginLoginAttempt();
       mcs.invokeMethod("circle-proximity-session", {
         'sid': null
       });
       final account = currentAppleAccount;
       if (account == null) throw StateError('Apple account is unavailable for SMS 2FA');
+      bool ownsSmsResult(api.LoginState? result) {
+        if (isLoginAttemptCurrent(smsAttempt) && identical(currentAppleAccount, account)) return true;
+        // A late response owns only its returned body, never a newer account,
+        // verification channel or circle. Do not retain an abandoned challenge.
+        if (result is api.LoginState_NeedsSMS2FAVerification) {
+          final activeState = state;
+          if (activeState is! api.LoginState_NeedsSMS2FAVerification ||
+              !identical(activeState.field0, result.field0)) {
+            _disposeLoginResourceWhenIdle(result.field0);
+          }
+        }
+        return false;
+      }
       var options = await withLoginAttemptResources(
-        attempt ?? beginLoginAttempt(),
+        smsAttempt,
         [account],
         () => api.get2FaSmsOpts(state: account),
       );
+      if (!ownsSmsResult(options.$2)) return ret;
+      final smsCircle = circleSession;
+      var requestedSms = false;
       if (options.$2 != null) {
         ret = options.$2!;
       } else if (options.$1.length == 1) {
         ret = await withLoginAttemptResources<api.LoginState>(
-          attempt ?? beginLoginAttempt(),
-          [account, circleSession],
-          () => api.send2FaSms(locked: circleSession, account: account, phoneId: options.$1[0].id),
+          smsAttempt,
+          [account, smsCircle],
+          () => api.send2FaSms(locked: smsCircle, account: account, phoneId: options.$1[0].id),
         );
-        circleSession = null;
+        requestedSms = true;
       } else {
         int selectedRadio = -1;
         await showDialog(
@@ -642,14 +709,18 @@ class SetupViewController extends StatefulController {
             ],
           ),
         );
-        if (selectedRadio == -1) {
+        if (!ownsSmsResult(null) || selectedRadio == -1) {
           return ret;
         }
         ret = await withLoginAttemptResources<api.LoginState>(
-          attempt ?? beginLoginAttempt(),
-          [account, circleSession],
-          () => api.send2FaSms(locked: circleSession, account: account, phoneId: selectedRadio),
+          smsAttempt,
+          [account, smsCircle],
+          () => api.send2FaSms(locked: smsCircle, account: account, phoneId: selectedRadio),
         );
+        requestedSms = true;
+      }
+      if (!ownsSmsResult(ret)) return ret;
+      if (requestedSms && identical(circleSession, smsCircle)) {
         circleSession = null;
       }
       isSms.value = true;
@@ -948,33 +1019,50 @@ class SetupViewController extends StatefulController {
     final currentConfig = config;
     final currentReceiver = connReceiver;
     final currentListener = connListener;
+    final currentCircle = circleSession;
+    final useTrustedCircle = hasLiveTrustedDeviceCircleResources();
+    final directTrusted = state is api.LoginState_Needs2FAVerification && !useTrustedCircle;
     if (account == null || currentAnisette == null || currentConfig == null) {
       throw StateError('Apple login resources are unavailable for 2FA');
     }
     return withLoginAttemptResources(
       effectiveAttempt,
-      [account, currentConnection, currentAnisette, currentConfig, currentReceiver, currentListener, circleSession],
+      [
+        account, currentConfig,
+        if (!directTrusted) ...[
+          currentConnection, currentAnisette, currentReceiver,
+          currentListener, currentCircle,
+        ],
+      ],
       () async {
+        (api.LoginState, api.IdsUser?)? verification;
         if (state is api.LoginState_Needs2FAVerification) {
-          if (circleSession == null || currentReceiver == null || currentListener == null || currentConnection == null) {
-            throw StateError('Trusted-device 2FA resources are unavailable');
+          if (useTrustedCircle) {
+            verification = await api.verify2Fa(
+              path: pushService.statePath,
+              client: currentCircle!,
+              anisette: currentAnisette,
+              osConfig: currentConfig,
+              watcher: currentReceiver!,
+              idms: currentListener!,
+              account: account,
+              code: code,
+            );
+          } else {
+            // Already-issued challenge with no circle session: direct code
+            // verification only. No push, no premature password replay; the
+            // fresh SRP/PET gate and Windows admission run inside Rust after
+            // the code is accepted.
+            verification = await api.verify2FaDirect(
+              path: pushService.statePath,
+              account: account,
+              osConfig: currentConfig,
+              code: code,
+            );
           }
-          var (dart, isAnnoying) = await api.verify2Fa(
-            path: pushService.statePath,
-            client: circleSession!,
-            anisette: currentAnisette,
-            osConfig: currentConfig,
-            watcher: currentReceiver,
-            idms: currentListener,
-            account: account,
-            code: code,
-          );
-          if (!isLoginAttemptCurrent(effectiveAttempt)) return state;
-          state = dart;
-          currentAppleUser = isAnnoying;
         } else if (state is api.LoginState_NeedsSMS2FAVerification) {
           var myState = state as api.LoginState_NeedsSMS2FAVerification;
-          var (dart, isAnnoying) = await api.verify2FaSms(
+          verification = await api.verify2FaSms(
             path: pushService.statePath,
             accountMut: account,
             anisette: currentAnisette,
@@ -982,9 +1070,17 @@ class SetupViewController extends StatefulController {
             body: myState.field0,
             code: code,
           );
-          if (!isLoginAttemptCurrent(effectiveAttempt)) return state;
-          state = dart;
-          currentAppleUser = isAnnoying;
+        }
+        if (verification != null) {
+          final (nextState, user) = verification;
+          if (!isLoginAttemptCurrent(effectiveAttempt)) {
+            if (!identical(user, currentAppleUser)) {
+              _disposeLoginResourceWhenIdle(user);
+            }
+            return state;
+          }
+          state = nextState;
+          currentAppleUser = user;
         }
         return await updateLoginState(state, attempt: effectiveAttempt);
       },
@@ -1026,10 +1122,28 @@ class SetupViewController extends StatefulController {
       await setupConnection();
   }
 
-  Future<void> setupConnection() async {
-    var data = await api.setupPush(config: config!, identity: identity!, statePath: pushService.statePath, state: cachedState);
-    connection = data.$1;
-    anisette = await api.makeAnisette(path: pushService.statePath, config: config!, conn: connection!);
+  Future<void> setupConnection({
+    Future<(ApsConnection, api.PushError?)> Function()? createPush,
+    Future<ArcAnisetteClientDefaultAnisetteProvider> Function(ApsConnection)? prepareAnisette,
+  }) async {
+    final data = await (createPush ?? () => api.setupPush(config: config!, identity: identity!, statePath: pushService.statePath, state: cachedState))();
+    final candidate = data.$1;
+    final failure = data.$2;
+    if (failure != null) {
+      candidate.dispose();
+      failure.dispose();
+      throw AnyhowException('Unable to connect to Apple Push for device setup. Check your connection and retry. Your saved messages and device details have been kept.');
+    }
+    try {
+      final nextAnisette = await (prepareAnisette ?? (conn) => api.makeAnisette(path: pushService.statePath, config: config!, conn: conn))(candidate);
+      final previousAnisette = anisette;
+      connection = candidate;
+      anisette = nextAnisette;
+      _disposeLoginResourceWhenIdle(previousAnisette);
+    } catch (_) {
+      candidate.dispose();
+      rethrow;
+    }
   }
 
   void updatePage(int newPage) {

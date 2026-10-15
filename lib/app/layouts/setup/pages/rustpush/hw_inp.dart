@@ -1151,9 +1151,7 @@ class HwInpState extends OptimizedState<HwInp> {
       }
       
       if (controller.connection == null) {
-        var data = await api.setupPush(config: controller.config!, identity: controller.identity!, statePath: pushService.statePath, state: controller.cachedState);
-        controller.connection = data.$1;
-        controller.anisette = await api.makeAnisette(path: pushService.statePath, config: controller.config!, conn: controller.connection!);
+        await controller.setupConnection();
       }
 
       var state = await api.getDeviceInfo(config: controller.config!);

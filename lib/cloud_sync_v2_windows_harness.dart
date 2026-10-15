@@ -113,7 +113,7 @@ Future<void> main(List<String> arguments) async {
     await Logger.init();
     stage = 'logger-ready';
     await _writeHarnessStatus(state: 'initializing', stage: stage);
-    api.doFirstTimeInit(path: fs.appDocDir.path);
+    await api.doFirstTimeInit(path: fs.appDocDir.path);
     stage = 'protected-keystore-ready';
     await _writeHarnessStatus(state: 'initializing', stage: stage);
     await Database.init(cloudSyncV2Harness: true);

@@ -3,6 +3,29 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('profile native initialization completes before desktop restore', () {
+    final service = File(
+      'lib/services/rustpush/rustpush_service.dart',
+    ).readAsStringSync();
+    final barrier = service.indexOf('initFuture = (() async {');
+    final initialized = service.indexOf(
+      'await api.doFirstTimeInit(path: fs.appDocDir.path);', barrier,
+    );
+    final restore = service.indexOf(
+      'await api.SharedPushState.restore(', barrier,
+    );
+    expect(initialized, greaterThan(barrier));
+    expect(restore, greaterThan(initialized));
+
+    final harness = File('lib/cloud_sync_v2_windows_harness.dart')
+        .readAsStringSync();
+    final nativeInit = harness.indexOf(
+      'await api.doFirstTimeInit(path: fs.appDocDir.path);',
+    );
+    expect(nativeInit, greaterThanOrEqualTo(0));
+    expect(harness.indexOf('await Database.init('), greaterThan(nativeInit));
+  });
+
   test('incoming push readiness excludes optional iCloud maintenance', () {
     final source = File(
       'lib/services/rustpush/rustpush_service.dart',

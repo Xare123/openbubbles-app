@@ -39,7 +39,7 @@ flutter_rust_bridge::frb_generated_boilerplate!(
     default_rust_auto_opaque = RustAutoOpaqueMoi,
 );
 pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_VERSION: &str = "2.3.0";
-pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = -340070333;
+pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = -346250373;
 
 // Section: executor
 
@@ -17970,7 +17970,7 @@ fn wire__crate__api__api__set_identity_impl(
             >>::sse_decode(&mut deserializer);
             deserializer.end();
             move |context| async move {
-                transform_result_sse::<_, ()>(
+                transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
                     (move || async move {
                         let mut api_config_guard = None;
                         let mut api_identity_guard = None;
@@ -18004,14 +18004,12 @@ fn wire__crate__api__api__set_identity_impl(
                         }
                         let api_config_guard = api_config_guard.unwrap();
                         let api_identity_guard = api_identity_guard.unwrap();
-                        let output_ok = Result::<_, ()>::Ok({
-                            crate::api::api::set_identity(
-                                api_state_path,
-                                &*api_config_guard,
-                                &*api_identity_guard,
-                            )
-                            .await;
-                        })?;
+                        let output_ok = crate::api::api::set_identity(
+                            api_state_path,
+                            &*api_config_guard,
+                            &*api_identity_guard,
+                        )
+                        .await?;
                         Ok(output_ok)
                     })()
                     .await,
@@ -18181,7 +18179,7 @@ fn wire__crate__api__api__setup_push_impl(
             let api_state_path = <String>::sse_decode(&mut deserializer);
             deserializer.end();
             move |context| async move {
-                transform_result_sse::<_, ()>(
+                transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
                     (move || async move {
                         let mut api_config_guard = None;
                         let mut api_identity_guard = None;
@@ -18215,15 +18213,13 @@ fn wire__crate__api__api__setup_push_impl(
                         }
                         let api_config_guard = api_config_guard.unwrap();
                         let api_identity_guard = api_identity_guard.unwrap();
-                        let output_ok = Result::<_, ()>::Ok(
-                            crate::api::api::setup_push(
-                                &*api_config_guard,
-                                &*api_identity_guard,
-                                api_state,
-                                api_state_path,
-                            )
-                            .await,
-                        )?;
+                        let output_ok = crate::api::api::setup_push(
+                            &*api_config_guard,
+                            &*api_identity_guard,
+                            api_state,
+                            api_state_path,
+                        )
+                        .await?;
                         Ok(output_ok)
                     })()
                     .await,
@@ -20085,6 +20081,89 @@ fn wire__crate__api__api__verify_2fa_impl(
                             &*api_account_guard,
                             &mut *api_watcher_guard,
                             &*api_idms_guard,
+                            api_code,
+                        )
+                        .await?;
+                        Ok(output_ok)
+                    })()
+                    .await,
+                )
+            }
+        },
+    )
+}
+fn wire__crate__api__api__verify_2fa_direct_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_async::<flutter_rust_bridge::for_generated::SseCodec, _, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "verify_2fa_direct",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_path = <String>::sse_decode(&mut deserializer);
+            let api_account = <RustOpaqueMoi<
+                flutter_rust_bridge::for_generated::RustAutoOpaqueInner<
+                    Arc<Mutex<AppleAccount<DefaultAnisetteProvider>>>,
+                >,
+            >>::sse_decode(&mut deserializer);
+            let api_os_config = <RustOpaqueMoi<
+                flutter_rust_bridge::for_generated::RustAutoOpaqueInner<JoinedOSConfig>,
+            >>::sse_decode(&mut deserializer);
+            let api_code = <String>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| async move {
+                transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
+                    (move || async move {
+                        let mut api_account_guard = None;
+                        let mut api_os_config_guard = None;
+                        let decode_indices_ =
+                            flutter_rust_bridge::for_generated::lockable_compute_decode_order(
+                                vec![
+                                    flutter_rust_bridge::for_generated::LockableOrderInfo::new(
+                                        &api_account,
+                                        0,
+                                        false,
+                                    ),
+                                    flutter_rust_bridge::for_generated::LockableOrderInfo::new(
+                                        &api_os_config,
+                                        1,
+                                        false,
+                                    ),
+                                ],
+                            );
+                        for i in decode_indices_ {
+                            match i {
+                                0 => {
+                                    api_account_guard =
+                                        Some(api_account.lockable_decode_async_ref().await)
+                                }
+                                1 => {
+                                    api_os_config_guard =
+                                        Some(api_os_config.lockable_decode_async_ref().await)
+                                }
+                                _ => unreachable!(),
+                            }
+                        }
+                        let api_account_guard = api_account_guard.unwrap();
+                        let api_os_config_guard = api_os_config_guard.unwrap();
+                        let output_ok = crate::api::api::verify_2fa_direct(
+                            api_path,
+                            &*api_account_guard,
+                            &*api_os_config_guard,
                             api_code,
                         )
                         .await?;
@@ -32558,10 +32637,11 @@ fn pde_ffi_dispatcher_primary_impl(
 349 => wire__crate__api__api__validate_targets_impl(port, ptr, rust_vec_len, data_len),
 350 => wire__crate__api__api__validate_targets_facetime_impl(port, ptr, rust_vec_len, data_len),
 351 => wire__crate__api__api__verify_2fa_impl(port, ptr, rust_vec_len, data_len),
-352 => wire__crate__api__api__verify_2fa_sms_impl(port, ptr, rust_vec_len, data_len),
-353 => wire__crate__api__cloud_sync_chat1_correlation__cloud_sync_inspect_chat1_record_name_correlation_under_writer_pause_impl(port, ptr, rust_vec_len, data_len),
-354 => wire__crate__api__cloud_sync_chat_identity__cloud_sync_observe_protected_chat_identity_impl(port, ptr, rust_vec_len, data_len),
-355 => wire__crate__api__cloud_sync_dependency__cloud_sync_locate_protected_message_parent_impl(port, ptr, rust_vec_len, data_len),
+352 => wire__crate__api__api__verify_2fa_direct_impl(port, ptr, rust_vec_len, data_len),
+353 => wire__crate__api__api__verify_2fa_sms_impl(port, ptr, rust_vec_len, data_len),
+354 => wire__crate__api__cloud_sync_chat1_correlation__cloud_sync_inspect_chat1_record_name_correlation_under_writer_pause_impl(port, ptr, rust_vec_len, data_len),
+355 => wire__crate__api__cloud_sync_chat_identity__cloud_sync_observe_protected_chat_identity_impl(port, ptr, rust_vec_len, data_len),
+356 => wire__crate__api__cloud_sync_dependency__cloud_sync_locate_protected_message_parent_impl(port, ptr, rust_vec_len, data_len),
                         _ => unreachable!(),
                     }
 }
