@@ -47,7 +47,7 @@ try {
         }
         # The static-link archive includes an unused symlink. Extract only the
         # exact dynamic runtime/header members and retain the no-links guard.
-        $members = if ($package[0] -like '*-unicorn-*') {
+        [string[]]$members = if ($package[0] -like '*-unicorn-*') {
             @('clang64/bin/libunicorn.dll', 'clang64/include/unicorn')
         } else { @('clang64/bin/libwinpthread-1.dll') }
         $types = @(& tar.exe -tvf $archive @members)
