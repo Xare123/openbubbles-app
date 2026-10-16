@@ -79,6 +79,7 @@ on:
           - corten-host-readiness-only
           - corten-windows-readiness-only
           - corten-windows-machine-only
+          - corten-windows-engine-only
           - corten-android-cleanup-only
           - corten-android-auth-transport-only
       outbound_writer:
@@ -132,7 +133,7 @@ env:
 jobs:
   create-runner:
     name: Create ephemeral Google Cloud runner
-    if: ${{ inputs.validation_mode != 'corten-android-login-only' && inputs.validation_mode != 'corten-host-readiness-only' && inputs.validation_mode != 'corten-windows-readiness-only' && inputs.validation_mode != 'corten-windows-machine-only' && inputs.validation_mode != 'corten-android-cleanup-only' && inputs.validation_mode != 'corten-android-auth-transport-only' }}
+    if: ${{ inputs.validation_mode != 'corten-android-login-only' && inputs.validation_mode != 'corten-host-readiness-only' && inputs.validation_mode != 'corten-windows-readiness-only' && inputs.validation_mode != 'corten-windows-machine-only' && inputs.validation_mode != 'corten-windows-engine-only' && inputs.validation_mode != 'corten-android-cleanup-only' && inputs.validation_mode != 'corten-android-auth-transport-only' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -1177,6 +1178,29 @@ jobs:
         with:
           name: Native host readiness ${{ github.run_id }}
           path: host-readiness-receipts/
+          if-no-files-found: warn
+          retention-days: 7
+
+  corten-windows-engine:
+    name: Credential-free native Windows x64 engine comparison
+    if: ${{ inputs.validation_mode == 'corten-windows-engine-only' }}
+    runs-on: windows-2022
+    timeout-minutes: 8
+    steps:
+      - name: Check out exact tooling without submodules
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Run the offline engine comparison and remove temporary dependencies
+        shell: pwsh
+        run: ./tooling/ci/run_windows_engine_probe.ps1 -OutRoot ./windows-engine-receipts
+      - name: Retain only offline probe results and provenance
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: Windows x64 engine comparison ${{ github.run_id }}
+          path: windows-engine-receipts/
           if-no-files-found: warn
           retention-days: 7
 
