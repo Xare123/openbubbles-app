@@ -16794,7 +16794,9 @@ static CLOUDKIT_STATE_FILE_WRITE_LOCK: OnceLock<std::sync::Mutex<()>> = OnceLock
 #[frb(ignore)]
 struct CloudKitLoginLifecycle {
     generation: u64,
-    admissions: HashMap<usize, u64>,
+    // Whether this admitted account replaces persisted account state is kept
+    // with its generation, never inferred from the username or a failed login.
+    admissions: HashMap<usize, (u64, bool)>,
 }
 
 #[cfg(any(target_os = "android", target_os = "windows", test))]
@@ -16869,6 +16871,10 @@ fn cloudkit_runtime_state_writer_context(
     requested_directory: &std::path::Path,
 ) -> anyhow::Result<(PathBuf, u64)> {
     let canonical_directory = canonical_cloudkit_state_directory(requested_directory)?;
+    let lifecycle_gate = cloudkit_read_authentication_lifecycle_gate(&canonical_directory)?;
+    let _lifecycle_guard = lifecycle_gate.try_lock().map_err(|_| {
+        anyhow!("Runtime state writer setup is blocked by account lifecycle change")
+    })?;
     let generation = cloudkit_login_current_generation(&canonical_directory)?;
     Ok((canonical_directory, generation))
 }
@@ -16895,6 +16901,7 @@ fn cloudkit_login_register_admission(
     canonical_directory: &std::path::Path,
     expected_generation: u64,
     account_key: usize,
+    replace_persisted_state: bool,
 ) -> anyhow::Result<()> {
     let mut lifecycles = CLOUDKIT_LOGIN_LIFECYCLES
         .get_or_init(|| std::sync::Mutex::new(HashMap::new()))
@@ -16908,7 +16915,7 @@ fn cloudkit_login_register_admission(
     }
     lifecycle
         .admissions
-        .insert(account_key, expected_generation);
+        .insert(account_key, (expected_generation, replace_persisted_state));
     Ok(())
 }
 
@@ -16924,7 +16931,7 @@ fn cloudkit_login_validate_admission(
     let lifecycle = lifecycles
         .get(canonical_directory)
         .ok_or_else(|| anyhow!("CloudKit login admission is missing"))?;
-    let expected_generation = lifecycle
+    let (expected_generation, _) = lifecycle
         .admissions
         .get(&account_key)
         .copied()
@@ -16933,6 +16940,30 @@ fn cloudkit_login_validate_admission(
         return Err(anyhow!("CloudKit login attempt was superseded"));
     }
     Ok(expected_generation)
+}
+
+#[cfg(any(target_os = "android", target_os = "windows", test))]
+fn cloudkit_login_replaces_persisted_state(
+    canonical_directory: &std::path::Path,
+    expected_generation: u64,
+    account_key: usize,
+) -> anyhow::Result<bool> {
+    let lifecycles = CLOUDKIT_LOGIN_LIFECYCLES
+        .get_or_init(|| std::sync::Mutex::new(HashMap::new()))
+        .lock()
+        .map_err(|_| anyhow!("CloudKit login lifecycle lock was poisoned"))?;
+    let lifecycle = lifecycles
+        .get(canonical_directory)
+        .ok_or_else(|| anyhow!("CloudKit login admission is missing"))?;
+    let (generation, replace_persisted_state) = lifecycle
+        .admissions
+        .get(&account_key)
+        .copied()
+        .ok_or_else(|| anyhow!("CloudKit login admission is missing"))?;
+    if generation != expected_generation || lifecycle.generation != generation {
+        return Err(anyhow!("CloudKit login attempt was superseded"));
+    }
+    Ok(replace_persisted_state)
 }
 
 #[cfg(any(target_os = "android", target_os = "windows", test))]
@@ -16949,7 +16980,11 @@ fn cloudkit_login_consume_admission(
         .get_mut(canonical_directory)
         .ok_or_else(|| anyhow!("CloudKit login admission is missing"))?;
     if lifecycle.generation != expected_generation
-        || lifecycle.admissions.get(&account_key) != Some(&expected_generation)
+        || lifecycle
+            .admissions
+            .get(&account_key)
+            .map(|admission| admission.0)
+            != Some(expected_generation)
     {
         return Err(anyhow!("CloudKit login attempt was superseded"));
     }
@@ -17241,12 +17276,16 @@ pub async fn cloud_sync_ensure_read_authentication(
     }
 }
 
-#[cfg(any(target_os = "android", target_os = "windows"))]
-async fn revoke_clear_and_reset_cloudkit_state(directory: &PathBuf) -> anyhow::Result<u64> {
+#[cfg(any(target_os = "android", target_os = "windows", test))]
+async fn begin_cloudkit_login_attempt(directory: &PathBuf) -> anyhow::Result<u64> {
     let canonical_directory = canonical_cloudkit_state_directory(directory)?;
     let lifecycle_gate = cloudkit_read_authentication_lifecycle_gate(&canonical_directory)?;
     let _lifecycle_guard = lifecycle_gate.lock().await;
-    revoke_clear_and_reset_cloudkit_state_locked(&canonical_directory).await
+    #[cfg(any(target_os = "android", target_os = "windows"))]
+    let _state_write_guard = cloudkit_state_file_write_guard()?;
+    // Invalidate old attempts/writers now, but keep recovery material until a
+    // verified replacement is ready to commit. An SRP/2FA failure is not logout.
+    cloudkit_login_advance_generation(&canonical_directory)
 }
 
 #[cfg(any(target_os = "android", target_os = "windows"))]
@@ -17576,8 +17615,10 @@ fn clear_cloudkit_read_authentication_cache_locked(
 #[cfg(test)]
 mod cloudkit_read_authentication_cache_tests {
     use super::{
-        canonical_cloudkit_state_directory, cloudkit_login_advance_generation,
+        begin_cloudkit_login_attempt, canonical_cloudkit_state_directory,
+        cloudkit_login_advance_generation,
         cloudkit_login_consume_admission, cloudkit_login_register_admission,
+        cloudkit_login_replaces_persisted_state,
         cloudkit_login_validate_admission, cloudkit_read_authentication_key_alias,
         cloudkit_read_authentication_lifecycle_gate, reset_user,
         two_factor_fresh_login_is_authenticated, two_factor_verification_authorizes_fresh_login,
@@ -17756,8 +17797,10 @@ mod cloudkit_read_authentication_cache_tests {
 
         let initial_generation =
             cloudkit_login_advance_generation(&canonical_directory).expect("initial generation");
-        cloudkit_login_register_admission(&canonical_directory, initial_generation, account_key)
-            .expect("register initial admission");
+        cloudkit_login_register_admission(
+            &canonical_directory, initial_generation, account_key, false,
+        )
+        .expect("register initial admission");
         assert_eq!(
             cloudkit_login_validate_admission(&canonical_directory, account_key)
                 .expect("initial admission is current"),
@@ -17772,6 +17815,7 @@ mod cloudkit_read_authentication_cache_tests {
             &canonical_directory,
             initial_generation,
             account_key,
+            false,
         )
         .is_err());
 
@@ -17779,6 +17823,7 @@ mod cloudkit_read_authentication_cache_tests {
             &canonical_directory,
             replacement_generation,
             account_key,
+            false,
         )
         .expect("register replacement admission");
         cloudkit_login_consume_admission(&canonical_directory, replacement_generation, account_key)
@@ -17786,6 +17831,143 @@ mod cloudkit_read_authentication_cache_tests {
         assert!(cloudkit_login_validate_admission(&canonical_directory, account_key).is_err());
 
         std::fs::remove_dir(&directory).expect("remove login generation test directory");
+    }
+
+    #[tokio::test]
+    async fn failed_or_abandoned_login_preserves_saved_account_and_encryption_files() {
+        let directory = tempfile::tempdir().expect("isolated login fixture");
+        let canonical_directory = canonical_cloudkit_state_directory(directory.path()).unwrap();
+        let preserved_files = [
+            "gsa.plist", "cloudkit.plist", "keychain.plist", "passwords.plist",
+            "findmy.plist", "facetime.plist", "sharedstreams.plist", "statuskit.plist",
+            "hw_info.plist", "messages.db", super::CLOUDKIT_READ_AUTHENTICATION_CACHE_FILE,
+        ];
+        for name in preserved_files {
+            std::fs::write(directory.path().join(name), format!("synthetic-state:{name}"))
+                .expect("seed recovery fixture");
+        }
+
+        // This is the actual pre-SRP helper. If the following request fails or
+        // 2FA is abandoned, no admission or commit occurs. Repeat to cover a
+        // user's next attempt, without loading a real profile or sending HTTP.
+        let first = begin_cloudkit_login_attempt(&canonical_directory).await.unwrap();
+        let second = begin_cloudkit_login_attempt(&canonical_directory).await.unwrap();
+        assert!(second > first);
+        assert!(cloudkit_login_validate_admission(&canonical_directory, 41).is_err());
+        for name in preserved_files {
+            assert_eq!(
+                std::fs::read(directory.path().join(name)).expect("state still present"),
+                format!("synthetic-state:{name}").as_bytes(),
+                "failed login must preserve {name}",
+            );
+        }
+        assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), preserved_files.len());
+    }
+
+    #[test]
+    fn replacement_permission_is_account_generation_bound_and_single_use() {
+        let directory = tempfile::tempdir().unwrap();
+        let canonical_directory = canonical_cloudkit_state_directory(directory.path()).unwrap();
+        let generation = cloudkit_login_advance_generation(&canonical_directory).unwrap();
+        cloudkit_login_register_admission(&canonical_directory, generation, 41, true).unwrap();
+        cloudkit_login_register_admission(&canonical_directory, generation, 42, false).unwrap();
+        assert!(cloudkit_login_replaces_persisted_state(&canonical_directory, generation, 41).unwrap());
+        assert!(!cloudkit_login_replaces_persisted_state(&canonical_directory, generation, 42).unwrap());
+        assert!(cloudkit_login_replaces_persisted_state(&canonical_directory, generation, 43).is_err());
+        assert!(cloudkit_login_replaces_persisted_state(&canonical_directory, generation + 1, 41).is_err());
+
+        cloudkit_login_consume_admission(&canonical_directory, generation, 41).unwrap();
+        assert!(cloudkit_login_replaces_persisted_state(&canonical_directory, generation, 41).is_err());
+        assert!(cloudkit_login_consume_admission(&canonical_directory, generation, 41).is_err());
+        cloudkit_login_advance_generation(&canonical_directory).unwrap();
+        assert!(cloudkit_login_replaces_persisted_state(&canonical_directory, generation, 42).is_err());
+    }
+
+    #[tokio::test]
+    async fn pending_login_preservation_does_not_disable_explicit_account_reset() {
+        let directory = tempfile::tempdir().unwrap();
+        let canonical_directory = canonical_cloudkit_state_directory(directory.path()).unwrap();
+        for name in ["gsa.plist", "cloudkit.plist", "keychain.plist", "hw_info.plist", "messages.db"] {
+            std::fs::write(directory.path().join(name), b"synthetic-state").unwrap();
+        }
+        begin_cloudkit_login_attempt(&canonical_directory).await.unwrap();
+        assert!(directory.path().join("gsa.plist").exists());
+        reset_user(&canonical_directory).unwrap();
+        for name in ["gsa.plist", "cloudkit.plist", "keychain.plist"] {
+            assert!(!directory.path().join(name).exists());
+        }
+        for name in ["hw_info.plist", "messages.db"] {
+            assert_eq!(std::fs::read(directory.path().join(name)).unwrap(), b"synthetic-state");
+        }
+    }
+
+    #[cfg(any(target_os = "android", target_os = "windows"))]
+    #[tokio::test]
+    async fn login_attempt_and_replacement_each_invalidate_prior_runtime_writers() {
+        let directory = tempfile::tempdir().unwrap();
+        let (canonical_directory, old_generation) =
+            super::cloudkit_runtime_state_writer_context(directory.path()).unwrap();
+        super::persist_runtime_state_file(&canonical_directory, "cloudkit.plist", b"old", old_generation)
+            .unwrap();
+        let attempt = begin_cloudkit_login_attempt(&canonical_directory).await.unwrap();
+        assert!(super::persist_runtime_state_file(
+            &canonical_directory, "cloudkit.plist", b"stale", old_generation,
+        ).is_err());
+        assert_eq!(std::fs::read(directory.path().join("cloudkit.plist")).unwrap(), b"old");
+
+        // Same second generation advance used at replacement commit. A writer
+        // created while authentication was pending cannot write the new state.
+        let replacement = cloudkit_login_advance_generation(&canonical_directory).unwrap();
+        assert!(replacement > attempt);
+        assert!(super::persist_runtime_state_file(
+            &canonical_directory, "cloudkit.plist", b"pending-old", attempt,
+        ).is_err());
+        super::persist_runtime_state_file(&canonical_directory, "cloudkit.plist", b"new", replacement)
+            .unwrap();
+        assert_eq!(std::fs::read(directory.path().join("cloudkit.plist")).unwrap(), b"new");
+    }
+
+    #[test]
+    fn explicit_replacement_cleanup_follows_remote_login_and_precedes_local_commit() {
+        // Source-order regression supplements the executed storage/admission
+        // tests; it is not an authenticated end-to-end login test.
+        let source = include_str!("api.rs");
+        let login = source.split("\npub async fn do_login(").nth(1).unwrap()
+            .split("pub fn get_available_user(").next().unwrap();
+        let authenticated = login.find("let user = authenticate_apple(").unwrap();
+        let cleanup = login.find("revoke_clear_and_reset_cloudkit_state_locked(").unwrap();
+        let first_write = login.find("persist_login_state_file(").unwrap();
+        let gsa_commit = login.find("persist_gsa_config_atomically(").unwrap();
+        assert!(authenticated < cleanup && cleanup < first_write && first_write < gsa_commit);
+        assert!(login[..authenticated].contains("cloudkit_login_validate_admission("));
+        assert!(login[authenticated..cleanup].contains("if replace_persisted_state"));
+
+        let attempt = source.split("\npub async fn try_auth(").nth(1).unwrap()
+            .split("pub async fn try_icloud_login(").next().unwrap();
+        assert!(attempt.contains("begin_cloudkit_login_attempt("));
+        assert!(!attempt.contains("revoke_clear_and_reset_cloudkit_state"));
+    }
+
+    #[cfg(any(target_os = "android", target_os = "windows"))]
+    #[tokio::test]
+    async fn runtime_writer_cannot_capture_replacement_generation_before_commit_finishes() {
+        let directory = tempfile::tempdir().unwrap();
+        let canonical_directory = canonical_cloudkit_state_directory(directory.path()).unwrap();
+        std::fs::write(directory.path().join("keychain.plist"), b"old-account-state").unwrap();
+        let gate = cloudkit_read_authentication_lifecycle_gate(&canonical_directory).unwrap();
+        let commit_guard = gate.lock().await;
+        // Reproduce the real commit boundary: generation has advanced but
+        // account files are not replaced yet. No keystore or account is used.
+        let generation = cloudkit_login_advance_generation(&canonical_directory).unwrap();
+        assert!(super::cloudkit_runtime_state_writer_context(&canonical_directory).is_err(),
+            "a writer must not bind old account bytes to the replacement generation");
+        super::persist_login_state_file(&canonical_directory, "keychain.plist", b"new-account-state")
+            .unwrap();
+        drop(commit_guard);
+        let (_, admitted_generation) =
+            super::cloudkit_runtime_state_writer_context(&canonical_directory).unwrap();
+        assert_eq!(admitted_generation, generation);
+        assert_eq!(std::fs::read(directory.path().join("keychain.plist")).unwrap(), b"new-account-state");
     }
 
     #[test]
@@ -17857,6 +18039,12 @@ pub async fn do_login(
     #[cfg(any(target_os = "android", target_os = "windows"))]
     let expected_login_generation =
         cloudkit_login_validate_admission(&canonical_conf_dir, login_account_key)?;
+    #[cfg(any(target_os = "android", target_os = "windows"))]
+    let replace_persisted_state = cloudkit_login_replaces_persisted_state(
+        &canonical_conf_dir,
+        expected_login_generation,
+        login_account_key,
+    )?;
 
     let mut account = account.lock().await;
 
@@ -17947,6 +18135,24 @@ pub async fn do_login(
     // Remote authentication must succeed before the first local state write.
     // gsa.plist is written last and acts as the local commit marker.
     let user = authenticate_apple(ids, &*os_config.config()).await?;
+
+    #[cfg(any(target_os = "android", target_os = "windows"))]
+    let expected_login_generation = if replace_persisted_state {
+        // Still under the directory lifecycle gate. Remote account/delegate
+        // authentication succeeded, not merely an SRP challenge awaiting 2FA.
+        // Advance again to invalidate any old-profile writer created while
+        // authentication was pending, then admit only this verified account.
+        let generation = revoke_clear_and_reset_cloudkit_state_locked(&canonical_conf_dir).await?;
+        cloudkit_login_register_admission(
+            &canonical_conf_dir,
+            generation,
+            login_account_key,
+            false,
+        )?;
+        generation
+    } else {
+        expected_login_generation
+    };
 
     let statuskit_path = conf_dir.join("statuskit.plist");
     let statuskit = plist_to_string(&StatusKitState {
@@ -18060,18 +18266,14 @@ pub async fn try_auth(
     let conf_dir = requested_conf_dir;
 
     #[cfg(any(target_os = "android", target_os = "windows"))]
-    let (canonical_conf_dir, expected_login_generation) = if creds.is_some() {
+    let (canonical_conf_dir, expected_login_generation) = {
         let canonical_conf_dir = conf_dir.clone();
-        let expected_login_generation = revoke_clear_and_reset_cloudkit_state(&conf_dir).await?;
-        (canonical_conf_dir, expected_login_generation)
-    } else {
-        let canonical_conf_dir = conf_dir.clone();
-        let lifecycle_gate = cloudkit_read_authentication_lifecycle_gate(&conf_dir)?;
-        let _lifecycle_guard = lifecycle_gate.lock().await;
-        let _state_write_guard = cloudkit_state_file_write_guard()?;
-        let expected_login_generation = cloudkit_login_advance_generation(&canonical_conf_dir)?;
+        let expected_login_generation = begin_cloudkit_login_attempt(&conf_dir).await?;
         (canonical_conf_dir, expected_login_generation)
     };
+
+    #[cfg(any(target_os = "android", target_os = "windows"))]
+    let replace_persisted_state = creds.is_some();
 
     #[cfg(all(not(target_os = "android"), not(target_os = "windows")))]
     if creds.is_some() {
@@ -18108,6 +18310,7 @@ pub async fn try_auth(
             &canonical_conf_dir,
             expected_login_generation,
             Arc::as_ptr(&account) as usize,
+            replace_persisted_state,
         )?;
     }
 

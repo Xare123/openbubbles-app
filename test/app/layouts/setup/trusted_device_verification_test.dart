@@ -5,6 +5,8 @@ import 'package:bluebubbles/services/rustpush/rustpush_service.dart';
 import 'package:bluebubbles/src/rust/api/api.dart' as api;
 import 'package:bluebubbles/src/rust/frb_generated.dart';
 import 'package:bluebubbles/src/rust/lib.dart';
+import 'package:flutter_rust_bridge/flutter_rust_bridge.dart'
+    show AnyhowException;
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated_common.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -269,6 +271,48 @@ void main() {
       expect(bridge.calls, isEmpty);
     },
   );
+
+  for (final error in [
+    "Apple's sign-in service returned a server error (HTTP 503). Please try again later. This error does not require resetting your activation details.",
+    'Apple is limiting sign-in requests (HTTP 429). Please wait before trying again.',
+  ]) {
+    test(
+      'service failure preserves setup resources without retry: $error',
+      () async {
+        final account = _Account();
+        final user = _User();
+        final config = _Config();
+        final connection = _Connection();
+        final anisette = _Anisette();
+        final controller = SetupViewController()
+          ..config = config
+          ..connection = connection
+          ..anisette = anisette
+          ..currentAppleAccount = account
+          ..currentAppleUser = user
+          ..state = const api.LoginState.needsLogin();
+        final failure = AnyhowException(error);
+        bridge.authenticate = () async => throw failure;
+        await expectLater(
+          controller.updateLoginState(
+            const api.LoginState.needsLogin(),
+            attempt: controller.beginLoginAttempt(),
+          ),
+          throwsA(same(failure)),
+        );
+        expect(bridge.calls, ['authenticate']);
+        expect(controller.state, isA<api.LoginState_NeedsLogin>());
+        expect(controller.currentAppleAccount, same(account));
+        expect(controller.currentAppleUser, same(user));
+        expect(controller.config, same(config));
+        expect(controller.connection, same(connection));
+        expect(controller.anisette, same(anisette));
+        for (final resource in [account, user, config, connection, anisette]) {
+          expect(resource.disposeCount, 0);
+        }
+      },
+    );
+  }
 
   test(
     'missing circle uses direct verification and publishes its result',

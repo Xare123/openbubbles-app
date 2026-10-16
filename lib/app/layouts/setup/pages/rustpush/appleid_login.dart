@@ -549,13 +549,15 @@ class _AppleIdLoginState extends OptimizedState<AppleIdLogin> {
   }
 
   Future<void> connect(String appleId, String? password) async {
+    if (!mounted || loading) return;
+    // Reserve the request synchronously. OptimizedState may defer its setState
+    // callback, and keyboard submission bypasses the disabled sign-in button.
+    loading = true;
     final attempt = controller.beginLoginAttempt();
     // apple only takes lowercase
     appleId = appleId.toLowerCase();
     controller.updateConnectError("");
-    setState(() {
-      loading = true;
-    });
+    setState(() {});
     try {
       var (account, result) = await controller.withLoginAttemptResources(
         attempt,
@@ -619,7 +621,7 @@ class _AppleIdLoginState extends OptimizedState<AppleIdLogin> {
         FocusManager.instance.primaryFocus?.unfocus();
       }
     } catch (e) {
-      if (e is StaleLoginAttemptException) return;
+      if (!mounted || !controller.isLoginAttemptCurrent(attempt) || e is StaleLoginAttemptException) return;
       if (e is StateError && e.message == 'Cannot use a disposed login resource') {
         controller.cancelLoginAttempt();
         try {
@@ -668,6 +670,9 @@ class _AppleIdLoginState extends OptimizedState<AppleIdLogin> {
           }
           return;
         }
+        // Every caller is a UI event. The actionable native error is already
+        // displayed; rethrowing also creates an unhandled event-handler future.
+        return;
       }
       if (e is PanicException) {
         controller.updateConnectError(e.message);
