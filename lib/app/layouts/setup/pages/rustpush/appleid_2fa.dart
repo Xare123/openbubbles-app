@@ -33,11 +33,12 @@ class _AppleId2FAState extends OptimizedState<AppleId2FA> {
   bool obscureText = true;
   bool loading = false;
   bool appleHelping = false;
+  bool get isBusy => loading || appleHelping;
 
   Color focusOutlineColor(BuildContext context) => context.theme.brightness == Brightness.dark ? Colors.white : Colors.black;
 
   void handleSignIn() {
-    if (loading) return;
+    if (isBusy) return;
     ss.settings.customHeaders.value = {};
     http.onInit();
     connect(codeController.text);
@@ -63,7 +64,7 @@ class _AppleId2FAState extends OptimizedState<AppleId2FA> {
       setState(() {
         currentCode = codeController.text;
       });
-      if (codeController.text.length == 6 && submittedCode != codeController.text) {
+      if (!isBusy && codeController.text.length == 6 && submittedCode != codeController.text) {
         submittedCode = codeController.text;
         connect(codeController.text);
       }
@@ -149,6 +150,7 @@ class _AppleId2FAState extends OptimizedState<AppleId2FA> {
                                 Opacity(
                                   opacity: 0,
                                   child: TextField(
+                                    enabled: !isBusy,
                                     cursorColor: context.theme.colorScheme.primary,
                                     autocorrect: false,
                                     autofocus: controller.goingTo2fa, // if we're not going don't pop up the keyboard for a transitive state
@@ -182,7 +184,7 @@ class _AppleId2FAState extends OptimizedState<AppleId2FA> {
                               signInFocusNode.requestFocus();
                               return KeyEventResult.handled;
                             }
-                            if (isActivateKey(event.logicalKey) && !appleHelping) {
+                            if (isActivateKey(event.logicalKey) && !isBusy) {
                               appleHelp();
                               return KeyEventResult.handled;
                             }
@@ -194,12 +196,12 @@ class _AppleId2FAState extends OptimizedState<AppleId2FA> {
                               borderRadius: BorderRadius.circular(20),
                             ),
                             child: TextButton(
-                              onPressed: appleHelping ? null : () async {
+                              onPressed: isBusy ? null : () async {
                                 appleHelp();
                               },
                               child: Text(
                                 controller.isSms.value ? "Resend code" : "Resend to Phone #",
-                                style: context.theme.textTheme.bodyLarge!.apply(fontSizeFactor: 1.1, color: appleHelping ? HexColor('777777') : HexColor('2772C3'))
+                                style: context.theme.textTheme.bodyLarge!.apply(fontSizeFactor: 1.1, color: isBusy ? HexColor('777777') : HexColor('2772C3'))
                               )
                             ),
                           ),
@@ -289,7 +291,7 @@ class _AppleId2FAState extends OptimizedState<AppleId2FA> {
                                 border: signInFocusNode.hasFocus ? Border.all(color: focusOutlineColor(context), width: 2) : null,
                                 gradient: LinearGradient(
                                   begin: AlignmentDirectional.topStart,
-                                  colors: loading ? [HexColor('777777'), HexColor('777777')] : [HexColor('2772C3'), HexColor('5CA7F8').darkenPercent(5)],
+                                  colors: isBusy ? [HexColor('777777'), HexColor('777777')] : [HexColor('2772C3'), HexColor('5CA7F8').darkenPercent(5)],
                                 ),
                               ),
                               height: 40,
@@ -306,8 +308,8 @@ class _AppleId2FAState extends OptimizedState<AppleId2FA> {
                                   maximumSize: MaterialStateProperty.all(const Size(200, 36)),
                                   minimumSize: MaterialStateProperty.all(const Size(30, 30)),
                                 ),
-                                onPressed: loading ? null : handleSignIn,
-                                onLongPress: () async {
+                                onPressed: isBusy ? null : handleSignIn,
+                                onLongPress: isBusy ? null : () async {
                                   await showCustomHeadersDialog(context);
                                   connect(codeController.text);
                                 },
@@ -343,20 +345,24 @@ class _AppleId2FAState extends OptimizedState<AppleId2FA> {
   }
 
   Future<void> appleHelp() async {
+    if (!mounted || isBusy) return;
+    // Reserve before setState: OptimizedState may defer its callback.
+    appleHelping = true;
     final attempt = controller.beginLoginAttempt();
-    setState(() {
-      appleHelping = true;
-    });
+    controller.updateConnectError("");
+    setState(() {});
     try {
       await controller.updateLoginState(const api.LoginState.needsSms2Fa(), attempt: attempt);
     } catch (e) {
       if (!mounted || !controller.isLoginAttemptCurrent(attempt) || e is StaleLoginAttemptException) return;
       controller.updateConnectError("$e");
+      // This Future is invoked by UI events without an awaiting caller.
+      // A displayed native request error must not also escape unhandled.
+      if (e is AnyhowException) return;
       rethrow;
     } finally {
-      setState(() {
-        appleHelping = false;
-      });
+      appleHelping = false;
+      if (mounted) setState(() {});
     }
   }
 
@@ -370,11 +376,12 @@ class _AppleId2FAState extends OptimizedState<AppleId2FA> {
   }
 
   Future<void> connect(String code) async {
+    if (!mounted || isBusy) return;
+    // Code auto-submit, keyboard and button actions share this reservation.
+    loading = true;
     final attempt = controller.beginLoginAttempt();
     controller.updateConnectError("");
-    setState(() {
-      loading = true;
-    });
+    setState(() {});
     try {
       if (await controller.submitCode(code, attempt: attempt) is api.LoginState_LoggedIn) {
         if (!controller.isLoginAttemptCurrent(attempt)) return;
@@ -413,16 +420,20 @@ class _AppleId2FAState extends OptimizedState<AppleId2FA> {
             }
             }));
         }
+        if (!mounted || !controller.isLoginAttemptCurrent(attempt)) return;
+        if (submittedCode == code) submittedCode = "";
         controller.updateConnectError(e.message);
+        // The code listener does not await connect. The user-visible native
+        // error is handled here, as it is on the password sign-in page.
+        return;
       }
       if (e is PanicException) {
         controller.updateConnectError(e.message);
       }
       rethrow;
     } finally {
-      setState(() {
-        loading = false;
-      });
+      loading = false;
+      if (mounted) setState(() {});
     }
   }
 }
