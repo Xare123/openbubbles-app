@@ -558,6 +558,7 @@ class _AppleIdLoginState extends OptimizedState<AppleIdLogin> {
     appleId = appleId.toLowerCase();
     controller.updateConnectError("");
     setState(() {});
+    var loginStage = 'try-auth';
     try {
       var (account, result) = await controller.withLoginAttemptResources(
         attempt,
@@ -575,6 +576,7 @@ class _AppleIdLoginState extends OptimizedState<AppleIdLogin> {
         return;
       }
       controller.replaceCurrentAppleAccount(account, attempt: attempt);
+      loginStage = 'complete-authenticated-login';
       await controller.completeAuthenticatedAppleLogin(
         result,
         account,
@@ -584,6 +586,7 @@ class _AppleIdLoginState extends OptimizedState<AppleIdLogin> {
         controller.replaceCurrentAppleAccount(account, attempt: attempt);
         return;
       }
+      loginStage = 'update-login-state';
       result = await controller.updateLoginState(result, attempt: attempt);
 
 
@@ -622,6 +625,14 @@ class _AppleIdLoginState extends OptimizedState<AppleIdLogin> {
       }
     } catch (e) {
       if (!mounted || !controller.isLoginAttemptCurrent(attempt) || e is StaleLoginAttemptException) return;
+      // Persist only fixed stage/category labels, never the server error,
+      // response body, credentials or stack trace. Handled errors remain on UI.
+      final failureCategory = e is AnyhowException
+          ? 'anyhow'
+          : e is PanicException
+              ? 'panic'
+              : e is StateError ? 'state' : 'other';
+      Logger.warn('Apple login failed: stage=$loginStage; category=$failureCategory');
       if (e is StateError && e.message == 'Cannot use a disposed login resource') {
         controller.cancelLoginAttempt();
         try {

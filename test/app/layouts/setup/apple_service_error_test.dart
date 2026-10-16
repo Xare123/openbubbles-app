@@ -6,6 +6,7 @@ import 'package:bluebubbles/services/rustpush/rustpush_service.dart';
 import 'package:bluebubbles/src/rust/api/api.dart' as api;
 import 'package:bluebubbles/src/rust/frb_generated.dart';
 import 'package:bluebubbles/src/rust/lib.dart';
+import 'package:bluebubbles/utils/logger/logger.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge.dart'
@@ -28,6 +29,20 @@ class _Connection extends _Handle implements ApsConnection {}
 class _Anisette extends _Handle
     implements ArcAnisetteClientDefaultAnisetteProvider {}
 
+class _Account extends _Handle
+    implements ArcMutexAppleAccountDefaultAnisetteProvider {}
+
+class _CapturingLogger extends BaseLogger {
+  final warnings = <String>[];
+
+  @override
+  void warn(dynamic log, {String? tag, Object? error, StackTrace? trace}) {
+    expect(error, isNull);
+    expect(trace, isNull);
+    warnings.add(log.toString());
+  }
+}
+
 class _PushService implements RustPushService {
   @override
   String statePath = 'synthetic-no-account-profile';
@@ -37,6 +52,32 @@ class _PushService implements RustPushService {
 }
 
 class _Controller extends SetupViewController {
+  String? failStage;
+  String failureMessage = '';
+  final completedStages = <String>[];
+
+  @override
+  Future<void> completeAuthenticatedAppleLogin(
+    api.LoginState loginState,
+    ArcMutexAppleAccountDefaultAnisetteProvider account, {
+    required int attempt,
+  }) async {
+    if (failStage == null) {
+      return super.completeAuthenticatedAppleLogin(loginState, account, attempt: attempt);
+    }
+    completedStages.add('complete-authenticated-login');
+    if (failStage == 'complete-authenticated-login') {
+      throw AnyhowException(failureMessage);
+    }
+  }
+
+  @override
+  Future<api.LoginState> updateLoginState(api.LoginState state, {int? attempt}) async {
+    if (failStage == null) return super.updateLoginState(state, attempt: attempt);
+    completedStages.add('update-login-state');
+    throw AnyhowException(failureMessage);
+  }
+
   @override
   void updateConnectError(String newError) {
     error = newError;
@@ -73,6 +114,8 @@ class _Bridge implements RustLibApi {
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   final bridge = _Bridge();
+  late BaseLogger originalLogger;
+  late _CapturingLogger capturedLogger;
   setUpAll(() async {
     RustLib.initMock(api: bridge);
     pushService = _PushService();
@@ -86,6 +129,13 @@ void main() {
   setUp(() {
     bridge.calls.clear();
     bridge.pending = null;
+    originalLogger = Logger;
+    capturedLogger = _CapturingLogger();
+    Logger = capturedLogger;
+  });
+  tearDown(() async {
+    Logger = originalLogger;
+    await capturedLogger.logStream.close();
   });
 
   Future<(_Controller, dynamic)> mountLogin(WidgetTester tester) async {
@@ -135,10 +185,44 @@ void main() {
         expect(bridge.calls, ['authenticate']);
         expect(controller.currentAppleAccount, isNull);
         expect(controller.currentAppleUser, isNull);
+        expect(capturedLogger.warnings, isEmpty);
         expect(tester.takeException(), isNull);
         await tester.pumpWidget(const SizedBox.shrink());
       },
     );
+  }
+
+  for (final stage in ['try-auth', 'complete-authenticated-login', 'update-login-state']) {
+    testWidgets('records only the fixed login failure stage: $stage', (tester) async {
+      final (controller, page) = await mountLogin(tester);
+      const privateError = 'synthetic response contains private-token-value';
+      bridge.error = privateError;
+      if (stage != 'try-auth') {
+        controller.failStage = stage;
+        controller.failureMessage = privateError;
+        bridge.pending = Completer()
+          ..complete((_Account(), const api.LoginState.loggedIn()));
+      }
+      await expectLater(
+        page.connect('synthetic@example.test', 'synthetic-password'),
+        completes,
+      );
+      await tester.pumpAndSettle();
+      expect(capturedLogger.warnings, [
+        'Apple login failed: stage=$stage; category=anyhow',
+      ]);
+      expect(find.text(privateError), findsOneWidget);
+      expect(page.loading, isFalse);
+      expect(bridge.calls, ['authenticate']);
+      expect(controller.completedStages, switch (stage) {
+        'try-auth' => <String>[],
+        'complete-authenticated-login' => ['complete-authenticated-login'],
+        _ => ['complete-authenticated-login', 'update-login-state'],
+      });
+      expect(page.passwordController.text, 'synthetic-password');
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox.shrink());
+    });
   }
 
   testWidgets('pending password submission cannot start another sign-in',
