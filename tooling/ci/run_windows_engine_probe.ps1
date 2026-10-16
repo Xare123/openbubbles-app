@@ -45,11 +45,16 @@ try {
                 throw 'Archive path escapes the private directory'
             }
         }
-        $types = @(& tar.exe -tvf $archive)
+        # The static-link archive includes an unused symlink. Extract only the
+        # exact dynamic runtime/header members and retain the no-links guard.
+        $members = if ($package[0] -like '*-unicorn-*') {
+            @('clang64/bin/libunicorn.dll', 'clang64/include/unicorn')
+        } else { @('clang64/bin/libwinpthread-1.dll') }
+        $types = @(& tar.exe -tvf $archive @members)
         if ($LASTEXITCODE -ne 0 -or @($types | Where-Object { $_ -notmatch '^[-d]' }).Count -gt 0) {
             throw 'Unexpected archive entry type; only regular files and directories allowed'
         }
-        & tar.exe -xf $archive -C $work
+        & tar.exe -xf $archive -C $work @members
         if ($LASTEXITCODE -ne 0) { throw 'Verified package extraction failed' }
         $report.packages += [ordered]@{ name=$package[0]; sha256=$hash; bytes=(Get-Item $archive).Length }
     }
