@@ -52,17 +52,17 @@ try {
         @('https://raw.githubusercontent.com/Xare123/openbubbles-app/2eef443e0d2d6349df94d1ff1deaf4d0bc64c4b0/rust/src/mac_hw_info.proto',
           'rust/src/mac_hw_info.proto', '621eedbc97207d504c107b27eb074253f75729414ef9447e7c5c8d1b553223c0'),
         @('https://raw.githubusercontent.com/Xare123/rustpush/338cbf0c17c765bbbde07fae1fab18732c6ae5d0/certs/root/profileidentity.ess.apple.com.cert',
-          'rustpush/certs/root/profileidentity.ess.apple.com.cert', 'da6e667ca7df7c2c8c508c08ad1f0d05808daf5203cee3358ba6f0bcb08feff9'),
+          'rustpush/certs/root/profileidentity.ess.apple.com.cert', '0c0daaff3aaf1be8d257a1948c98aa469b476ab26fd9a51b597d38004cfbd63e'),
         @('https://raw.githubusercontent.com/Xare123/rustpush/338cbf0c17c765bbbde07fae1fab18732c6ae5d0/certs/root/init.ess.apple.com.cert',
-          'rustpush/certs/root/init.ess.apple.com.cert', '2010051d6c52b80abc3900056b41d8eca479d1d2c26c5356fd6d50bdb3a2bd41')
+          'rustpush/certs/root/init.ess.apple.com.cert', 'f83c5c9357eebba5d70331640b4b9f15790a251f1f7424914840ccc51db16046')
     )
     foreach ($inputFile in $inputs) {
         $path = Join-Path $source $inputFile[1]
         New-Item -ItemType Directory -Path (Split-Path $path -Parent) -Force | Out-Null
         Invoke-WebRequest -Uri $inputFile[0] -OutFile $path -TimeoutSec 45 -MaximumRedirection 0
         $hash = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
-        if ($hash -ne $inputFile[2]) { throw ('Pinned source input mismatch: '+$inputFile[1]) }
         $report.inputs += [ordered]@{path=$inputFile[1];sha256=$hash}
+        if ($hash -ne $inputFile[2]) { throw ('Pinned source input mismatch: '+$inputFile[1]) }
     }
     # Pinned upstream compiler. Extract only its executable and public schemas.
     $archive = Join-Path $work 'protoc.zip'
