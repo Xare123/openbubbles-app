@@ -311,8 +311,10 @@ class NativeRequestReaderSocketpairTests(unittest.TestCase):
         cls.executable = pathlib.Path(cls.output.name) / "request-reader"
         clang = subprocess.run(["xcrun", "--find", "clang"], check=True,
                                capture_output=True, text=True, timeout=15).stdout.strip()
+        sdk = subprocess.run(["xcrun", "--sdk", "macosx", "--show-sdk-path"], check=True,
+                             capture_output=True, text=True, timeout=15).stdout.strip()
         compiled = subprocess.run([clang, "-std=c11", "-D_DARWIN_C_SOURCE",
-            "-Wall", "-Wextra", "-Werror", "-I", str(DIRECTORY), "-x", "c", "-",
+            "-isysroot", sdk, "-Wall", "-Wextra", "-Werror", "-I", str(DIRECTORY), "-x", "c", "-",
             "-o", str(cls.executable)], input=SOCKETPAIR_HARNESS, capture_output=True,
             text=True, timeout=30)
         if compiled.returncode:
