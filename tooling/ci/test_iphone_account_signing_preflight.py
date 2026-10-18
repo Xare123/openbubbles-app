@@ -67,7 +67,7 @@ class AccountSigningPreflightGuards(unittest.TestCase):
         mode = "iphone-account-signing-preflight-only"
         create = text.split("  create-runner:\n", 1)[1]
         self.assertIn(f"inputs.validation_mode != '{mode}'", create.split("    runs-on:", 1)[0])
-        job = text.split("  iphone-account-signing-preflight:\n", 1)[1].split("\n  iphone-activation-static:", 1)[0]
+        job = re.split(r"\n  [a-z][a-z0-9-]+:\n", text.split("  iphone-account-signing-preflight:\n", 1)[1], maxsplit=1)[0]
         self.assertIn(f"inputs.validation_mode == '{mode}'", job)
         self.assertIn("runs-on: macos-15", job)
         self.assertIn("timeout-minutes: 10", job)
