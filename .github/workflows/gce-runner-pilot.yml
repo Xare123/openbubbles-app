@@ -84,6 +84,7 @@ on:
           - corten-android-cleanup-only
           - corten-android-auth-transport-only
           - iphone-activation-static-only
+          - iphone-account-signing-preflight-only
       outbound_writer:
         description: Build the isolated Android Canary with one-message V2 writer controls
         required: true
@@ -135,7 +136,7 @@ env:
 jobs:
   create-runner:
     name: Create ephemeral Google Cloud runner
-    if: ${{ inputs.validation_mode != 'corten-android-login-only' && inputs.validation_mode != 'corten-host-readiness-only' && inputs.validation_mode != 'corten-windows-readiness-only' && inputs.validation_mode != 'corten-windows-machine-only' && inputs.validation_mode != 'corten-windows-engine-only' && inputs.validation_mode != 'corten-windows-component-only' && inputs.validation_mode != 'corten-android-cleanup-only' && inputs.validation_mode != 'corten-android-auth-transport-only' && inputs.validation_mode != 'iphone-activation-static-only' }}
+    if: ${{ inputs.validation_mode != 'corten-android-login-only' && inputs.validation_mode != 'corten-host-readiness-only' && inputs.validation_mode != 'corten-windows-readiness-only' && inputs.validation_mode != 'corten-windows-machine-only' && inputs.validation_mode != 'corten-windows-engine-only' && inputs.validation_mode != 'corten-windows-component-only' && inputs.validation_mode != 'corten-android-cleanup-only' && inputs.validation_mode != 'corten-android-auth-transport-only' && inputs.validation_mode != 'iphone-activation-static-only' && inputs.validation_mode != 'iphone-account-signing-preflight-only' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -1231,6 +1232,37 @@ jobs:
           name: Windows x64 Corten component ${{ github.run_id }}
           path: windows-corten-receipts/
           if-no-files-found: warn
+          retention-days: 7
+
+  iphone-account-signing-preflight:
+    name: Build separate credential-free iPhone account-signing diagnostic
+    if: ${{ inputs.validation_mode == 'iphone-account-signing-preflight-only' }}
+    runs-on: macos-15
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Check out exact diagnostic tools, no application submodules
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          submodules: false
+      - name: Compile and sign only the small separate diagnostic
+        env:
+          OB_SOURCE_SHA: ${{ github.sha }}
+        run: |
+          python3 -m unittest discover -s tooling/ci -p test_iphone_account_signing_preflight.py -v
+          bash tooling/ios/account-signing-preflight/build.sh "$RUNNER_TEMP/account-signing-preflight"
+      - name: Retain package and exact hashes, no account or relay input
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: iphone-account-signing-preflight-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/account-signing-preflight/OBAccountSigningProbe.tipa
+            ${{ runner.temp }}/account-signing-preflight/SHA256SUMS
+            ${{ runner.temp }}/account-signing-preflight/SOURCE_SHA
+          if-no-files-found: error
           retention-days: 7
 
   iphone-activation-static:
