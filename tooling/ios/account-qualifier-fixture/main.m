@@ -13,13 +13,14 @@
 #import <sys/socket.h>
 #import <sys/stat.h>
 #import <unistd.h>
+#include "request_reader.h"
 
 #if !defined(OB_SOURCE_SHA) || !defined(OB_FIXTURE_BODY_SHA256) || !defined(OB_FIXTURE_JSON_SHA256)
 #error Exact source and bundled fixture hashes are required
 #endif
 
 static NSString *const OBBundle = @"dev.openbubbles.diagnostics.accountqualifier";
-enum { OBPort = 49173, OBHeaderBytes = 41, OBMaxBody = 8192,
+enum { OBPort = 49173, OBHeaderBytes = OBFixtureRequestBytes, OBMaxBody = 8192,
        OBMaxMetadata = 2048, OBMaxSignature = 2048, OBMaxReply = 16384 };
 static const double OBArmSeconds = 120, OBHeaderSeconds = 10;
 static const double OBSigningSeconds = 45, OBExchangeSeconds = 54, OBReplySeconds = 3;
@@ -166,23 +167,19 @@ static int OBListen(void) {
     return fd;
 }
 
+static int OBRequestActive(double deadline, void *context) {
+    OBRunControl *control = (__bridge OBRunControl *)context;
+    return !control.cancelled && OBNow() < deadline;
+}
+
+static int OBRequestWait(int fd, double deadline, void *context) {
+    return OBWait(fd, POLLIN, deadline, (__bridge OBRunControl *)context);
+}
+
 static BOOL OBReadRequest(int fd, NSString *runID, double deadline, OBRunControl *control) {
-    // EOF is mandatory after the 41 bytes: PC must shutdown its write half.
-    // The 42nd byte rejects any second frame or appended payload before signing.
-    uint8_t bytes[OBHeaderBytes + 1];
-    NSUInteger used = 0;
-    for (;;) {
-        if (!OBWait(fd, POLLIN, deadline, control)) return NO;
-        ssize_t count = recv(fd, bytes + used, sizeof(bytes) - used, 0);
-        if (count < 0 && (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK)) continue;
-        if (count < 0) return NO;
-        if (count == 0) break;
-        used += (NSUInteger)count;
-        if (used > OBHeaderBytes) return NO;
-    }
-    NSData *expected = [[NSString stringWithFormat:@"OBQUAL1:%@\n", runID] dataUsingEncoding:NSASCIIStringEncoding];
-    return !control.cancelled && OBNow() < deadline && used == OBHeaderBytes
-        && expected.length == OBHeaderBytes && memcmp(bytes, expected.bytes, OBHeaderBytes) == 0;
+    // Shared real reader: fixed OBQUAL2 frame, no EOF or half-close requirement.
+    return OBFixtureReadRequest(fd, runID.UTF8String, deadline,
+        OBRequestWait, OBRequestActive, (__bridge void *)control);
 }
 
 static BOOL OBSendAll(int fd, const void *bytes, NSUInteger length, double deadline, OBRunControl *control) {

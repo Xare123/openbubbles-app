@@ -57,10 +57,14 @@ from being substituted after build validation. Source SHA is embedded separately
 3. Accept one connection within 120 seconds and close the listener immediately.
    A bad/idle client consumes this launch's opportunity. No accept/retry loop
    after that first successful accept.
-4. PC sends exactly **41 ASCII bytes**: `OBQUAL1:` + manifest run_id + newline.
-   **PC must call `shutdown(SHUT_WR)` after the frame**, keeping its read side open.
-   EOF is required within 10 seconds, so trailing bytes or a second frame are
-   rejected before any native signing. Socket input never supplies payload bytes.
+4. PC sends exactly **41 ASCII bytes**: `OBQUAL2:` + manifest run_id + newline.
+   This is the complete frame: **do not half-close/shutdown the write direction**.
+   The reader completes with that direction still open, within 10 seconds, and
+   rejects wrong/truncated frames or trailing bytes observed in its nonblocking
+   peek. Without EOF, future appended bytes cannot be ruled out before signing.
+   They are never interpreted or signed, cannot supply a payload, and cannot
+   trigger a second operation. A queued extra byte or second frame rejects the
+   exchange before signing. `OBQUAL1` is not accepted.
 5. Use one `AAAbsintheSigner.sharedSigner` result for sequential empty/body calls.
    The main observer is installed before native dispatch. A separate native serial
    queue prevents factory/sign stalls blocking UI or timeout observation. Every
@@ -91,6 +95,14 @@ Native-owned returned bytes cannot be promised securely erased. Owned mutable
 copies are cleared; transient serialization/callback objects leave scope without
 any persistent write. UI displays only disposition and two byte counts.
 
+October18 human runtime evidence for the earlier EOF-based fixture showed
+`delivery-failed`, empty 261 bytes and body 917 bytes. Those counts are retained
+only after both native calls succeed: the observed failure was reply delivery,
+not cancellation or a request-only/native-signing failure. EOF-triggered usbmux
+tunnel teardown is a supported inference, not a uniquely proven cause. `OBQUAL2`
+removes that half-close dependency. Counts do not prove body binding or Apple
+acceptance; the revised framing still requires separate transport qualification.
+
 Fixed reply errors: `invalid-request`, `cancelled`, `signing-timeout`,
 `framework-unavailable`, `factory-unavailable`, `selector-unavailable`,
 `native-signing-failed`, `native-exception`, `internal-failure`. Before connection,
@@ -109,6 +121,13 @@ checks and hashes. It never downloads, dispatches, installs, launches or accesse
 device/account. It uses exactly the preflight's narrow native entitlement classes,
 with this app's own application/keychain identifiers. Parent owns workflow and
 exact-source qualification; no workflow is modified here.
+
+The existing Mac CI guard file compiles a small POSIX socketpair harness against
+the same `request_reader.h` included by `main.m`. It verifies completion while the
+peer's write direction stays open, and rejection of truncated/wrong frames and
+queued trailing bytes/frames under a deadline. These executable reader tests are
+Mac-only and skipped on Windows; they do not invoke the native signer or qualify
+usbmux, the iOS app lifecycle, or login.
 
 Runtime and login remain **unqualified** until separately observed. The iOS18.2
 reconstruction indicates a cached NAC context and per-input signing, not a reusable
