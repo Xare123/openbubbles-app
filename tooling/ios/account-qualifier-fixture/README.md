@@ -47,8 +47,10 @@ from being substituted after build validation. Source SHA is embedded separately
 1. Complete/dismiss the trusted-device 2FA push first. After the PC reaches its
    postdata/fixture-wait stage, bring this fixture foreground and tap **Arm once**.
    Resigning active (including a system prompt or app switch) cancels this
-   launch's exchange; do not arm before the 2FA interaction. No automatic arming
-   on launch. Keep the fixture foreground until its final disposition appears.
+   launch's exchange; do not arm before the 2FA interaction. Normal/manual launch
+   never automatically arms. Keep the fixture foreground until its final
+   disposition appears. The optional exact PC-launch mode below replaces only
+   this tap, never the fixed USB frame or any account-authorization gate.
 2. Bind IPv4 **127.0.0.1:49173** only. No reuse-port/all-interface/IPv6 listener.
    Parent must separately verify that its existing paired usbmux route reaches
    that exact loopback socket. Loopback itself does not authenticate a PC or
@@ -108,6 +110,43 @@ Fixed reply errors: `invalid-request`, `cancelled`, `signing-timeout`,
 `native-signing-failed`, `native-exception`, `internal-failure`. Before connection,
 bundle/listener/arm failures have only local metadata UI, with no response socket.
 
+## Optional PC launch, protocol 1
+
+Manual **Arm once** remains the default. A supported developer launch may request
+automatic arming only by passing exactly one argument after the executable:
+
+```text
+--ob-usb-transport-once-v1
+```
+
+The shared C parser accepts only that exact singleton. Duplicate flags, unknown
+arguments, extra/empty arguments, spelling/case changes, and normal system launch
+arguments do not opt in. Such launches remain manual; no environment variable,
+URL/deep link, launch-options dictionary, or socket payload can enable auto mode.
+The original process arguments are checked before `UIApplicationMain`; a later
+activation cannot change the selection in an already-running process.
+
+An opted-in launch arms synchronously on its **first** `applicationDidBecomeActive`,
+using the same one-use `arm` method, 120-second window, listener and frozen inputs.
+It does not arm during `didFinishLaunching`. Later active transitions cannot arm
+again. Resigning active cancels the run, including a pending auto-arm before the
+first active transition; it never rearms on return. Manual launches retain their
+existing button behavior and cancellation after arming. Parent must order any
+developer launch after prompts/2FA have been dismissed and keep the app foreground.
+
+`Info.plist` advertises `OBUSBAutomationProtocol` string `1` and `CFBundleVersion`
+string `2`. These are capability markers, not source identity or authorization.
+The response's existing compiled-in `source_sha` and exact `body_sha256` remain
+mandatory parent checks; no placeholder/static `OBSourceSHA` is added to the plist.
+The launch argument is **not permission to log in**: this fixture still performs
+only the same empty/frozen-body two native calls after one matching fixed frame.
+
+This mode does not change entitlements, provisioning, Developer Mode, pairing,
+background execution, or installability. In particular, the existing ad-hoc package
+and private signing entitlement do not become ordinary non-jailbreak development
+capabilities through a launch flag. Parent owns non-jailbreak signing, foreground
+developer-launch and native-signing qualification; all remain unqualified here.
+
 ## Build and limits
 
 On the existing macOS SDK runner, with a NEW absolute output directory:
@@ -122,8 +161,9 @@ device/account. It uses exactly the preflight's narrow native entitlement classe
 with this app's own application/keychain identifiers. Parent owns workflow and
 exact-source qualification; no workflow is modified here.
 
-The existing Mac CI guard file compiles a small POSIX socketpair harness against
-the same `request_reader.h` included by `main.m`. It verifies completion while the
+The existing Mac CI guard file compiles a small C/POSIX harness against the same
+`launch_mode.h` and `request_reader.h` included by `main.m`. It executes the exact
+launch parser/first-active/cancellation latch, and verifies reader completion while the
 peer's write direction stays open, and rejection of truncated/wrong frames and
 queued trailing bytes/frames under a deadline. These executable reader tests are
 Mac-only and skipped on Windows; they do not invoke the native signer or qualify

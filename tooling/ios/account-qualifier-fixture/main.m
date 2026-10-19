@@ -1,4 +1,4 @@
-// Separate, human-armed, one-exchange fixture. Proofs have no disk/log/UI path.
+// Separate, one-exchange fixture. Manual arm is the default; proofs stay private.
 #import <UIKit/UIKit.h>
 #import <CommonCrypto/CommonDigest.h>
 #import <objc/message.h>
@@ -14,12 +14,14 @@
 #import <sys/stat.h>
 #import <unistd.h>
 #include "request_reader.h"
+#include "launch_mode.h"
 
 #if !defined(OB_SOURCE_SHA) || !defined(OB_FIXTURE_BODY_SHA256) || !defined(OB_FIXTURE_JSON_SHA256)
 #error Exact source and bundled fixture hashes are required
 #endif
 
 static NSString *const OBBundle = @"dev.openbubbles.diagnostics.accountqualifier";
+static OBFixtureLaunchMode OBLaunchMode; // Accessed only by main-thread lifecycle.
 enum { OBPort = 49173, OBHeaderBytes = OBFixtureRequestBytes, OBMaxBody = 8192,
        OBMaxMetadata = 2048, OBMaxSignature = 2048, OBMaxReply = 16384 };
 static const double OBArmSeconds = 120, OBHeaderSeconds = 10;
@@ -378,6 +380,7 @@ static NSData *OBResponse(NSDictionary *info, NSData *empty, NSData *body, NSStr
 @property(nonatomic, strong) UILabel *status;
 @property(nonatomic, strong) UIButton *armButton;
 @property(nonatomic, strong) OBRunControl *control;
+- (void)arm;
 @end
 
 @implementation OBAccountQualifierFixture
@@ -407,9 +410,16 @@ static NSData *OBResponse(NSDictionary *info, NSData *empty, NSData *body, NSStr
     self.window.rootViewController = controller; [self.window makeKeyAndVisible];
     return YES;
 }
+- (void)applicationDidBecomeActive:(UIApplication *)application {
+    (void)application;
+    // Only the first active transition may consume the explicit launch opt-in.
+    if (OBFixtureAutoArmOnFirstActive(&OBLaunchMode)) [self arm];
+}
 - (void)applicationWillResignActive:(UIApplication *)application {
     (void)application;
+    OBFixtureLaunchResignedActive(&OBLaunchMode);
     self.control.cancelled = YES; // I/O owner polls cancellation; callbacks never own FDs.
+    if (OBLaunchMode.auto_requested) self.armButton.enabled = NO;
 }
 - (void)runExchange:(OBRunControl *)control {
     @autoreleasepool {
@@ -487,6 +497,7 @@ static NSData *OBResponse(NSDictionary *info, NSData *empty, NSData *body, NSStr
 }
 - (void)arm {
     if (self.control) return; // One arm and one accept per process launch.
+    if (OBLaunchMode.auto_requested && OBLaunchMode.cancelled) return;
     OBRunControl *control = [OBRunControl new];
     control.armDeadline = OBNow() + OBArmSeconds;
     self.control = control; self.armButton.enabled = NO;
@@ -501,6 +512,7 @@ static NSData *OBResponse(NSDictionary *info, NSData *empty, NSData *body, NSStr
 
 int main(int argc, char **argv) {
     @autoreleasepool {
+        OBLaunchMode = OBFixtureLaunchModeFromArguments(argc, (const char *const *)argv);
         return UIApplicationMain(argc, argv, nil, NSStringFromClass(OBAccountQualifierFixture.class));
     }
 }

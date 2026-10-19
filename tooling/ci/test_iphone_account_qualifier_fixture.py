@@ -1,4 +1,4 @@
-"""Fixture/privacy guards and Mac-only real C reader tests. No signer/USB/login."""
+"""Fixture/privacy guards and Mac-only real C launch/reader tests. No signer/USB/login."""
 import hashlib
 import importlib.util
 import json
@@ -18,10 +18,11 @@ BUNDLE = "dev.openbubbles.diagnostics.accountqualifier"
 RUN = "0a34797b7dc44e8e8a41f1fe4c2b01d8"
 CLIENT = "7332110D-8CF0-4B5A-9C4D-EB9C806CF832"
 
-# This harness includes the app's actual reader, not a Python parser model.
+# This harness includes the app's actual launch parser/latch and request reader.
 # Its only sockets are an anonymous local POSIX socketpair, never TCP/device I/O.
 SOCKETPAIR_HARNESS = r'''
 #include "request_reader.h"
+#include "launch_mode.h"
 #include <poll.h>
 #include <stdio.h>
 #include <time.h>
@@ -47,9 +48,51 @@ static int wait_readable(int fd, double deadline, void *context) {
     }
     return 0;
 }
+static int launch_mode_cases(void) {
+    struct {
+        int argc;
+        const char *argv[5];
+        int automatic;
+    } cases[] = {
+        {0, {NULL}, 0},
+        {1, {"fixture", NULL}, 0},
+        {2, {"fixture", "--ob-usb-transport-once-v1", NULL}, 1},
+        {2, {"fixture", "--unknown", NULL}, 0},
+        {2, {"fixture", "--OB-usb-transport-once-v1", NULL}, 0},
+        {2, {"fixture", "--ob-usb-transport-once-v1\n", NULL}, 0},
+        {2, {"fixture", "--ob-usb-transport-once-v1 ", NULL}, 0},
+        {2, {"fixture", "--ob-usb-transport-once-v1=true", NULL}, 0},
+        {2, {"fixture", "", NULL}, 0},
+        {2, {"fixture", NULL}, 0},
+        {2, {NULL, "--ob-usb-transport-once-v1", NULL}, 0},
+        {3, {"fixture", "--ob-usb-transport-once-v1", "--ob-usb-transport-once-v1", NULL}, 0},
+        {3, {"fixture", "--ob-usb-transport-once-v1", "--unknown", NULL}, 0},
+        {3, {"fixture", "--unknown", "--ob-usb-transport-once-v1", NULL}, 0},
+        {3, {"fixture", "--ob-usb-transport-once-v1", "", NULL}, 0},
+        {3, {"fixture", "-SomeSystemArgument", "YES", NULL}, 0},
+    };
+    if (OBFixtureLaunchModeFromArguments(2, NULL).auto_requested) return 20;
+    for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); ++i) {
+        OBFixtureLaunchMode mode = OBFixtureLaunchModeFromArguments(cases[i].argc, cases[i].argv);
+        if (mode.auto_requested != cases[i].automatic
+            || OBFixtureAutoArmOnFirstActive(&mode) != cases[i].automatic
+            || OBFixtureAutoArmOnFirstActive(&mode)) return 21;
+        OBFixtureLaunchResignedActive(&mode);
+        if (OBFixtureAutoArmOnFirstActive(&mode)) return 22;
+    }
+    const char *valid[] = {"fixture", "--ob-usb-transport-once-v1", NULL};
+    OBFixtureLaunchMode pending = OBFixtureLaunchModeFromArguments(2, valid);
+    OBFixtureLaunchResignedActive(&pending);
+    if (!pending.cancelled || OBFixtureAutoArmOnFirstActive(&pending)
+        || OBFixtureAutoArmOnFirstActive(&pending)) return 23;
+    if (OBFixtureAutoArmOnFirstActive(NULL)) return 24;
+    OBFixtureLaunchResignedActive(NULL);
+    return 0;
+}
 int main(int argc, char **argv) {
     if (argc != 2) return 2;
     const char *mode = argv[1];
+    if (strcmp(mode, "launch-mode") == 0) return launch_mode_cases();
     const char *run_id = "0a34797b7dc44e8e8a41f1fe4c2b01d8";
     const char frame[] = "OBQUAL2:0a34797b7dc44e8e8a41f1fe4c2b01d8\n";
     if (sizeof(frame) - 1 != OBFixtureRequestBytes) return 3;
@@ -196,12 +239,15 @@ class NativeBoundaryGuards(unittest.TestCase):
         cls.source = (DIRECTORY / "main.m").read_text()
         cls.build = (DIRECTORY / "build.sh").read_text()
         cls.reader = (DIRECTORY / "request_reader.h").read_text()
+        cls.launch = (DIRECTORY / "launch_mode.h").read_text()
 
     def test_bundle_entitlements_are_distinct_and_exact(self):
         info = plistlib.loads((DIRECTORY / "Info.plist").read_bytes())
         entitlements = plistlib.loads((DIRECTORY / "entitlements.plist").read_bytes())
         self.assertEqual(info["CFBundleIdentifier"], BUNDLE)
         self.assertEqual(info["CFBundleExecutable"], "OBAccountQualifierFixture")
+        self.assertEqual(info["CFBundleVersion"], "2")
+        self.assertEqual(info["OBUSBAutomationProtocol"], "1")
         self.assertEqual(set(entitlements), {"application-identifier", "keychain-access-groups",
             "com.apple.private.MobileGestalt.AllowedProtectedKeys", "abs-client"})
         self.assertEqual(entitlements["application-identifier"], BUNDLE)
@@ -234,6 +280,37 @@ class NativeBoundaryGuards(unittest.TestCase):
         self.assertNotIn("payload", read_request)
         for forbidden in ["send(", "write(", "socket(", "open(", "signer", "signature"]:
             self.assertNotIn(forbidden, self.reader)
+
+    def test_auto_arm_uses_exact_process_arguments_and_first_active_only(self):
+        self.assertIn('#include "launch_mode.h"', self.source)
+        self.assertIn('argc == 2 && argv && argv[0] && argv[1]', self.launch)
+        self.assertIn('strcmp(argv[1], "--ob-usb-transport-once-v1") == 0', self.launch)
+        entry = self.source.split("int main(int argc, char **argv)", 1)[1]
+        self.assertLess(entry.index("OBFixtureLaunchModeFromArguments"), entry.index("UIApplicationMain"))
+        ui = self.source.split("@implementation OBAccountQualifierFixture", 1)[1]
+        launch, active = ui.split("- (void)applicationDidBecomeActive:", 1)
+        active = active.split("- (void)applicationWillResignActive:", 1)[0]
+        self.assertNotIn("[self arm]", launch)
+        self.assertNotIn("runExchange:", launch)
+        self.assertIn("if (OBFixtureAutoArmOnFirstActive(&OBLaunchMode)) [self arm]", active)
+        self.assertEqual(self.source.count("OBFixtureAutoArmOnFirstActive("), 1)
+        for forbidden in ["getenv(", "NSProcessInfo.processInfo.arguments", ".environment", "openURL:", "handleOpenURL:"]:
+            self.assertNotIn(forbidden, self.source + self.launch)
+
+    def test_auto_arm_cancellation_cannot_rearm_or_change_manual_default(self):
+        self.assertIn("OBFixtureLaunchMode mode = {0}", self.launch)
+        self.assertIn("if (!mode || mode->first_activation_seen) return 0", self.launch)
+        self.assertLess(self.launch.index("mode->first_activation_seen = 1"),
+                        self.launch.index("return mode->auto_requested && !mode->cancelled"))
+        self.assertIn("if (mode) mode->cancelled = 1", self.launch)
+        resign = self.source.split("- (void)applicationWillResignActive:", 1)[1].split("- (void)runExchange:", 1)[0]
+        self.assertIn("OBFixtureLaunchResignedActive(&OBLaunchMode)", resign)
+        self.assertIn("self.control.cancelled = YES", resign)
+        self.assertIn("if (OBLaunchMode.auto_requested) self.armButton.enabled = NO", resign)
+        arm = self.source.split("- (void)arm {", 1)[1].split("@end", 1)[0]
+        self.assertIn("if (self.control) return", arm)
+        self.assertIn("if (OBLaunchMode.auto_requested && OBLaunchMode.cancelled) return", arm)
+        self.assertIn("self.control = control; self.armButton.enabled = NO", arm)
 
     def test_descriptor_ownership_and_io_deadlines(self):
         close = self.source.split("static void OBClose", 1)[1].split("static BOOL OBNonblocking", 1)[0]
@@ -345,6 +422,9 @@ class NativeRequestReaderSocketpairTests(unittest.TestCase):
 
     def test_cancellation_rejects_even_a_complete_frame(self):
         self.reader_case("cancelled")
+
+    def test_real_launch_parser_first_active_once_and_cancellation(self):
+        self.reader_case("launch-mode")
 
 
 if __name__ == "__main__":
