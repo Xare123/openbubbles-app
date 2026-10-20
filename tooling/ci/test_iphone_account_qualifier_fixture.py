@@ -99,12 +99,17 @@ static int listener_cases(int rebind) {
         socklen_t size = sizeof(reuse);
         struct sockaddr_in address;
         socklen_t address_size = sizeof(address);
-        if (getsockopt(listener, SOL_SOCKET, SO_REUSEADDR, &reuse, &size) != 0 || reuse != 1
+        /* Darwin may report the enabled option bit (SO_REUSEADDR), not literal
+         * one. Socket boolean options are enabled by any nonzero value. */
+        if (getsockopt(listener, SOL_SOCKET, SO_REUSEADDR, &reuse, &size) != 0 || reuse == 0
             || getsockname(listener, (struct sockaddr *)&address, &address_size) != 0
             || address.sin_addr.s_addr != htonl(INADDR_LOOPBACK)
             || ntohs(address.sin_port) != OBFixtureLoopbackPort
             || !(fcntl(listener, F_GETFL, 0) & O_NONBLOCK)
-            || !(fcntl(listener, F_GETFD, 0) & FD_CLOEXEC)) result = 31;
+            || !(fcntl(listener, F_GETFD, 0) & FD_CLOEXEC)) {
+            fprintf(stderr, "listener option verification failed: reuse=%d\n", reuse);
+            result = 31;
+        }
         int second = OBFixtureOpenLoopbackListener();
         if (second >= 0) { close(second); result = 32; }
         else if (errno != EADDRINUSE) result = 33;
