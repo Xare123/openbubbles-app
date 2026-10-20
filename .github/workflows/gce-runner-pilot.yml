@@ -1273,6 +1273,7 @@ jobs:
       - name: Validate source guards and install declared build dependencies
         run: |
           python3 -B -m unittest discover -s tooling/ios/trollvnc-usb-control -p test_prepare.py -v
+          python3 -B -m unittest discover -s tooling/ios/trollvnc-usb-control -p test_lifetime_native.py -v
           python3 -B -m unittest discover -s tooling/ci -p test_iphone_usb_control_build.py -v
           brew install xcbeautify ldid-procursus p7zip make
       - name: Build only the hardened bootstrap helper

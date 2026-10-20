@@ -51,6 +51,26 @@ SOURCES = {
     [updater start];
 #endif
 ''',
+    prepare.APP + "TVNCViewController.m": b'''- (void)viewDidAppear:(BOOL)animated {
+    UNUserNotificationCenter *center = [UNUserNotificationCenter currentNotificationCenter];
+}
+''',
+    prepare.APP + "TVNCRootListController.m": b'''- (NSString *)defaultFooterText {
+        versionString = [[GitHubReleaseUpdater shared] currentVersion];
+}
+''',
+    prepare.MANAGER: b'''#import "TRWatchDog.h"
+int main(int argc, const char *argv[]) {
+    /* Singleton */
+    openLocalDummyService(kTvAlivePort);
+    CFRunLoopRun();
+    @autoreleasepool {
+        pid_t child = [gWatchDog processIdentifier];
+        [gWatchDog stop];
+        gWatchDog = nil;
+    }
+}
+''',
     prepare.SERVER: b'''#pragma mark - Options
 static void parseDaemonOptions(void) {
     NSString *fullPwd = [prefs objectForKey:@"FullPassword"];
@@ -75,7 +95,6 @@ int main(int argc, const char *argv[]) {
 }
 
 PRESERVED = {
-    "src/trollvncmanager.mm": b"    openLocalDummyService(kTvAlivePort);\n",
     "COPYING": b"synthetic upstream license fixture\n",
     prepare.APP + "TrollVNC.entitlements": b"synthetic upstream entitlements fixture\n",
 }
@@ -136,6 +155,28 @@ class SourceTests(unittest.TestCase):
         self.assertNotIn("configureWithStrategy:", app)
         self.assertIn('#ifndef THEBOOTSTRAP\n    [[TVNCHotspotManager', app)
 
+    def test_manual_waiting_and_packaged_version_are_honest(self):
+        view = self.output[prepare.APP + "TVNCViewController.m"].decode()
+        self.assertLess(view.index("Waiting for USB control"), view.index("UNUserNotificationCenter *center"))
+        self.assertIn("no password is needed here", view)
+        self.assertIn("password.length != 8", view)
+        root = self.output[prepare.APP + "TVNCRootListController.m"].decode()
+        self.assertIn('objectForInfoDictionaryKey:@"CFBundleShortVersionString"', root)
+        self.assertNotIn("[[GitHubReleaseUpdater shared] currentVersion]", root)
+
+    def test_native_lifetime_is_packaged_and_not_renewed_by_health_poll(self):
+        gui = self.output[prepare.APP + "TVNCServiceCoordinator.m"].decode()
+        self.assertIn("static BOOL usbLaunchAttempted = NO", gui)
+        self.assertLess(gui.index("usbLaunchAttempted = YES"), gui.index("[[TRTask alloc]"))
+        manager = self.output[prepare.MANAGER].decode()
+        self.assertLess(manager.index("OBUSBStartLifetime(getppid()"), manager.index("/* Singleton */"))
+        self.assertIn("600ULL * NSEC_PER_SEC", manager)
+        self.assertIn("if (!obUSBStopped) CFRunLoopRun()", manager)
+        self.assertIn("openLocalDummyService(kTvAlivePort)", manager)
+        self.assertLess(manager.index("[gWatchDog setKeepAlive:@NO]"), manager.index("[gWatchDog stop]"))
+        self.assertNotIn("gWatchDog = nil", manager)
+        self.assertEqual(self.output[prepare.LIFETIME], Path(prepare.__file__).with_name("USBSessionLifetime.h").read_bytes())
+
     def test_missing_and_ambiguous_real_anchors_fail(self):
         path = prepare.SERVER
         for replacement in (b"", b"#pragma mark - Options\n" * 2):
@@ -159,6 +200,7 @@ class StageTests(unittest.TestCase):
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.write_bytes(content)
             (checkout / prepare.MANAGED).parent.mkdir(parents=True, exist_ok=True)
+        (self.stage / prepare.LIFETIME).parent.mkdir(parents=True, exist_ok=True)
         self.mock_git = patch.object(prepare, "git", side_effect=self.git)
         self.mock_git.start()
         self.addCleanup(self.mock_git.stop)
@@ -220,7 +262,7 @@ class StageTests(unittest.TestCase):
 
     def test_dry_run_then_apply_is_idempotent_and_preserves_upstream(self):
         report, diff = prepare.prepare(self.upstream, self.stage, check=True)
-        self.assertEqual(report["pending_files"], 4)
+        self.assertEqual(report["pending_files"], 8)
         self.assertIn("--- /dev/null\n+++ b/" + prepare.MANAGED, diff)
         self.assertFalse((self.stage / prepare.MANAGED).exists())
         prepare.prepare(self.upstream, self.stage)
@@ -241,7 +283,7 @@ class StageTests(unittest.TestCase):
         name = prepare.APP + "AppDelegate.m"
         (self.stage / name).write_bytes(prepare.harden(SOURCES)[name])
         report, _ = prepare.prepare(self.upstream, self.stage)
-        self.assertEqual(report["pending_files"], 3)
+        self.assertEqual(report["pending_files"], 7)
         managed = self.stage / prepare.MANAGED
         managed.write_bytes(b"do not overwrite")
         with self.assertRaises(prepare.PreparationError):

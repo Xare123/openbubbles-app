@@ -31,7 +31,8 @@ python -B -m unittest discover -s tooling/ios/trollvnc-usb-control -p test_prepa
 `--check` writes nothing. It prints the full proposed unified source/resource
 diff to stdout and a nonsecret JSON report to stderr. Apply mode prints only the
 report. There is no pin override and no password argument. The preparer changes
-three source files plus `prefs/TrollVNCPrefs/Resources/Managed.plist` in the stage;
+six source files, adds `src/OBUSBSessionLifetime.h`, and adds
+`prefs/TrollVNCPrefs/Resources/Managed.plist` in the stage;
 upstream entitlements, `COPYING`, build files and workflows remain byte-for-byte
 unchanged. Existing upstream symlinks outside patch targets are preserved.
 
@@ -40,9 +41,10 @@ unchanged. Existing upstream symlinks outside patch targets are preserved.
 All links below refer to the reviewed SHA, not a release or moving branch.
 
 - [AppDelegate.m:28-45](https://github.com/owngoal-dev/TrollVNC/blob/cfdb737e72977d961eb7d0a8110d2fe1a58551d7/app/TrollVNC/TrollVNC/AppDelegate.m#L28-L45): retain startup `registerServiceMonitor`; compile out hotspot registration for bootstrap and remove updater configure/start. Managed mode does **not** prevent GUI auto-start.
-- [TVNCServiceCoordinator.m:53-69, 98-128, 130-182](https://github.com/owngoal-dev/TrollVNC/blob/cfdb737e72977d961eb7d0a8110d2fe1a58551d7/app/TrollVNC/TrollVNC/TVNCServiceCoordinator.m#L53-L182): validate the same `sharedTaskEnvironment` supplied to the manager before allocating/launching its task. Require exactly eight bytes in ASCII `0x20..0x7e`. No password is logged or bundled. Preserve the original three-second health check to the manager, avoiding VNC client churn.
+- [TVNCServiceCoordinator.m:53-69, 98-128, 130-182](https://github.com/owngoal-dev/TrollVNC/blob/cfdb737e72977d961eb7d0a8110d2fe1a58551d7/app/TrollVNC/TrollVNC/TVNCServiceCoordinator.m#L53-L182): validate the same `sharedTaskEnvironment` supplied to the manager before allocating/launching its task. Require exactly eight bytes in ASCII `0x20..0x7e`. No password is logged or bundled. Preserve the original three-second health check to the manager, avoiding VNC client churn. Admit only one manager launch per GUI process, so health polling cannot renew the lifetime limit.
 - [TVNCServiceCoordinator.m:184-232](https://github.com/owngoal-dev/TrollVNC/blob/cfdb737e72977d961eb7d0a8110d2fe1a58551d7/app/TrollVNC/TrollVNC/TVNCServiceCoordinator.m#L184-L232): return immediately in bootstrap to prevent the `LaunchAtLogin` dependency-app launch, even if persisted defaults override registered defaults.
-- [trollvncmanager.mm:89-162](https://github.com/owngoal-dev/TrollVNC/blob/cfdb737e72977d961eb7d0a8110d2fe1a58551d7/src/trollvncmanager.mm#L89-L162): **preserve** the existing `127.0.0.1:46751` health listener as the explicitly permitted exception to no extra listeners. It binds `INADDR_LOOPBACK` (line 115), accepts (line 141), then closes (line 150), with no command parser, data reads or response. The manager source, `-daemon` and [environment inheritance at lines 224-235](https://github.com/owngoal-dev/TrollVNC/blob/cfdb737e72977d961eb7d0a8110d2fe1a58551d7/src/trollvncmanager.mm#L224-L235) remain unchanged. No new health protocol is added.
+- [trollvncmanager.mm:89-162](https://github.com/owngoal-dev/TrollVNC/blob/cfdb737e72977d961eb7d0a8110d2fe1a58551d7/src/trollvncmanager.mm#L89-L162): preserve the existing loopback-only `127.0.0.1:46751` passive health listener. No command parser or new listener is added. Before singleton/startup, bind manager lifetime to its actual parent GUI's canonical executable path and kernel start identity using `OBUSBSessionLifetime.h`. A kernel process-exit source or ten-minute monotonic timer stops the main loop. Shutdown disables watchdog restarts, retains the watchdog through its existing bounded child stop/wait, and does not depend on a PC signal to the root manager. The existing `-daemon` and environment inheritance remain unchanged.
+- The GUI view controller now explains manual launch as "Waiting for USB control" instead of showing an indefinite Launching overlay without a runtime password. The settings footer uses the actual bundle version, not the disabled updater's null version. No password field or notification permission is needed to dismiss the manual waiting alert.
 - [trollvncserver.mm:428-460, 791-805, 845-859](https://github.com/owngoal-dev/TrollVNC/blob/cfdb737e72977d961eb7d0a8110d2fe1a58551d7/src/trollvncserver.mm#L428-L859): ignore managed/persisted password keys in bootstrap. Require the runtime environment before option parsing; remove the alternate view-only environment credential. Force enabled/input-enabled, loopback 5901, Bonjour/clipboard/file-transfer/HTTP/reverse/control socket/key logging/automatic AssistiveTouch off after parsing, before any server setup.
 - [trollvncserver.mm:3613-3658, 3715-3747, 3771-3824, 3872-3874, 4172-4215](https://github.com/owngoal-dev/TrollVNC/blob/cfdb737e72977d961eb7d0a8110d2fe1a58551d7/src/trollvncserver.mm#L3613-L4215): pass only argv[0] to LibVNCServer; immediately before `rfbInitServer`, recheck password validity and the installed authentication vector/callback, force IPv4 loopback 5901, turn auto-port selection off, set IPv6/UDP/HTTP/HTTP6 ports to zero, remove HTTP resources/proxy and TLS paths. These fields exist in the pinned [rfb.h:229-266, 326-355](https://github.com/owngoal-dev/TrollVNC/blob/cfdb737e72977d961eb7d0a8110d2fe1a58551d7/include/rfb/rfb.h#L229-L355).
 
@@ -104,15 +106,17 @@ artifact metadata.
 
 ## Qualification boundary
 
-Tests exercise synthetic source transformation, rejection paths, ordering and
-idempotent staging. Real pinned source anchors are separately checked in memory.
-No Objective-C/Swift compilation, packaged-resource inspection, executable
-provenance, GUI launch, DVT environment delivery, socket behavior, authentication
-negotiation, USB forwarding, input injection or shutdown was tested here.
+Source tests exercise synthetic transformation, rejection paths, ordering and
+idempotent staging. `test_lifetime_native.py` compiles and executes the actual
+lifetime header on the Mac lane: owner exit, deadline, cancellation, duplicate
+admission, and invalid identity/limits. Windows explicitly skips these Darwin
+tests. No synthetic test establishes actual iPhone shutdown.
 
-Upstream manager keep-alive, server singleton/parent monitoring and signal paths
-are preserved. GUI exit is not established to stop the manager or its child;
-the preparer adds no shutdown guarantee or launch-at-login mechanism. The existing
-manager connect probe is not proof of child ownership. The parent must qualify lifecycle
-and verify the packaged Managed resource, entitlements, authentication and actual
-listening sockets before treating any future device run as qualified.
+The previous997ebf8d helper passed real USB authentication/capture but failed
+cleanup when its root manager outlived the GUI. This changed-source fix needs
+Mac compilation and actual iPhone shutdown verification before admission to
+interactive control. The host must stop only its exact owned GUI, await native
+descendant exit, and verify both helper process and paired-USB port absence.
+No generic root signal, new launch-at-login mechanism or device trust change is
+introduced. Compile/package, iPhone runtime and full relay login remain separate
+qualification gates; preserve the previous failed admission and evidence.

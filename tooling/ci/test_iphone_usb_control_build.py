@@ -12,6 +12,7 @@ class USBControlBuildTests(unittest.TestCase):
         self.assertIn("inputs.validation_mode == 'iphone-usb-control-only'",job)
         self.assertIn("runs-on: macos-15",job)
         self.assertIn("timeout-minutes: 25",job)
+        self.assertIn("-p test_lifetime_native.py -v",job)
         self.assertIn("contents: read",job)
         for prohibited in ("secrets.","id-token: write","create-runner","adb ","gcloud ","-Run","TROLLVNC_PASSWORD:"):
             self.assertNotIn(prohibited,job)
@@ -25,6 +26,7 @@ class USBControlBuildTests(unittest.TestCase):
                      "--no-hardlinks --local","codesign --verify --deep --strict","prepare.CONFIG"):
             self.assertIn(text,build)
         self.assertNotIn("TROLLVNC_PASSWORD=",build)
+        self.assertIn("Set :CFBundleVersion 280",build)
         self.assertNotIn("releases/latest",fetch)
         self.assertIn("137098923",fetch)
         self.assertIn("137098925",fetch)

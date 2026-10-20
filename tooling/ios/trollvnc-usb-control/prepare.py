@@ -17,6 +17,8 @@ import tempfile
 PIN = "cfdb737e72977d961eb7d0a8110d2fe1a58551d7"
 APP = "app/TrollVNC/TrollVNC/"
 SERVER = "src/trollvncserver.mm"
+MANAGER = "src/trollvncmanager.mm"
+LIFETIME = "src/OBUSBSessionLifetime.h"
 MANAGED = "prefs/TrollVNCPrefs/Resources/Managed.plist"
 TOOL_REPO = Path(__file__).resolve().parents[3]
 CONFIG = {
@@ -134,13 +136,36 @@ EDITS = (
          GUI_PASSWORD_CHECK + "@interface TVNCServiceCoordinator ()\n"),
     Edit(APP + "TVNCServiceCoordinator.m", "- (void)spawnService {\n", '''- (void)spawnService {
 #ifdef THEBOOTSTRAP
-    if (!TVNCUSBPasswordIsValid([TVNCServiceCoordinator sharedTaskEnvironment])) return;
+    // A GUI launch owns one bounded manager. Health polling cannot renew it.
+    static BOOL usbLaunchAttempted = NO;
+    if (!TVNCUSBPasswordIsValid([TVNCServiceCoordinator sharedTaskEnvironment]) || usbLaunchAttempted) return;
+    usbLaunchAttempted = YES;
 #endif
 '''),
     Edit(APP + "TVNCServiceCoordinator.m", "- (void)checkPrebootDependencies {\n", '''- (void)checkPrebootDependencies {
 #ifdef THEBOOTSTRAP
     return; // Never launch another app at login in this USB test build.
 #endif
+'''),
+    Edit(APP + "TVNCViewController.m", '''    UNUserNotificationCenter *center = [UNUserNotificationCenter currentNotificationCenter];
+''', '''#ifdef THEBOOTSTRAP
+    NSDictionary *environment = [TVNCServiceCoordinator sharedTaskEnvironment];
+    NSData *password = [environment[@"TROLLVNC_PASSWORD"] dataUsingEncoding:NSASCIIStringEncoding
+                                                       allowLossyConversion:NO];
+    if (password.length != 8) {
+        UIAlertController *waiting = [UIAlertController alertControllerWithTitle:@"Waiting for USB control"
+            message:@"Leave this iPhone unlocked and connected by USB. The PC starts a temporary session; no password is needed here."
+            preferredStyle:UIAlertControllerStyleAlert];
+        [waiting addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+        [self presentViewController:waiting animated:YES completion:nil];
+        _isAlertPresented = YES;
+        return;
+    }
+#endif
+    UNUserNotificationCenter *center = [UNUserNotificationCenter currentNotificationCenter];
+'''),
+    Edit(APP + "TVNCRootListController.m", '''        versionString = [[GitHubReleaseUpdater shared] currentVersion];
+''', '''        versionString = [[NSBundle mainBundle] objectForInfoDictionaryKey:@"CFBundleShortVersionString"];
 '''),
     Edit(APP + "AppDelegate.m",
          '    [[TVNCHotspotManager sharedManager] registerWithName:@"TrollVNC"];\n',
@@ -162,6 +187,25 @@ EDITS = (
     [updater start];
 #endif
 ''', "    // USB test build: auto updater is never configured or started.\n"),
+    Edit(MANAGER, '#import "TRWatchDog.h"\n', '#import "TRWatchDog.h"\n#import "OBUSBSessionLifetime.h"\n'),
+    Edit(MANAGER, '    /* Singleton */\n', '''    // Only the GUI in this exact installed bundle owns the root manager.
+    NSString *ownerPath = [[[NSString stringWithUTF8String:argv[0]] stringByDeletingLastPathComponent]
+        stringByAppendingPathComponent:@"TrollVNC"];
+    if (!OBUSBStartLifetime(getppid(), ownerPath.fileSystemRepresentation, 600ULL * NSEC_PER_SEC, ^(bool ownerExited) {
+        (void)ownerExited;
+        CFRunLoopStop(CFRunLoopGetMain());
+    })) return EXIT_FAILURE;
+
+    /* Singleton */
+'''),
+    Edit(MANAGER, '    CFRunLoopRun();\n', '''    if (!obUSBStopped) CFRunLoopRun();
+    OBUSBCancelLifetime();
+'''),
+    Edit(MANAGER, '''        [gWatchDog stop];
+        gWatchDog = nil;
+''', '''        [gWatchDog setKeepAlive:@NO];
+        [gWatchDog stop];
+'''),
     Edit(SERVER, "#pragma mark - Options\n", SERVER_PASSWORD_CHECK + "#pragma mark - Options\n"),
     Edit(SERVER, '    NSString *fullPwd = [prefs objectForKey:@"FullPassword"];\n',
          '''    NSString *fullPwd = nil;
@@ -199,6 +243,7 @@ def harden(originals):
             raise PreparationError(f"anchor in {edit.path}: expected exactly once, found {count}")
         result[edit.path] = text.replace(edit.before, edit.after, 1).encode("utf-8")
     result[MANAGED] = plistlib.dumps(CONFIG, sort_keys=True)
+    result[LIFETIME] = Path(__file__).with_name("USBSessionLifetime.h").read_bytes()
     return result
 
 

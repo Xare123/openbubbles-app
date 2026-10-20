@@ -55,6 +55,7 @@ for binary in trollvncserver trollvncmanager; do
   codesign --force --sign - --preserve-metadata=entitlements,identifier --generate-entitlement-der "$app/$binary"
 done
 /usr/libexec/PlistBuddy -c 'Set :CFBundleDisplayName OB USB Control' "$app/Info.plist"
+/usr/libexec/PlistBuddy -c 'Set :CFBundleVersion 280' "$app/Info.plist"
 codesign --force --sign - --deep --preserve-metadata=entitlements,identifier --generate-entitlement-der "$app"
 codesign --verify --deep --strict "$app"
 executable="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$app/Info.plist")"
@@ -68,6 +69,7 @@ expected=dict(prepare.CONFIG,DesktopName='OB USB Control '+sys.argv[4])
 assert plistlib.loads(Path(sys.argv[2]).read_bytes()) == expected
 info=plistlib.loads(Path(sys.argv[3]).read_bytes())
 assert tuple(map(int,info['MinimumOSVersion'].split('.'))) <= (15,7,9)
+assert info['CFBundleVersion'] == '280'
 print(json.dumps({'arm64_package':True,'managed_resource_verified':True,'password_bundled':False,'device_runtime_qualified':False}))
 PY
 (
