@@ -86,6 +86,7 @@ on:
           - iphone-activation-static-only
           - iphone-account-signing-preflight-only
           - iphone-account-qualifier-fixture-only
+          - iphone-usb-control-only
       outbound_writer:
         description: Build the isolated Android Canary with one-message V2 writer controls
         required: true
@@ -137,7 +138,7 @@ env:
 jobs:
   create-runner:
     name: Create ephemeral Google Cloud runner
-    if: ${{ inputs.validation_mode != 'corten-android-login-only' && inputs.validation_mode != 'corten-host-readiness-only' && inputs.validation_mode != 'corten-windows-readiness-only' && inputs.validation_mode != 'corten-windows-machine-only' && inputs.validation_mode != 'corten-windows-engine-only' && inputs.validation_mode != 'corten-windows-component-only' && inputs.validation_mode != 'corten-android-cleanup-only' && inputs.validation_mode != 'corten-android-auth-transport-only' && inputs.validation_mode != 'iphone-activation-static-only' && inputs.validation_mode != 'iphone-account-signing-preflight-only' && inputs.validation_mode != 'iphone-account-qualifier-fixture-only' }}
+    if: ${{ inputs.validation_mode != 'corten-android-login-only' && inputs.validation_mode != 'corten-host-readiness-only' && inputs.validation_mode != 'corten-windows-readiness-only' && inputs.validation_mode != 'corten-windows-machine-only' && inputs.validation_mode != 'corten-windows-engine-only' && inputs.validation_mode != 'corten-windows-component-only' && inputs.validation_mode != 'corten-android-cleanup-only' && inputs.validation_mode != 'corten-android-auth-transport-only' && inputs.validation_mode != 'iphone-activation-static-only' && inputs.validation_mode != 'iphone-account-signing-preflight-only' && inputs.validation_mode != 'iphone-account-qualifier-fixture-only' && inputs.validation_mode != 'iphone-usb-control-only' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -1232,6 +1233,69 @@ jobs:
         with:
           name: Windows x64 Corten component ${{ github.run_id }}
           path: windows-corten-receipts/
+          if-no-files-found: warn
+          retention-days: 7
+
+  iphone-usb-control:
+    name: Build credential-free USB-only iPhone control helper
+    if: ${{ inputs.validation_mode == 'iphone-usb-control-only' }}
+    runs-on: macos-15
+    timeout-minutes: 25
+    permissions:
+      contents: read
+    env:
+      HOMEBREW_NO_AUTO_UPDATE: 1
+      HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK: 1
+    steps:
+      - name: Check out exact preparation tools without application submodules
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          submodules: false
+      - name: Check out immutable reviewed TrollVNC source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: owngoal-dev/TrollVNC
+          ref: cfdb737e72977d961eb7d0a8110d2fe1a58551d7
+          path: trollvnc-reviewed
+          fetch-depth: 0
+          persist-credentials: false
+          submodules: false
+      - name: Check out pinned upstream build tools
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: roothide/theos
+          ref: cfba89a53a05b4a1b822121158acc3669c20602f
+          path: theos-roothide
+          persist-credentials: false
+          submodules: recursive
+      - name: Validate source guards and install declared build dependencies
+        run: |
+          python3 -B -m unittest discover -s tooling/ios/trollvnc-usb-control -p test_prepare.py -v
+          python3 -B -m unittest discover -s tooling/ci -p test_iphone_usb_control_build.py -v
+          brew install xcbeautify ldid-procursus p7zip make
+      - name: Build only the hardened bootstrap helper
+        env:
+          OB_SOURCE_SHA: ${{ github.sha }}
+          TROLLVNC_SOURCE: ${{ github.workspace }}/trollvnc-reviewed
+          THEOS: ${{ github.workspace }}/theos-roothide
+        run: bash tooling/ios/trollvnc-usb-control/build.sh "$RUNNER_TEMP/iphone-usb-control"
+      - name: Retain credential-free helper and exact build evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: iphone-usb-control-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/iphone-usb-control/OBUSBControl.tipa
+            ${{ runner.temp }}/iphone-usb-control/SHA256SUMS
+            ${{ runner.temp }}/iphone-usb-control/SOURCE_SHA
+            ${{ runner.temp }}/iphone-usb-control/UPSTREAM_SHA
+            ${{ runner.temp }}/iphone-usb-control/SDK_PROVENANCE.json
+            ${{ runner.temp }}/iphone-usb-control/BUILD_TOOLS.txt
+            ${{ runner.temp }}/iphone-usb-control/HARDENING.patch
+            ${{ runner.temp }}/iphone-usb-control/PREPARE.json
+            ${{ runner.temp }}/iphone-usb-control/IDEMPOTENCE.json
           if-no-files-found: warn
           retention-days: 7
 
