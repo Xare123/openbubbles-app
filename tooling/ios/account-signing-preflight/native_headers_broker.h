@@ -116,11 +116,14 @@ static NSDictionary *OBFetchNativeHeaders(BOOL (^active)(void), NSString **failu
         // Ask the same runtime factory only when absent, never invent a UUID.
         if (!headers[@"X-Apple-I-MD-LU"]) {
             SEL localUser = NSSelectorFromString(@"ak_addLocalUserUUIDHashHeader");
-            if (!OBNativeHeaderMethod(class_getInstanceMethod(requestClass, localUser), 2, 'v')) {
+            Method localUserMethod = class_getInstanceMethod(requestClass, localUser);
+            if (localUserMethod && !OBNativeHeaderMethod(localUserMethod, 2, 'v')) {
                 *failure = @"native-local-user-factory-unavailable"; return nil;
             }
-            if (!active()) { *failure = @"cancelled"; return nil; }
-            ((void (*)(id, SEL))objc_msgSend)(request, localUser);
+            if (localUserMethod) {
+                if (!active()) { *failure = @"cancelled"; return nil; }
+                ((void (*)(id, SEL))objc_msgSend)(request, localUser);
+            }
         }
         if (!OBNativeHeaderMerge(headers, request.allHTTPHeaderFields)) { *failure = @"native-header-invalid"; return nil; }
         // The saved relay user-agent can belong to an older/different platform.
@@ -137,7 +140,7 @@ static NSDictionary *OBFetchNativeHeaders(BOOL (^active)(void), NSString **failu
             *failure = @"native-system-context-unavailable"; return nil;
         }
         headers[@"User-Agent"] = [NSString stringWithFormat:@"akd/1.0 CFNetwork/%@ Darwin/%@", networkVersion, kernelVersion];
-        for (NSString *required in @[@"X-Apple-I-MD", @"X-Apple-I-MD-M", @"X-Apple-I-MD-LU",
+        for (NSString *required in @[@"X-Apple-I-MD", @"X-Apple-I-MD-M",
                 @"X-Apple-I-MD-RINFO", @"X-Mme-Device-Id", @"X-Mme-Client-Info", @"X-Apple-I-Client-Time",
                 @"X-Apple-I-SRL-NO", @"User-Agent"]) {
             if (!headers[required]) {

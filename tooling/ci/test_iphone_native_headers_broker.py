@@ -221,7 +221,7 @@ class NativeHeadersSourceGuards(unittest.TestCase):
         bundle = "dev.openbubbles.diagnostics.accountsigning"
         self.assertEqual(info["CFBundleIdentifier"], bundle)
         self.assertEqual(info["CFBundleExecutable"], "OBAccountSigningProbe")
-        self.assertEqual(info["CFBundleVersion"], "4")
+        self.assertEqual(info["CFBundleVersion"], "5")
         self.assertNotIn("CFBundleURLTypes", info)
         self.assertNotIn("NSAppTransportSecurity", info)
         self.assertEqual(set(entitlements), {"application-identifier", "keychain-access-groups",
@@ -298,11 +298,13 @@ class NativeHeadersSourceGuards(unittest.TestCase):
 
     def test_missing_local_user_uses_only_native_factory_and_reports_fixed_missing_names(self):
         broker = without_comments(self.broker)
-        block = broker.split('if (!headers[@"X-Apple-I-MD-LU"]) {',1)[1].split('\n        }',1)[0]
+        block = broker.split('if (!headers[@"X-Apple-I-MD-LU"]) {',1)[1].split('OBNativeHeaderMerge(headers, request.allHTTPHeaderFields)',1)[0]
         self.assertIn('NSSelectorFromString(@"ak_addLocalUserUUIDHashHeader")',block)
-        check = "OBNativeHeaderMethod(class_getInstanceMethod(requestClass, localUser), 2, 'v')"
+        check = "OBNativeHeaderMethod(localUserMethod, 2, 'v')"
         call = '((void (*)(id, SEL))objc_msgSend)(request, localUser)'
         self.assertIn(check,block)
+        self.assertIn('Method localUserMethod = class_getInstanceMethod(requestClass, localUser)',block)
+        self.assertIn('if (localUserMethod)',block)
         self.assertLess(block.index(check),block.index(call))
         self.assertLess(block.index('if (!active())'),block.index(call))
         for forbidden in ('NSUUID','localUserUUID','CC_SHA','setValue:','setObject:'):
@@ -310,6 +312,15 @@ class NativeHeadersSourceGuards(unittest.TestCase):
         self.assertIn('[@"native-header-missing-" stringByAppendingString:required]',broker)
         self.assertNotIn('stringByAppendingString:headers',broker)
         self.assertLess(broker.index(call),broker.index('OBNativeHeaderMerge(headers, request.allHTTPHeaderFields)'))
+
+    def test_native_local_user_absence_preserved_without_relaxing_core_identity(self):
+        broker=without_comments(self.broker)
+        required=broker.split('for (NSString *required in @[',1)[1].split(']) {',1)[0]
+        names=set(re.findall(r'@"([^"\n]+)"',required))
+        self.assertEqual(names,{'X-Apple-I-MD','X-Apple-I-MD-M','X-Apple-I-MD-RINFO',
+            'X-Mme-Device-Id','X-Mme-Client-Info','X-Apple-I-Client-Time','X-Apple-I-SRL-NO','User-Agent'})
+        self.assertIn('@"X-Apple-I-MD-LU"',broker.split('static BOOL OBNativeHeaderMerge',1)[0])
+        self.assertNotIn('headers[@"X-Apple-I-MD-LU"] =',broker)
 
     def test_rebind_harness_waits_boundedly_before_nonblocking_accept(self):
         rebind = C_HARNESS.split('static int listener_case(int rebind)',1)[1]

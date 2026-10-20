@@ -1,5 +1,18 @@
 # Separate native iPhone authentication diagnostic
 
+## Version5 preserves native local-user absence, October20
+
+Actual version4/native iOS15.7.9 returned native-header-missing-X-Apple-I-MD-LU
+even after the runtime local-user method ran. This is native field absence, not
+an Apple account refusal. Version5 preserves that absence. No local-user value
+is fabricated, borrowed from Android/Mac or persisted. The native method is
+used only when present with a valid ABI; an absent method/value is optional.
+All eight other required headers, fixed allowlist/value limits, native NO-
+provision fetch, source/nonce, identity checks and transport guards remain.
+The matching Windows test-only adapter must likewise omit LU when absent and
+reject explicit null or invalid present values. Default production providers
+are unchanged. This enables the native-iPhone comparison, not a login claim.
+
 ## Version4 native-header completeness, October20
 
 Actual Signing3 on iPhone15.7.9 returned the fixed native-header-incomplete

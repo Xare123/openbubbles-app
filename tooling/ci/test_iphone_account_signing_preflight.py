@@ -18,7 +18,7 @@ class AccountSigningPreflightGuards(unittest.TestCase):
         info = plistlib.loads((DIRECTORY / "Info.plist").read_bytes())
         self.assertEqual(info["CFBundleIdentifier"], "dev.openbubbles.diagnostics.accountsigning")
         self.assertEqual(info["CFBundleExecutable"], "OBAccountSigningProbe")
-        self.assertEqual(info["CFBundleVersion"], "4")
+        self.assertEqual(info["CFBundleVersion"], "5")
         self.assertNotIn("NSAppTransportSecurity", info)
         self.assertNotIn("CFBundleURLTypes", info)
 
