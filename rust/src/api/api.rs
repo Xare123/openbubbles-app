@@ -1,6 +1,10 @@
 #[cfg(target_os = "windows")]
 use crate::windows_secret_storage::{open_windows_keystore, replace_file_without_backup};
 use anyhow::anyhow;
+#[path = "phone_registration_push_refresh.rs"]
+mod phone_registration_push_refresh;
+#[path = "relay_setup_reuse.rs"]
+mod relay_setup_reuse;
 use async_recursion::async_recursion;
 use base64::prelude::*;
 pub use broadcast::Receiver;
@@ -12300,10 +12304,49 @@ pub async fn make_anisette(
 ) -> ArcAnisetteClient<DefaultAnisetteProvider> {
     let dir = PathBuf::from_str(&path).unwrap();
 
+    if let Some(native) = native_relay_anisette(config) { return native; }
     default_provider(
         get_login_config(&dir, config, conn).await,
         dir.join("anisette_test"),
     )
+}
+
+fn native_relay_anisette(config: &JoinedOSConfig) -> Option<ArcAnisetteClient<DefaultAnisetteProvider>> {
+    match config {
+        JoinedOSConfig::Relay(relay) => relay.native_auth_config().map(rustpush::native_relay_provider),
+        JoinedOSConfig::MacOS(_) => None,
+    }
+}
+
+#[cfg(test)]
+mod native_relay_composition_tests {
+    use super::*;
+
+    fn config(native: bool) -> JoinedOSConfig {
+        JoinedOSConfig::Relay(Arc::new(serde_json::from_value(serde_json::json!({
+            "version":{"software_build_id":"synthetic-build","software_name":"iPhone OS",
+                "software_version":"synthetic-version","serial_number":"synthetic-serial",
+                "hardware_version":"iPhone9,3","unique_device_id":"synthetic-device"},
+            "icloud_ua":"synthetic-agent","aoskit_version":"synthetic-kit","dev_uuid":"synthetic-uuid",
+            "protocol_version":1660,"host":"invalid-origin","code":"synthetic-code","beeper_token":null,
+            "udid":"synthetic-udid","native_auth_v1":native})).unwrap()))
+    }
+
+    #[test]
+    fn legacy_relay_keeps_existing_platform_provider_selection() {
+        assert!(native_relay_anisette(&config(false)).is_none());
+    }
+
+    #[tokio::test]
+    async fn native_capability_selects_native_before_any_password_or_remote_provider_call() {
+        let selected=native_relay_anisette(&config(true)).expect("native capability");
+        // Invalid origin fails locally. A fallback provider would not return
+        // this native error; no network, account, or filesystem input is used.
+        let mut selected=selected.lock().await;
+        assert!(matches!(selected.get_fresh_headers().await,
+            Err(rustpush::AnisetteError::NativeRelayUnavailable("relay-origin"))));
+        assert!(selected.provider.auth_client_info().is_none());
+    }
 }
 
 #[frb(sync)]
@@ -13202,6 +13245,12 @@ pub async fn set_identity(
 }
 
 fn persist_activation_hardware(directory: &std::path::Path, state: &SavedHardwareState) -> anyhow::Result<()> {
+    phone_registration_push_refresh::guarded_hardware_write(directory, None, || {
+        persist_activation_hardware_unlocked(directory, state)
+    })
+}
+
+fn persist_activation_hardware_unlocked(directory: &std::path::Path, state: &SavedHardwareState) -> anyhow::Result<()> {
     let encoded = plist_to_string(state).map_err(|_| anyhow!(
         "Device setup could not prepare its saved state. Existing messages and keys have been kept."
     ))?;
@@ -13210,11 +13259,106 @@ fn persist_activation_hardware(directory: &std::path::Path, state: &SavedHardwar
     ))
 }
 
+/// Obtain a fresh phone-registration push token while retaining the proven
+/// activation certificate/key. Never starts a replacement activation request.
+/// The caller keeps its current connection until this candidate is ready.
+pub async fn refresh_phone_registration_push(
+    config: &JoinedOSConfig,
+    identity: &IDSNGMIdentity,
+    current: &APSConnection,
+    state_path: String,
+) -> anyhow::Result<(APSConnection, Option<PushError>)> {
+    let wanted = config.config();
+    let same_device = !wanted.get_serial_number().is_empty()
+        && wanted.get_serial_number() == current.os_config.get_serial_number()
+        && wanted.get_device_uuid() == current.os_config.get_device_uuid()
+        && wanted.get_version_ua() == current.os_config.get_version_ua();
+    if !same_device {
+        return Err(anyhow!("Device setup changed while preparing phone-number registration. Retry with the current device; saved credentials have been kept."));
+    }
+    let saved = current.state.read().await.clone();
+    let pair = saved.keypair.as_ref().ok_or_else(|| anyhow!(
+        "The saved Apple Push certificate is unavailable. Existing messages and device details have been kept."))?;
+    let public = pair.private.get_public_key().map_err(|_| anyhow!(
+        "The saved Apple Push key could not be accessed. Unlock this device and retry; do not clear app data."))?;
+    let prepared = phone_registration_push_refresh::prepare_existing_push_for_refresh(
+        &saved, same_device, &public).map_err(|reason| anyhow!("{reason}"))?;
+    let expected = fs::read(PathBuf::from(&state_path).join("hw_info.plist"))
+        .map_err(|_| anyhow!("The saved device setup is unavailable. Existing messages and keys have been kept."))?;
+    let expected_saved: SavedHardwareState = plist::from_bytes(&expected)
+        .map_err(|_| anyhow!("The saved device setup could not be read. Existing messages and keys have been kept."))?;
+    let expected_config = expected_saved.os_config.config();
+    if expected_config.get_serial_number() != wanted.get_serial_number()
+        || expected_config.get_device_uuid() != wanted.get_device_uuid()
+        || expected_config.get_version_ua() != wanted.get_version_ua()
+        || !phone_registration_push_refresh::saved_push_belongs_to_connection(&saved, &expected_saved.push) {
+        return Err(anyhow!("The saved device setup changed. The newer credentials have been kept; retry with the current connection."));
+    }
+    let result = setup_push_inner(config, identity, Some(prepared), state_path, Some(expected),
+        saved.token.map(phone_registration_push_refresh::PushTokenRequirement::Fresh)).await?;
+    if result.1.is_some() {
+        result.0.close();
+    }
+    Ok(result)
+}
+
 pub async fn setup_push(
     config: &JoinedOSConfig,
     identity: &IDSNGMIdentity,
     state: Option<APSState>,
     state_path: String,
+) -> anyhow::Result<(APSConnection, Option<PushError>)> {
+    setup_push_inner(config, identity, state, state_path, None, None).await
+}
+
+/// Retain the exact ready connection state for setup retries. The opaque
+/// snapshot contains protected-key references, never exported private keys.
+pub async fn capture_push_state(state: &APSConnection) -> anyhow::Result<APSState> {
+    let snapshot = state.state.read().await.clone();
+    phone_registration_push_refresh::validate_push_snapshot(&snapshot)
+        .map_err(|reason| anyhow!("{reason}"))?;
+    Ok(snapshot)
+}
+
+/// Reconnect a replacement native relay for the same saved physical iPhone.
+/// This never calls activation, generates an identity, or clears phone users.
+/// None leaves the existing new-device path unchanged for other devices.
+pub async fn reuse_native_relay_setup(
+    state_path: String,
+    candidate: &JoinedOSConfig,
+) -> anyhow::Result<Option<(APSConnection, APSState, JoinedOSConfig, IDSNGMIdentity, ArcAnisetteClient<DefaultAnisetteProvider>)>> {
+    if !matches!(candidate, JoinedOSConfig::Relay(relay) if relay.native_auth_v1) {
+        return Ok(None);
+    }
+    let expected = match fs::read(PathBuf::from(&state_path).join("hw_info.plist")) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(_) => return Err(anyhow!("Saved device details could not be read. Existing keys and messages have been kept.")),
+    };
+    let saved: SavedHardwareState = plist::from_bytes(&expected)
+        .map_err(|_| anyhow!("Saved device details could not be restored. Existing keys and messages have been kept; no replacement activation was attempted."))?;
+    let Some(prepared) = relay_setup_reuse::prepare(&saved, candidate)? else { return Ok(None) };
+    let identity = decode_identity(&prepared.identity)?;
+    let token_requirement = prepared.push.token
+        .map(phone_registration_push_refresh::PushTokenRequirement::Retain);
+    let (connection, failure) = setup_push_inner(&prepared.os_config, &identity,
+        Some(prepared.push), state_path.clone(), Some(expected), token_requirement).await?;
+    if failure.is_some() {
+        connection.close();
+        return Err(anyhow!("The saved iPhone push connection could not be restored. Existing credentials were kept; no replacement activation was attempted."));
+    }
+    let state = connection.state.read().await.clone();
+    let anisette = make_anisette(state_path, &prepared.os_config, &connection).await;
+    Ok(Some((connection, state, prepared.os_config, identity, anisette)))
+}
+
+async fn setup_push_inner(
+    config: &JoinedOSConfig,
+    identity: &IDSNGMIdentity,
+    state: Option<APSState>,
+    state_path: String,
+    expected_hardware: Option<Vec<u8>>,
+    token_requirement: Option<phone_registration_push_refresh::PushTokenRequirement>,
 ) -> anyhow::Result<(APSConnection, Option<PushError>)> {
     let directory = PathBuf::from(state_path);
     // Fail before opening a push connection if restored protected keys cannot
@@ -13224,16 +13368,27 @@ pub async fn setup_push(
     ))?;
     let (conn, error) = APSConnectionResource::new(config.config(), state).await;
 
+    let mut last_persisted_push = None;
     if error.is_none() {
+        if let Some(requirement) = token_requirement {
+            if !requirement.accepts(conn.try_get_token().await) {
+                conn.close();
+                return Err(anyhow!(requirement.failure_message()));
+            }
+        }
         let state = SavedHardwareState {
             push: conn.state.read().await.clone(),
             os_config: config.clone(),
             identity: saved_identity.clone().into(),
         };
-        if let Err(error) = persist_activation_hardware(&directory, &state) {
+        if let Err(error) = phone_registration_push_refresh::guarded_hardware_write(
+            &directory, expected_hardware.as_deref(), || {
+                persist_activation_hardware_unlocked(&directory, &state)
+            }) {
             conn.close();
             return Err(error);
         }
+        last_persisted_push = Some(state.push.clone());
     }
 
     let mut to_refresh = conn.generated_signal.subscribe();
@@ -13252,11 +13407,23 @@ pub async fn setup_push(
                         os_config: config_ref.clone(),
                         identity: saved_identity.clone().into(),
                     };
-                    if persist_activation_hardware(&directory, &state).is_err() {
+                    let persisted = phone_registration_push_refresh::guarded_hardware_write(
+                        &directory, None, || {
+                            let current: SavedHardwareState = plist::from_file(directory.join("hw_info.plist"))?;
+                            if !relay_setup_reuse::same_config(&current.os_config, &config_ref)?
+                                || !last_persisted_push.as_ref().is_some_and(|previous| {
+                                    phone_registration_push_refresh::saved_push_write_is_current(previous, &current.push)
+                                }) {
+                                return Err(anyhow!("Device setup writer was superseded"));
+                            }
+                            persist_activation_hardware_unlocked(&directory, &state)
+                        });
+                    if persisted.is_err() {
                         error!("Refreshed activation state could not be saved; closing its connection");
                         conn.close();
                         break;
                     }
+                    last_persisted_push = Some(state.push.clone());
                 }
                 Err(broadcast::error::RecvError::Lagged(_)) => continue,
                 Err(broadcast::error::RecvError::Closed) => break,
@@ -13416,8 +13583,9 @@ pub async fn config_from_relay(
     host: String,
     token: &Option<String>,
 ) -> anyhow::Result<JoinedOSConfig> {
+    let (version, native_auth_v1) = RelayConfig::get_versions_with_native_auth(&host, &code, token).await?;
     Ok(JoinedOSConfig::Relay(Arc::new(RelayConfig {
-        version: RelayConfig::get_versions(&host, &code, token).await?,
+        version,
         icloud_ua: "com.apple.iCloudHelper/282 CFNetwork/1408.0.4 Darwin/22.5.0".to_string(),
         aoskit_version: "com.apple.AOSKit/282 (com.apple.accountsd/113)".to_string(),
         dev_uuid: Uuid::new_v4().to_string(),
@@ -13426,6 +13594,7 @@ pub async fn config_from_relay(
         code: code.clone(),
         beeper_token: token.clone(),
         udid: Some(generate_udid()),
+        native_auth_v1,
     })))
 }
 
@@ -14359,7 +14528,10 @@ async fn handle_circle(
             return;
         }
         let Some(signin) = signin else { return };
-        let push_token = state.conn.get_token().await;
+        let Some(push_token) = state.conn.try_get_token().await else {
+            warn!("Ignoring circle message before APS token exists!");
+            return;
+        };
         let Some(account) = &state.icloud_services else {
             warn!("Ignoring circle message for no account!");
             return;
@@ -16467,7 +16639,9 @@ pub async fn upload_attachment(
 }
 
 pub async fn get_token(state: &APSConnection) -> Vec<u8> {
-    state.get_token().await.to_vec()
+    // Empty means the APS connection has no token yet. Callers must treat
+    // it as not-connected instead of receiving a panic across the bridge.
+    state.try_get_token().await.map(|token| token.to_vec()).unwrap_or_default()
 }
 
 pub fn save_user(user: &IDSUser) -> anyhow::Result<String> {
@@ -17621,7 +17795,8 @@ mod cloudkit_read_authentication_cache_tests {
         cloudkit_login_replaces_persisted_state,
         cloudkit_login_validate_admission, cloudkit_read_authentication_key_alias,
         cloudkit_read_authentication_lifecycle_gate, reset_user,
-        two_factor_fresh_login_is_authenticated, two_factor_verification_authorizes_fresh_login,
+        two_factor_completion_requires_srp, two_factor_fresh_login_is_authenticated,
+        two_factor_verification_authorizes_fresh_login, TwoFactorCompletionSource,
         CachedCloudKitReadAuthentication, LoginState, CLOUDKIT_READ_AUTHENTICATION_SCHEMA_VERSION,
     };
     use std::{
@@ -18011,6 +18186,41 @@ mod cloudkit_read_authentication_cache_tests {
             true
         ));
     }
+
+    #[test]
+    fn direct_two_factor_completion_reuses_only_a_current_verified_pet() {
+        let source = TwoFactorCompletionSource::DirectVerification;
+        assert!(!two_factor_completion_requires_srp(
+            &LoginState::LoggedIn, Some(Duration::from_secs(120)), source,
+        ).unwrap());
+        for lifetime in [None, Some(Duration::ZERO)] {
+            assert!(two_factor_completion_requires_srp(&LoginState::LoggedIn, lifetime, source).is_err());
+        }
+    }
+
+    #[test]
+    fn proximity_or_needs_login_completion_retains_the_password_exchange() {
+        for lifetime in [None, Some(Duration::ZERO), Some(Duration::from_secs(120))] {
+            assert!(two_factor_completion_requires_srp(
+                &LoginState::LoggedIn, lifetime, TwoFactorCompletionSource::ProximityCompletion,
+            ).unwrap());
+            for source in [TwoFactorCompletionSource::DirectVerification, TwoFactorCompletionSource::ProximityCompletion] {
+                assert!(two_factor_completion_requires_srp(&LoginState::NeedsLogin, lifetime, source).unwrap());
+            }
+        }
+    }
+
+    #[test]
+    fn pending_two_factor_completion_never_uses_pre_verification_authority() {
+        for state in [LoginState::NeedsDevice2FA, LoginState::Needs2FAVerification,
+            LoginState::NeedsSMS2FA, LoginState::NeedsExtraStep("synthetic".into())] {
+            for source in [TwoFactorCompletionSource::DirectVerification, TwoFactorCompletionSource::ProximityCompletion] {
+                assert!(two_factor_completion_requires_srp(
+                    &state, Some(Duration::from_secs(120)), source,
+                ).is_err());
+            }
+        }
+    }
 }
 
 pub async fn do_login(
@@ -18351,10 +18561,12 @@ pub async fn auth_phone(
     number: String,
     sig: Vec<u8>,
 ) -> anyhow::Result<IDSUser> {
+    let push_token = conn.try_get_token().await
+        .ok_or_else(|| anyhow!("Push connection did not issue a token"))?;
     let identity = authenticate_phone(
         &number,
         AuthPhone {
-            push_token: conn.get_token().await.to_vec().into(),
+            push_token: push_token.to_vec().into(),
             sigs: vec![sig.into()],
         },
         &*config.config(),
@@ -18384,8 +18596,10 @@ pub async fn send_2fa_to_devices(
         .ok_or_else(|| anyhow!("Trusted-device 2FA account is unavailable"))?;
     drop(account);
 
+    let push_token = conn.try_get_token().await
+        .ok_or_else(|| anyhow!("Push connection did not issue a token"))?;
     let client_session =
-        CircleClientSession::new(dsid, state.clone(), conn.get_token().await).await?;
+        CircleClientSession::new(dsid, state.clone(), push_token).await?;
 
     #[cfg(target_os = "android")]
     {
@@ -19552,6 +19766,28 @@ fn two_factor_fresh_login_is_authenticated(state: &LoginState, has_pet: bool) ->
     matches!(state, LoginState::LoggedIn) && has_pet
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TwoFactorCompletionSource {
+    DirectVerification,
+    ProximityCompletion,
+}
+
+// Only a successful direct verify_2fa response replaces the pre-verification
+// tokens and returns LoggedIn on a newly supplied PET. A circle completion can
+// also return LoggedIn without issuing a token, so it retains the SRP recheck.
+fn two_factor_completion_requires_srp(
+    state: &LoginState,
+    pet_lifetime: Option<Duration>,
+    source: TwoFactorCompletionSource,
+) -> anyhow::Result<bool> {
+    match state {
+        LoginState::NeedsLogin => Ok(true),
+        LoginState::LoggedIn if source == TwoFactorCompletionSource::ProximityCompletion => Ok(true),
+        LoginState::LoggedIn if pet_lifetime.is_some_and(|value| !value.is_zero()) => Ok(false),
+        _ => Err(anyhow!("Two-factor verification did not provide current login authority")),
+    }
+}
+
 #[cfg(target_os = "windows")]
 pub(super) fn is_cloud_sync_windows_dev_profile(path: &str) -> bool {
     let Some(directory) = canonical_cloudkit_state_directory(&PathBuf::from(path)).ok() else {
@@ -19756,6 +19992,7 @@ async fn complete_trusted_device_login(
     account: &Arc<Mutex<AppleAccount<DefaultAnisetteProvider>>>,
     os_config: &JoinedOSConfig,
     verification_state: LoginState,
+    source: TwoFactorCompletionSource,
 ) -> anyhow::Result<(LoginState, Option<IDSUser>)> {
     if !two_factor_verification_authorizes_fresh_login(&verification_state) {
         return Err(anyhow!(
@@ -19763,30 +20000,35 @@ async fn complete_trusted_device_login(
         ));
     }
 
-    // Apple can populate the SPD token dictionary before reporting that 2FA
-    // is still required. Those pre-verification tokens are not authenticated
-    // CloudKit authority. Always perform a fresh SRP exchange after the code
-    // is accepted and require an explicit logged-in response with a PET.
+    // Keep the fresh token returned by direct code verification. Replaying SRP
+    // here discards that accepted result and can fail before service login.
+    // NeedsLogin and circle completion still require a fresh password exchange.
     let login_state = {
         let mut locked = account.lock().await;
-        let username = locked
-            .username
-            .clone()
-            .ok_or_else(|| anyhow!("Trusted-device verification account is unavailable"))?;
-        let hashed_password = locked
-            .hashed_password
-            .clone()
-            .ok_or_else(|| anyhow!("Trusted-device verification credential is unavailable"))?;
-        locked.login_email_pass(&username, &hashed_password).await?
+        let login_state = if two_factor_completion_requires_srp(
+            &verification_state, locked.pet_remaining_lifetime(), source,
+        )? {
+            let username = locked
+                .username
+                .clone()
+                .ok_or_else(|| anyhow!("Trusted-device verification account is unavailable"))?;
+            let hashed_password = locked
+                .hashed_password
+                .clone()
+                .ok_or_else(|| anyhow!("Trusted-device verification credential is unavailable"))?;
+            locked.login_email_pass(&username, &hashed_password).await?
+        } else {
+            verification_state
+        };
+        if !two_factor_fresh_login_is_authenticated(
+            &login_state, locked.pet_remaining_lifetime().is_some_and(|value| !value.is_zero()),
+        ) {
+            return Err(anyhow!(
+                "Trusted-device verification did not produce a post-verification login"
+            ));
+        }
+        login_state
     };
-    if !two_factor_fresh_login_is_authenticated(
-        &login_state,
-        account.lock().await.get_pet().is_some(),
-    ) {
-        return Err(anyhow!(
-            "Trusted-device verification did not produce a post-verification login"
-        ));
-    }
 
     let mut user = None;
     if is_cloud_sync_windows_dev_profile(&path) {
@@ -19811,7 +20053,7 @@ pub async fn verify_2fa(
     code: String,
 ) -> anyhow::Result<(LoginState, Option<IDSUser>)> {
     #[cfg(target_os = "android")]
-    let verification_state = {
+    let (verification_state, source) = {
         client.send_code(&code).await?;
 
         let proximity_result = tokio::time::timeout(Duration::from_secs(10), async {
@@ -19835,40 +20077,40 @@ pub async fn verify_2fa(
         .await;
 
         match proximity_result {
-            Ok(Ok(state)) => state,
+            Ok(Ok(state)) => (state, TwoFactorCompletionSource::ProximityCompletion),
             Ok(Err(error)) => {
                 warn!(
                     "Trusted-device 2FA proximity exchange failed ({error}); \
                      falling back to direct verification"
                 );
-                account.lock().await.verify_2fa(code).await?
+                (account.lock().await.verify_2fa(code).await?, TwoFactorCompletionSource::DirectVerification)
             }
             Err(_) => {
                 warn!(
                     "Trusted-device 2FA proximity response timed out; \
                      falling back to direct verification"
                 );
-                account.lock().await.verify_2fa(code).await?
+                (account.lock().await.verify_2fa(code).await?, TwoFactorCompletionSource::DirectVerification)
             }
         }
     };
 
     #[cfg(not(target_os = "android"))]
-    let verification_state = {
+    let (verification_state, source) = {
         // The code shown by Apple's normal trusted-device prompt can be
         // verified directly without waiting on an unavailable BLE exchange.
-        account.lock().await.verify_2fa(code).await?
+        (account.lock().await.verify_2fa(code).await?, TwoFactorCompletionSource::DirectVerification)
     };
 
-    complete_trusted_device_login(path, account, os_config, verification_state).await
+    complete_trusted_device_login(path, account, os_config, verification_state, source).await
 }
 
 /// Verifies an already-issued trusted-device code without a circle session.
 ///
 /// The server reports that it is awaiting verification (e.g. ec0/hsc409
 /// without au mapped to Needs2FAVerification). This performs no additional
-/// push and replays no password before the code is accepted. The fresh SRP
-/// exchange runs only after acceptance, under the same guards as verify_2fa.
+/// push and replays no password when verification returns a fresh PET. A new
+/// SRP exchange is used only for NeedsLogin, under the same authority guards.
 pub async fn verify_2fa_direct(
     path: String,
     account: &Arc<Mutex<AppleAccount<DefaultAnisetteProvider>>>,
@@ -19876,7 +20118,8 @@ pub async fn verify_2fa_direct(
     code: String,
 ) -> anyhow::Result<(LoginState, Option<IDSUser>)> {
     let verification_state = account.lock().await.verify_2fa(code).await?;
-    complete_trusted_device_login(path, account, os_config, verification_state).await
+    complete_trusted_device_login(path, account, os_config, verification_state,
+        TwoFactorCompletionSource::DirectVerification).await
 }
 
 pub async fn get_2fa_sms_opts(

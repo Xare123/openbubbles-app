@@ -1632,6 +1632,21 @@ Future<void> setIdentity({
   identity: identity,
 );
 
+/// Obtain a fresh phone-registration push token while retaining the proven
+/// activation certificate/key. Never starts a replacement activation request.
+/// The caller keeps its current connection until this candidate is ready.
+Future<(ApsConnection, PushError?)> refreshPhoneRegistrationPush({
+  required JoinedOsConfig config,
+  required IdsngmIdentity identity,
+  required ApsConnection current,
+  required String statePath,
+}) => RustLib.instance.api.crateApiApiRefreshPhoneRegistrationPush(
+  config: config,
+  identity: identity,
+  current: current,
+  statePath: statePath,
+);
+
 Future<(ApsConnection, PushError?)> setupPush({
   required JoinedOsConfig config,
   required IdsngmIdentity identity,
@@ -1642,6 +1657,31 @@ Future<(ApsConnection, PushError?)> setupPush({
   identity: identity,
   state: state,
   statePath: statePath,
+);
+
+/// Retain the exact ready connection state for setup retries. The opaque
+/// snapshot contains protected-key references, never exported private keys.
+Future<ApsState> capturePushState({required ApsConnection state}) =>
+    RustLib.instance.api.crateApiApiCapturePushState(state: state);
+
+/// Reconnect a replacement native relay for the same saved physical iPhone.
+/// This never calls activation, generates an identity, or clears phone users.
+/// None leaves the existing new-device path unchanged for other devices.
+Future<
+  (
+    ApsConnection,
+    ApsState,
+    JoinedOsConfig,
+    IdsngmIdentity,
+    ArcAnisetteClientDefaultAnisetteProvider,
+  )?
+>
+reuseNativeRelaySetup({
+  required String statePath,
+  required JoinedOsConfig candidate,
+}) => RustLib.instance.api.crateApiApiReuseNativeRelaySetup(
+  statePath: statePath,
+  candidate: candidate,
 );
 
 Future<ApsConnectionStatus> getApsConnectionStatus({
@@ -2761,8 +2801,8 @@ Future<(LoginState, IdsUser?)> verify2Fa({
 ///
 /// The server reports that it is awaiting verification (e.g. ec0/hsc409
 /// without au mapped to Needs2FAVerification). This performs no additional
-/// push and replays no password before the code is accepted. The fresh SRP
-/// exchange runs only after acceptance, under the same guards as verify_2fa.
+/// push and replays no password when verification returns a fresh PET. A new
+/// SRP exchange is used only for NeedsLogin, under the same authority guards.
 Future<(LoginState, IdsUser?)> verify2FaDirect({
   required String path,
   required ArcMutexAppleAccountDefaultAnisetteProvider account,

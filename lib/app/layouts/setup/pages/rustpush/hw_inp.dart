@@ -1120,7 +1120,9 @@ class HwInpState extends OptimizedState<HwInp> {
     });
     controller.updateConnectError("");
     try {
-      if (!alreadyActivated) {
+      final reusedRelay = !alreadyActivated && !isHosted &&
+          await controller.reuseNativeRelaySetup(config);
+      if (!alreadyActivated && !reusedRelay) {
         ss.settings.macIsMine.value = stagingMine;
         ss.settings.deviceIsHosted.value = isHosted;
         if (!isHosted) {
@@ -1174,7 +1176,9 @@ class HwInpState extends OptimizedState<HwInp> {
                 Text("You're in control"),
               ],
             ),
-            content: const Text('A new Apple device will appear on your Apple Account.\n\nAll keys and account credentials are generated and stored locally on this device. The new device does not have any access to your Apple Account or Messages.'),
+            content: Text(reusedRelay
+                ? 'Your existing iPhone setup was retained.\n\nYour saved keys and phone-number credentials stay on this device. Only the relay connection and authentication method were updated.'
+                : 'A new Apple device will appear on your Apple Account.\n\nAll keys and account credentials are generated and stored locally on this device. The new device does not have any access to your Apple Account or Messages.'),
             actions: [
               TextButton(
                 onPressed: () {

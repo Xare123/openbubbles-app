@@ -133,12 +133,14 @@ class PhoneNumberState extends OptimizedState<PhoneNumber> {
       }
       // always get new token for PNR
       if (controller.currentPhoneUsers.isEmpty) {
-        controller.destroyConnection();
-        controller.cachedState = null;
-
-        await controller.setupConnection();
+        await controller.refreshPhoneRegistrationConnection();
       }
       var token = await api.getToken(state: controller.connection!);
+      if (token.isEmpty) {
+        controller.updateConnectError("Apple Push is not ready for phone registration. Check your connection and retry; your saved device details have been kept.");
+        failedSms.value = true;
+        return;
+      }
 
       String resp = await mcs.invokeMethod("sms-auth-gateway", {'token': hex.encode(token).toUpperCase(), 'subscription': subscription});
       controller.currentPhoneUsers[subscription] = await api.authPhone(conn: controller.connection!, config: controller.config!, number: resp.split("|").first, sig: hex.decode(resp.split("|").last));

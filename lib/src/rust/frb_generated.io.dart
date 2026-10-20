@@ -2103,6 +2103,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   Reaction dco_decode_box_autoadd_reaction(dynamic raw);
 
   @protected
+  (
+    ApsConnection,
+    ApsState,
+    JoinedOsConfig,
+    IdsngmIdentity,
+    ArcAnisetteClientDefaultAnisetteProvider,
+  )
+  dco_decode_box_autoadd_record_auto_owned_rust_opaque_flutter_rust_bridgefor_generated_rust_auto_opaque_inner_aps_connection_auto_owned_rust_opaque_flutter_rust_bridgefor_generated_rust_auto_opaque_inner_aps_state_auto_owned_rust_opaque_flutter_rust_bridgefor_generated_rust_auto_opaque_inner_joined_os_config_auto_owned_rust_opaque_flutter_rust_bridgefor_generated_rust_auto_opaque_inner_idsngm_identity_auto_owned_rust_opaque_flutter_rust_bridgefor_generated_rust_auto_opaque_inner_arc_anisette_client_default_anisette_provider(
+    dynamic raw,
+  );
+
+  @protected
   (SharedPushState, ApsWatcher)
   dco_decode_box_autoadd_record_shared_push_state_auto_owned_rust_opaque_flutter_rust_bridgefor_generated_rust_auto_opaque_inner_aps_watcher(
     dynamic raw,
@@ -3624,6 +3636,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   PushMessage? dco_decode_opt_box_autoadd_push_message(dynamic raw);
 
   @protected
+  (
+    ApsConnection,
+    ApsState,
+    JoinedOsConfig,
+    IdsngmIdentity,
+    ArcAnisetteClientDefaultAnisetteProvider,
+  )?
+  dco_decode_opt_box_autoadd_record_auto_owned_rust_opaque_flutter_rust_bridgefor_generated_rust_auto_opaque_inner_aps_connection_auto_owned_rust_opaque_flutter_rust_bridgefor_generated_rust_auto_opaque_inner_aps_state_auto_owned_rust_opaque_flutter_rust_bridgefor_generated_rust_auto_opaque_inner_joined_os_config_auto_owned_rust_opaque_flutter_rust_bridgefor_generated_rust_auto_opaque_inner_idsngm_identity_auto_owned_rust_opaque_flutter_rust_bridgefor_generated_rust_auto_opaque_inner_arc_anisette_client_default_anisette_provider(
+    dynamic raw,
+  );
+
+  @protected
   (SharedPushState, ApsWatcher)?
   dco_decode_opt_box_autoadd_record_shared_push_state_auto_owned_rust_opaque_flutter_rust_bridgefor_generated_rust_auto_opaque_inner_aps_watcher(
     dynamic raw,
@@ -3805,6 +3829,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   Reaction dco_decode_reaction(dynamic raw);
+
+  @protected
+  (
+    ApsConnection,
+    ApsState,
+    JoinedOsConfig,
+    IdsngmIdentity,
+    ArcAnisetteClientDefaultAnisetteProvider,
+  )
+  dco_decode_record_auto_owned_rust_opaque_flutter_rust_bridgefor_generated_rust_auto_opaque_inner_aps_connection_auto_owned_rust_opaque_flutter_rust_bridgefor_generated_rust_auto_opaque_inner_aps_state_auto_owned_rust_opaque_flutter_rust_bridgefor_generated_rust_auto_opaque_inner_joined_os_config_auto_owned_rust_opaque_flutter_rust_bridgefor_generated_rust_auto_opaque_inner_idsngm_identity_auto_owned_rust_opaque_flutter_rust_bridgefor_generated_rust_auto_opaque_inner_arc_anisette_client_default_anisette_provider(
+    dynamic raw,
+  );
 
   @protected
   (ApsConnection, PushError?)
@@ -6187,6 +6223,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   Reaction sse_decode_box_autoadd_reaction(SseDeserializer deserializer);
 
   @protected
+  (
+    ApsConnection,
+    ApsState,
+    JoinedOsConfig,
+    IdsngmIdentity,
+    ArcAnisetteClientDefaultAnisetteProvider,
+  )
+  sse_decode_box_autoadd_record_auto_owned_rust_opaque_flutter_rust_bridgefor_generated_rust_auto_opaque_inner_aps_connection_auto_owned_rust_opaque_flutter_rust_bridgefor_generated_rust_auto_opaque_inner_aps_state_auto_owned_rust_opaque_flutter_rust_bridgefor_generated_rust_auto_opaque_inner_joined_os_config_auto_owned_rust_opaque_flutter_rust_bridgefor_generated_rust_auto_opaque_inner_idsngm_identity_auto_owned_rust_opaque_flutter_rust_bridgefor_generated_rust_auto_opaque_inner_arc_anisette_client_default_anisette_provider(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   (SharedPushState, ApsWatcher)
   sse_decode_box_autoadd_record_shared_push_state_auto_owned_rust_opaque_flutter_rust_bridgefor_generated_rust_auto_opaque_inner_aps_watcher(
     SseDeserializer deserializer,
@@ -8020,6 +8068,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  (
+    ApsConnection,
+    ApsState,
+    JoinedOsConfig,
+    IdsngmIdentity,
+    ArcAnisetteClientDefaultAnisetteProvider,
+  )?
+  sse_decode_opt_box_autoadd_record_auto_owned_rust_opaque_flutter_rust_bridgefor_generated_rust_auto_opaque_inner_aps_connection_auto_owned_rust_opaque_flutter_rust_bridgefor_generated_rust_auto_opaque_inner_aps_state_auto_owned_rust_opaque_flutter_rust_bridgefor_generated_rust_auto_opaque_inner_joined_os_config_auto_owned_rust_opaque_flutter_rust_bridgefor_generated_rust_auto_opaque_inner_idsngm_identity_auto_owned_rust_opaque_flutter_rust_bridgefor_generated_rust_auto_opaque_inner_arc_anisette_client_default_anisette_provider(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   (SharedPushState, ApsWatcher)?
   sse_decode_opt_box_autoadd_record_shared_push_state_auto_owned_rust_opaque_flutter_rust_bridgefor_generated_rust_auto_opaque_inner_aps_watcher(
     SseDeserializer deserializer,
@@ -8245,6 +8305,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   Reaction sse_decode_reaction(SseDeserializer deserializer);
+
+  @protected
+  (
+    ApsConnection,
+    ApsState,
+    JoinedOsConfig,
+    IdsngmIdentity,
+    ArcAnisetteClientDefaultAnisetteProvider,
+  )
+  sse_decode_record_auto_owned_rust_opaque_flutter_rust_bridgefor_generated_rust_auto_opaque_inner_aps_connection_auto_owned_rust_opaque_flutter_rust_bridgefor_generated_rust_auto_opaque_inner_aps_state_auto_owned_rust_opaque_flutter_rust_bridgefor_generated_rust_auto_opaque_inner_joined_os_config_auto_owned_rust_opaque_flutter_rust_bridgefor_generated_rust_auto_opaque_inner_idsngm_identity_auto_owned_rust_opaque_flutter_rust_bridgefor_generated_rust_auto_opaque_inner_arc_anisette_client_default_anisette_provider(
+    SseDeserializer deserializer,
+  );
 
   @protected
   (ApsConnection, PushError?)
@@ -11031,6 +11103,20 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void
+  sse_encode_box_autoadd_record_auto_owned_rust_opaque_flutter_rust_bridgefor_generated_rust_auto_opaque_inner_aps_connection_auto_owned_rust_opaque_flutter_rust_bridgefor_generated_rust_auto_opaque_inner_aps_state_auto_owned_rust_opaque_flutter_rust_bridgefor_generated_rust_auto_opaque_inner_joined_os_config_auto_owned_rust_opaque_flutter_rust_bridgefor_generated_rust_auto_opaque_inner_idsngm_identity_auto_owned_rust_opaque_flutter_rust_bridgefor_generated_rust_auto_opaque_inner_arc_anisette_client_default_anisette_provider(
+    (
+      ApsConnection,
+      ApsState,
+      JoinedOsConfig,
+      IdsngmIdentity,
+      ArcAnisetteClientDefaultAnisetteProvider,
+    )
+    self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void
   sse_encode_box_autoadd_record_shared_push_state_auto_owned_rust_opaque_flutter_rust_bridgefor_generated_rust_auto_opaque_inner_aps_watcher(
     (SharedPushState, ApsWatcher) self,
     SseSerializer serializer,
@@ -13171,6 +13257,20 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void
+  sse_encode_opt_box_autoadd_record_auto_owned_rust_opaque_flutter_rust_bridgefor_generated_rust_auto_opaque_inner_aps_connection_auto_owned_rust_opaque_flutter_rust_bridgefor_generated_rust_auto_opaque_inner_aps_state_auto_owned_rust_opaque_flutter_rust_bridgefor_generated_rust_auto_opaque_inner_joined_os_config_auto_owned_rust_opaque_flutter_rust_bridgefor_generated_rust_auto_opaque_inner_idsngm_identity_auto_owned_rust_opaque_flutter_rust_bridgefor_generated_rust_auto_opaque_inner_arc_anisette_client_default_anisette_provider(
+    (
+      ApsConnection,
+      ApsState,
+      JoinedOsConfig,
+      IdsngmIdentity,
+      ArcAnisetteClientDefaultAnisetteProvider,
+    )?
+    self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void
   sse_encode_opt_box_autoadd_record_shared_push_state_auto_owned_rust_opaque_flutter_rust_bridgefor_generated_rust_auto_opaque_inner_aps_watcher(
     (SharedPushState, ApsWatcher)? self,
     SseSerializer serializer,
@@ -13440,6 +13540,20 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_reaction(Reaction self, SseSerializer serializer);
+
+  @protected
+  void
+  sse_encode_record_auto_owned_rust_opaque_flutter_rust_bridgefor_generated_rust_auto_opaque_inner_aps_connection_auto_owned_rust_opaque_flutter_rust_bridgefor_generated_rust_auto_opaque_inner_aps_state_auto_owned_rust_opaque_flutter_rust_bridgefor_generated_rust_auto_opaque_inner_joined_os_config_auto_owned_rust_opaque_flutter_rust_bridgefor_generated_rust_auto_opaque_inner_idsngm_identity_auto_owned_rust_opaque_flutter_rust_bridgefor_generated_rust_auto_opaque_inner_arc_anisette_client_default_anisette_provider(
+    (
+      ApsConnection,
+      ApsState,
+      JoinedOsConfig,
+      IdsngmIdentity,
+      ArcAnisetteClientDefaultAnisetteProvider,
+    )
+    self,
+    SseSerializer serializer,
+  );
 
   @protected
   void

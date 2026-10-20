@@ -1122,28 +1122,136 @@ class SetupViewController extends StatefulController {
       await setupConnection();
   }
 
+  /// Swap the relay transport without clearing a matching saved iPhone's keys,
+  /// push token or phone users. Rust verifies the physical identity and commits
+  /// only after the retained push connection succeeds.
+  Future<bool> reuseNativeRelaySetup(api.JoinedOsConfig candidate, {
+    Future<(ApsConnection, ApsState, api.JoinedOsConfig, api.IdsngmIdentity,
+        ArcAnisetteClientDefaultAnisetteProvider)?> Function()? prepareReuse,
+  }) async {
+    final previousConfig = config;
+    final previousIdentity = identity;
+    final previousConnection = connection;
+    final previousAnisette = anisette;
+    final previousState = cachedState;
+    final prepared = await (prepareReuse ?? () => api.reuseNativeRelaySetup(
+      statePath: pushService.statePath, candidate: candidate))();
+    if (prepared == null) return false;
+    if (_disposed || !identical(config, previousConfig) ||
+        !identical(identity, previousIdentity) ||
+        !identical(connection, previousConnection) ||
+        !identical(anisette, previousAnisette)) {
+      for (final resource in <RustOpaqueInterface>[
+        prepared.$1, prepared.$2, prepared.$3, prepared.$4, prepared.$5,
+      ]) {
+        _disposeLoginResourceWhenIdle(resource);
+      }
+      throw AnyhowException('Device setup changed while restoring the relay. The newer setup and saved credentials have been kept; retry from the current screen.');
+    }
+    cancelLoginAttempt();
+    destroyConnection();
+    _disposeLoginResourceWhenIdle(previousAnisette);
+    _disposeLoginResourceWhenIdle(previousState);
+    _disposeLoginResourceWhenIdle(previousIdentity);
+    _disposeLoginResourceWhenIdle(previousConfig);
+    connection = prepared.$1;
+    cachedState = prepared.$2;
+    config = prepared.$3;
+    identity = prepared.$4;
+    anisette = prepared.$5;
+    restoredConfigNeedsFreshIdentity = false;
+    return true;
+  }
+
   Future<void> setupConnection({
     Future<(ApsConnection, api.PushError?)> Function()? createPush,
     Future<ArcAnisetteClientDefaultAnisetteProvider> Function(ApsConnection)? prepareAnisette,
+    Future<ApsState> Function(ApsConnection)? captureState,
+    ApsConnection? expectedPreviousConnection,
+    bool disposePreviousConnection = false,
   }) async {
+    final previousConnection = connection;
     final data = await (createPush ?? () => api.setupPush(config: config!, identity: identity!, statePath: pushService.statePath, state: cachedState))();
     final candidate = data.$1;
     final failure = data.$2;
+    if (expectedPreviousConnection != null && !identical(connection, expectedPreviousConnection)) {
+      candidate.dispose();
+      failure?.dispose();
+      throw AnyhowException('Phone registration refresh was superseded; the existing push connection remains active.');
+    }
     if (failure != null) {
       candidate.dispose();
       failure.dispose();
       throw AnyhowException('Unable to connect to Apple Push for device setup. Check your connection and retry. Your saved messages and device details have been kept.');
     }
+    ArcAnisetteClientDefaultAnisetteProvider? nextAnisette;
+    ApsState? candidateState;
     try {
-      final nextAnisette = await (prepareAnisette ?? (conn) => api.makeAnisette(path: pushService.statePath, config: config!, conn: conn))(candidate);
-      final previousAnisette = anisette;
-      connection = candidate;
-      anisette = nextAnisette;
-      _disposeLoginResourceWhenIdle(previousAnisette);
+      final capture = captureState ?? (createPush == null
+          ? (ApsConnection conn) => api.capturePushState(state: conn)
+          : null);
+      candidateState = await capture?.call(candidate);
+      if (expectedPreviousConnection != null && !identical(connection, expectedPreviousConnection)) {
+        throw AnyhowException('Phone registration refresh was superseded; the existing push connection remains active.');
+      }
+      nextAnisette = await (prepareAnisette ?? (conn) => api.makeAnisette(path: pushService.statePath, config: config!, conn: conn))(candidate);
     } catch (_) {
+      candidateState?.dispose();
+      nextAnisette?.dispose();
       candidate.dispose();
       rethrow;
     }
+    if (expectedPreviousConnection != null && !identical(connection, expectedPreviousConnection)) {
+      candidateState?.dispose();
+      nextAnisette.dispose();
+      candidate.dispose();
+      throw AnyhowException('Phone registration refresh was superseded; the existing push connection remains active.');
+    }
+    final previousAnisette = anisette;
+    connection = candidate;
+    anisette = nextAnisette;
+    if (candidateState != null) cachedState = candidateState;
+    _disposeLoginResourceWhenIdle(previousAnisette);
+    if (disposePreviousConnection && !identical(previousConnection, candidate)) {
+      _disposeLoginResourceWhenIdle(previousConnection);
+    }
+  }
+
+  Future<void> refreshPhoneRegistrationConnection({
+    Future<(ApsConnection, api.PushError?)> Function()? createPush,
+    Future<ArcAnisetteClientDefaultAnisetteProvider> Function(ApsConnection)? prepareAnisette,
+    Future<ApsState> Function(ApsConnection)? captureState,
+  }) async {
+    final previousConnection = connection;
+    if (previousConnection == null || previousConnection.isDisposed) {
+      throw AnyhowException('Apple Push is not ready for phone registration. Reconnect and retry; your saved device details have been kept.');
+    }
+    final refreshConfig = config;
+    final refreshIdentity = identity;
+    await setupConnection(
+      createPush: createPush ?? () {
+        if (refreshConfig == null || refreshIdentity == null) {
+          throw AnyhowException('The saved phone registration setup is unavailable. Your existing messages and device details have been kept.');
+        }
+        return api.refreshPhoneRegistrationPush(
+          config: refreshConfig,
+          identity: refreshIdentity,
+          current: previousConnection,
+          statePath: pushService.statePath,
+        );
+      },
+      prepareAnisette: prepareAnisette ?? (conn) {
+        if (refreshConfig == null) {
+          throw AnyhowException('The saved phone registration setup is unavailable. Your existing messages and device details have been kept.');
+        }
+        return api.makeAnisette(path: pushService.statePath, config: refreshConfig, conn: conn);
+      },
+      captureState: captureState ?? (createPush == null
+          ? (conn) => api.capturePushState(state: conn)
+          : null),
+      expectedPreviousConnection: previousConnection,
+      disposePreviousConnection: true,
+    );
   }
 
   void updatePage(int newPage) {
@@ -1245,6 +1353,80 @@ class SetupViewController extends StatefulController {
     }
     updateWidgets<ErrorText>(newError);
   }
+
+  static const _savedHardwareDecodeError =
+      'Saved device credentials could not be restored. Re-enter device details to reactivate this device.';
+  static const _savedHardwareConnectionError =
+      'Unable to restore the saved Apple Push connection. Saved device details were kept; retry when the connection is available.';
+
+  void _setSafeRestoreError(String message) {
+    error = message;
+    updateWidgets<ErrorText>(message);
+  }
+
+  @visibleForTesting
+  Future<void> restoreSavedHardware(
+    api.SavedHardwareState restored, {
+    api.IdsngmIdentity Function(List<int>)? decodeIdentity,
+    Future<void> Function()? setupConnectionOverride,
+  }) async {
+    config = restored.osConfig;
+    try {
+      identity = (decodeIdentity ?? (bytes) => api.decodeIdentity(identity: bytes))(restored.identity);
+    } catch (_) {
+      destroyConnection();
+      identity = null;
+      cachedState = null;
+      restoredConfigNeedsFreshIdentity = true;
+      _setSafeRestoreError(_savedHardwareDecodeError);
+      Logger.warn('Saved hardware identity could not be decoded; staging the saved relay configuration for local reactivation');
+      return;
+    }
+
+    cachedState = restored.push;
+    try {
+      await (setupConnectionOverride ?? setupConnection)();
+      restoredConfigNeedsFreshIdentity = false;
+    } catch (_) {
+      restoredConfigNeedsFreshIdentity = false;
+      _setSafeRestoreError(_savedHardwareConnectionError);
+      Logger.warn('Saved hardware push connection could not be restored; saved identity and push state were kept for retry');
+    }
+  }
+
+  @visibleForTesting
+  Future<void> restoreCachedPhoneUsers({
+    Iterable<MapEntry<String, String>>? cachedCodes,
+    Future<void> Function(String key, String encoded)? restoreAndValidate,
+  }) async {
+    if (connection == null || connection!.isDisposed) return;
+    final entries = (cachedCodes ?? ss.settings.cachedCodes.entries).toList();
+    for (var items in entries) {
+      if (!items.key.startsWith("sms-auth-")) continue;
+
+      phoneValidating.value = true;
+      try {
+        if (restoreAndValidate != null) {
+          await restoreAndValidate(items.key, items.value);
+        } else {
+          var user = await api.restoreUser(user: items.value);
+          Logger.info("restore validating!");
+          await api.validateCert(conn: connection!, user: user);
+          Logger.info("restore validated");
+          currentPhoneUsers[int.parse(items.key.replaceFirst("sms-auth-", ""))] = user;
+        }
+      } catch (_) {
+        // A connection/provider failure is not proof that the locally saved
+        // phone credential is invalid. Explicit device reconfiguration and a
+        // new successful registration already replace these entries.
+        Logger.info("Saved phone validation could not be confirmed; kept for retry");
+        continue;
+      } finally {
+        Logger.info("restore done!");
+        phoneValidating.value = false;
+      }
+    }
+  }
 }
 
 class SetupView extends StatefulWidget {
@@ -1283,20 +1465,7 @@ class _SetupViewState extends OptimizedState<SetupView> {
       }
 
       if (restored != null && pushService.state == null && controller.connection == null) {
-        controller.config = restored.osConfig;
-        try {
-          controller.identity = api.decodeIdentity(identity: restored.identity);
-          controller.cachedState = restored.push;
-          await controller.setupConnection();
-          controller.restoredConfigNeedsFreshIdentity = false;
-        } catch (e) {
-          controller.destroyConnection();
-          controller.identity = null;
-          controller.cachedState = null;
-          controller.restoredConfigNeedsFreshIdentity = true;
-          Logger.warn(
-              "Saved hardware credentials cannot be reused on this device; staging the saved relay configuration for local reactivation (${e.runtimeType})");
-        }
+        await controller.restoreSavedHardware(restored);
       }
 
       var dumb = File("${pushService.statePath}/dumb");
@@ -1316,28 +1485,7 @@ class _SetupViewState extends OptimizedState<SetupView> {
         }
       }
 
-      var list = ss.settings.cachedCodes.entries.toList();
-      for (var items in list) {
-        if (!items.key.startsWith("sms-auth-")) continue;
-
-        controller.phoneValidating.value = true;
-        try {
-          var user = await api.restoreUser(user: items.value);
-          Logger.info("restore validating!");
-          await api.validateCert(conn: controller.connection!, user: user);
-          Logger.info("restore validated");
-          controller.currentPhoneUsers[int.parse(items.key.replaceFirst("sms-auth-", ""))] = user;
-        } catch (e) {
-          Logger.info("restore resetting! $e");
-          ss.settings.cachedCodes.remove(items.key);
-          ss.saveSettings();
-          continue;
-        } finally {
-          Logger.info("restore done!");
-          controller.phoneValidating.value = false;
-        }
-
-      }
+      await controller.restoreCachedPhoneUsers();
     })();
 
     (() async {
