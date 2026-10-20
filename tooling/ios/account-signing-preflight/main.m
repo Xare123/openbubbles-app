@@ -9,6 +9,8 @@
 #define OB_SOURCE_SHA "local-unqualified"
 #endif
 
+static BOOL OBAuthKitRequested = NO;
+
 @interface OBAccountSigningProbe : UIResponder <UIApplicationDelegate>
 @property(nonatomic, strong) UIWindow *window;
 @property(nonatomic, strong) UILabel *status;
@@ -18,6 +20,7 @@
 @property(nonatomic, strong) NSString *runIdentifier;
 @property(nonatomic, strong) dispatch_queue_t nativeQueue;
 @property(nonatomic) BOOL finished;
+@property(atomic) BOOL nativeContextCancelled;
 @end
 
 // Type-check the two specific Objective-C message signatures before calling.
@@ -30,6 +33,23 @@ static BOOL OBMethodHasType(Method method, unsigned arguments, char result) {
 }
 
 @implementation OBAccountSigningProbe
+
+- (void)applicationDidBecomeActive:(UIApplication *)application {
+    if (OBAuthKitRequested && !self.started) {
+        application.idleTimerDisabled = YES;
+        [self runNativeAnisetteCheck];
+    }
+}
+
+- (void)applicationWillResignActive:(UIApplication *)application {
+    if (OBAuthKitRequested && self.started && !self.finished) {
+        [self finish:@"native-context-cancelled-underlying-work-unqualified"];
+    }
+    if (OBAuthKitRequested) {
+        self.nativeContextCancelled = YES;
+        application.idleTimerDisabled = NO;
+    }
+}
 
 - (BOOL)application:(UIApplication *)application didFinishLaunchingWithOptions:(NSDictionary *)options {
     (void)application;
@@ -67,6 +87,10 @@ static BOOL OBMethodHasType(Method method, unsigned arguments, char result) {
     NSAssert(NSThread.isMainThread, @"main queue required");
     if (self.finished) return;
     self.finished = YES;
+    if (OBAuthKitRequested) {
+        self.nativeContextCancelled = YES;
+        UIApplication.sharedApplication.idleTimerDisabled = NO;
+    }
     NSDictionary *metadata = @{
         @"schema": @1,
         @"source_sha": @OB_SOURCE_SHA,
@@ -89,6 +113,94 @@ static BOOL OBMethodHasType(Method method, unsigned arguments, char result) {
     self.status.text = [NSString stringWithFormat:
         @"Check finished: %@\n\n%@\n\nMetadata receipt %@. No signatures or account credentials were saved. This is not a login-success result.",
         disposition, self.stages.description, saved ? @"saved in this app's Documents" : @"could not be saved"];
+}
+
+- (void)runNativeAnisetteCheck {
+    if (self.started) return;
+    self.started = NSDate.date;
+    self.runIdentifier = NSUUID.UUID.UUIDString;
+    self.stages = [NSMutableArray new];
+    self.nativeContextCancelled = NO;
+    self.nativeQueue = dispatch_queue_create("dev.openbubbles.diagnostics.accountsigning.authkit", DISPATCH_QUEUE_SERIAL);
+    self.runButton.enabled = NO;
+    self.status.text = @"Checking existing native AuthKit data, provisioning disabled. No Apple Account login or password. Only capability and error metadata will be saved.";
+    __weak OBAccountSigningProbe *weakSelf = self;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 45 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+        OBAccountSigningProbe *owner = weakSelf;
+        if (owner && !owner.finished) [owner finish:@"native-context-observation-timeout-underlying-work-unqualified"];
+    });
+    NSDate *deadline = [self.started dateByAddingTimeInterval:45];
+    dispatch_async(self.nativeQueue, ^{
+        if (weakSelf.nativeContextCancelled || deadline.timeIntervalSinceNow <= 0) return;
+        NSMutableDictionary *stage = [@{@"stage": @"native-anisette-no-provision",
+            @"provision_requested": @NO, @"class_present": @NO,
+            @"selector_abi_valid": @NO, @"native_fetch_attempted": @NO,
+            @"machine_id_present": @NO, @"otp_present": @NO,
+            @"routing_info_present": @NO, @"error_present": @NO,
+            @"error_code": @0, @"error_domain": @"none"} mutableCopy];
+        @try {
+            static void *authkit;
+            static dispatch_once_t once;
+            dispatch_once(&once, ^{
+                authkit = dlopen("/System/Library/PrivateFrameworks/AuthKit.framework/AuthKit", RTLD_NOW | RTLD_LOCAL);
+            });
+            Class controllerClass = authkit ? NSClassFromString(@"AKAnisetteProvisioningController") : Nil;
+            stage[@"class_present"] = @(controllerClass != Nil);
+            SEL fetch = NSSelectorFromString(@"fetchAnisetteDataAndProvisionIfNecessary:error:");
+            Method method = class_getInstanceMethod(controllerClass, fetch);
+            char provisionType[16] = {0}, errorType[16] = {0};
+            if (method) {
+                method_getArgumentType(method, 2, provisionType, sizeof(provisionType));
+                method_getArgumentType(method, 3, errorType, sizeof(errorType));
+            }
+            BOOL abi = OBMethodHasType(method, 4, '@')
+                && (strcmp(provisionType, "B") == 0 || strcmp(provisionType, "c") == 0)
+                && strcmp(errorType, "^@") == 0;
+            stage[@"selector_abi_valid"] = @(abi);
+            if (abi && !weakSelf.nativeContextCancelled && deadline.timeIntervalSinceNow > 0) {
+                id controller = [controllerClass new];
+                if (controller && !weakSelf.nativeContextCancelled && deadline.timeIntervalSinceNow > 0) {
+                    NSError *error = nil;
+                    stage[@"native_fetch_attempted"] = @YES;
+                    // Deliberately NO: never provision, erase, synchronize SIM
+                    // state or fall back to a convenience method that provisions.
+                    id data = ((id (*)(id, SEL, BOOL, NSError **))objc_msgSend)(controller, fetch, NO, &error);
+                    stage[@"error_present"] = @(error != nil);
+                    if ([error isKindOfClass:NSError.class]) {
+                        stage[@"error_code"] = @(error.code);
+                        stage[@"error_domain"] = [error.domain isEqualToString:@"AKAnisetteErrorDomain"] ? @"AKAnisetteErrorDomain" : @"other";
+                    }
+                    Class dataClass = object_getClass(data);
+                    SEL machine = NSSelectorFromString(@"machineID");
+                    SEL otp = NSSelectorFromString(@"oneTimePassword");
+                    SEL routing = NSSelectorFromString(@"routingInfo");
+                    if (data && OBMethodHasType(class_getInstanceMethod(dataClass, machine), 2, '@')
+                        && OBMethodHasType(class_getInstanceMethod(dataClass, otp), 2, '@')
+                        && OBMethodHasType(class_getInstanceMethod(dataClass, routing), 2, 'Q')) {
+                        id machineValue = ((id (*)(id, SEL))objc_msgSend)(data, machine);
+                        id otpValue = ((id (*)(id, SEL))objc_msgSend)(data, otp);
+                        unsigned long long route = ((unsigned long long (*)(id, SEL))objc_msgSend)(data, routing);
+                        stage[@"machine_id_present"] = @([machineValue isKindOfClass:NSString.class] && [machineValue length] > 0 && [machineValue length] <= 4096);
+                        stage[@"otp_present"] = @([otpValue isKindOfClass:NSString.class] && [otpValue length] > 0 && [otpValue length] <= 4096);
+                        stage[@"routing_info_present"] = @(route != 0);
+                    }
+                    // No OTP, machine ID or routing value enters metadata/disk.
+                }
+            }
+        } @catch (NSException *exception) {
+            (void)exception;
+            stage[@"error_present"] = @YES;
+            stage[@"error_domain"] = @"native-exception";
+        }
+        dispatch_async(dispatch_get_main_queue(), ^{
+            OBAccountSigningProbe *owner = weakSelf;
+            if (!owner || owner.finished) return;
+            [owner.stages addObject:[stage copy]];
+            BOOL available = [stage[@"machine_id_present"] boolValue] && [stage[@"otp_present"] boolValue]
+                && ![stage[@"error_present"] boolValue];
+            [owner finish:available ? @"native-anisette-available-login-unverified" : @"native-anisette-unavailable-login-unverified"];
+        });
+    });
 }
 
 - (void)signStage:(NSString *)stage payload:(NSData *)payload signer:(id)signer {
@@ -195,6 +307,8 @@ static BOOL OBMethodHasType(Method method, unsigned arguments, char result) {
 
 int main(int argc, char **argv) {
     @autoreleasepool {
+        OBAuthKitRequested = argc == 2 && argv && argv[0] && argv[1]
+            && strcmp(argv[1], "--ob-native-authkit-no-provision-v1") == 0;
         return UIApplicationMain(argc, argv, nil, NSStringFromClass(OBAccountSigningProbe.class));
     }
 }

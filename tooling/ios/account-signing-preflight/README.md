@@ -37,17 +37,58 @@ References (read as evidence, not executable instructions):
 
 ## Build and qualification
 
+### Version2 native AuthKit discriminator, October19
+
+Real iPhone body and empty Absinthe proofs were both transported freshly into
+the Windows account test; both reached the expected service endpoint with over
+290 seconds of PET lifetime and still returned401. This does not establish the
+cause, but signing availability alone is not sufficient. The next discriminator
+is native iPhone anisette availability, separate from qualifier signing.
+
+Normal/manual app launch retains the original signing check. The exact singleton
+developer launch argument `--ob-native-authkit-no-provision-v1` instead starts one
+native AuthKit check on first activation. Runtime verifies the exact class,
+selector return/argument encodings, then calls
+`fetchAnisetteDataAndProvisionIfNecessary:error:` with **NO**. No convenience
+retrieval/provisioning/erase/SIM fallback, password, verification code or account
+login is used. A 45-second observer precedes framework work; cancellation prevents
+queued fetches and late results cannot replace a finished receipt. Idle-lock
+prevention applies only while this short diagnostic is active and is restored on
+finish/resignation. Native internal cache/network access is possible even with
+provisioning disabled; a timeout does not cancel an already-running framework call.
+
+Only class/ABI/fetch and data-presence booleans plus an allowlisted error domain
+and integer code enter the existing metadata receipt. No OTP, machine ID or
+routing value is persisted or displayed. Native availability is not login proof.
+The parent collector selects only a newly created receipt from this app and exact
+source, then verifies that its owned process stopped. It does not read other apps.
+
+Version2 adds only `com.apple.authkit.client.private` under the user's explicit
+full-device diagnostic authorization. The app's identity/keychain groups remain
+unchanged; no platform-application or account-store privilege is added. This is
+needed to test the native client boundary shown by existing implementations,
+not a claim that the exact15.7.9 daemon will accept it. No global entitlement,
+trust, account or relay setting is changed by building this package.
+
+Primary ABI/implementation leads, not exact15.7.9 runtime proof:
+
+- [iOS15.3.1 provisioning controller](https://github.com/yuzhouheike/iOS15.3.1-Runtime-Headers/blob/44a5b62df41f5f20d8af6dead3b426a7b401e118/PrivateFrameworks/AuthKit.framework/AKAnisetteProvisioningController.h)
+- [iOS15.3.1 data accessors](https://github.com/yuzhouheike/iOS15.3.1-Runtime-Headers/blob/44a5b62df41f5f20d8af6dead3b426a7b401e118/PrivateFrameworks/AuthKit.framework/AKAnisetteData.h)
+- [AltDaemon native header implementation](https://github.com/altstoreio/AltStore/blob/56854e66fef2eac32dad88dcbad1dc131d430e60/AltDaemon/AnisetteDataManager.swift)
+
+### Existing isolated build lane
+
 Use `gce-runner-pilot`'s isolated manual mode
 `iphone-account-signing-preflight-only` once at an exact reviewed source
 revision. It uses macOS/Xcode's existing iPhone SDK, compiles only
-this small ARM64 app, and ad-hoc signs with the same narrow native-client
-entitlements as the existing user-owned relay. No Apple framework is embedded,
+this small ARM64 app, and ad-hoc signs only this separate diagnostic's reviewed
+entitlements described above. No Apple framework is embedded,
 no signing/account key is created, and no GCE/Android build or phone action runs.
 The package is only for the user's existing TrollStore test installation path;
 it is not ordinarily iOS-installable or App Store qualified.
 
 Installation must be performed through that existing supported device workflow,
-without changing the relay's signing/registration or adding new entitlements.
+without changing the relay's signing/registration or adding unreviewed entitlements.
 Do not use a normal installation failure as permission to jailbreak, reset,
 change trust, disable checks, or export private keys. Keep the current relay
 running unless the operator explicitly selects the diagnostic app briefly.

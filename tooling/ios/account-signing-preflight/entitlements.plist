@@ -6,4 +6,5 @@
   <key>com.apple.private.MobileGestalt.AllowedProtectedKeys</key>
   <array><string>SerialNumber</string><string>UniqueDeviceID</string></array>
   <key>abs-client</key><integer>772496756</integer>
+  <key>com.apple.authkit.client.private</key><true/>
 </dict></plist>
