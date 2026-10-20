@@ -99,6 +99,11 @@ on:
         required: true
         default: false
         type: boolean
+      native_contract_analysis:
+        description: Opt-in temporary offline decompiler for the Mac-only iPhone static lane
+        required: false
+        default: false
+        type: boolean
       runner_lane:
         description: Use the second bounded lane only after checking concurrent CPU and disk quota
         required: true
@@ -1408,6 +1413,8 @@ jobs:
     timeout-minutes: 25
     permissions:
       contents: read
+    env:
+      NATIVE_CONTRACT_ANALYSIS: ${{ inputs.native_contract_analysis || false }}
     steps:
       - name: Check out exact inspection tools without submodules
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -1419,6 +1426,7 @@ jobs:
         shell: bash
         run: |
           python3 -m unittest discover -s tooling/ci -p test_inspect_iphone_activation_native.py -v
+          python3 -m unittest discover -s tooling/ci -p 'test_iphone_native_contract*.py' -v
           python3 tooling/ci/inspect_iphone_activation_native.py --out "$RUNNER_TEMP/iphone-activation-evidence"
       - name: Retain hashes and bounded static facts, never Apple binaries
         if: ${{ always() }}

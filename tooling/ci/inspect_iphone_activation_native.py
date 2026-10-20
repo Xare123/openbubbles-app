@@ -377,11 +377,53 @@ def disk_info(work, name):
     return run_owned(["/usr/bin/hdiutil", "info", "-plist"], work, name, 20)[1]
 
 
+def contract_analysis_requested(environ):
+    value = environ.get("NATIVE_CONTRACT_ANALYSIS", "false")
+    if value not in ("false", "true"):
+        raise RuntimeError("invalid-native-contract-analysis-flag")
+    return value == "true"
+
+
+def require_contract_fixture(evidence):
+    """Require code-backed references and pseudocode, not matching text alone."""
+    carriers = ("FairPlaySignature", "ActivationInfoXML")
+    if evidence.get("analysis_timeout_occurred") == "false":
+        for row in evidence.get("candidates", []):
+            pseudocode = row.get("pseudocode")
+            if (row.get("name", "").lstrip("_") != "fixture_reference_only"
+                    or not re.fullmatch(r"0x[0-9a-fA-F]+", row.get("entry", ""))
+                    or int(row["entry"], 16) <= 0x100000000
+                    or type(row.get("body_addresses")) is not int or row["body_addresses"] <= 0
+                    or row.get("external") is not False or row.get("thunk") is not False
+                    or not all(value in row.get("seeds", []) for value in carriers)
+                    or not all(any(ref.startswith(value + "@") for ref in row.get("references", []))
+                               for value in carriers)
+                    or not any(call.rsplit("::", 1)[-1].lstrip("_") == "CFStringGetLength"
+                               for call in row.get("calls", []))
+                    or type(pseudocode) is not dict or pseudocode.get("truncated") is not False
+                    or not 0 < len(pseudocode.get("text", "")) <= 20000):
+                continue
+            return {"status": "synthetic-reference-and-decompiler-qualified",
+                    "function_entry": row["entry"], "reference_carriers": list(carriers),
+                    "pseudocode_chars": len(pseudocode["text"])}
+    raise RuntimeError("synthetic-native-analysis-unqualified")
+
+
+def inspect_contract_if_requested(copied, work, requested, report):
+    if not requested:
+        return False
+    from iphone_native_contract import inspect_contract
+    report["native_contract_analysis"] = {}
+    inspect_contract(copied, work, run_owned, require_contract_fixture, report["native_contract_analysis"])
+    return True
+
+
 def inspect_on_mac(out):
     if platform.system() != "Darwin" or os.environ.get("GITHUB_ACTIONS") != "true":
         raise RuntimeError("owned-github-macos-runner-required")
     if any(os.environ.get(key, "false") != "false" for key in ("OUTBOUND_WRITER", "AUTOMATIC_UPLOADS")):
         raise RuntimeError("inspection-requires-write-flags-off")
+    contract_analysis = contract_analysis_requested(os.environ)
     temp = Path(os.environ["RUNNER_TEMP"]).resolve()
     out = validate_out_root(out, temp)
     out.mkdir(parents=True)
@@ -391,6 +433,8 @@ def inspect_on_mac(out):
               "workflow_sha": os.environ.get("GITHUB_SHA"), "firmware": FIRMWARE,
               "expected_product": "iPhone9,1", "expected_version": "15.7.9",
               "expected_build": "19H365", "full_ipsw_sha256_verified": False,
+              "analysis_mode": "contract" if contract_analysis else "lightweight",
+              "previous_lightweight_inspection_not_repeated": contract_analysis,
               "accounts": 0, "activation_requests": 0, "phone_operations": 0,
               "native_private_keys_read": False, "binary_artifact_retained": False}
     started = time.monotonic()
@@ -427,44 +471,45 @@ def inspect_on_mac(out):
         # Inspect a private copy only. No component is executed or exported.
         copied = work / "mobileactivationd"
         shutil.copyfile(native, copied)
-        _, loads, _ = run_owned(["/usr/bin/otool", "-L", str(copied)], work, "native-loads", 60)
-        nm_code, symbols, _ = run_owned(["/usr/bin/nm", "-nm", str(copied)], work, "native-symbols", 60,
-                                        check=False)
-        report["symbol_inventory_exit"] = nm_code
-        report["loads"] = [line.strip() for line in loads.decode(errors="replace").splitlines()[1:80]]
-        report["selected_symbols"] = [line for line in symbols.decode(errors="replace").splitlines()
-                                      if INTERESTING.search(line)][:120]
-        _, objc, _ = run_owned(objc_metadata_command(copied), work, "native-objc-metadata", 90)
-        report["objc_activation_metadata"] = select_objc_activation_metadata(objc)
-        _, literals, _ = run_owned(["/usr/bin/strings", "-a", "-t", "x", str(copied)],
-                                  work, "native-fixed-literals", 60)
-        report["activation_literal_locations"] = select_activation_literals(literals)
-        code, signature, signature_error = run_owned(
-            ["/usr/bin/codesign", "--verify", "--strict", str(copied)], work, "signature-verify", 60,
-            check=False)
-        report["code_signature_verification_exit"] = code
-        _, details, detail_error = run_owned(
-            ["/usr/bin/codesign", "--display", "--verbose=4", str(copied)], work, "signature-details", 60)
-        report["code_signature_facts"] = [line for line in (details + detail_error).decode(errors="replace").splitlines()
-                                          if line.startswith(("Identifier=", "Format=", "CodeDirectory ",
-                                                              "CDHash=", "Platform identifier=", "Authority="))]
-        _, assembly, _ = run_owned(["/usr/bin/otool", "-tvV", str(copied)], work, "native-disassembly", 120)
-        lines = assembly.decode(errors="replace").splitlines()
-        windows = []
-        for index, line in enumerate(lines):
-            if "wyjYwk" in line and len(windows) < 8:
-                windows.append(lines[max(0, index - 12):index + 5])
-        report["fairplay_callsite_windows"] = windows
-        annotated_code, annotated, _ = run_owned(
-            annotated_disassembly_command(tool, copied, work / "native-symbols.a2s"),
-            work, "native-annotated-disassembly", 240, check=False)
-        report["annotated_disassembly_exit"] = annotated_code
-        report["annotated_activation_instructions"] = (
-            select_activation_instruction_windows(annotated) if annotated_code == 0 else {
-                "status": "unavailable", "reason": "annotated-disassembly-failed",
-                "external_csr_interface_proved": False, "runtime_or_caller_access_proved": False})
-        if annotated_code == 0:
-            report["certificate_region_static_facts"] = select_certificate_region_facts(annotated)
+        if not inspect_contract_if_requested(copied, work, contract_analysis, report):
+            _, loads, _ = run_owned(["/usr/bin/otool", "-L", str(copied)], work, "native-loads", 60)
+            nm_code, symbols, _ = run_owned(["/usr/bin/nm", "-nm", str(copied)], work, "native-symbols", 60,
+                                            check=False)
+            report["symbol_inventory_exit"] = nm_code
+            report["loads"] = [line.strip() for line in loads.decode(errors="replace").splitlines()[1:80]]
+            report["selected_symbols"] = [line for line in symbols.decode(errors="replace").splitlines()
+                                          if INTERESTING.search(line)][:120]
+            _, objc, _ = run_owned(objc_metadata_command(copied), work, "native-objc-metadata", 90)
+            report["objc_activation_metadata"] = select_objc_activation_metadata(objc)
+            _, literals, _ = run_owned(["/usr/bin/strings", "-a", "-t", "x", str(copied)],
+                                      work, "native-fixed-literals", 60)
+            report["activation_literal_locations"] = select_activation_literals(literals)
+            code, signature, signature_error = run_owned(
+                ["/usr/bin/codesign", "--verify", "--strict", str(copied)], work, "signature-verify", 60,
+                check=False)
+            report["code_signature_verification_exit"] = code
+            _, details, detail_error = run_owned(
+                ["/usr/bin/codesign", "--display", "--verbose=4", str(copied)], work, "signature-details", 60)
+            report["code_signature_facts"] = [line for line in (details + detail_error).decode(errors="replace").splitlines()
+                                              if line.startswith(("Identifier=", "Format=", "CodeDirectory ",
+                                                                  "CDHash=", "Platform identifier=", "Authority="))]
+            _, assembly, _ = run_owned(["/usr/bin/otool", "-tvV", str(copied)], work, "native-disassembly", 120)
+            lines = assembly.decode(errors="replace").splitlines()
+            windows = []
+            for index, line in enumerate(lines):
+                if "wyjYwk" in line and len(windows) < 8:
+                    windows.append(lines[max(0, index - 12):index + 5])
+            report["fairplay_callsite_windows"] = windows
+            annotated_code, annotated, _ = run_owned(
+                annotated_disassembly_command(tool, copied, work / "native-symbols.a2s"),
+                work, "native-annotated-disassembly", 240, check=False)
+            report["annotated_disassembly_exit"] = annotated_code
+            report["annotated_activation_instructions"] = (
+                select_activation_instruction_windows(annotated) if annotated_code == 0 else {
+                    "status": "unavailable", "reason": "annotated-disassembly-failed",
+                    "external_csr_interface_proved": False, "runtime_or_caller_access_proved": False})
+            if annotated_code == 0:
+                report["certificate_region_static_facts"] = select_certificate_region_facts(annotated)
         report["status"] = "static-inspection-completed"
         report["signer_runtime_or_external_csr_proved"] = False
     except Exception as error:

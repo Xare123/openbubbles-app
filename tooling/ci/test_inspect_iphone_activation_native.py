@@ -5,6 +5,7 @@ import os
 import plistlib
 from pathlib import Path
 import struct
+import sys
 import tempfile
 import unittest
 from types import SimpleNamespace
@@ -36,6 +37,73 @@ def macho64_arm64(payload=b"fixture"):
 
 
 class InspectIPhoneActivationNativeTests(unittest.TestCase):
+    def test_default_path_does_not_import_or_launch_the_optional_engine(self):
+        with patch.dict(sys.modules, {"iphone_native_contract": None}):
+            self.assertFalse(S.inspect_contract_if_requested(Path("unused"), Path("unused"), False, {}))
+
+    def test_opt_in_uses_the_existing_owned_runner_and_no_fallback_after_failure(self):
+        import iphone_native_contract as contract
+        report = {}
+        with patch.object(contract, "inspect_contract", side_effect=RuntimeError("fixture-failed")) as inspect:
+            with self.assertRaisesRegex(RuntimeError, "fixture-failed"):
+                S.inspect_contract_if_requested(Path("native"), Path("owned"), True, report)
+        inspect.assert_called_once_with(Path("native"), Path("owned"), S.run_owned,
+                                        S.require_contract_fixture, report["native_contract_analysis"])
+
+    @staticmethod
+    def fixture_evidence():
+        return {"analysis_timeout_occurred": "false", "candidates": [{
+            "name": "_fixture_reference_only", "entry": "0x100000400", "body_addresses": 64,
+            "external": False, "thunk": False,
+            "seeds": ["FairPlaySignature", "ActivationInfoXML"],
+            "references": ["FairPlaySignature@0x100000420:L1:DATA",
+                           "ActivationInfoXML@0x100000430:L2:DATA"],
+            "calls": ["_CFStringGetLength"],
+            "pseudocode": {"text": "long fixture_reference_only(void) { return CFStringGetLength(p); }",
+                           "truncated": False, "chars": 70}}]}
+
+    def test_synthetic_qualification_requires_real_function_and_both_reference_carriers(self):
+        evidence = self.fixture_evidence()
+        result = S.require_contract_fixture(evidence)
+        self.assertEqual(result["function_entry"], "0x100000400")
+        self.assertEqual(result["reference_carriers"], ["FairPlaySignature", "ActivationInfoXML"])
+        self.assertEqual(result["status"], "synthetic-reference-and-decompiler-qualified")
+
+    def test_synthetic_qualification_rejects_names_or_declarations_without_code(self):
+        for replacement in ({"body_addresses": 0}, {"external": True}, {"thunk": True},
+                            {"pseudocode": None}, {"calls": []}, {"references": []},
+                            {"references": ["FairPlaySignature@0x100000420:L1:DATA"]},
+                            {"seeds": ["ActivationInfoXML"]}, {"entry": "0x100000000"}):
+            evidence = self.fixture_evidence()
+            evidence["candidates"][0].update(replacement)
+            with self.subTest(replacement=replacement), self.assertRaisesRegex(
+                    RuntimeError, "synthetic-native-analysis-unqualified"):
+                S.require_contract_fixture(evidence)
+        evidence = self.fixture_evidence()
+        evidence["analysis_timeout_occurred"] = "true"
+        with self.assertRaisesRegex(RuntimeError, "synthetic-native-analysis-unqualified"):
+            S.require_contract_fixture(evidence)
+
+    def test_contract_analysis_requires_explicit_boolean_opt_in(self):
+        for environ, expected in (({}, False), ({"NATIVE_CONTRACT_ANALYSIS": "false"}, False),
+                                  ({"NATIVE_CONTRACT_ANALYSIS": "true"}, True)):
+            with self.subTest(environ=environ):
+                self.assertIs(S.contract_analysis_requested(environ), expected)
+        for value in ("", "TRUE", "1", "yes", True, None):
+            with self.subTest(value=value), self.assertRaisesRegex(
+                    RuntimeError, "invalid-native-contract-analysis-flag"):
+                S.contract_analysis_requested({"NATIVE_CONTRACT_ANALYSIS": value})
+
+    def test_invalid_contract_opt_in_fails_before_work_or_network(self):
+        with patch.object(S.platform, "system", return_value="Darwin"), patch.dict(
+            os.environ, {"GITHUB_ACTIONS": "true", "NATIVE_CONTRACT_ANALYSIS": "yes",
+                         "OUTBOUND_WRITER": "false", "AUTOMATIC_UPLOADS": "false"}
+        ), patch.object(S, "validate_out_root") as validate, patch.object(S, "download_tool") as download:
+            with self.assertRaisesRegex(RuntimeError, "invalid-native-contract-analysis-flag"):
+                S.inspect_on_mac(Path("not-used"))
+        validate.assert_not_called()
+        download.assert_not_called()
+
     def test_certificate_region_facts_are_exact_sha_bound_addresses_not_general_code_export(self):
         raw = b'''name 0x100000000 protocolDeclaration
 0x100001000:  00000091   add x0, x8, #0 ; "outside-region"
