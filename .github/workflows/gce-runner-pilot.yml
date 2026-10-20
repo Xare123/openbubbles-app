@@ -44,6 +44,7 @@ on:
         type: choice
         options:
           - agent/cloudkit-v2-update-seam
+          - agent/native-relay-client-20261020
           - agent/cloudkit-v2-received-origin-20260916
           - agent/facetime-findmy-independent-20260916
       flavor:
