@@ -15,6 +15,7 @@
 #import <unistd.h>
 #include "request_reader.h"
 #include "launch_mode.h"
+#include "loopback_listener.h"
 
 #if !defined(OB_SOURCE_SHA) || !defined(OB_FIXTURE_BODY_SHA256) || !defined(OB_FIXTURE_JSON_SHA256)
 #error Exact source and bundled fixture hashes are required
@@ -155,18 +156,7 @@ static BOOL OBWait(int fd, short events, double deadline, OBRunControl *control)
 }
 
 static int OBListen(void) {
-    int fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-    if (fd < 0) return -1;
-    struct sockaddr_in address = {0};
-    address.sin_len = sizeof(address);
-    address.sin_family = AF_INET;
-    address.sin_port = htons(OBPort);
-    if (inet_pton(AF_INET, "127.0.0.1", &address.sin_addr) != 1 || !OBNonblocking(fd)
-        || bind(fd, (struct sockaddr *)&address, sizeof(address)) != 0 || listen(fd, 1) != 0) {
-        OBClose(&fd);
-        return -1;
-    }
-    return fd;
+    return OBFixtureOpenLoopbackListener();
 }
 
 static int OBRequestActive(double deadline, void *context) {

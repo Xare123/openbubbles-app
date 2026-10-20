@@ -19,10 +19,12 @@ RUN = "0a34797b7dc44e8e8a41f1fe4c2b01d8"
 CLIENT = "7332110D-8CF0-4B5A-9C4D-EB9C806CF832"
 
 # This harness includes the app's actual launch parser/latch and request reader.
-# Its only sockets are an anonymous local POSIX socketpair, never TCP/device I/O.
+# Socketpair reader cases and fixed-loopback listener cases never use device or
+# external-network I/O. The listener cases exercise the actual production header.
 SOCKETPAIR_HARNESS = r'''
 #include "request_reader.h"
 #include "launch_mode.h"
+#include "loopback_listener.h"
 #include <poll.h>
 #include <stdio.h>
 #include <time.h>
@@ -89,10 +91,54 @@ static int launch_mode_cases(void) {
     OBFixtureLaunchResignedActive(NULL);
     return 0;
 }
+static int listener_cases(int rebind) {
+    for (int round = 0; round < (rebind ? 4 : 1); ++round) {
+        int listener = OBFixtureOpenLoopbackListener();
+        if (listener < 0) return 30;
+        int result = 0, reuse = 0, client = -1, peer = -1;
+        socklen_t size = sizeof(reuse);
+        struct sockaddr_in address;
+        socklen_t address_size = sizeof(address);
+        if (getsockopt(listener, SOL_SOCKET, SO_REUSEADDR, &reuse, &size) != 0 || reuse != 1
+            || getsockname(listener, (struct sockaddr *)&address, &address_size) != 0
+            || address.sin_addr.s_addr != htonl(INADDR_LOOPBACK)
+            || ntohs(address.sin_port) != OBFixtureLoopbackPort
+            || !(fcntl(listener, F_GETFL, 0) & O_NONBLOCK)
+            || !(fcntl(listener, F_GETFD, 0) & FD_CLOEXEC)) result = 31;
+        int second = OBFixtureOpenLoopbackListener();
+        if (second >= 0) { close(second); result = 32; }
+        else if (errno != EADDRINUSE) result = 33;
+        if (!result && rebind) {
+            client = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+            if (client < 0 || connect(client, (struct sockaddr *)&address, sizeof(address)) != 0) result = 34;
+            if (!result) {
+                peer = accept(listener, NULL, NULL);
+                if (peer < 0) result = 35;
+            }
+            close(listener); listener = -1;
+            /* Server actively closes first, deliberately creating TCP teardown
+             * state before the next immediate bind of the identical address. */
+            char byte;
+            if (!result && (shutdown(peer, SHUT_WR) != 0 || recv(client, &byte, 1, 0) != 0
+                || shutdown(client, SHUT_WR) != 0)) result = 36;
+            if (!result) {
+                struct pollfd item = { .fd = peer, .events = POLLIN, .revents = 0 };
+                if (poll(&item, 1, 1000) <= 0 || recv(peer, &byte, 1, 0) != 0) result = 37;
+            }
+        }
+        if (peer >= 0) close(peer);
+        if (client >= 0) close(client);
+        if (listener >= 0) close(listener);
+        if (result) return result;
+    }
+    return 0;
+}
 int main(int argc, char **argv) {
     if (argc != 2) return 2;
     const char *mode = argv[1];
     if (strcmp(mode, "launch-mode") == 0) return launch_mode_cases();
+    if (strcmp(mode, "listener-exclusive") == 0) return listener_cases(0);
+    if (strcmp(mode, "listener-rebind") == 0) return listener_cases(1);
     const char *run_id = "0a34797b7dc44e8e8a41f1fe4c2b01d8";
     const char frame[] = "OBQUAL2:0a34797b7dc44e8e8a41f1fe4c2b01d8\n";
     if (sizeof(frame) - 1 != OBFixtureRequestBytes) return 3;
@@ -240,13 +286,14 @@ class NativeBoundaryGuards(unittest.TestCase):
         cls.build = (DIRECTORY / "build.sh").read_text()
         cls.reader = (DIRECTORY / "request_reader.h").read_text()
         cls.launch = (DIRECTORY / "launch_mode.h").read_text()
+        cls.listener = (DIRECTORY / "loopback_listener.h").read_text()
 
     def test_bundle_entitlements_are_distinct_and_exact(self):
         info = plistlib.loads((DIRECTORY / "Info.plist").read_bytes())
         entitlements = plistlib.loads((DIRECTORY / "entitlements.plist").read_bytes())
         self.assertEqual(info["CFBundleIdentifier"], BUNDLE)
         self.assertEqual(info["CFBundleExecutable"], "OBAccountQualifierFixture")
-        self.assertEqual(info["CFBundleVersion"], "2")
+        self.assertEqual(info["CFBundleVersion"], "3")
         self.assertEqual(info["OBUSBAutomationProtocol"], "1")
         self.assertEqual(set(entitlements), {"application-identifier", "keychain-access-groups",
             "com.apple.private.MobileGestalt.AllowedProtectedKeys", "abs-client"})
@@ -259,7 +306,10 @@ class NativeBoundaryGuards(unittest.TestCase):
 
     def test_listener_and_fixed_frame_have_no_payload_input(self):
         self.assertEqual(len(("OBQUAL2:" + RUN + "\n").encode("ascii")), 41)
-        self.assertIn('inet_pton(AF_INET, "127.0.0.1", &address.sin_addr)', self.source)
+        self.assertIn('inet_pton(AF_INET, "127.0.0.1", &address.sin_addr)', self.listener)
+        self.assertIn('OBFixtureLoopbackPort = 49173', self.listener)
+        self.assertIn('return OBFixtureOpenLoopbackListener();', self.source)
+        self.assertIn('setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse))', self.listener)
         self.assertIn("OBPort = 49173, OBHeaderBytes = OBFixtureRequestBytes", self.source)
         self.assertIn('#include "request_reader.h"', self.source)
         self.assertIn("OBFixtureRequestBytes = 41", self.reader)
@@ -271,8 +321,9 @@ class NativeBoundaryGuards(unittest.TestCase):
         self.assertIn("if (count > 0) return 0", self.reader)
         self.assertEqual(self.source.count("recv("), 0)
         self.assertEqual(self.reader.count("recv("), 2)
-        for forbidden in ["INADDR_ANY", "AF_INET6", "SO_REUSEPORT", "SO_REUSEADDR", "0.0.0.0"]:
-            self.assertNotIn(forbidden, self.source)
+        for forbidden in ["INADDR_ANY", "AF_INET6", "0.0.0.0"]:
+            self.assertNotIn(forbidden, self.source + self.listener)
+        self.assertNotIn('setsockopt(fd, SOL_SOCKET, SO_REUSEPORT', self.listener)
         read_request = self.source.split("static BOOL OBReadRequest", 1)[1].split("static BOOL OBSendAll", 1)[0]
         self.assertNotIn("signer", read_request)
         self.assertIn("OBFixtureReadRequest(fd, runID.UTF8String, deadline", read_request)
@@ -425,6 +476,12 @@ class NativeRequestReaderSocketpairTests(unittest.TestCase):
 
     def test_real_launch_parser_first_active_once_and_cancellation(self):
         self.reader_case("launch-mode")
+
+    def test_actual_loopback_listener_preserves_single_live_owner(self):
+        self.reader_case("listener-exclusive")
+
+    def test_actual_listener_rebinds_after_four_immediate_tcp_teardowns(self):
+        self.reader_case("listener-rebind")
 
 
 if __name__ == "__main__":

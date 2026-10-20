@@ -51,7 +51,9 @@ from being substituted after build validation. Source SHA is embedded separately
    never automatically arms. Keep the fixture foreground until its final
    disposition appears. The optional exact PC-launch mode below replaces only
    this tap, never the fixed USB frame or any account-authorization gate.
-2. Bind IPv4 **127.0.0.1:49173** only. No reuse-port/all-interface/IPv6 listener.
+2. Bind IPv4 **127.0.0.1:49173** only. Address reuse permits a new process after
+   TCP teardown; duplicate live-port reuse, all-interface and IPv6 listeners
+   remain forbidden. A second live listener must still fail.
    Parent must separately verify that its existing paired usbmux route reaches
    that exact loopback socket. Loopback itself does not authenticate a PC or
    exclude another local iPhone process. The nonce is a fixed fixture admission
@@ -135,7 +137,7 @@ existing button behavior and cancellation after arming. Parent must order any
 developer launch after prompts/2FA have been dismissed and keep the app foreground.
 
 `Info.plist` advertises `OBUSBAutomationProtocol` string `1` and `CFBundleVersion`
-string `2`. These are capability markers, not source identity or authorization.
+string `3`. These are capability markers, not source identity or authorization.
 The response's existing compiled-in `source_sha` and exact `body_sha256` remain
 mandatory parent checks; no placeholder/static `OBSourceSHA` is added to the plist.
 The launch argument is **not permission to log in**: this fixture still performs
@@ -172,6 +174,24 @@ usbmux, the iOS app lifecycle, or login.
 Runtime and login remain **unqualified** until separately observed. The iOS18.2
 reconstruction indicates a cached NAC context and per-input signing, not a reusable
 cached signature. Its 540-second context cache does not establish signature expiry.
+
+### October19 rapid-relaunch repair
+
+The real iPhone completed one automated exchange, then an immediate fresh launch
+showed `listener-unavailable` before either signing call. This also interrupted
+the account harness locally; it is not an Apple authentication result. The old
+listener did not enable address reuse. Version3 uses the shared
+`loopback_listener.h` with `SO_REUSEADDR`, nonblocking/CLOEXEC descriptors, the
+same fixed loopback address/port and a one-connection backlog. It never enables
+duplicate active-port sharing. See Apple's archived
+[setsockopt reference](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/setsockopt.2.html).
+
+The Mac harness compiles this actual shared listener, verifies its socket options
+and exclusive live owner, then performs four immediate server-first TCP teardown
+and rebind cycles. These are kernel tests, not a mock of bind. Windows skips these
+eight Mac C cases. A version3 build and real iPhone rapid-relaunch check remain
+necessary before claiming this repair is deployed. Signing, body, framing,
+entitlements and account behavior are unchanged.
 Consume each returned proof at most once promptly; freeze final body bytes before
 signing and send those identical bytes. Lengths alone do not prove body binding.
 Native-empty versus native-body comparison must retain endpoint/header semantics;
