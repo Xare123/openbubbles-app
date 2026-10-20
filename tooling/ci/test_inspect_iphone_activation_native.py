@@ -36,6 +36,36 @@ def macho64_arm64(payload=b"fixture"):
 
 
 class InspectIPhoneActivationNativeTests(unittest.TestCase):
+    def test_certificate_region_facts_are_exact_sha_bound_addresses_not_general_code_export(self):
+        raw = b'''name 0x100000000 protocolDeclaration
+0x100001000:  00000091   add x0, x8, #0 ; "outside-region"
+0x10003f434:  018941f9   ldr x1, [x8, #0x310] ; sel_hasEntitlement:
+0x10003f43c:  00000094   bl j__objc_msgSend
+0x10003fb1c:  198941f9   ldr x25, [x8, #0x310] ; sel_hasEntitlement:
+'''
+        result = S.select_certificate_region_facts(raw)
+        self.assertEqual(result["required_native_sha256"], S.EXPECTED_NATIVE_SHA256)
+        self.assertEqual(result["regions"][0]["references"], [
+            {"address": "0x10003f434", "name": "sel_hasEntitlement:"}])
+        self.assertEqual(result["regions"][0]["calls"], [
+            {"address": "0x10003f43c", "target": "j__objc_msgSend"}])
+        self.assertEqual(result["regions"][1]["references"][0]["address"], "0x10003fb1c")
+        self.assertNotIn("outside-region", str(result))
+        self.assertNotIn("00000094", str(result))
+        self.assertFalse(result["function_boundaries_proved"])
+        self.assertFalse(result["external_csr_interface_proved"])
+
+    def test_certificate_region_facts_bound_static_names_and_reference_count(self):
+        raw = "\n".join(
+            f'0x{0x10003f300 + n * 4:x}:  00000091   add x0, x8, #0 ; "' + "s" * 260 + '"'
+            for n in range(110)).encode()
+        result = S.select_certificate_region_facts(raw)
+        region = result["regions"][0]
+        self.assertEqual(region["matching_reference_count"], 110)
+        self.assertEqual(len(region["references"]), 96)
+        self.assertTrue(region["truncated"])
+        self.assertLessEqual(max(len(row["name"]) for row in region["references"]), 200)
+
     def test_annotated_instruction_command_has_no_runtime_llm_or_analysis_bypass(self):
         command = S.annotated_disassembly_command(Path("ipsw"), Path("native"), Path("owned.a2s"))
         self.assertEqual(command, ["ipsw", "macho", "disass", "--cache", "owned.a2s", "native"])

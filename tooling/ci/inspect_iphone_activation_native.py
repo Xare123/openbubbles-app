@@ -61,6 +61,10 @@ INSTRUCTION_TARGETS = (
 INSTRUCTION_TARGET_PATTERN = re.compile(
     r"(?<![A-Za-z0-9_])(?:sel_)?(" + "|".join(map(re.escape, INSTRUCTION_TARGETS))
     + r")(?![A-Za-z0-9_:])")
+INSTRUCTION_LINE = re.compile(
+    r"^\s*(0x[0-9a-fA-F]{8,16}):\s+((?:[0-9a-fA-F]{2}\s*){4})\s+"
+    r"([a-zA-Z.][a-zA-Z0-9_.]*)\s*(.*)$")
+ANSI_SEQUENCE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 
 
 class CommandFailure(RuntimeError):
@@ -114,14 +118,9 @@ def annotated_disassembly_command(tool, path, cache):
 def select_activation_instruction_windows(raw):
     """Addressed instruction references, not protocol fields or callable ABI proof."""
     lines = metadata_lines(raw)
-    instruction = re.compile(
-        r"^\s*(0x[0-9a-fA-F]{8,16}):\s+((?:[0-9a-fA-F]{2}\s*){4})\s+"
-        r"([a-zA-Z.][a-zA-Z0-9_.]*)\s*(.*)$")
-    ansi = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
     decoded, matches = [], []
     for number, line in enumerate(lines):
-        line = ansi.sub("", line)
-        match = instruction.fullmatch(line)
+        match = INSTRUCTION_LINE.fullmatch(ANSI_SEQUENCE.sub("", line))
         if not match:
             continue
         target = INSTRUCTION_TARGET_PATTERN.search(match[4])
@@ -152,6 +151,47 @@ def select_activation_instruction_windows(raw):
             "addressed_instruction_count": len(decoded), "matching_instruction_count": len(matches),
             "windows": windows, "truncated": len(matches) > len(windows),
             "external_csr_interface_proved": False, "runtime_or_caller_access_proved": False}
+
+
+def select_certificate_region_facts(raw):
+    """Only public static names/callees in two exact-hash observed code regions.
+
+    The first annotated pass located real __func__ diagnostic string references,
+    not method entry points. This follow-up retains their surrounding selector,
+    entitlement and dictionary-name references, NOT whole methods or binary code.
+    These ranges are not valid for any different native binary.
+    """
+    regions = [
+        {"label": label, "begin": hex(begin), "end_exclusive": hex(end),
+         "references": [], "calls": [], "matching_reference_count": 0, "matching_call_count": 0}
+        for label, begin, end in (
+            ("legacy-diagnostic-region", 0x10003f300, 0x10003f9f0),
+            ("reference-key-diagnostic-region", 0x10003f9f0, 0x10003fe00))]
+    for line in metadata_lines(raw):
+        match = INSTRUCTION_LINE.fullmatch(ANSI_SEQUENCE.sub("", line))
+        if not match:
+            continue
+        address = int(match[1], 16)
+        for region in regions:
+            if not int(region["begin"], 16) <= address < int(region["end_exclusive"], 16):
+                continue
+            operand, separator, comment = match[4].partition(";")
+            if separator and comment.strip():
+                region["matching_reference_count"] += 1
+                if len(region["references"]) < 96:
+                    name = "".join(value for value in comment.strip() if 32 <= ord(value) < 127)[:200]
+                    region["references"].append({"address": match[1], "name": name})
+            if match[3].lower() in {"bl", "blr", "blraa", "blrab"}:
+                region["matching_call_count"] += 1
+                if len(region["calls"]) < 64:
+                    region["calls"].append({"address": match[1], "target": operand.strip()[:160]})
+    for region in regions:
+        region["truncated"] = (region["matching_reference_count"] > len(region["references"])
+                               or region["matching_call_count"] > len(region["calls"]))
+    return {"selection": "exact-native-observed-certificate-region-static-facts",
+            "required_native_sha256": EXPECTED_NATIVE_SHA256, "regions": regions,
+            "function_boundaries_proved": False, "external_csr_interface_proved": False,
+            "runtime_or_caller_access_proved": False}
 
 
 def metadata_lines(raw):
@@ -423,6 +463,8 @@ def inspect_on_mac(out):
             select_activation_instruction_windows(annotated) if annotated_code == 0 else {
                 "status": "unavailable", "reason": "annotated-disassembly-failed",
                 "external_csr_interface_proved": False, "runtime_or_caller_access_proved": False})
+        if annotated_code == 0:
+            report["certificate_region_static_facts"] = select_certificate_region_facts(annotated)
         report["status"] = "static-inspection-completed"
         report["signer_runtime_or_external_csr_proved"] = False
     except Exception as error:
