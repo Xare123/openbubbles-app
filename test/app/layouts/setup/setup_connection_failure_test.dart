@@ -75,6 +75,92 @@ class _SavedHardware implements api.SavedHardwareState {
 }
 
 void main() {
+  test('initial restore failure cannot replace the newer relay status', () async {
+    final controller = SetupViewController();
+    final newerConfig = _Config();
+    final newerIdentity = _Identity();
+    await controller.restoreSavedHardware(
+      _SavedHardware(identity: Uint8List.fromList([1]), osConfig: _Config(), push: _PushState()),
+      decodeIdentity: (_) => _Identity(),
+      setupConnectionOverride: () async {
+        controller.config = newerConfig;
+        controller.identity = newerIdentity;
+        controller.error = 'newer-synthetic-status';
+        throw AnyhowException('old-synthetic-failure');
+      },
+    );
+    expect(controller.config, same(newerConfig));
+    expect(controller.identity, same(newerIdentity));
+    expect(controller.error, 'newer-synthetic-status');
+  });
+
+  test('initial restore success cannot clear a newer identity recovery requirement', () async {
+    final controller = SetupViewController();
+    await controller.restoreSavedHardware(
+      _SavedHardware(identity: Uint8List.fromList([1]), osConfig: _Config(), push: _PushState()),
+      decodeIdentity: (_) => _Identity(),
+      setupConnectionOverride: () async {
+        controller.config = _Config();
+        controller.identity = _Identity();
+        controller.restoredConfigNeedsFreshIdentity = true;
+      },
+    );
+    expect(controller.restoredConfigNeedsFreshIdentity, isTrue);
+  });
+
+  test('initial setup cannot overwrite a newer connection completed while push was pending', () async {
+    final controller = SetupViewController();
+    final started = Completer<void>();
+    final finishPush = Completer<(ApsConnection, api.PushError?)>();
+    final oldCandidate = _Connection();
+    final oldProvider = _Anisette();
+    final pending = controller.setupConnection(
+      createPush: () { started.complete(); return finishPush.future; },
+      prepareAnisette: (_) async => oldProvider,
+    );
+    await started.future;
+    final newer = _Connection();
+    final newerProvider = _Anisette();
+    controller.connection = newer;
+    controller.anisette = newerProvider;
+    finishPush.complete((oldCandidate, null));
+    await expectLater(pending, throwsA(isA<AnyhowException>()));
+    expect(controller.connection, same(newer));
+    expect(controller.anisette, same(newerProvider));
+    expect(newer.disposeCount, 0);
+    expect(newerProvider.disposeCount, 0);
+    expect(oldCandidate.disposeCount, 1);
+  });
+
+  test('initial setup rejects a changed identity while provider preparation was pending', () async {
+    final controller = SetupViewController();
+    controller.config = _Config();
+    controller.identity = _Identity();
+    final started = Completer<void>();
+    final finishProvider = Completer<ArcAnisetteClientDefaultAnisetteProvider>();
+    final candidate = _Connection();
+    final candidateState = _PushState();
+    final candidateProvider = _Anisette();
+    final pending = controller.setupConnection(
+      createPush: () async => (candidate, null),
+      captureState: (_) async => candidateState,
+      prepareAnisette: (_) { started.complete(); return finishProvider.future; },
+    );
+    await started.future;
+    final newerConfig = _Config();
+    final newerIdentity = _Identity();
+    controller.config = newerConfig;
+    controller.identity = newerIdentity;
+    finishProvider.complete(candidateProvider);
+    await expectLater(pending, throwsA(isA<AnyhowException>()));
+    expect(controller.config, same(newerConfig));
+    expect(controller.identity, same(newerIdentity));
+    expect(controller.connection, isNull);
+    expect(candidate.disposeCount, 1);
+    expect(candidateProvider.disposeCount, 1);
+    expect(candidateState.isDisposed, isTrue);
+  });
+
   test('unmatched relay leaves the existing setup untouched', () async {
     final controller = SetupViewController();
     final config = _Config();

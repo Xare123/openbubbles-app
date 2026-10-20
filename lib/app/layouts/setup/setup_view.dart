@@ -1171,13 +1171,25 @@ class SetupViewController extends StatefulController {
     bool disposePreviousConnection = false,
   }) async {
     final previousConnection = connection;
-    final data = await (createPush ?? () => api.setupPush(config: config!, identity: identity!, statePath: pushService.statePath, state: cachedState))();
+    final previousConfig = config;
+    final previousIdentity = identity;
+    final previousAnisette = anisette;
+    final previousState = cachedState;
+    bool isCurrentSetup() => !_disposed &&
+        identical(connection, previousConnection) &&
+        identical(config, previousConfig) &&
+        identical(identity, previousIdentity) &&
+        identical(anisette, previousAnisette) &&
+        (expectedPreviousConnection == null || identical(connection, expectedPreviousConnection));
+    const superseded = 'Device setup changed while connecting. The newer connection and saved credentials have been kept; retry from the current screen.';
+    if (!isCurrentSetup()) throw AnyhowException(superseded);
+    final data = await (createPush ?? () => api.setupPush(config: previousConfig!, identity: previousIdentity!, statePath: pushService.statePath, state: previousState))();
     final candidate = data.$1;
     final failure = data.$2;
-    if (expectedPreviousConnection != null && !identical(connection, expectedPreviousConnection)) {
+    if (!isCurrentSetup()) {
       candidate.dispose();
       failure?.dispose();
-      throw AnyhowException('Phone registration refresh was superseded; the existing push connection remains active.');
+      throw AnyhowException(superseded);
     }
     if (failure != null) {
       candidate.dispose();
@@ -1191,23 +1203,22 @@ class SetupViewController extends StatefulController {
           ? (ApsConnection conn) => api.capturePushState(state: conn)
           : null);
       candidateState = await capture?.call(candidate);
-      if (expectedPreviousConnection != null && !identical(connection, expectedPreviousConnection)) {
-        throw AnyhowException('Phone registration refresh was superseded; the existing push connection remains active.');
+      if (!isCurrentSetup()) {
+        throw AnyhowException(superseded);
       }
-      nextAnisette = await (prepareAnisette ?? (conn) => api.makeAnisette(path: pushService.statePath, config: config!, conn: conn))(candidate);
+      nextAnisette = await (prepareAnisette ?? (conn) => api.makeAnisette(path: pushService.statePath, config: previousConfig!, conn: conn))(candidate);
     } catch (_) {
       candidateState?.dispose();
       nextAnisette?.dispose();
       candidate.dispose();
       rethrow;
     }
-    if (expectedPreviousConnection != null && !identical(connection, expectedPreviousConnection)) {
+    if (!isCurrentSetup()) {
       candidateState?.dispose();
       nextAnisette.dispose();
       candidate.dispose();
-      throw AnyhowException('Phone registration refresh was superseded; the existing push connection remains active.');
+      throw AnyhowException(superseded);
     }
-    final previousAnisette = anisette;
     connection = candidate;
     anisette = nextAnisette;
     if (candidateState != null) cachedState = candidateState;
@@ -1370,9 +1381,12 @@ class SetupViewController extends StatefulController {
     api.IdsngmIdentity Function(List<int>)? decodeIdentity,
     Future<void> Function()? setupConnectionOverride,
   }) async {
-    config = restored.osConfig;
+    final restoringConfig = restored.osConfig;
+    config = restoringConfig;
+    late final api.IdsngmIdentity restoringIdentity;
     try {
-      identity = (decodeIdentity ?? (bytes) => api.decodeIdentity(identity: bytes))(restored.identity);
+      restoringIdentity = (decodeIdentity ?? (bytes) => api.decodeIdentity(identity: bytes))(restored.identity);
+      identity = restoringIdentity;
     } catch (_) {
       destroyConnection();
       identity = null;
@@ -1384,10 +1398,14 @@ class SetupViewController extends StatefulController {
     }
 
     cachedState = restored.push;
+    bool isCurrentRestore() => !_disposed && identical(config, restoringConfig) &&
+        identical(identity, restoringIdentity);
     try {
       await (setupConnectionOverride ?? setupConnection)();
+      if (!isCurrentRestore()) return;
       restoredConfigNeedsFreshIdentity = false;
     } catch (_) {
+      if (!isCurrentRestore() || (connection != null && !connection!.isDisposed)) return;
       restoredConfigNeedsFreshIdentity = false;
       _setSafeRestoreError(_savedHardwareConnectionError);
       Logger.warn('Saved hardware push connection could not be restored; saved identity and push state were kept for retry');

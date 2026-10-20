@@ -13294,7 +13294,8 @@ pub async fn refresh_phone_registration_push(
         || !phone_registration_push_refresh::saved_push_belongs_to_connection(&saved, &expected_saved.push) {
         return Err(anyhow!("The saved device setup changed. The newer credentials have been kept; retry with the current connection."));
     }
-    let result = setup_push_inner(config, identity, Some(prepared), state_path, Some(expected),
+    let result = setup_push_inner(config, identity, Some(prepared), state_path,
+        Some(phone_registration_push_refresh::SavedHardwareExpectation::Exact(expected)),
         saved.token.map(phone_registration_push_refresh::PushTokenRequirement::Fresh)).await?;
     if result.1.is_some() {
         result.0.close();
@@ -13308,7 +13309,12 @@ pub async fn setup_push(
     state: Option<APSState>,
     state_path: String,
 ) -> anyhow::Result<(APSConnection, Option<PushError>)> {
-    setup_push_inner(config, identity, state, state_path, None, None).await
+    let expected = phone_registration_push_refresh::SavedHardwareExpectation::capture(
+        &PathBuf::from(&state_path))?;
+    if let Some(push) = state.as_ref() {
+        relay_setup_reuse::validate_restore_snapshot(expected.bytes(), config, push)?;
+    }
+    setup_push_inner(config, identity, state, state_path, Some(expected), None).await
 }
 
 /// Retain the exact ready connection state for setup retries. The opaque
@@ -13342,7 +13348,8 @@ pub async fn reuse_native_relay_setup(
     let token_requirement = prepared.push.token
         .map(phone_registration_push_refresh::PushTokenRequirement::Retain);
     let (connection, failure) = setup_push_inner(&prepared.os_config, &identity,
-        Some(prepared.push), state_path.clone(), Some(expected), token_requirement).await?;
+        Some(prepared.push), state_path.clone(),
+        Some(phone_registration_push_refresh::SavedHardwareExpectation::Exact(expected)), token_requirement).await?;
     if failure.is_some() {
         connection.close();
         return Err(anyhow!("The saved iPhone push connection could not be restored. Existing credentials were kept; no replacement activation was attempted."));
@@ -13357,7 +13364,7 @@ async fn setup_push_inner(
     identity: &IDSNGMIdentity,
     state: Option<APSState>,
     state_path: String,
-    expected_hardware: Option<Vec<u8>>,
+    expected_hardware: Option<phone_registration_push_refresh::SavedHardwareExpectation>,
     token_requirement: Option<phone_registration_push_refresh::PushTokenRequirement>,
 ) -> anyhow::Result<(APSConnection, Option<PushError>)> {
     let directory = PathBuf::from(state_path);
@@ -13381,10 +13388,12 @@ async fn setup_push_inner(
             os_config: config.clone(),
             identity: saved_identity.clone().into(),
         };
-        if let Err(error) = phone_registration_push_refresh::guarded_hardware_write(
-            &directory, expected_hardware.as_deref(), || {
-                persist_activation_hardware_unlocked(&directory, &state)
-            }) {
+        let persist = || persist_activation_hardware_unlocked(&directory, &state);
+        let persisted = match expected_hardware {
+            Some(expected) => expected.commit(&directory, persist),
+            None => phone_registration_push_refresh::guarded_hardware_write(&directory, None, persist),
+        };
+        if let Err(error) = persisted {
             conn.close();
             return Err(error);
         }

@@ -5,6 +5,37 @@ use std::{path::Path, sync::{Mutex, OnceLock}};
 
 static PUSH_STATE_WRITES: OnceLock<Mutex<()>> = OnceLock::new();
 
+pub(super) enum SavedHardwareExpectation {
+    Absent,
+    Exact(Vec<u8>),
+}
+
+impl SavedHardwareExpectation {
+    pub(super) fn capture(directory: &Path) -> anyhow::Result<Self> {
+        match std::fs::read(directory.join("hw_info.plist")) {
+            Ok(bytes) => Ok(Self::Exact(bytes)),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Self::Absent),
+            Err(_) => Err(anyhow::anyhow!("Saved device details could not be read. Existing keys and messages have been kept.")),
+        }
+    }
+
+    pub(super) fn bytes(&self) -> Option<&[u8]> {
+        match self { Self::Absent => None, Self::Exact(bytes) => Some(bytes) }
+    }
+
+    pub(super) fn commit<T>(&self, directory: &Path, write: impl FnOnce() -> anyhow::Result<T>) -> anyhow::Result<T> {
+        guarded_hardware_write(directory, self.bytes(), || {
+            if matches!(self, Self::Absent) {
+                match std::fs::metadata(directory.join("hw_info.plist")) {
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {},
+                    _ => return Err(anyhow::anyhow!("Device setup changed; the newer saved credentials have been kept.")),
+                }
+            }
+            write()
+        })
+    }
+}
+
 pub(super) enum PushTokenRequirement {
     Retain([u8; 32]),
     Fresh([u8; 32]),
@@ -245,5 +276,47 @@ mod tests {
             Ok(())
         }).unwrap();
         assert_eq!(std::fs::read(&path).unwrap(), b"ready-synthetic-state");
+    }
+
+    #[test]
+    fn initial_restore_cannot_overwrite_a_replacement_committed_while_connecting() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("hw_info.plist");
+        std::fs::write(&file, b"old-synthetic-ticket").unwrap();
+        let initial = SavedHardwareExpectation::capture(dir.path()).unwrap();
+        std::fs::write(&file, b"new-synthetic-ticket").unwrap();
+        let mut wrote = false;
+        assert!(initial.commit(dir.path(), || { wrote = true; Ok(()) }).is_err());
+        assert!(!wrote);
+        assert_eq!(std::fs::read(file).unwrap(), b"new-synthetic-ticket");
+    }
+
+    #[test]
+    fn initially_missing_profile_cannot_replace_a_newer_first_setup() {
+        let dir = tempfile::tempdir().unwrap();
+        let initial = SavedHardwareExpectation::capture(dir.path()).unwrap();
+        let file = dir.path().join("hw_info.plist");
+        std::fs::write(&file, b"newer-synthetic-setup").unwrap();
+        assert!(initial.commit(dir.path(), || std::fs::write(&file, b"stale").map_err(Into::into)).is_err());
+        assert_eq!(std::fs::read(file).unwrap(), b"newer-synthetic-setup");
+    }
+
+    #[test]
+    fn unchanged_or_still_missing_profile_allows_the_admitted_commit() {
+        for existing in [false, true] {
+            let dir = tempfile::tempdir().unwrap();
+            let file = dir.path().join("hw_info.plist");
+            if existing { std::fs::write(&file, b"old-synthetic-setup").unwrap(); }
+            let initial = SavedHardwareExpectation::capture(dir.path()).unwrap();
+            initial.commit(dir.path(), || std::fs::write(&file, b"admitted-synthetic-setup").map_err(Into::into)).unwrap();
+            assert_eq!(std::fs::read(file).unwrap(), b"admitted-synthetic-setup");
+        }
+    }
+
+    #[test]
+    fn unreadable_saved_hardware_is_not_treated_as_an_absent_profile() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join("hw_info.plist")).unwrap();
+        assert!(SavedHardwareExpectation::capture(dir.path()).is_err());
     }
 }

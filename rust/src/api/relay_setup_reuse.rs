@@ -31,6 +31,18 @@ pub(super) fn same_config(a: &JoinedOSConfig, b: &JoinedOSConfig) -> anyhow::Res
     Ok(plist::to_value(a)? == plist::to_value(b)?)
 }
 
+pub(super) fn validate_restore_snapshot(
+    saved_bytes: Option<&[u8]>, config: &JoinedOSConfig, push: &rustpush::APSState,
+) -> anyhow::Result<()> {
+    let current: SavedHardwareState = saved_bytes.and_then(|bytes| plist::from_bytes(bytes).ok())
+        .ok_or_else(|| anyhow::anyhow!("Saved device setup is unavailable. Existing credentials have been kept; no replacement activation was attempted."))?;
+    if !same_config(&current.os_config, config)?
+        || !super::phone_registration_push_refresh::saved_push_write_is_current(push, &current.push) {
+        return Err(anyhow::anyhow!("Saved device setup changed while restoring it. The newer credentials have been kept; retry with the current device."));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -147,5 +159,19 @@ mod tests {
             old.os_config = changed(&relay(false, "synthetic-old-ticket"), field, "");
             assert!(prepare(&old, &candidate).unwrap().is_none());
         }
+    }
+
+    #[test]
+    fn initial_restore_rejects_a_ticket_or_token_snapshot_already_replaced_on_disk() {
+        let old = saved();
+        let bytes = super::super::plist_to_string(&old).unwrap().into_bytes();
+        assert!(validate_restore_snapshot(Some(&bytes), &old.os_config, &old.push).is_ok());
+        let next = prepare(&old, &relay(true, "synthetic-new-ticket")).unwrap().unwrap();
+        let replaced = super::super::plist_to_string(&next).unwrap().into_bytes();
+        assert!(validate_restore_snapshot(Some(&replaced), &old.os_config, &old.push).is_err());
+        let mut fresh_token = old.push.clone();
+        fresh_token.token = Some([9; 32]);
+        assert!(validate_restore_snapshot(Some(&bytes), &old.os_config, &fresh_token).is_err());
+        assert!(validate_restore_snapshot(None, &old.os_config, &old.push).is_err());
     }
 }
