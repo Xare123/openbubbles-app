@@ -36,6 +36,76 @@ def macho64_arm64(payload=b"fixture"):
 
 
 class InspectIPhoneActivationNativeTests(unittest.TestCase):
+    def test_objc_command_is_metadata_only(self):
+        self.assertEqual(S.objc_metadata_command(Path("native")),
+                         ["/usr/bin/otool", "-ov", "native"])
+
+    def test_objc_metadata_keeps_only_bounded_target_names_and_typed_fields(self):
+        raw = b"""    name 0x1000 ActivationManager
+    baseMethods 0x1100
+        name 0x1200 createActivationInfoWithOptions:reply:
+        types 0x1300 v32@0:8@16@?24
+        imp 0x1400
+        name 0x1500 unrelatedMethod:
+        types 0x1600 v24@0:8@16
+        imp 0x1700
+arbitrary payload must not be retained
+"""
+        result = S.select_objc_activation_metadata(raw)
+        self.assertEqual(result["matching_name_count"], 2)
+        self.assertEqual(result["records"][0]["record_kind"], "named-metadata-only")
+        method = result["records"][1]
+        self.assertEqual(method["name"], "createActivationInfoWithOptions:reply:")
+        self.assertEqual(method["type_encoding"], "v32@0:8@16@?24")
+        self.assertEqual(method["implementation_address"], "0x1400")
+        self.assertEqual(method["record_kind"], "typed-method-metadata")
+        self.assertNotIn("unrelatedMethod", str(result))
+        self.assertNotIn("arbitrary payload", str(result))
+        self.assertFalse(result["external_csr_interface_proved"])
+
+    def test_objc_metadata_does_not_attach_nested_or_next_method_fields(self):
+        raw = b"""    name 0x1000 ActivationManager
+        name 0x1200 ordinaryMethod
+        types 0x1300 v16@0:8
+        imp 0x1400
+    name 0x1500 certificateName
+    name 0x1600 unrelated
+    types 0x1700 v16@0:8
+    imp 0x1800
+"""
+        result = S.select_objc_activation_metadata(raw)
+        self.assertEqual(len(result["records"]), 2)
+        for record in result["records"]:
+            self.assertIsNone(record["type_encoding"])
+            self.assertIsNone(record["implementation_address"])
+
+    def test_objc_metadata_caps_records_without_claiming_exhaustive_export(self):
+        raw = b"\n".join(b"    name 0x1000 createActivationInfo" for _ in range(70))
+        result = S.select_objc_activation_metadata(raw)
+        self.assertEqual(result["matching_name_count"], 70)
+        self.assertEqual(len(result["records"]), 64)
+        self.assertTrue(result["truncated"])
+        self.assertFalse(result["external_csr_interface_proved"])
+
+    def test_activation_literals_require_exact_fixed_names_and_bounded_offsets(self):
+        raw = b"""  10 DeviceCertRequest
+  20 FairPlaySignature
+  30 arbitrary-account-value
+  40 DeviceCertRequestSuffix
+fffffffffffffffff DeviceCertRequest
+"""
+        result = S.select_activation_literals(raw)
+        self.assertEqual(result["records"], [
+            {"file_offset_hex": "0x10", "name": "DeviceCertRequest"},
+            {"file_offset_hex": "0x20", "name": "FairPlaySignature"}])
+        self.assertFalse(result["external_csr_interface_proved"])
+
+    def test_metadata_parsers_reject_oversized_input(self):
+        raw = b"x" * (32 * 1024**2 + 1)
+        for parser in (S.select_objc_activation_metadata, S.select_activation_literals):
+            with self.subTest(parser=parser.__name__), self.assertRaises(ValueError):
+                parser(raw)
+
     def test_command_failure_bounds_public_errors_and_removes_url_tokens(self):
         error = S.CommandFailure("extract-rootfs", 1,
                                  ("ignored\n" * 20 + "failed https://example.invalid/?token=secret\n"

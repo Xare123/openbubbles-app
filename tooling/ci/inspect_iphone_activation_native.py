@@ -37,11 +37,18 @@ ARCHIVES = {
                "7121fce3ff630077d7de0e3e6ff15f49876494b5d54b01f92a3c1787ebe23c0e"),
 }
 NATIVE_PATH = Path("usr/libexec/mobileactivationd")
+EXPECTED_NATIVE_SHA256 = "54650d966b1dd0f7295b5e41f219d86c9007260ebaacd925a95e933ddb882028"
 INTERESTING = re.compile(
     r"wyjYwk|FairPlay|[Cc]reate.*[Aa]ctivation|[Ii]ssueClientCertificate|"
     r"[Cc]reate.*[Cc]ert.*[Rr]equest|NACSign|[Cc]ertifyDevice|[Rr]ecertify"
 )
 OWNED_PROCESSES = []
+OBJC_INTERESTING = re.compile(r"activation|certificat|certrequest|fairplay|signature|recertif|csr", re.I)
+ACTIVATION_LITERALS = frozenset({
+    "DeviceCertRequest", "ClientCertificateRequest", "FairPlaySignature", "FairPlayCertChain",
+    "ActivationInfoXML", "ActivationRequestInfo", "CreateActivationInfoRequest",
+    "CreateTunnel1SessionInfoRequest", "CreateTunnel1ActivationInfoRequest",
+})
 
 
 class CommandFailure(RuntimeError):
@@ -79,6 +86,72 @@ def extract_command(tool, output):
 def readonly_attach_command(image, mount):
     return ["/usr/bin/hdiutil", "attach", "-readonly", "-nobrowse", "-noautoopen",
             "-plist", "-mountpoint", str(mount), str(image)]
+
+
+def objc_metadata_command(path):
+    return ["/usr/bin/otool", "-ov", str(path)]
+
+
+def metadata_lines(raw):
+    if type(raw) is not bytes or len(raw) > 32 * 1024**2:
+        raise ValueError("bounded-static-metadata-required")
+    return raw.decode(errors="replace").expandtabs(4).splitlines()
+
+
+def select_objc_activation_metadata(raw):
+    """Selected names/types/addresses only, never raw code or arbitrary context.
+
+    Objective-C metadata can describe internal methods or class/protocol names.
+    It does not establish external accessibility, an accepted CSR or runtime ABI.
+    """
+    lines = metadata_lines(raw)
+    name_pattern = re.compile(r"^(\s*)name\s+(0x[0-9a-fA-F]+)\s+([A-Za-z_$][A-Za-z0-9_$:]{0,199})\s*$")
+    type_pattern = re.compile(r'^(\s*)types\s+0x[0-9a-fA-F]+\s+([A-Za-z0-9@#?:^*\[\]{}=(),"._+\-]{1,200})\s*$')
+    imp_pattern = re.compile(r"^(\s*)imp\s+(0x[0-9a-fA-F]+)(?:\s+.*)?$")
+    records, matching = [], 0
+    for index, line in enumerate(lines):
+        name = name_pattern.fullmatch(line)
+        if not name or not OBJC_INTERESTING.search(name[3]):
+            continue
+        matching += 1
+        if len(records) >= 64:
+            continue
+        indent = len(name[1])
+        record = {"name": name[3], "name_address": name[2], "source_line": index + 1,
+                  "type_encoding": None, "implementation_address": None,
+                  "record_kind": "named-metadata-only"}
+        for following in lines[index + 1:index + 5]:
+            if len(following) - len(following.lstrip()) < indent or name_pattern.fullmatch(following):
+                break
+            types, implementation = type_pattern.fullmatch(following), imp_pattern.fullmatch(following)
+            if types and len(types[1]) == indent:
+                record["type_encoding"] = types[2]
+            if implementation and len(implementation[1]) == indent:
+                record["implementation_address"] = implementation[2]
+        if record["type_encoding"] is not None and record["implementation_address"] is not None:
+            record["record_kind"] = "typed-method-metadata"
+        records.append(record)
+    return {"selection": "keyword-selected-objective-c-metadata", "raw_lines": len(lines),
+            "raw_sha256": hashlib.sha256(raw).hexdigest(), "matching_name_count": matching,
+            "records": records, "truncated": matching > len(records),
+            "external_csr_interface_proved": False}
+
+
+def select_activation_literals(raw):
+    records, matching = [], 0
+    for line in metadata_lines(raw):
+        match = re.fullmatch(r"\s*([0-9a-fA-F]{1,16})\s+(.{1,120})", line)
+        if not match or match[2] not in ACTIVATION_LITERALS:
+            continue
+        offset = int(match[1], 16)
+        if offset >= 16 * 1024**2:
+            continue
+        matching += 1
+        if len(records) < 128:
+            records.append({"file_offset_hex": hex(offset), "name": match[2]})
+    return {"selection": "exact-fixed-activation-literals", "records": records,
+            "matching_count": matching, "truncated": matching > len(records),
+            "external_csr_interface_proved": False}
 
 
 def owned_images(raw_plist, work):
@@ -247,6 +320,8 @@ def inspect_on_mac(out):
         if mount.resolve() not in native.resolve().parents:
             raise RuntimeError("native-path-escaped-owned-mount")
         report["native"] = inspect_macho(native)
+        if report["native"]["sha256"] != EXPECTED_NATIVE_SHA256:
+            raise RuntimeError("previously-reviewed-native-binary-mismatch")
         # Inspect a private copy only. No component is executed or exported.
         copied = work / "mobileactivationd"
         shutil.copyfile(native, copied)
@@ -257,6 +332,11 @@ def inspect_on_mac(out):
         report["loads"] = [line.strip() for line in loads.decode(errors="replace").splitlines()[1:80]]
         report["selected_symbols"] = [line for line in symbols.decode(errors="replace").splitlines()
                                       if INTERESTING.search(line)][:120]
+        _, objc, _ = run_owned(objc_metadata_command(copied), work, "native-objc-metadata", 90)
+        report["objc_activation_metadata"] = select_objc_activation_metadata(objc)
+        _, literals, _ = run_owned(["/usr/bin/strings", "-a", "-t", "x", str(copied)],
+                                  work, "native-fixed-literals", 60)
+        report["activation_literal_locations"] = select_activation_literals(literals)
         code, signature, signature_error = run_owned(
             ["/usr/bin/codesign", "--verify", "--strict", str(copied)], work, "signature-verify", 60,
             check=False)
