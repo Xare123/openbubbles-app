@@ -36,6 +36,64 @@ def macho64_arm64(payload=b"fixture"):
 
 
 class InspectIPhoneActivationNativeTests(unittest.TestCase):
+    def test_annotated_instruction_command_has_no_runtime_llm_or_analysis_bypass(self):
+        command = S.annotated_disassembly_command(Path("ipsw"), Path("native"), Path("owned.a2s"))
+        self.assertEqual(command, ["ipsw", "macho", "disass", "--cache", "owned.a2s", "native"])
+        for forbidden in ("--force", "--dec", "--dec-llm", "--quiet", "--json"):
+            self.assertNotIn(forbidden, command)
+
+    def test_annotated_instruction_selection_keeps_only_real_addressed_instruction_windows(self):
+        raw = b'''sub_100001000:
+0x100001000:  fd 7b bf a9   stp x29, x30, [sp, #-0x10]!
+0x100001004:  08 00 00 90   adrp x8, #0x100212000
+0x100001008:  00 00 00 91   add x0, x8, #0xd50 ; "DeviceCertRequest"
+0x10000100c:  00 00 00 94   bl _objc_msgSend
+arbitrary unaddressed data must not escape
+'''
+        result = S.select_activation_instruction_windows(raw)
+        self.assertEqual(result["matching_instruction_count"], 1)
+        self.assertEqual(result["windows"][0]["match_address"], "0x100001008")
+        self.assertEqual(result["windows"][0]["target"], "DeviceCertRequest")
+        self.assertEqual(len(result["windows"][0]["instructions"]), 4)
+        self.assertNotIn("arbitrary unaddressed", str(result))
+        self.assertFalse(result["external_csr_interface_proved"])
+        self.assertFalse(result["runtime_or_caller_access_proved"])
+
+    def test_annotated_instruction_targets_are_exact_and_protocol_metadata_does_not_match(self):
+        raw = b'''name 0x100000000 issueClientCertificateLegacy:WithCompletionBlock:
+0x100001000:  00000091   add x0, x8, #0 ; "DeviceCertRequestSuffix"
+0x100001004:  00000091   add x0, x8, #0 ; "DeviceCertRequest"
+'''
+        result = S.select_activation_instruction_windows(raw)
+        self.assertEqual(result["matching_instruction_count"], 1)
+        self.assertEqual(result["windows"][0]["match_address"], "0x100001004")
+
+    def test_annotated_instruction_selection_prioritizes_certificate_selector_and_caps_context(self):
+        lines = [f'0x{0x100001000 + n * 4:x}:  00000091   add x0, x8, #0 ; "DeviceCertRequest"'
+                 for n in range(80)]
+        lines.append('0x100002000:  00000091   add x0, x8, #0 ; sel_issueClientCertificateLegacy:WithCompletionBlock:')
+        result = S.select_activation_instruction_windows("\n".join(lines).encode())
+        self.assertEqual(result["matching_instruction_count"], 81)
+        self.assertEqual(len(result["windows"]), 24)
+        self.assertTrue(result["truncated"])
+        self.assertEqual(result["windows"][0]["target"], "issueClientCertificateLegacy:WithCompletionBlock:")
+        self.assertLessEqual(max(len(window["instructions"]) for window in result["windows"]), 33)
+
+    def test_annotated_instruction_parser_bounds_lines_and_drops_other_comments(self):
+        raw = ('0x100001000:  00000091   add x0, x8, #0 ; "DeviceCertRequest"\n'
+               '0x100001004:  00000091   add x0, x8, #0 ; "unselected-static-value"\n').encode()
+        result = S.select_activation_instruction_windows(raw)
+        self.assertNotIn("unselected-static-value", str(result))
+        self.assertIn("[other-static-comment-omitted]", str(result))
+
+    def test_annotated_instruction_parser_rejects_oversized_input_and_empty_is_unknown(self):
+        with self.assertRaises(ValueError):
+            S.select_activation_instruction_windows(b"x" * (32 * 1024**2 + 1))
+        result = S.select_activation_instruction_windows(b"no addressed instructions")
+        self.assertEqual(result["windows"], [])
+        self.assertEqual(result["matching_instruction_count"], 0)
+        self.assertFalse(result["external_csr_interface_proved"])
+
     def test_objc_command_is_metadata_only(self):
         self.assertEqual(S.objc_metadata_command(Path("native")),
                          ["/usr/bin/otool", "-ov", "native"])

@@ -2,8 +2,9 @@
 
 Never executes Apple code, contacts an account/activation endpoint, accesses a
 phone, reads a native private key, or retains firmware in the evidence artifact.
-The only image attach is explicitly read-only. Output is hashes and selected
-symbol/import facts, not Apple binaries or arbitrary data strings.
+The only image attach is explicitly read-only. Output is hashes, selected
+symbol/import facts and bounded annotated instruction windows, never Apple
+binaries, firmware or arbitrary data strings. No LLM decompilation is used.
 """
 import argparse
 import hashlib
@@ -49,6 +50,17 @@ ACTIVATION_LITERALS = frozenset({
     "ActivationInfoXML", "ActivationRequestInfo", "CreateActivationInfoRequest",
     "CreateTunnel1SessionInfoRequest", "CreateTunnel1ActivationInfoRequest",
 })
+INSTRUCTION_TARGETS = (
+    "issueClientCertificateLegacy:WithCompletionBlock:",
+    "issueClientCertificateWithReferenceKey:options:completion:",
+    "ClientCertificateRequest", "DeviceCertRequest", "FairPlaySignature",
+    "FairPlayCertChain", "ActivationInfoXML", "ActivationRequestInfo",
+    "CreateActivationInfoRequest", "CreateTunnel1ActivationInfoRequest",
+    "CreateTunnel1SessionInfoRequest",
+)
+INSTRUCTION_TARGET_PATTERN = re.compile(
+    r"(?<![A-Za-z0-9_])(?:sel_)?(" + "|".join(map(re.escape, INSTRUCTION_TARGETS))
+    + r")(?![A-Za-z0-9_:])")
 
 
 class CommandFailure(RuntimeError):
@@ -90,6 +102,56 @@ def readonly_attach_command(image, mount):
 
 def objc_metadata_command(path):
     return ["/usr/bin/otool", "-ov", str(path)]
+
+
+def annotated_disassembly_command(tool, path, cache):
+    # Pinned ipsw annotates CFString/selector references and code addresses.
+    # Do not use --json: its pinned formatter omits the needed annotations.
+    # No --dec/LLM, external provider, forced/partial analysis or native execution.
+    return [str(tool), "macho", "disass", "--cache", str(cache), str(path)]
+
+
+def select_activation_instruction_windows(raw):
+    """Addressed instruction references, not protocol fields or callable ABI proof."""
+    lines = metadata_lines(raw)
+    instruction = re.compile(
+        r"^\s*(0x[0-9a-fA-F]{8,16}):\s+((?:[0-9a-fA-F]{2}\s*){4})\s+"
+        r"([a-zA-Z.][a-zA-Z0-9_.]*)\s*(.*)$")
+    ansi = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
+    decoded, matches = [], []
+    for number, line in enumerate(lines):
+        line = ansi.sub("", line)
+        match = instruction.fullmatch(line)
+        if not match:
+            continue
+        target = INSTRUCTION_TARGET_PATTERN.search(match[4])
+        operand, separator, comment = match[4].partition(";")
+        if separator:
+            comment = comment if INSTRUCTION_TARGET_PATTERN.search(comment) else " [other-static-comment-omitted]"
+        # Only addressed code and selected comments survive; never raw strings
+        # output, protocol declarations, whole methods or unbounded context.
+        retained = f"{match[1]}: {match[2].strip()} {match[3]} {operand.strip()}"
+        if separator:
+            retained += " ;" + comment
+        retained = retained[:320]
+        index = len(decoded)
+        decoded.append({"source_line": number + 1, "address": match[1], "instruction": retained})
+        if target:
+            matches.append((INSTRUCTION_TARGETS.index(target[1]), index, target[1]))
+    # Certificate selectors have priority over frequently repeated envelope keys.
+    windows = []
+    for _, index, target in sorted(matches)[:24]:
+        windows.append({
+            "target": target, "match_address": decoded[index]["address"],
+            "source_line": decoded[index]["source_line"],
+            "instructions": [entry["instruction"] for entry in decoded[max(0, index - 12):index + 21]],
+            "context_is_not_function_boundary": True,
+        })
+    return {"selection": "fixed-activation-addressed-instruction-references",
+            "raw_lines": len(lines), "raw_sha256": hashlib.sha256(raw).hexdigest(),
+            "addressed_instruction_count": len(decoded), "matching_instruction_count": len(matches),
+            "windows": windows, "truncated": len(matches) > len(windows),
+            "external_csr_interface_proved": False, "runtime_or_caller_access_proved": False}
 
 
 def metadata_lines(raw):
@@ -353,6 +415,14 @@ def inspect_on_mac(out):
             if "wyjYwk" in line and len(windows) < 8:
                 windows.append(lines[max(0, index - 12):index + 5])
         report["fairplay_callsite_windows"] = windows
+        annotated_code, annotated, _ = run_owned(
+            annotated_disassembly_command(tool, copied, work / "native-symbols.a2s"),
+            work, "native-annotated-disassembly", 240, check=False)
+        report["annotated_disassembly_exit"] = annotated_code
+        report["annotated_activation_instructions"] = (
+            select_activation_instruction_windows(annotated) if annotated_code == 0 else {
+                "status": "unavailable", "reason": "annotated-disassembly-failed",
+                "external_csr_interface_proved": False, "runtime_or_caller_access_proved": False})
         report["status"] = "static-inspection-completed"
         report["signer_runtime_or_external_csr_proved"] = False
     except Exception as error:
