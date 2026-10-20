@@ -30,6 +30,20 @@ There is one serial native worker,5second finite Mach calls,8second HTTP bounds
 and the caller's monotonic deadline. Actual SDK compilation, MIG wire compatibility,
 system trust on this iOS version and real NAC generation remain UNQUALIFIED.
 
+The first Mac-only run39490923534 passed119 real Foundation relay checks and19
+store checks, then iOS compilation failed because servers/bootstrap.h is absent
+from that SDK. No phone/account operation occurred. The corrected adapter uses
+the public Mach task_get_bootstrap_port macro, releases that owned right, and
+resolves only fixed bootstrap_look_up at runtime. Its exact function ABI was
+checked against Apple launchd bootstrap.h b471f4c2074a816dec86291ff1f7c59f3d1f39db;
+the public Mach macro against xnu task_special_ports.h e6231be02a03711ca404e5121a151b24afbff733.
+No Mac SDK headers or third-party implementation were copied.
+
+That run's MIG warning identified send-timeout resource cleanup. The interface
+now declares ConsumeOnSendError Timeout, supported by the pinned Apple parser.y
+and routine.c/user.c. The generated client must include the SDK's actual
+MACH_SEND_TIMED_OUT cleanup and mach_msg_destroy, not only finite timeout flags.
+
 Credential-free Windows certificate checks: ordinary Node trust failed
 UNABLE_TO_GET_ISSUER_CERT_LOCALLY. The same HTTPS URL with the existing official
 Apple Root CA G3 anchor added to that request's normal trust set returned

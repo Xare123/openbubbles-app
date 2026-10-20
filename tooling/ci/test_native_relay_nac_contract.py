@@ -12,6 +12,7 @@ class NativeNACContractTests(unittest.TestCase):
         value = (NAC / 'OBAbsintheIPC.defs').read_text(encoding='utf-8')
         self.assertIn('subsystem OBAbsintheIPC 1200;', value)
         self.assertIn('waittime 5000;', value)
+        self.assertIn('ConsumeOnSendError Timeout;', value)
         self.assertEqual(re.findall(r'\broutine\s+(\w+)\(', value),
                          ['BeginSession', 'EstablishSession', 'SignBytes'])
         self.assertEqual(value.count('MACH_MSG_TYPE_INTEGER_64'), 1)
@@ -47,6 +48,14 @@ class NativeNACContractTests(unittest.TestCase):
         self.assertIn('self.result = nil;', value)
         self.assertIn('invalidateAndCancel', value)
         self.assertNotIn('NACRelease', value)
+
+    def test_ios_bootstrap_boundary_uses_fixed_verified_abi_and_owned_public_port(self):
+        value = (NAC / 'OBNativeNACValidator.m').read_text(encoding='utf-8')
+        self.assertNotIn('#import <servers/bootstrap.h>', value)
+        self.assertIn('dlsym(RTLD_DEFAULT, "bootstrap_look_up")', value)
+        self.assertIn('task_get_bootstrap_port(mach_task_self(), &bootstrap)', value)
+        self.assertIn('mach_port_deallocate(mach_task_self(), bootstrap)', value)
+        self.assertIn('typedef kern_return_t (*OBNACServiceLookup)(mach_port_t, const char *, mach_port_t *);', value)
 
     def test_no_log_account_input_or_persistent_proof_write_exists(self):
         value = (NAC / 'OBNativeNACValidator.m').read_text(encoding='utf-8')

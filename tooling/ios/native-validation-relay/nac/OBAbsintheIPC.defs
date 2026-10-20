@@ -4,6 +4,7 @@
 subsystem OBAbsintheIPC 1200;
 userprefix OBAbsinthe;
 waittime 5000;
+ConsumeOnSendError Timeout;
 
 import <stdint.h>;
 type OBServicePort = MACH_MSG_TYPE_COPY_SEND ctype: mach_port_t;

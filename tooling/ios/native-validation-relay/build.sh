@@ -21,6 +21,8 @@ mig="$(xcrun --find mig)"
 grep -q 'MACH_SEND_TIMEOUT' "$output/generated/OBAbsintheIPCUser.c"
 grep -q 'MACH_RCV_TIMEOUT' "$output/generated/OBAbsintheIPCUser.c"
 grep -q '5000' "$output/generated/OBAbsintheIPCUser.c"
+grep -q 'MACH_SEND_TIMED_OUT' "$output/generated/OBAbsintheIPCUser.c"
+grep -q 'mach_msg_destroy' "$output/generated/OBAbsintheIPCUser.c"
 for operation in 1200 1201 1202; do
   grep -Eq "msgh_id[[:space:]]*=[[:space:]]*$operation" "$output/generated/OBAbsintheIPCUser.c"
 done
