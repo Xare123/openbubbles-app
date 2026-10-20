@@ -35,6 +35,13 @@ The PC must validate source/nonce/shape and actual device ID/serial, pin provide
 identity across all account phases, and collect a new snapshot on each required
 refresh. No Android fallback, profile promotion or production default is implied.
 
+The response also carries an AuthKit-style User-Agent assembled from the actual
+runtime CFNetwork bundle version and uname kernel release, not the saved relay
+string. The latter is already a full user-agent while the current helper treats
+its first token as a platform suffix. This observed contract mismatch is not a
+proved explanation of401; the isolated provider must nevertheless keep its
+native proof and client metadata coherent throughout the account exchange.
+
 Source leads, not exact15.7.9 runtime proof:
 - [iOS15 NSMutableURLRequest factories](https://github.com/yuzhouheike/iOS15.3.1-Runtime-Headers/blob/44a5b62df41f5f20d8af6dead3b426a7b401e118/Frameworks/CFNetwork.framework/NSMutableURLRequest.h)
 - [Reconstructed native dictionary formatting](https://github.com/EthanArbuckle/iPhone17-1_18.2_22C152_Restore/blob/e26ed4563f78871c59d2d96856756a65d62517e5/System/Library/PrivateFrameworks/AuthKit.framework/NSMutableURLRequest%28AuthKit%29.m)

@@ -4,6 +4,7 @@
 #import <objc/runtime.h>
 #import <dlfcn.h>
 #import <poll.h>
+#import <sys/utsname.h>
 #include "native_headers_transport.h"
 
 static double OBNativeHeadersNow(void) { return NSProcessInfo.processInfo.systemUptime; }
@@ -29,7 +30,7 @@ static BOOL OBNativeHeaderASCII(id value) {
 static NSArray<NSString *> *OBNativeHeaderNames(void) {
     return @[@"X-Apple-I-MD", @"X-Apple-I-MD-M", @"X-Apple-I-MD-LU", @"X-Apple-I-MD-RINFO",
         @"X-Mme-Device-Id", @"X-Mme-Client-Info", @"X-Apple-I-Client-Time",
-        @"X-Apple-I-TimeZone", @"X-Apple-Locale", @"X-Apple-I-SRL-NO"];
+        @"X-Apple-I-TimeZone", @"X-Apple-Locale", @"X-Apple-I-SRL-NO", @"User-Agent"];
 }
 static BOOL OBNativeHeaderMerge(NSMutableDictionary *target, id incoming) {
     if (![incoming isKindOfClass:NSDictionary.class] || [incoming count] > 32) return NO;
@@ -112,9 +113,23 @@ static NSDictionary *OBFetchNativeHeaders(BOOL (^active)(void), NSString **failu
         NSMutableURLRequest *request = [NSMutableURLRequest new];
         ((void (*)(id, SEL))objc_msgSend)(request, serial);
         if (!OBNativeHeaderMerge(headers, request.allHTTPHeaderFields)) { *failure = @"native-header-invalid"; return nil; }
+        // The saved relay user-agent can belong to an older/different platform.
+        // Read actual public runtime versions; never borrow a Mac/Android value.
+        NSBundle *networkBundle = [NSBundle bundleWithIdentifier:@"com.apple.CFNetwork"];
+        if (!networkBundle) networkBundle = [NSBundle bundleWithPath:@"/System/Library/Frameworks/CFNetwork.framework"];
+        NSString *networkVersion = networkBundle.infoDictionary[@"CFBundleVersion"];
+        struct utsname kernel;
+        NSString *kernelVersion = uname(&kernel) == 0 ? [NSString stringWithUTF8String:kernel.release] : nil;
+        NSString *versionPattern = @"\\A[0-9]{1,8}(?:\\.[0-9]{1,8}){1,5}\\z";
+        if (!OBNativeHeaderASCII(networkVersion) || !OBNativeHeaderASCII(kernelVersion)
+            || [networkVersion rangeOfString:versionPattern options:NSRegularExpressionSearch].location == NSNotFound
+            || [kernelVersion rangeOfString:versionPattern options:NSRegularExpressionSearch].location == NSNotFound) {
+            *failure = @"native-system-context-unavailable"; return nil;
+        }
+        headers[@"User-Agent"] = [NSString stringWithFormat:@"akd/1.0 CFNetwork/%@ Darwin/%@", networkVersion, kernelVersion];
         for (NSString *required in @[@"X-Apple-I-MD", @"X-Apple-I-MD-M", @"X-Apple-I-MD-LU",
                 @"X-Apple-I-MD-RINFO", @"X-Mme-Device-Id", @"X-Mme-Client-Info", @"X-Apple-I-Client-Time",
-                @"X-Apple-I-SRL-NO"]) {
+                @"X-Apple-I-SRL-NO", @"User-Agent"]) {
             if (!headers[required]) { *failure = @"native-header-incomplete"; return nil; }
         }
         if (!active()) { *failure = @"cancelled"; return nil; }

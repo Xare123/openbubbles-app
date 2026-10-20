@@ -274,6 +274,18 @@ class NativeHeadersSourceGuards(unittest.TestCase):
         self.assertRegex(source, r'strcmp\([^,]+,\s*"B"\)')
         self.assertRegex(source, r'strcmp\([^,]+,\s*"c"\)')
 
+    def test_user_agent_uses_actual_native_runtime_without_saved_platform_fallback(self):
+        broker = without_comments(self.broker)
+        self.assertIn('bundleWithIdentifier:@"com.apple.CFNetwork"', broker)
+        self.assertIn('@"CFBundleVersion"', broker)
+        self.assertIn("uname(&kernel)", broker)
+        self.assertIn("kernel.release", broker)
+        self.assertIn('@"akd/1.0 CFNetwork/%@ Darwin/%@"', broker)
+        self.assertIn('headers[@"User-Agent"]', broker)
+        self.assertNotIn("icloud_ua", broker)
+        for borrowed in ("Darwin/23.4.0", "CFNetwork/1494.0.7", "Macintosh", "MacBook"):
+            self.assertNotIn(borrowed, broker)
+
     def test_private_reply_is_bounded_and_never_a_file_log_or_http_request(self):
         broker = without_comments(self.broker)
         self.assertIn("32768", broker)
