@@ -149,7 +149,7 @@ EDITS = (
 '''),
     Edit(APP + "TVNCViewController.m", '''    UNUserNotificationCenter *center = [UNUserNotificationCenter currentNotificationCenter];
 ''', '''#ifdef THEBOOTSTRAP
-    NSDictionary *environment = [TVNCServiceCoordinator sharedTaskEnvironment];
+    NSDictionary *environment = [[NSProcessInfo processInfo] environment];
     NSData *password = [environment[@"TROLLVNC_PASSWORD"] dataUsingEncoding:NSASCIIStringEncoding
                                                        allowLossyConversion:NO];
     if (password.length != 8) {

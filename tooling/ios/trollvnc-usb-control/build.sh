@@ -27,7 +27,8 @@ export THEOS="$theos" THEOS_PACKAGE_SCHEME=roothide THEBOOTSTRAP=1
 export THEOS_DEVICE_IP=127.0.0.1 THEOS_DEVICE_PORT=58422 THEOS_DEVICE_SIMULATOR=
 (
   cd -- "$stage"
-  FINALPACKAGE=1 gmake -j2 package
+  # Preserve raw Xcode diagnostics; the upstream formatter hid a GUI error.
+  FINALPACKAGE=1 gmake -j2 TARGET_XCPRETTY= package
 )
 shopt -s nullglob
 packages=("$stage"/packages/*.tipa)

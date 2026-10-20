@@ -160,6 +160,8 @@ class SourceTests(unittest.TestCase):
         self.assertLess(view.index("Waiting for USB control"), view.index("UNUserNotificationCenter *center"))
         self.assertIn("no password is needed here", view)
         self.assertIn("password.length != 8", view)
+        self.assertIn("[[NSProcessInfo processInfo] environment]", view)
+        self.assertNotIn("[TVNCServiceCoordinator sharedTaskEnvironment]", view)
         root = self.output[prepare.APP + "TVNCRootListController.m"].decode()
         self.assertIn('objectForInfoDictionaryKey:@"CFBundleShortVersionString"', root)
         self.assertNotIn("[[GitHubReleaseUpdater shared] currentVersion]", root)
