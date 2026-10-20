@@ -18,7 +18,7 @@ class AccountSigningPreflightGuards(unittest.TestCase):
         info = plistlib.loads((DIRECTORY / "Info.plist").read_bytes())
         self.assertEqual(info["CFBundleIdentifier"], "dev.openbubbles.diagnostics.accountsigning")
         self.assertEqual(info["CFBundleExecutable"], "OBAccountSigningProbe")
-        self.assertEqual(info["CFBundleVersion"], "2")
+        self.assertEqual(info["CFBundleVersion"], "3")
         self.assertNotIn("NSAppTransportSecurity", info)
         self.assertNotIn("CFBundleURLTypes", info)
 
@@ -86,7 +86,10 @@ class AccountSigningPreflightGuards(unittest.TestCase):
         self.assertLess(native.index("if (self.started) return"), native.index("self.started = NSDate.date"))
         self.assertIn("self.runButton.enabled = NO", native)
         self.assertIn("action:@selector(runCheck) forControlEvents:UIControlEventTouchUpInside", source)
-        self.assertEqual(len(re.findall(r"self\.started\s*=", source)), 2)
+        self.assertEqual(len(re.findall(r"self\.started\s*=", source)), 3)
+        for signature in ("- (void)runCheck", "- (void)runNativeAnisetteCheck", "- (void)runNativeHeadersBroker"):
+            start = method_source(source, signature)
+            self.assertLess(start.index("if (self.started) return"), start.index("self.started = NSDate.date"))
         self.assertNotIn("self.started = nil", source)
 
     def test_authkit_fetch_is_exactly_once_with_no_provision_or_fallback(self):

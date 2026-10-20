@@ -1,4 +1,4 @@
-// Credential-free, separate-app probe. Never returns or persists a signature.
+// Default checks are metadata-only. Explicit USB mode returns private headers.
 #import <UIKit/UIKit.h>
 #import <objc/message.h>
 #import <objc/runtime.h>
@@ -8,8 +8,10 @@
 #ifndef OB_SOURCE_SHA
 #define OB_SOURCE_SHA "local-unqualified"
 #endif
+#include "native_headers_broker.h"
 
 static BOOL OBAuthKitRequested = NO;
+static BOOL OBNativeHeadersRequested = NO;
 
 @interface OBAccountSigningProbe : UIResponder <UIApplicationDelegate>
 @property(nonatomic, strong) UIWindow *window;
@@ -21,6 +23,7 @@ static BOOL OBAuthKitRequested = NO;
 @property(nonatomic, strong) dispatch_queue_t nativeQueue;
 @property(nonatomic) BOOL finished;
 @property(atomic) BOOL nativeContextCancelled;
+@property(nonatomic, strong) OBNativeHeadersBroker *headerBroker;
 @end
 
 // Type-check the two specific Objective-C message signatures before calling.
@@ -35,13 +38,21 @@ static BOOL OBMethodHasType(Method method, unsigned arguments, char result) {
 @implementation OBAccountSigningProbe
 
 - (void)applicationDidBecomeActive:(UIApplication *)application {
-    if (OBAuthKitRequested && !self.started) {
+    if (OBNativeHeadersRequested && !self.started) {
+        application.idleTimerDisabled = YES;
+        [self runNativeHeadersBroker];
+    } else if (OBAuthKitRequested && !self.started) {
         application.idleTimerDisabled = YES;
         [self runNativeAnisetteCheck];
     }
 }
 
 - (void)applicationWillResignActive:(UIApplication *)application {
+    if (OBNativeHeadersRequested) {
+        self.headerBroker.cancelled = YES;
+        application.idleTimerDisabled = NO;
+        if (self.started && !self.finished) [self finish:@"native-headers-cancelled-login-unverified"];
+    }
     if (OBAuthKitRequested && self.started && !self.finished) {
         [self finish:@"native-context-cancelled-underlying-work-unqualified"];
     }
@@ -87,6 +98,10 @@ static BOOL OBMethodHasType(Method method, unsigned arguments, char result) {
     NSAssert(NSThread.isMainThread, @"main queue required");
     if (self.finished) return;
     self.finished = YES;
+    if (OBNativeHeadersRequested) {
+        self.headerBroker.cancelled = YES;
+        UIApplication.sharedApplication.idleTimerDisabled = NO;
+    }
     if (OBAuthKitRequested) {
         self.nativeContextCancelled = YES;
         UIApplication.sharedApplication.idleTimerDisabled = NO;
@@ -115,6 +130,27 @@ static BOOL OBMethodHasType(Method method, unsigned arguments, char result) {
         disposition, self.stages.description, saved ? @"saved in this app's Documents" : @"could not be saved"];
 }
 
+- (void)runNativeHeadersBroker {
+    if (self.started) return;
+    self.started = NSDate.date;
+    self.runIdentifier = NSUUID.UUID.UUIDString;
+    self.stages = [NSMutableArray new];
+    self.runButton.enabled = NO;
+    self.status.text = @"One private native-header exchange on paired USB only. No Apple Account login. Headers are never displayed or saved. Keep this diagnostic in front.";
+    self.headerBroker = [OBNativeHeadersBroker new];
+    __weak OBAccountSigningProbe *weakSelf = self;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 60 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+        OBAccountSigningProbe *owner = weakSelf;
+        if (owner && !owner.finished) [owner finish:@"native-headers-observation-timeout-login-unverified"];
+    });
+    [self.headerBroker startWithCompletion:^(NSString *disposition, NSUInteger count, long long elapsed) {
+        OBAccountSigningProbe *owner = weakSelf;
+        if (!owner || owner.finished) return;
+        [owner.stages addObject:@{@"stage": @"native-anisette-headers", @"header_count": @(count),
+            @"native_elapsed_ms": @(elapsed), @"header_values_saved": @NO}];
+        [owner finish:disposition];
+    }];
+}
 - (void)runNativeAnisetteCheck {
     if (self.started) return;
     self.started = NSDate.date;
@@ -309,6 +345,8 @@ int main(int argc, char **argv) {
     @autoreleasepool {
         OBAuthKitRequested = argc == 2 && argv && argv[0] && argv[1]
             && strcmp(argv[1], "--ob-native-authkit-no-provision-v1") == 0;
+        OBNativeHeadersRequested = argc == 2 && argv && argv[0] && argv[1]
+            && strcmp(argv[1], "--ob-native-authkit-usb-once-v1") == 0;
         return UIApplicationMain(argc, argv, nil, NSStringFromClass(OBAccountSigningProbe.class));
     }
 }

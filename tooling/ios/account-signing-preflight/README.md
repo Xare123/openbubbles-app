@@ -1,4 +1,46 @@
-# Separate native iPhone account-signing preflight
+# Separate native iPhone authentication diagnostic
+
+## Version3 private USB header comparison, October19
+
+Version2 ran on the actual iPhone15.7.9: the native NO-provision fetch reported
+machine/OTP/routing present, class/ABI valid and no error. This was observed on
+the diagnostic screen with owned-PID cleanup; TrollStore's System registration
+rejected both House Arrest modes, so a source-attested JSON receipt was not
+retrieved. This is availability evidence, not a working Apple login.
+
+Version3 adds ONLY the exact singleton developer argument
+`--ob-native-authkit-usb-once-v1`. Ordinary launch/manual signing and the prior
+metadata-only `--ob-native-authkit-no-provision-v1` mode remain unchanged.
+The new mode is a private credential-bearing test transport, not a public relay:
+it listens on127.0.0.1:49174 for one fixed41-byte `OBHDRS1:`/32lowerhex nonce/newline
+frame. It accepts no account, password, verification code, URL or signing body.
+Only one connection/response is possible per launch. Existing owner exclusion,
+SO_REUSEADDR, deadlines and lifecycle cancellation apply; no SO_REUSEPORT.
+
+The fetch uses `fetchAnisetteDataAndProvisionIfNecessary:error:` with NO and
+checks runtime ABI and required data before calling Apple's own
+NSMutableURLRequest AuthKit header factories. It does not use a guessed Xcode
+context, convenience fetch, provisioning/erase fallback, account object or
+URLSession. The factories are declared in pinned iOS15.3.1 runtime headers;
+actual15.7.9 dictionary behavior remains unqualified until the new transport runs.
+
+The allowlisted native header map, exact source, nonce and fixed error metadata
+travel only in one <=32768B length-prefixed USB reply. Header values must be
+bounded printable ASCII and cannot include arbitrary Authorization/Cookie/ADSID
+fields. The app displays/saves only counts and disposition metadata. Mutable
+wire data is wiped; immutable framework/JSON temporaries are released with their
+scope, not claimed cryptographically erased. Internal AuthKit caches/network
+may still be used. No raw header values may enter PC logs, files, CI or source.
+The PC must validate source/nonce/shape and actual device ID/serial, pin provider
+identity across all account phases, and collect a new snapshot on each required
+refresh. No Android fallback, profile promotion or production default is implied.
+
+Source leads, not exact15.7.9 runtime proof:
+- [iOS15 NSMutableURLRequest factories](https://github.com/yuzhouheike/iOS15.3.1-Runtime-Headers/blob/44a5b62df41f5f20d8af6dead3b426a7b401e118/Frameworks/CFNetwork.framework/NSMutableURLRequest.h)
+- [Reconstructed native dictionary formatting](https://github.com/EthanArbuckle/iPhone17-1_18.2_22C152_Restore/blob/e26ed4563f78871c59d2d96856756a65d62517e5/System/Library/PrivateFrameworks/AuthKit.framework/NSMutableURLRequest%28AuthKit%29.m)
+
+Everything below describes the original/default and metadata-only modes unless
+explicitly stated otherwise. The new private USB mode is not metadata-only.
 
 This original diagnostic app checks the real iPhone's `AAAbsintheSigner` factory
 and `signatureForData:completion:` interface. It is not a login client or a relay

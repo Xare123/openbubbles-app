@@ -1236,7 +1236,7 @@ jobs:
           retention-days: 7
 
   iphone-account-signing-preflight:
-    name: Build separate credential-free iPhone account-signing diagnostic
+    name: Build separate iPhone native authentication diagnostic
     if: ${{ inputs.validation_mode == 'iphone-account-signing-preflight-only' }}
     runs-on: macos-15
     timeout-minutes: 10
@@ -1254,6 +1254,7 @@ jobs:
           OB_SOURCE_SHA: ${{ github.sha }}
         run: |
           python3 -m unittest discover -s tooling/ci -p test_iphone_account_signing_preflight.py -v
+          python3 -m unittest discover -s tooling/ci -p test_iphone_native_headers_broker.py -v
           bash tooling/ios/account-signing-preflight/build.sh "$RUNNER_TEMP/account-signing-preflight"
       - name: Retain package and exact hashes, no account or relay input
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
