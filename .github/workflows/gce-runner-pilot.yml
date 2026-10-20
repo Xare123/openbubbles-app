@@ -87,6 +87,7 @@ on:
           - iphone-account-signing-preflight-only
           - iphone-account-qualifier-fixture-only
           - iphone-usb-control-only
+          - iphone-native-relay-only
       outbound_writer:
         description: Build the isolated Android Canary with one-message V2 writer controls
         required: true
@@ -138,7 +139,7 @@ env:
 jobs:
   create-runner:
     name: Create ephemeral Google Cloud runner
-    if: ${{ inputs.validation_mode != 'corten-android-login-only' && inputs.validation_mode != 'corten-host-readiness-only' && inputs.validation_mode != 'corten-windows-readiness-only' && inputs.validation_mode != 'corten-windows-machine-only' && inputs.validation_mode != 'corten-windows-engine-only' && inputs.validation_mode != 'corten-windows-component-only' && inputs.validation_mode != 'corten-android-cleanup-only' && inputs.validation_mode != 'corten-android-auth-transport-only' && inputs.validation_mode != 'iphone-activation-static-only' && inputs.validation_mode != 'iphone-account-signing-preflight-only' && inputs.validation_mode != 'iphone-account-qualifier-fixture-only' && inputs.validation_mode != 'iphone-usb-control-only' }}
+    if: ${{ inputs.validation_mode != 'corten-android-login-only' && inputs.validation_mode != 'corten-host-readiness-only' && inputs.validation_mode != 'corten-windows-readiness-only' && inputs.validation_mode != 'corten-windows-machine-only' && inputs.validation_mode != 'corten-windows-engine-only' && inputs.validation_mode != 'corten-windows-component-only' && inputs.validation_mode != 'corten-android-cleanup-only' && inputs.validation_mode != 'corten-android-auth-transport-only' && inputs.validation_mode != 'iphone-activation-static-only' && inputs.validation_mode != 'iphone-account-signing-preflight-only' && inputs.validation_mode != 'iphone-account-qualifier-fixture-only' && inputs.validation_mode != 'iphone-usb-control-only' && inputs.validation_mode != 'iphone-native-relay-only' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -1298,6 +1299,40 @@ jobs:
             ${{ runner.temp }}/iphone-usb-control/PREPARE.json
             ${{ runner.temp }}/iphone-usb-control/IDEMPOTENCE.json
           if-no-files-found: warn
+          retention-days: 7
+
+  iphone-native-relay:
+    name: Qualify private native iPhone relay and device-validation adapter
+    if: ${{ inputs.validation_mode == 'iphone-native-relay-only' }}
+    runs-on: macos-15
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Check out immutable helper source without application submodules
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          submodules: false
+      - name: Run source contracts, Foundation tests and SDK-only package build
+        env:
+          OB_SOURCE_SHA: ${{ github.sha }}
+        run: |
+          python3 -B -m unittest discover -s tooling/ci -p test_native_relay_nac_contract.py -v
+          python3 -B -m unittest discover -s tooling/ci -p test_native_relay_build_isolation.py -v
+          bash tooling/ios/native-validation-relay/build.sh "$RUNNER_TEMP/native-iphone-relay"
+      - name: Retain credential-free private helper and qualification evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: iphone-native-relay-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/native-iphone-relay/OBNativeRelay.tipa
+            ${{ runner.temp }}/native-iphone-relay/SHA256SUMS
+            ${{ runner.temp }}/native-iphone-relay/SOURCE_SHA
+            ${{ runner.temp }}/native-iphone-relay/BUILD_TOOLS.txt
+            ${{ runner.temp }}/native-iphone-relay/foundation-tests/
+          if-no-files-found: error
           retention-days: 7
 
   iphone-account-signing-preflight:

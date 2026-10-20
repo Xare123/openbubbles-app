@@ -1,0 +1,32 @@
+/* Functional IPC declarations only. Generate the implementation with the
+ * installed Apple SDK mig tool. No third-party client implementation is used.
+ * The service ABI is subsystem 1200, operations 0/1/2 in this order. */
+subsystem OBAbsintheIPC 1200;
+userprefix OBAbsinthe;
+waittime 5000;
+
+import <stdint.h>;
+type OBServicePort = MACH_MSG_TYPE_COPY_SEND ctype: mach_port_t;
+type OBProtocolWord = MACH_MSG_TYPE_INTEGER_32 ctype: uint32_t;
+type OBSessionHandle = MACH_MSG_TYPE_INTEGER_64 ctype: uint64_t;
+type OBOutOfLineBytes = ^array[] of MACH_MSG_TYPE_BYTE ctype: vm_offset_t;
+
+routine BeginSession(
+    service: OBServicePort;
+    in protocol_word: OBProtocolWord;
+    in certificate: OBOutOfLineBytes;
+    out handle: OBSessionHandle;
+    out challenge: OBOutOfLineBytes);
+
+routine EstablishSession(
+    service: OBServicePort;
+    in protocol_word: OBProtocolWord;
+    in handle: OBSessionHandle;
+    in response: OBOutOfLineBytes);
+
+routine SignBytes(
+    service: OBServicePort;
+    in protocol_word: OBProtocolWord;
+    in handle: OBSessionHandle;
+    in payload: OBOutOfLineBytes;
+    out signature: OBOutOfLineBytes);
