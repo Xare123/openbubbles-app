@@ -1,5 +1,23 @@
 # Separate native iPhone authentication diagnostic
 
+## Version4 native-header completeness, October20
+
+Actual Signing3 on iPhone15.7.9 returned the fixed native-header-incomplete
+failure before any account request. Its first implementation did not identify
+which required name was absent. No Apple login failure is inferred from this.
+System-registered TrollStore apps still reject House Arrest; do not retry that
+unchanged receipt path or switch registration to bypass it.
+
+Version4 calls the runtime's ABI-checked `ak_addLocalUserUUIDHashHeader` only if
+the anisette dictionary omitted X-Apple-I-MD-LU. This method is declared in the
+already-reviewed pinned iOS15.3.1 NSMutableURLRequest header linked below. No
+local UUID/hash, account identity, Android header or provisioning fallback is
+fabricated. Existing serial/native factories and strict required keys remain.
+If incomplete, the reply now names the first missing *allowlisted header name*,
+not a value. This is a targeted native composition candidate and diagnostic,
+not proof the local-user field was the original absent field or a working login.
+Entitlements, one-shot loopback transport and account-free input remain unchanged.
+
 ## Version3 private USB header comparison, October19
 
 Version2 ran on the actual iPhone15.7.9: the native NO-provision fetch reported

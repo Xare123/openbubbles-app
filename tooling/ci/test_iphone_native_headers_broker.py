@@ -211,7 +211,7 @@ class NativeHeadersSourceGuards(unittest.TestCase):
         bundle = "dev.openbubbles.diagnostics.accountsigning"
         self.assertEqual(info["CFBundleIdentifier"], bundle)
         self.assertEqual(info["CFBundleExecutable"], "OBAccountSigningProbe")
-        self.assertEqual(info["CFBundleVersion"], "3")
+        self.assertEqual(info["CFBundleVersion"], "4")
         self.assertNotIn("CFBundleURLTypes", info)
         self.assertNotIn("NSAppTransportSecurity", info)
         self.assertEqual(set(entitlements), {"application-identifier", "keychain-access-groups",
@@ -285,6 +285,21 @@ class NativeHeadersSourceGuards(unittest.TestCase):
         self.assertNotIn("icloud_ua", broker)
         for borrowed in ("Darwin/23.4.0", "CFNetwork/1494.0.7", "Macintosh", "MacBook"):
             self.assertNotIn(borrowed, broker)
+
+    def test_missing_local_user_uses_only_native_factory_and_reports_fixed_missing_names(self):
+        broker = without_comments(self.broker)
+        block = broker.split('if (!headers[@"X-Apple-I-MD-LU"]) {',1)[1].split('\n        }',1)[0]
+        self.assertIn('NSSelectorFromString(@"ak_addLocalUserUUIDHashHeader")',block)
+        check = "OBNativeHeaderMethod(class_getInstanceMethod(requestClass, localUser), 2, 'v')"
+        call = '((void (*)(id, SEL))objc_msgSend)(request, localUser)'
+        self.assertIn(check,block)
+        self.assertLess(block.index(check),block.index(call))
+        self.assertLess(block.index('if (!active())'),block.index(call))
+        for forbidden in ('NSUUID','localUserUUID','CC_SHA','setValue:','setObject:'):
+            self.assertNotIn(forbidden,block)
+        self.assertIn('[@"native-header-missing-" stringByAppendingString:required]',broker)
+        self.assertNotIn('stringByAppendingString:headers',broker)
+        self.assertLess(broker.index(call),broker.index('OBNativeHeaderMerge(headers, request.allHTTPHeaderFields)'))
 
     def test_private_reply_is_bounded_and_never_a_file_log_or_http_request(self):
         broker = without_comments(self.broker)

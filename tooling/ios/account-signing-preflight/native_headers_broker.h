@@ -112,6 +112,16 @@ static NSDictionary *OBFetchNativeHeaders(BOOL (^active)(void), NSString **failu
         }
         NSMutableURLRequest *request = [NSMutableURLRequest new];
         ((void (*)(id, SEL))objc_msgSend)(request, serial);
+        // Older native formatters need not include the local-user header.
+        // Ask the same runtime factory only when absent, never invent a UUID.
+        if (!headers[@"X-Apple-I-MD-LU"]) {
+            SEL localUser = NSSelectorFromString(@"ak_addLocalUserUUIDHashHeader");
+            if (!OBNativeHeaderMethod(class_getInstanceMethod(requestClass, localUser), 2, 'v')) {
+                *failure = @"native-local-user-factory-unavailable"; return nil;
+            }
+            if (!active()) { *failure = @"cancelled"; return nil; }
+            ((void (*)(id, SEL))objc_msgSend)(request, localUser);
+        }
         if (!OBNativeHeaderMerge(headers, request.allHTTPHeaderFields)) { *failure = @"native-header-invalid"; return nil; }
         // The saved relay user-agent can belong to an older/different platform.
         // Read actual public runtime versions; never borrow a Mac/Android value.
@@ -130,7 +140,11 @@ static NSDictionary *OBFetchNativeHeaders(BOOL (^active)(void), NSString **failu
         for (NSString *required in @[@"X-Apple-I-MD", @"X-Apple-I-MD-M", @"X-Apple-I-MD-LU",
                 @"X-Apple-I-MD-RINFO", @"X-Mme-Device-Id", @"X-Mme-Client-Info", @"X-Apple-I-Client-Time",
                 @"X-Apple-I-SRL-NO", @"User-Agent"]) {
-            if (!headers[required]) { *failure = @"native-header-incomplete"; return nil; }
+            if (!headers[required]) {
+                // `required` is a fixed allowlisted name, never a header value.
+                *failure = [@"native-header-missing-" stringByAppendingString:required];
+                return nil;
+            }
         }
         if (!active()) { *failure = @"cancelled"; return nil; }
         return [headers copy];
