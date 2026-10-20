@@ -165,7 +165,17 @@ static int listener_case(int rebind) {
             if (client < 0 || setsockopt(client, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout))
                 || setsockopt(client, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout))
                 || connect(client, (struct sockaddr *)&address, sizeof(address))) result = 34;
-            if (!result && (peer = accept(listener, NULL, NULL)) < 0) result = 35;
+            if (!result) {
+                /* connect completion need not make a nonblocking accept ready
+                 * in this thread yet. Match the broker's bounded readable wait. */
+                struct controls accepting = {0};
+                double accept_deadline = now_seconds() + 1.0;
+                while (peer < 0 && wait_readable(listener, accept_deadline, &accepting)) {
+                    peer = accept(listener, NULL, NULL);
+                    if (peer < 0 && errno != EINTR && errno != EAGAIN && errno != EWOULDBLOCK) break;
+                }
+                if (peer < 0) result = 35;
+            }
             close(listener); listener = -1;
             char byte;
             /* Actual TCP teardown, with the server actively closing first. */
@@ -300,6 +310,15 @@ class NativeHeadersSourceGuards(unittest.TestCase):
         self.assertIn('[@"native-header-missing-" stringByAppendingString:required]',broker)
         self.assertNotIn('stringByAppendingString:headers',broker)
         self.assertLess(broker.index(call),broker.index('OBNativeHeaderMerge(headers, request.allHTTPHeaderFields)'))
+
+    def test_rebind_harness_waits_boundedly_before_nonblocking_accept(self):
+        rebind = C_HARNESS.split('static int listener_case(int rebind)',1)[1]
+        self.assertIn('double accept_deadline = now_seconds() + 1.0;',rebind)
+        wait = 'while (peer < 0 && wait_readable(listener, accept_deadline, &accepting))'
+        self.assertIn(wait,rebind)
+        self.assertLess(rebind.index(wait),rebind.index('peer = accept(listener, NULL, NULL)'))
+        self.assertIn('errno != EINTR && errno != EAGAIN && errno != EWOULDBLOCK',rebind)
+        self.assertIn('if (peer < 0) result = 35;',rebind)
 
     def test_private_reply_is_bounded_and_never_a_file_log_or_http_request(self):
         broker = without_comments(self.broker)
