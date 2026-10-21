@@ -1668,12 +1668,24 @@ Future<(ApsConnection, PushError?)> refreshPhoneRegistrationPush({
 Future<(ApsConnection, PushError?)> setupPush({
   required JoinedOsConfig config,
   required IdsngmIdentity identity,
-  ApsState? state,
+  required ApsState state,
   required String statePath,
 }) => RustLib.instance.api.crateApiApiSetupPush(
   config: config,
   identity: identity,
   state: state,
+  statePath: statePath,
+);
+
+/// First connection has no retained snapshot to borrow. Keep this explicit:
+/// the pinned bridge generator cannot lock an optional borrowed opaque type.
+Future<(ApsConnection, PushError?)> setupPushFresh({
+  required JoinedOsConfig config,
+  required IdsngmIdentity identity,
+  required String statePath,
+}) => RustLib.instance.api.crateApiApiSetupPushFresh(
+  config: config,
+  identity: identity,
   statePath: statePath,
 );
 
