@@ -739,6 +739,7 @@ final class CloudSyncProductionLocalSendAdapter {
     required bool Function() stillCurrent,
     CloudSyncAutomaticArchiveIdentity? automaticArchiveIdentity,
     bool Function()? receivedArchiveAllowed,
+    bool Function()? receivedMediaArchiveAllowed,
     Object? Function()? readActiveImClient,
     bool Function()? shouldYield,
   }) : _readActiveClient = readActiveClient,
@@ -746,6 +747,7 @@ final class CloudSyncProductionLocalSendAdapter {
        _stillCurrent = stillCurrent,
        _automaticArchiveIdentity = automaticArchiveIdentity,
        _receivedArchiveAllowed = receivedArchiveAllowed,
+       _receivedMediaArchiveAllowed = receivedMediaArchiveAllowed,
        _readActiveImClient = readActiveImClient,
        _shouldYield = shouldYield;
 
@@ -754,6 +756,7 @@ final class CloudSyncProductionLocalSendAdapter {
   final bool Function() _stillCurrent;
   final CloudSyncAutomaticArchiveIdentity? _automaticArchiveIdentity;
   final bool Function()? _receivedArchiveAllowed;
+  final bool Function()? _receivedMediaArchiveAllowed;
   final Object? Function()? _readActiveImClient;
   final bool Function()? _shouldYield;
   Future<CloudSyncLocalSendConsumerResult>? _running;
@@ -982,6 +985,8 @@ final class CloudSyncProductionLocalSendAdapter {
       localMutationJournal: mutationJournal,
       receivedMutationJournal: receivedMutationJournal,
       pauseUnsubmittedReceivedCreates: () => !receivedArchiveDispatchAllowed(),
+      pauseUnsubmittedReceivedMediaCreates: () => !receivedArchiveDispatchAllowed() ||
+          _receivedMediaArchiveAllowed?.call() != true,
       attachmentUploadJournal: uploads,
       historicalAttachmentJournal: historicalJournal,
       readChatIdentityEvidence: (operation) => chatEvidence[operation.operationId],
@@ -1155,6 +1160,8 @@ final class CloudSyncProductionLocalSendAdapter {
       validate: () => fence.run(() {}, accountFingerprint: scope.accountFingerprint),
       receivedArchiveAllowed: () => selection == null && historical == null &&
           _receivedArchiveAllowed?.call() == true,
+      receivedMediaArchiveAllowed: () => receivedArchiveDispatchAllowed() &&
+          _receivedMediaArchiveAllowed?.call() == true,
       stillCurrent: () => _stillCurrent() && !objectBox.isClosed() &&
           identical(objectBox, Database.store) && identical(auth.cloudMessagesClient, _readActiveClient()),
     );
@@ -1502,9 +1509,12 @@ final class CloudSyncProductionLocalSendAdapter {
         pausedReceivedArchiveJournal: selection == null && historical == null &&
             !receivedArchiveDispatchAllowed() ? receivedJournal : null,
         isPausedReceivedAttachmentCreate: (operationId) {
-          if (receivedArchiveDispatchAllowed()) return false;
           final operation = durable.readReceivedAttachmentOperation(attachmentScope,
             operationId, receivedJournal);
+          return operation != null && durable.isPausedUnsubmittedReceivedCreate(operation);
+        },
+        isPausedReceivedMessageCreate: (operationId) {
+          final operation = durable.readReceivedArchiveOperation(scope, operationId);
           return operation != null && durable.isPausedUnsubmittedReceivedCreate(operation);
         }).read();
       if (!local.objectBoxReady || local.coordinatorLeaseActive ||
@@ -1626,6 +1636,13 @@ final class CloudSyncProductionLocalSendAdapter {
       }
     }
 
+    void validateReceivedMediaSelection() {
+      validateReceivedSelection();
+      if (_receivedMediaArchiveAllowed?.call() != true) {
+        throw StateError('cloud_sync_received_archive_confirmation_required');
+      }
+    }
+
     // Exact receipt recovery is identity-bound, not future-upload consent.
     // The mutation gate separately rechecks consent at the consume boundary.
     Future<CloudSyncNativeAuthSnapshot?> receivedLiveAuth() => fence.run(() => auth,
@@ -1639,7 +1656,7 @@ final class CloudSyncProductionLocalSendAdapter {
       return CloudSyncAttachmentUploadExecutor(
         uploads: uploads, receivedJournal: receivedJournal, readLiveAuth: receivedLiveAuth,
         mutationGate: GuardedCloudSyncAttachmentUploadMutationGate(guard,
-          receivedJournal: receivedJournal, requireReceivedAdmission: validateReceivedSelection),
+          receivedJournal: receivedJournal, requireReceivedAdmission: validateReceivedMediaSelection),
         bridge: FrbCloudSyncAttachmentUploadBridge(cloudMessagesClient: client,
           storageDirectory: _privateStorageDirectory),
         staging: transport,
@@ -1651,7 +1668,7 @@ final class CloudSyncProductionLocalSendAdapter {
     Future<String?> receivedSourcePath(int intentId,
         CloudSyncAttachmentPlanInventoryItem item) async {
       final selected = await fence.run(() {
-        validateReceivedSelection();
+        validateReceivedMediaSelection();
         final origin = receivedJournal.requireReceivedAttachmentOrigin(
           transactionStore: objectBox, intentId: intentId, currentAuth: auth,
           forDispatch: true);
@@ -1672,7 +1689,7 @@ final class CloudSyncProductionLocalSendAdapter {
         await backend.downloadAttachment(attachment, original: true);
       }
       await fence.run(() {
-        validateReceivedSelection();
+        validateReceivedMediaSelection();
         final current = receivedJournal.requireReceivedAttachmentOrigin(
           transactionStore: objectBox, intentId: intentId, currentAuth: auth,
           forDispatch: true);
@@ -1715,7 +1732,7 @@ final class CloudSyncProductionLocalSendAdapter {
         }
       });
       if (!await drainExisting()) throw StateError('cloud_sync_attachment_parent_readback_pending');
-      validateReceivedSelection();
+      validateReceivedMediaSelection();
       // Resolve the WHOLE inventory before creating any fresh randomized plan.
       final paths = <String, String>{};
       for (final item in inventory) {
@@ -1730,7 +1747,7 @@ final class CloudSyncProductionLocalSendAdapter {
       await prepareCloudSyncAttachmentParent(
         staging: transport,
         prepareChildren: () async {
-          validateReceivedSelection();
+          validateReceivedMediaSelection();
           final coordinator = CloudSyncAttachmentPlanCoordinator(
             store: objectBox, localSends: journal, uploads: uploads,
             readLiveAuth: receivedLiveAuth, staging: transport,
@@ -1739,7 +1756,9 @@ final class CloudSyncProductionLocalSendAdapter {
           final plans = await coordinator.ensureReceivedPlans(
             receivedIntentId: intentId, receivedJournal: receivedJournal,
             readInventory: (source, current) async {
+              validateReceivedMediaSelection();
               final found = await attachmentPlans.inspectReceived(source, current);
+              validateReceivedMediaSelection();
               if (found.length != inventory.length || found.any((item) =>
                   !inventory.any((old) => old.logicalEntityKeyHash == item.logicalEntityKeyHash &&
                     old.originalAttachmentGuid == item.originalAttachmentGuid &&
@@ -1749,13 +1768,13 @@ final class CloudSyncProductionLocalSendAdapter {
               return found;
             },
             stagePlan: (item, source, current) async {
-              validateReceivedSelection();
+              validateReceivedMediaSelection();
               final path = paths[item.logicalEntityKeyHash];
               if (path == null) throw StateError('cloud_sync_attachment_plan_source_unavailable');
               return attachmentPlans.stageReceived(item, source, current, sourcePath: path);
             });
           for (final plan in plans) {
-            validateReceivedSelection();
+            validateReceivedMediaSelection();
             final item = inventory.singleWhere((item) => item.logicalEntityKeyHash == plan.plan.logicalEntityKeyHash);
             final fresh = uploads.readReceived(plan.id, receivedJournal).state == CloudAttachmentUploadState.prepared;
             if (fresh) attemptedUploadId = plan.id;
@@ -2105,7 +2124,10 @@ final class CloudSyncProductionLocalSendAdapter {
                 validateReceivedSelection();
                 return objectBox.box<Message>().get(candidate.localMessageId)?.hasAttachments == true;
               }, accountFingerprint: scope.accountFingerprint);
-              if (hasMedia) await prepareReceivedAttachments(candidate.intentId);
+              if (hasMedia) {
+                validateReceivedMediaSelection();
+                await prepareReceivedAttachments(candidate.intentId);
+              }
               await receivedCreates.admit(scope, candidate.intentId);
               receivedAdmitted++;
             } catch (error) {

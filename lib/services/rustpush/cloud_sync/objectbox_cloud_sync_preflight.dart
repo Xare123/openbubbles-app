@@ -23,6 +23,7 @@ final class ObjectBoxCloudSyncPreflightReader {
     CloudSyncLocalSendJournal? localSendJournal,
     CloudSyncReceivedArchiveJournal? pausedReceivedArchiveJournal,
     bool Function(String operationId)? isPausedReceivedAttachmentCreate,
+    bool Function(String operationId)? isPausedReceivedMessageCreate,
   }) : _store = store,
        // Keep this optional injection named without exposing the private field.
        // ignore: prefer_initializing_formals
@@ -33,6 +34,9 @@ final class ObjectBoxCloudSyncPreflightReader {
        // Public optional injection without exposing its backing field.
        // ignore: prefer_initializing_formals
        _isPausedReceivedAttachmentCreate = isPausedReceivedAttachmentCreate,
+       // Scoped durable proof, not a global exemption for pending rows.
+       // ignore: prefer_initializing_formals
+       _isPausedReceivedMessageCreate = isPausedReceivedMessageCreate,
        _leases = store.box<CloudSyncLeaseEntity>(),
        _outbox = store.box<CloudOutboxOperationEntity>(),
        _checkpoints = store.box<CloudSyncCheckpointEntity>(),
@@ -48,6 +52,7 @@ final class ObjectBoxCloudSyncPreflightReader {
   final CloudSyncLocalSendJournal? _localSendJournal;
   final CloudSyncReceivedArchiveJournal? _pausedReceivedArchiveJournal;
   final bool Function(String operationId)? _isPausedReceivedAttachmentCreate;
+  final bool Function(String operationId)? _isPausedReceivedMessageCreate;
   final Box<CloudSyncLeaseEntity> _leases;
   final Box<CloudOutboxOperationEntity> _outbox;
   final Box<CloudSyncCheckpointEntity> _checkpoints;
@@ -100,6 +105,10 @@ final class ObjectBoxCloudSyncPreflightReader {
           }
           if (row.zone == 'attachmentManateeZone' &&
               _isPausedReceivedAttachmentCreate?.call(row.operationId) == true) {
+            heldRows.add(row.id);
+          }
+          if (row.zone == 'messageManateeZone' &&
+              _isPausedReceivedMessageCreate?.call(row.operationId) == true) {
             heldRows.add(row.id);
           }
         }

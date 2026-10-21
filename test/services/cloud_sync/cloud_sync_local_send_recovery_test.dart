@@ -35,6 +35,7 @@ void main() {
   for (final failure in [
     StateError('cloud_sync_local_send_identity_changed'),
     StateError('cloud_sync_local_send_owner_changed'),
+    StateError('cloud_sync_received_archive_owner_changed'),
     const CloudKitWriterAuthorityFailure(
       'cloudkit_writer_mutation_outcome_unknown',
     ),

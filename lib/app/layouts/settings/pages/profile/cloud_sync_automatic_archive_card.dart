@@ -13,6 +13,8 @@ class CloudSyncAutomaticArchiveCard extends StatefulWidget {
     required this.onLoad,
     required this.onChanged,
     this.receivedArchiveAvailable = false,
+    this.receivedMediaArchiveAvailable = false,
+    this.onChangedWithMedia,
   });
 
   final Future<CloudSyncAutomaticArchivePreference> Function() onLoad;
@@ -24,7 +26,19 @@ class CloudSyncAutomaticArchiveCard extends StatefulWidget {
   })
   onChanged;
 
+  /// Optional until the caller wires the media-aware preference and worker gates.
+  /// The original callback remains usable for existing sent/text-only callers.
+  final Future<CloudSyncAutomaticArchivePreference> Function(
+    CloudSyncAutomaticArchivePreference,
+    bool, {
+    required bool acknowledgeQueuedUploads,
+    bool includeReceived,
+    bool includeReceivedMedia,
+  })?
+  onChangedWithMedia;
+
   final bool receivedArchiveAvailable;
+  final bool receivedMediaArchiveAvailable;
 
   @override
   State<CloudSyncAutomaticArchiveCard> createState() =>
@@ -37,11 +51,26 @@ class _CloudSyncAutomaticArchiveCardState
       'Attachments, replies, reactions, edits, and other message changes are not '
       'newly covered by this opt-in. Existing iCloud restores can still include '
       'media already archived by Apple.';
+  static const _receivedMediaCoverageNote =
+      'Only supported received and mirrored attachments are covered. Replies, '
+      'reactions, edits, and other message changes are not newly covered by this '
+      'opt-in. Existing iCloud restores can still include media already archived '
+      'by Apple.';
 
   CloudSyncAutomaticArchivePreference? _preference;
   bool _busy = true;
   bool _confirming = false;
   String? _error;
+
+  bool get _receivedMediaAvailable =>
+      widget.receivedArchiveAvailable &&
+      widget.receivedMediaArchiveAvailable &&
+      widget.onChangedWithMedia != null;
+
+  bool get _scopeChangeAvailable =>
+      widget.receivedArchiveAvailable &&
+      (!(_preference?.includesReceivedMedia ?? false) ||
+          _receivedMediaAvailable);
 
   @override
   void initState() {
@@ -74,11 +103,13 @@ class _CloudSyncAutomaticArchiveCardState
     bool enabled, {
     required bool acknowledgeQueuedUploads,
     bool includeReceived = false,
+    bool includeReceivedMedia = false,
   }) async {
     final preference = _preference;
     if (_busy ||
         preference == null ||
-        (includeReceived && !widget.receivedArchiveAvailable)) {
+        (enabled && includeReceived && !widget.receivedArchiveAvailable) ||
+        (enabled && includeReceivedMedia && !_receivedMediaAvailable)) {
       return;
     }
     setState(() {
@@ -86,12 +117,21 @@ class _CloudSyncAutomaticArchiveCardState
       _error = null;
     });
     try {
-      final saved = await widget.onChanged(
-        preference,
-        enabled,
-        acknowledgeQueuedUploads: acknowledgeQueuedUploads,
-        includeReceived: includeReceived,
-      );
+      final mediaChanged = widget.onChangedWithMedia;
+      final saved = mediaChanged != null
+          ? await mediaChanged(
+              preference,
+              enabled,
+              acknowledgeQueuedUploads: acknowledgeQueuedUploads,
+              includeReceived: includeReceived,
+              includeReceivedMedia: includeReceivedMedia,
+            )
+          : await widget.onChanged(
+              preference,
+              enabled,
+              acknowledgeQueuedUploads: acknowledgeQueuedUploads,
+              includeReceived: includeReceived,
+            );
       if (mounted) setState(() => _preference = saved);
     } catch (_) {
       if (mounted) {
@@ -110,13 +150,15 @@ class _CloudSyncAutomaticArchiveCardState
     if (_busy ||
         _confirming ||
         _preference == null ||
-        (changeScope && !widget.receivedArchiveAvailable)) {
+        (changeScope && !_scopeChangeAvailable)) {
       return;
     }
     setState(() => _confirming = true);
     var acknowledged = false;
     var includeReceived =
         widget.receivedArchiveAvailable && _preference!.includesReceived;
+    var includeReceivedMedia =
+        _receivedMediaAvailable && _preference!.includesReceivedMedia;
     bool? accepted;
     try {
       accepted = await showDialog<bool>(
@@ -155,18 +197,47 @@ class _CloudSyncAutomaticArchiveCardState
                     ),
                     onChanged: (value) => setDialogState(() {
                       includeReceived = value ?? false;
+                      if (!includeReceived) includeReceivedMedia = false;
                       acknowledged = false;
                     }),
                   ),
-                  const Text(_receivedCoverageNote),
+                  if (_receivedMediaAvailable)
+                    CheckboxListTile(
+                      key: const ValueKey(
+                        'automaticArchiveIncludeReceivedMedia',
+                      ),
+                      value: includeReceivedMedia,
+                      controlAffinity: ListTileControlAffinity.leading,
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('Include supported received media'),
+                      subtitle: const Text(
+                        'Also archive queued and future supported received attachments '
+                        'in direct and group chats, including supported mirrored media '
+                        'and queued uploads found during recovery.',
+                      ),
+                      onChanged: includeReceived
+                          ? (value) => setDialogState(() {
+                              includeReceivedMedia = value ?? false;
+                              acknowledged = false;
+                            })
+                          : null,
+                    ),
+                  Text(
+                    includeReceivedMedia
+                        ? _receivedMediaCoverageNote
+                        : _receivedCoverageNote,
+                  ),
                 ],
                 CheckboxListTile(
                   key: const ValueKey('automaticArchiveQueuedAcknowledgment'),
                   value: acknowledged,
                   controlAffinity: ListTileControlAffinity.leading,
                   contentPadding: EdgeInsets.zero,
-                  title: const Text(
-                    'I understand queued uploads will be archived.',
+                  title: Text(
+                    includeReceivedMedia
+                        ? 'I understand queued uploads and future sends, received text, '
+                              'and received media will be archived.'
+                        : 'I understand queued uploads will be archived.',
                   ),
                   onChanged: (value) =>
                       setDialogState(() => acknowledged = value ?? false),
@@ -200,6 +271,7 @@ class _CloudSyncAutomaticArchiveCardState
         true,
         acknowledgeQueuedUploads: true,
         includeReceived: includeReceived,
+        includeReceivedMedia: includeReceivedMedia,
       );
     }
   }
@@ -217,6 +289,15 @@ class _CloudSyncAutomaticArchiveCardState
       widget.receivedArchiveAvailable &&
       (_preference?.includesReceived ?? false);
 
+  bool get _receivedMediaEnabled =>
+      _receivedMediaAvailable && (_preference?.includesReceivedMedia ?? false);
+
+  String get _title => _receivedMediaEnabled
+      ? 'Archive sent messages and supported received text and media to iCloud'
+      : (_receivedEnabled
+            ? 'Archive sent messages and supported received text to iCloud'
+            : 'Archive sent messages to iCloud');
+
   @override
   Widget build(BuildContext context) => Padding(
     padding: const EdgeInsets.all(16),
@@ -227,16 +308,12 @@ class _CloudSyncAutomaticArchiveCardState
           children: [
             Expanded(
               child: Text(
-                _receivedEnabled
-                    ? 'Archive sent messages and supported received text to iCloud'
-                    : 'Archive sent messages to iCloud',
+                _title,
                 style: Theme.of(context).textTheme.titleMedium,
               ),
             ),
             Semantics(
-              label: _receivedEnabled
-                  ? 'Archive sent messages and supported received text to iCloud'
-                  : 'Archive sent messages to iCloud',
+              label: _title,
               child: Switch.adaptive(
                 value: _preference?.enabled ?? false,
                 onChanged: _busy || _confirming || _preference == null
@@ -247,7 +324,11 @@ class _CloudSyncAutomaticArchiveCardState
           ],
         ),
         Text(
-          _receivedEnabled
+          _receivedMediaEnabled
+              ? 'Archive sent messages after sending is confirmed, plus supported '
+                    'received text and attachments, including mirrored text and media, '
+                    'in direct and group chats to iCloud automatically.'
+              : _receivedEnabled
               ? 'Archive sent messages after sending is confirmed, plus supported '
                     'received text, including mirrored plain text, in direct and '
                     'group chats to iCloud automatically.'
@@ -257,11 +338,13 @@ class _CloudSyncAutomaticArchiveCardState
         if (_receivedEnabled) ...[
           const SizedBox(height: 8),
           Text(
-            _receivedCoverageNote,
+            (_preference?.includesReceivedMedia ?? false)
+                ? _receivedMediaCoverageNote
+                : _receivedCoverageNote,
             style: Theme.of(context).textTheme.bodySmall,
           ),
         ],
-        if (widget.receivedArchiveAvailable && (_preference?.enabled ?? false))
+        if (_scopeChangeAvailable && (_preference?.enabled ?? false))
           TextButton(
             onPressed: _busy || _confirming
                 ? null
@@ -277,9 +360,19 @@ class _CloudSyncAutomaticArchiveCardState
             style: Theme.of(context).textTheme.bodyMedium,
           ),
         ],
+        if (!_receivedMediaAvailable &&
+            (_preference?.includesReceivedMedia ?? false)) ...[
+          const SizedBox(height: 8),
+          Text(
+            'Supported received and mirrored media archival is unavailable in this '
+            'build. Your saved archival scope is kept.',
+            style: Theme.of(context).textTheme.bodyMedium,
+          ),
+        ],
         const SizedBox(height: 8),
         Text(
-          'Turning this off stops new automatic archival. A batch already running may finish.',
+          'Turning this off stops new automatic archival. A batch already running may finish. '
+          'Saved messages stay available, and already submitted uploads can still be checked.',
           style: Theme.of(context).textTheme.bodySmall,
         ),
         if (_busy) ...[

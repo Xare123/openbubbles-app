@@ -17,14 +17,17 @@ CloudSyncAutomaticArchivePreference _preference({
   bool enabled = false,
   int epoch = 3,
   bool includeReceived = false,
+  bool includeReceivedMedia = false,
 }) => CloudSyncAutomaticArchivePreference(
   identity: _identity(epoch: epoch),
   storedValue: enabled
       ? jsonEncode([
-          includeReceived ? 2 : 1,
-          includeReceived
-              ? 'queued-and-future-local-sends-and-receives'
-              : 'queued-and-future-local-sends',
+          includeReceivedMedia ? 3 : (includeReceived ? 2 : 1),
+          includeReceivedMedia
+              ? 'queued-and-future-local-sends-and-received-text-and-media'
+              : (includeReceived
+                    ? 'queued-and-future-local-sends-and-receives'
+                    : 'queued-and-future-local-sends'),
           epoch,
           'f' * 32,
         ])
@@ -36,6 +39,7 @@ void main() {
   late bool? lastEnabled;
   late bool? lastAcknowledged;
   late bool? lastIncludeReceived;
+  late bool? lastIncludeReceivedMedia;
   late Future<CloudSyncAutomaticArchivePreference> Function() load;
   late Future<CloudSyncAutomaticArchivePreference> Function(
     CloudSyncAutomaticArchivePreference,
@@ -44,12 +48,21 @@ void main() {
     bool includeReceived,
   })
   save;
+  late Future<CloudSyncAutomaticArchivePreference> Function(
+    CloudSyncAutomaticArchivePreference,
+    bool, {
+    required bool acknowledgeQueuedUploads,
+    bool includeReceived,
+    bool includeReceivedMedia,
+  })
+  saveWithMedia;
 
   setUp(() {
     writes = 0;
     lastEnabled = null;
     lastAcknowledged = null;
     lastIncludeReceived = null;
+    lastIncludeReceivedMedia = null;
     load = () async => _preference();
     save =
         (
@@ -67,37 +80,68 @@ void main() {
             includeReceived: includeReceived,
           );
         };
+    saveWithMedia =
+        (
+          expected,
+          enabled, {
+          required bool acknowledgeQueuedUploads,
+          bool includeReceived = false,
+          bool includeReceivedMedia = false,
+        }) async {
+          writes++;
+          lastEnabled = enabled;
+          lastAcknowledged = acknowledgeQueuedUploads;
+          lastIncludeReceived = includeReceived;
+          lastIncludeReceivedMedia = includeReceivedMedia;
+          return _preference(
+            enabled: enabled,
+            includeReceived: includeReceived,
+            includeReceivedMedia: includeReceivedMedia,
+          );
+        };
   });
 
-  Widget host({double scale = 1, bool receivedArchiveAvailable = false}) =>
-      MaterialApp(
-        debugShowCheckedModeBanner: false,
-        theme: ThemeData.dark(useMaterial3: true).copyWith(
-          textTheme: ThemeData.dark().textTheme.apply(fontFamily: 'Inter'),
+  Widget host({
+    double scale = 1,
+    bool receivedArchiveAvailable = false,
+    bool receivedMediaArchiveAvailable = false,
+    bool wireMediaCallback = false,
+  }) => MaterialApp(
+    debugShowCheckedModeBanner: false,
+    theme: ThemeData.dark(useMaterial3: true).copyWith(
+      textTheme: ThemeData.dark().textTheme.apply(fontFamily: 'Inter'),
+    ),
+    builder: (context, child) => MediaQuery(
+      data: MediaQuery.of(
+        context,
+      ).copyWith(textScaler: TextScaler.linear(scale)),
+      child: child!,
+    ),
+    home: Scaffold(
+      body: SingleChildScrollView(
+        child: CloudSyncAutomaticArchiveCard(
+          onLoad: load,
+          onChanged: save,
+          receivedArchiveAvailable: receivedArchiveAvailable,
+          receivedMediaArchiveAvailable: receivedMediaArchiveAvailable,
+          onChangedWithMedia: wireMediaCallback ? saveWithMedia : null,
         ),
-        builder: (context, child) => MediaQuery(
-          data: MediaQuery.of(
-            context,
-          ).copyWith(textScaler: TextScaler.linear(scale)),
-          child: child!,
-        ),
-        home: Scaffold(
-          body: SingleChildScrollView(
-            child: CloudSyncAutomaticArchiveCard(
-              onLoad: load,
-              onChanged: save,
-              receivedArchiveAvailable: receivedArchiveAvailable,
-            ),
-          ),
-        ),
-      );
+      ),
+    ),
+  );
 
   Future<void> openEnableDialog(
     WidgetTester tester, {
     bool receivedArchiveAvailable = false,
+    bool receivedMediaArchiveAvailable = false,
+    bool wireMediaCallback = false,
   }) async {
     await tester.pumpWidget(
-      host(receivedArchiveAvailable: receivedArchiveAvailable),
+      host(
+        receivedArchiveAvailable: receivedArchiveAvailable,
+        receivedMediaArchiveAvailable: receivedMediaArchiveAvailable,
+        wireMediaCallback: wireMediaCallback,
+      ),
     );
     await tester.pumpAndSettle();
     await tester.tap(find.byType(Switch));
@@ -109,6 +153,9 @@ void main() {
   );
   final acknowledgmentCheckbox = find.byKey(
     const ValueKey('automaticArchiveQueuedAcknowledgment'),
+  );
+  final receivedMediaCheckbox = find.byKey(
+    const ValueKey('automaticArchiveIncludeReceivedMedia'),
   );
 
   testWidgets('opening loads a preference without side effects', (
@@ -556,14 +603,309 @@ void main() {
   ) async {
     await tester.binding.setSurfaceSize(const Size(320, 700));
     addTearDown(() => tester.binding.setSurfaceSize(null));
-    await tester.pumpWidget(host(scale: 2, receivedArchiveAvailable: true));
+    await tester.pumpWidget(
+      host(
+        scale: 2,
+        receivedArchiveAvailable: true,
+        receivedMediaArchiveAvailable: true,
+        wireMediaCallback: true,
+      ),
+    );
     await tester.pumpAndSettle();
     tester.widget<Switch>(find.byType(Switch)).onChanged!(true);
     await tester.pumpAndSettle();
     expect(receivedCheckbox, findsOneWidget);
+    expect(receivedMediaCheckbox, findsOneWidget);
     expect(tester.takeException(), isNull);
     await tester.tap(find.text('Cancel'));
     await tester.pumpAndSettle();
+  });
+
+  testWidgets(
+    'media selection requires both availability and a capable callback',
+    (tester) async {
+      for (final available in [false, true]) {
+        await openEnableDialog(
+          tester,
+          receivedArchiveAvailable: true,
+          receivedMediaArchiveAvailable: available,
+          wireMediaCallback: !available,
+        );
+        expect(receivedMediaCheckbox, findsNothing);
+        await tester.tap(find.text('Cancel'));
+        await tester.pumpAndSettle();
+        await tester.pumpWidget(const SizedBox.shrink());
+      }
+      expect(writes, 0);
+    },
+  );
+
+  testWidgets('v2 text consent stays text-only when media becomes available', (
+    tester,
+  ) async {
+    load = () async => _preference(enabled: true, includeReceived: true);
+    await tester.pumpWidget(
+      host(
+        receivedArchiveAvailable: true,
+        receivedMediaArchiveAvailable: true,
+        wireMediaCallback: true,
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(writes, 0);
+    expect(
+      find.text('Archive sent messages and supported received text to iCloud'),
+      findsOneWidget,
+    );
+    await tester.tap(find.text('Change archival scope'));
+    await tester.pumpAndSettle();
+    expect(tester.widget<CheckboxListTile>(receivedCheckbox).value, isTrue);
+    expect(
+      tester.widget<CheckboxListTile>(receivedMediaCheckbox).value,
+      isFalse,
+    );
+    expect(
+      tester.widget<CheckboxListTile>(acknowledgmentCheckbox).value,
+      isFalse,
+    );
+    await tester.ensureVisible(acknowledgmentCheckbox);
+    await tester.tap(acknowledgmentCheckbox);
+    await tester.pump();
+    await tester.tap(find.widgetWithText(FilledButton, 'Save archival scope'));
+    await tester.pumpAndSettle();
+    expect(writes, 1);
+    expect(lastIncludeReceived, isTrue);
+    expect(lastIncludeReceivedMedia, isFalse);
+  });
+
+  testWidgets(
+    'explicit media selection requires renewed queued and future acknowledgment',
+    (tester) async {
+      await openEnableDialog(
+        tester,
+        receivedArchiveAvailable: true,
+        receivedMediaArchiveAvailable: true,
+        wireMediaCallback: true,
+      );
+      expect(
+        tester.widget<CheckboxListTile>(receivedMediaCheckbox).value,
+        isFalse,
+      );
+      expect(
+        tester.widget<CheckboxListTile>(receivedMediaCheckbox).onChanged,
+        isNull,
+      );
+      await tester.ensureVisible(receivedCheckbox);
+      await tester.tap(receivedCheckbox);
+      await tester.pump();
+      await tester.ensureVisible(acknowledgmentCheckbox);
+      await tester.tap(acknowledgmentCheckbox);
+      await tester.pump();
+      final button = find.widgetWithText(
+        FilledButton,
+        'Enable automatic archival',
+      );
+      expect(tester.widget<FilledButton>(button).onPressed, isNotNull);
+      await tester.ensureVisible(receivedMediaCheckbox);
+      await tester.tap(receivedMediaCheckbox);
+      await tester.pump();
+      expect(
+        tester.widget<CheckboxListTile>(receivedMediaCheckbox).value,
+        isTrue,
+      );
+      expect(
+        tester.widget<CheckboxListTile>(acknowledgmentCheckbox).value,
+        isFalse,
+      );
+      expect(tester.widget<FilledButton>(button).onPressed, isNull);
+      expect(
+        find.textContaining('queued and future supported received attachments'),
+        findsOneWidget,
+      );
+      expect(
+        find.textContaining('including supported mirrored media'),
+        findsOneWidget,
+      );
+      expect(
+        find.textContaining(
+          'queued uploads and future sends, received text, and received media',
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.textContaining('Only supported received and mirrored attachments'),
+        findsOneWidget,
+      );
+      expect(writes, 0);
+      await tester.ensureVisible(acknowledgmentCheckbox);
+      await tester.tap(acknowledgmentCheckbox);
+      await tester.pump();
+      await tester.tap(button);
+      await tester.pumpAndSettle();
+      expect(writes, 1);
+      expect(lastEnabled, isTrue);
+      expect(lastAcknowledged, isTrue);
+      expect(lastIncludeReceived, isTrue);
+      expect(lastIncludeReceivedMedia, isTrue);
+      expect(
+        find.text(
+          'Archive sent messages and supported received text and media to iCloud',
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.textContaining('already submitted uploads can still be checked'),
+        findsOneWidget,
+      );
+    },
+  );
+
+  testWidgets('canceling media opt-in preserves the saved text grant', (
+    tester,
+  ) async {
+    load = () async => _preference(enabled: true, includeReceived: true);
+    await tester.pumpWidget(
+      host(
+        receivedArchiveAvailable: true,
+        receivedMediaArchiveAvailable: true,
+        wireMediaCallback: true,
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Change archival scope'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(receivedMediaCheckbox);
+    await tester.tap(receivedMediaCheckbox);
+    await tester.pump();
+    await tester.tap(find.text('Cancel'));
+    await tester.pumpAndSettle();
+    expect(writes, 0);
+    expect(tester.widget<Switch>(find.byType(Switch)).value, isTrue);
+    await tester.tap(find.text('Change archival scope'));
+    await tester.pumpAndSettle();
+    expect(
+      tester.widget<CheckboxListTile>(receivedMediaCheckbox).value,
+      isFalse,
+    );
+    expect(
+      tester.widget<CheckboxListTile>(acknowledgmentCheckbox).value,
+      isFalse,
+    );
+    await tester.tap(find.text('Cancel'));
+    await tester.pumpAndSettle();
+  });
+
+  testWidgets('removing text also clears media and acknowledgment', (
+    tester,
+  ) async {
+    load = () async => _preference(
+      enabled: true,
+      includeReceived: true,
+      includeReceivedMedia: true,
+    );
+    await tester.pumpWidget(
+      host(
+        receivedArchiveAvailable: true,
+        receivedMediaArchiveAvailable: true,
+        wireMediaCallback: true,
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Change archival scope'));
+    await tester.pumpAndSettle();
+    expect(
+      tester.widget<CheckboxListTile>(receivedMediaCheckbox).value,
+      isTrue,
+    );
+    await tester.ensureVisible(acknowledgmentCheckbox);
+    await tester.tap(acknowledgmentCheckbox);
+    await tester.pump();
+    await tester.ensureVisible(receivedCheckbox);
+    await tester.tap(receivedCheckbox);
+    await tester.pump();
+    expect(
+      tester.widget<CheckboxListTile>(receivedMediaCheckbox).value,
+      isFalse,
+    );
+    expect(
+      tester.widget<CheckboxListTile>(receivedMediaCheckbox).onChanged,
+      isNull,
+    );
+    expect(
+      tester.widget<CheckboxListTile>(acknowledgmentCheckbox).value,
+      isFalse,
+    );
+    expect(
+      tester
+          .widget<FilledButton>(
+            find.widgetWithText(FilledButton, 'Save archival scope'),
+          )
+          .onPressed,
+      isNull,
+    );
+    await tester.tap(find.text('Cancel'));
+    await tester.pumpAndSettle();
+    expect(writes, 0);
+  });
+
+  testWidgets(
+    'unavailable media preserves v3 scope without silently narrowing it',
+    (tester) async {
+      load = () async => _preference(
+        enabled: true,
+        includeReceived: true,
+        includeReceivedMedia: true,
+      );
+      await tester.pumpWidget(host(receivedArchiveAvailable: true));
+      await tester.pumpAndSettle();
+      expect(tester.widget<Switch>(find.byType(Switch)).value, isTrue);
+      expect(
+        find.textContaining(
+          'Supported received and mirrored media archival is unavailable',
+        ),
+        findsOneWidget,
+      );
+      expect(find.text('Change archival scope'), findsNothing);
+      expect(receivedMediaCheckbox, findsNothing);
+      expect(
+        find.textContaining('Attachments, replies, reactions, edits'),
+        findsNothing,
+      );
+      expect(writes, 0);
+      await tester.tap(find.byType(Switch));
+      await tester.pumpAndSettle();
+      expect(writes, 1);
+      expect(lastEnabled, isFalse);
+      expect(lastAcknowledged, isFalse);
+      expect(tester.widget<Switch>(find.byType(Switch)).value, isFalse);
+    },
+  );
+
+  testWidgets('media revocation needs no dialog or new acknowledgment', (
+    tester,
+  ) async {
+    load = () async => _preference(
+      enabled: true,
+      includeReceived: true,
+      includeReceivedMedia: true,
+    );
+    await tester.pumpWidget(
+      host(
+        receivedArchiveAvailable: true,
+        receivedMediaArchiveAvailable: true,
+        wireMediaCallback: true,
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byType(Switch));
+    await tester.pumpAndSettle();
+    expect(find.byType(AlertDialog), findsNothing);
+    expect(writes, 1);
+    expect(lastEnabled, isFalse);
+    expect(lastAcknowledged, isFalse);
+    expect(lastIncludeReceived, isFalse);
+    expect(lastIncludeReceivedMedia, isFalse);
+    expect(tester.widget<Switch>(find.byType(Switch)).value, isFalse);
   });
 
   testWidgets('narrow large text stays legible without overflow', (

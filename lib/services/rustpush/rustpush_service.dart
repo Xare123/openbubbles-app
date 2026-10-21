@@ -8634,6 +8634,7 @@ class RustPushService extends GetxService {
     bool enabled, {
     required bool acknowledgeQueuedUploads,
     bool includeReceived = false,
+    bool includeReceivedMedia = false,
   }) async {
     if (!cloudSyncV2AutomaticArchiveVisible || !ls.isUiThread || mcs.background ||
         ls.currentState != AppLifecycleState.resumed ||
@@ -8646,6 +8647,7 @@ class RustPushService extends GetxService {
     final operation = _cloudSyncV2AutomaticArchivePreferences().setEnabled(
       expected, enabled, acknowledgeQueuedUploads: acknowledgeQueuedUploads,
       includeReceived: includeReceived,
+      includeReceivedMedia: includeReceivedMedia,
     );
     _cloudSyncV2AutomaticArchiveSetting = operation;
     try {
@@ -8765,6 +8767,8 @@ class RustPushService extends GetxService {
         automaticArchiveIdentity: consent.identity,
         receivedArchiveAllowed: () => stillCurrent() &&
             cloudSyncV2ReceivedArchiveAvailable && preferences.isReceivedGranted(consent),
+        receivedMediaArchiveAllowed: () => stillCurrent() &&
+            cloudSyncV2ReceivedArchiveAvailable && preferences.isReceivedMediaGranted(consent),
         shouldYield: () => _cloudSyncV2AttachmentGate.hasWaitingWork,
       );
       _cloudSyncV2LocalSendRuntime = CloudSyncLocalSendRuntime(
@@ -9389,7 +9393,8 @@ class RustPushService extends GetxService {
       final currentOwner = authority.read(CloudKitWriterScope(
           accountFingerprint: captured.accountFingerprint));
       return currentOwner != null && currentOwner.owner == CloudKitWriterOwner.v2 &&
-          consent.permitsReceivedCapture(
+          ((shape as CloudSyncReceivedArchiveEligible).identity.hasMedia
+              ? consent.permitsReceivedMediaCapture : consent.permitsReceivedCapture)(
             accountFingerprint: captured.accountFingerprint,
             protectedStoreIdentity: captured.protectedStoreIdentity,
             ownershipEpoch: currentOwner.automaticArchiveEpoch,

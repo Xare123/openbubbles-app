@@ -1595,6 +1595,19 @@ void main() {
       receivedArchiveJournal: journal, pauseUnsubmittedReceivedCreates: pause,
       clock: () => _time(4));
 
+    test('text-only received grant is not paused by missing media consent', () async {
+      await seedOrigin();
+      final operation = admit();
+      final textOnly = ObjectBoxCloudSyncStore(store: store, protector: _ReceivedTestProtector(),
+        receivedArchiveJournal: journal, pauseUnsubmittedReceivedCreates: () => false,
+        pauseUnsubmittedReceivedMediaCreates: () => true, clock: () => _time(4));
+      expect(textOnly.isPausedUnsubmittedReceivedCreate(operation), isFalse);
+      final leased = await textOnly.leaseEligibleOutbox(scope, now: _time(5), limit: 1,
+        leaseId: 'text-scope', leaseDuration: const Duration(minutes: 1),
+        allowedActions: const {CloudOutboxAction.save});
+      expect(leased.single.operationId, operation.operationId);
+    });
+
     test('sent-only grant pauses exact unsubmitted received create without erasing it', () async {
       await seedOrigin();
       final operation = admit();

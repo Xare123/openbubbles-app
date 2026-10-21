@@ -8,6 +8,8 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_operation_identit
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_attachment_plan_coordinator.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_attachment_upload_journal.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_attachment_upload_executor.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_attachment_upload_adapters.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_send_recovery.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_historical_archive_journal.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_historical_parent_binding.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_historical_protected_source_binding.dart';
@@ -17,12 +19,14 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_models.dart'
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_outbound_staging.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_persistent_keys.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_protector.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_production_sampler_adapter.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_received_archive_identity.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_received_archive_journal.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_received_archive_source_binding.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_received_record_observation.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_operation_interlock.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_writer_authority.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_writer_mutation_guard.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_writer_ownership.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/in_memory_cloud_sync_store.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/objectbox_cloud_sync_store.dart';
@@ -522,6 +526,343 @@ void main() {
       expect(() => f.prepare(), throwsStateError);
       expect(f.store.box<CloudAttachmentUploadEntity>().count(), 1);
       expect(f.store.box<CloudOutboxOperationEntity>().count(), 0);
+    },
+  );
+
+  test(
+    'real received byte guard schedules and reconciles without losing its origin',
+    () async {
+      final auth = _auth();
+      final prepared = f.prepare();
+      f.begin(prepared.id);
+      final originalEpoch = f.upload(prepared.id).writerEpoch;
+      final originalSource = f.source.encode();
+      final originalBinding = f.uploads.reconciliationReceivedBindingSha256(
+        prepared.id,
+        f.received,
+      );
+      final native = _ReceivedReceiptBinding();
+      final guard = CloudKitWriterMutationGuard.forTest(
+        store: f.store,
+        readActiveClient: () => auth.cloudMessagesClient,
+        privateStorageDirectory: f.directory.path,
+        nativeAuthBinding: native,
+        reconciliationBinding: native,
+        buildDecision: CloudKitWriterOwnership.resolve('v2'),
+      );
+      final interlock = CloudKitOperationInterlock(
+        privateStorageDirectory: f.directory.path,
+        fenceStore: InMemoryCloudSyncStore(),
+      );
+      Future<T> run<T>(Future<T> Function() action) => interlock.runExclusive(
+        kind: CloudKitOperationKind.v2ReadWrite,
+        action: action,
+      );
+      await expectLater(
+        run(
+          () => guard.runAuthorized<void>(
+            owner: CloudKitWriterOwner.v2,
+            expectedClient: auth.cloudMessagesClient,
+            expectedAccountFingerprint: _account,
+            preparedHandleBindingSha256: 'f' * 64,
+            reconciliationBindingSha256: originalBinding,
+            requireAdmission: () {},
+            requireDurableAdmission: () async {},
+            action: (capability) async {
+              capability.consumeForNative();
+              throw StateError('synthetic_received_response_lost');
+            },
+          ),
+        ),
+        throwsA(isA<CloudKitWriterAuthorityFailure>()),
+      );
+      expect(f.authority.read(_writerScope())!.epoch, originalEpoch + 1);
+      expect(
+        await run(
+          () => guard.canSchedulePendingAttachmentUploadRecovery(
+            expectedClient: auth.cloudMessagesClient,
+            uploads: f.uploads,
+            uploadId: prepared.id,
+            expectedEpoch: originalEpoch,
+            receivedJournal: f.received,
+          ),
+        ),
+        isTrue,
+      );
+      expect(
+        await run(
+          () => guard.reconcilePendingAttachmentUpload(
+            expectedClient: auth.cloudMessagesClient,
+            uploads: f.uploads,
+            receivedJournal: f.received,
+          ),
+        ),
+        isTrue,
+      );
+      expect(f.authority.read(_writerScope())!.epoch, originalEpoch + 2);
+      expect(
+        f.uploads.readReceivedOriginalSource(prepared.id, f.received).encode(),
+        originalSource,
+      );
+      f.record(prepared.id);
+      // Receipt-only access never renews this pass's permission to create.
+      expect(() => f.admit(prepared.id), throwsStateError);
+      await f.reopen();
+      f.record(prepared.id);
+      f.admit(prepared.id);
+      expect(f.upload(prepared.id).writerEpoch, originalEpoch);
+      expect(f.upload(prepared.id).attemptId, _attempt);
+      expect(
+        f.uploads.reconciliationReceivedBindingSha256(prepared.id, f.received),
+        originalBinding,
+      );
+      expect(native.calls, 1);
+      expect(f.intent.protectedSourceBinding, originalSource);
+      expect(f.store.box<CloudSyncLocalSendIntentEntity>().count(), 0);
+    },
+  );
+
+  test(
+    'real received executor loses one response then reuses the original receipt after restart',
+    () async {
+      final auth = _auth();
+      final plan = f.prepare();
+      final epoch = f.intent.writerEpoch;
+      final source = f.source.encode();
+      final native = _ReceivedReceiptBinding()
+        ..completedPayloadSha256 = f.result('L').payloadSha256;
+      final bridge = _ExecutorBridge(f.result('L'))..unknown = true;
+      final staging = _ReceivedPlanStaging();
+      CloudKitWriterMutationGuard guard() =>
+          CloudKitWriterMutationGuard.forTest(
+            store: f.store,
+            readActiveClient: () => auth.cloudMessagesClient,
+            privateStorageDirectory: f.directory.path,
+            nativeAuthBinding: native,
+            reconciliationBinding: native,
+            buildDecision: CloudKitWriterOwnership.resolve('v2'),
+          );
+      Future<T> run<T>(Future<T> Function() action) =>
+          CloudKitOperationInterlock(
+            privateStorageDirectory: f.directory.path,
+            fenceStore: InMemoryCloudSyncStore(),
+          ).runExclusive(
+            kind: CloudKitOperationKind.v2ReadWrite,
+            action: action,
+          );
+      CloudSyncAttachmentUploadExecutor executor(
+        CloudKitWriterMutationGuard owner,
+      ) => CloudSyncAttachmentUploadExecutor(
+        uploads: f.uploads,
+        receivedJournal: f.received,
+        readLiveAuth: () async => auth,
+        mutationGate: GuardedCloudSyncAttachmentUploadMutationGate(
+          owner,
+          receivedJournal: f.received,
+        ),
+        bridge: bridge,
+        staging: staging,
+        completedAdmitter: ObjectBoxCloudSyncCompletedUploadAdmitter(
+          ObjectBoxCloudSyncStore(store: f.store, protector: _TestProtector(),
+            localSendJournal: f.localSends, receivedArchiveJournal: f.received,
+            attachmentUploadJournal: f.uploads), receivedJournal: f.received),
+        privateStorageDirectory: f.directory.path,
+        clock: () => _now,
+      );
+      final firstGuard = guard();
+      final first = await run(
+        () => executor(firstGuard).execute(
+          CloudSyncAttachmentUploadExecutionInput(
+            uploadId: plan.id,
+            originalAttachmentGuid: 'received-upload-incoming_1',
+            sourcePath: '/synthetic/photo.jpg',
+            requestTimeoutSeconds: BigInt.from(60),
+          ),
+        ),
+      );
+      expect(first.status, CloudAttachmentUploadExecutionStatus.unknownOutcome);
+      expect(f.upload(plan.id).state, CloudAttachmentUploadState.unknown.index);
+      expect(
+        await run(
+          () => firstGuard.canSchedulePendingAttachmentUploadRecovery(
+            expectedClient: auth.cloudMessagesClient,
+            uploads: f.uploads,
+            uploadId: plan.id,
+            expectedEpoch: epoch,
+            receivedJournal: f.received,
+          ),
+        ),
+        isTrue,
+      );
+      await f.reopen();
+      final recovery = guard();
+      await expectLater(
+        run(
+          () => recoverCloudSyncLocalSendUploadFence(
+            recoverProtectedStore: () async {},
+            reconcileUpload: () => recovery.reconcilePendingAttachmentUpload(
+              expectedClient: auth.cloudMessagesClient,
+              uploads: f.uploads,
+              receivedJournal: f.received,
+            ),
+          ),
+        ),
+        throwsA(isA<CloudSyncLocalSendRecoveredEpoch>()),
+      );
+      f.bind(); // New pass/current permit after native receipt resolution.
+      final completed = await run(
+        () => executor(guard()).execute(
+          CloudSyncAttachmentUploadExecutionInput(
+            uploadId: plan.id,
+            originalAttachmentGuid: '',
+            sourcePath: '',
+            requestTimeoutSeconds: BigInt.from(60),
+          ),
+        ),
+      );
+      expect(
+        completed.status,
+        CloudAttachmentUploadExecutionStatus.recoveredAndCompleted,
+      );
+      expect(bridge.receivedPrepares, 1);
+      expect(bridge.consumes, 1);
+      expect(bridge.receivedRecoveries, 1);
+      expect(f.upload(plan.id).writerEpoch, epoch);
+      expect(f.upload(plan.id).attemptId, _attempt);
+      expect(f.intent.protectedSourceBinding, source);
+      expect(f.authority.read(_writerScope())!.epoch, epoch + 2);
+    },
+  );
+
+  for (final scenario in [
+    'missing',
+    'wrongAttempt',
+    'sourceDrift',
+    'accountDrift',
+  ]) {
+    test(
+      'real received guard retains unresolved evidence: $scenario',
+      () async {
+        final auth = _auth();
+        final plan = f.prepare();
+        f.begin(plan.id);
+        final native = _ReceivedReceiptBinding();
+        final guard = CloudKitWriterMutationGuard.forTest(
+          store: f.store,
+          readActiveClient: () => auth.cloudMessagesClient,
+          privateStorageDirectory: f.directory.path,
+          nativeAuthBinding: native,
+          reconciliationBinding: native,
+          buildDecision: CloudKitWriterOwnership.resolve('v2'),
+        );
+        Future<T> run<T>(Future<T> Function() action) =>
+            CloudKitOperationInterlock(
+              privateStorageDirectory: f.directory.path,
+              fenceStore: InMemoryCloudSyncStore(),
+            ).runExclusive(
+              kind: CloudKitOperationKind.v2ReadWrite,
+              action: action,
+            );
+        await expectLater(
+          run(
+            () => guard.runAuthorized<void>(
+              owner: CloudKitWriterOwner.v2,
+              expectedClient: auth.cloudMessagesClient,
+              expectedAccountFingerprint: _account,
+              preparedHandleBindingSha256: 'f' * 64,
+              reconciliationBindingSha256: f.uploads
+                  .reconciliationReceivedBindingSha256(plan.id, f.received),
+              requireAdmission: () {},
+              requireDurableAdmission: () async {},
+              action: (_) async => throw StateError('synthetic_lost_response'),
+            ),
+          ),
+          throwsA(isA<CloudKitWriterAuthorityFailure>()),
+        );
+        final fence = File(
+          '${f.directory.path}/.openbubbles-cloudkit-writer-mutation-v1.fence',
+        );
+        final encodedFence = fence.readAsStringSync();
+        native.missing = scenario == 'missing';
+        native.wrongAttempt = scenario == 'wrongAttempt';
+        native.onVerify = () {
+          if (scenario == 'accountDrift') native.account = 'B' * 43;
+          if (scenario == 'sourceDrift') {
+            f.store.box<CloudSyncReceivedArchiveIntentEntity>().put(
+              f.intent
+                ..protectedSourceBinding = f
+                    .replacementSource(reference: 'Y')
+                    .encode(),
+            );
+          }
+        };
+        final recovery = run(
+          () => guard.reconcilePendingAttachmentUpload(
+            expectedClient: auth.cloudMessagesClient,
+            uploads: f.uploads,
+            receivedJournal: f.received,
+          ),
+        );
+        if (scenario == 'missing') {
+          expect(await recovery, isFalse);
+        } else {
+          await expectLater(
+            recovery,
+            throwsA(
+              anyOf(isA<StateError>(), isA<CloudKitWriterAuthorityFailure>()),
+            ),
+          );
+        }
+        expect(native.calls, 1);
+        expect(fence.readAsStringSync(), encodedFence);
+        expect(
+          f.authority.read(_writerScope())!.state,
+          CloudKitWriterAuthorityState.mutationUnknown,
+        );
+        expect(f.upload(plan.id).attemptId, _attempt);
+        expect(
+          f.upload(plan.id).state,
+          CloudAttachmentUploadState.started.index,
+        );
+        expect(f.store.box<CloudOutboxOperationEntity>().count(), 0);
+      },
+    );
+  }
+
+  test(
+    'retained media resumes sibling plans only in the same proven ownership lineage',
+    () async {
+      final first = f.complete();
+      final originalEpoch = f.intent.writerEpoch;
+      final source = f.source.encode();
+      await f.enterUnknown();
+      await f.reconcile(originalEpoch);
+      expect(
+        f.received.readCreateCandidates(currentAuth: _auth()).single.intentId,
+        f.intentId,
+      );
+      f.admit(first.id);
+      f.confirm(first.id);
+      final sibling = f.prepare(marker: 'Q');
+      f.begin(sibling.id, attempt: _otherAttempt);
+      expect(f.upload(sibling.id).writerEpoch, originalEpoch);
+      expect(f.intent.protectedSourceBinding, source);
+      // A new/reset ownership lineage at a larger epoch must not inherit it.
+      final owners = f.store.box<CloudKitWriterAuthorityEntity>();
+      final row = owners.getAll().single;
+      row
+        ..epoch += 2
+        ..ownershipEpoch = row.epoch;
+      owners.put(row);
+      f.bind();
+      expect(f.received.readCreateCandidates(currentAuth: _auth()), isEmpty);
+      expect(
+        () => f.uploads.readReceived(sibling.id, f.received),
+        throwsStateError,
+      );
+      expect(() => f.begin(sibling.id), throwsStateError);
+      expect(f.upload(sibling.id).attemptId, _otherAttempt);
+      expect(f.intent.protectedSourceBinding, source);
     },
   );
 
@@ -1148,111 +1489,154 @@ void main() {
     }
   });
 
-  test(
-    'received child pause skips pristine create, never its exact unknown readback',
-    () async {
-      final uploaded = f.complete();
-      f.admit(uploaded.id);
-      final operation = f.operation(uploaded.id);
-      final sourceBytes = f.source.encode();
-      bool paused = true;
-      final durable = ObjectBoxCloudSyncStore(
-        store: f.store,
-        protector: _TestProtector(),
-        clock: () => _now,
-        localSendJournal: f.localSends,
-        receivedArchiveJournal: f.received,
-        attachmentUploadJournal: f.uploads,
-        pauseUnsubmittedReceivedCreates: () => paused,
-      );
-      expect(durable.isPausedUnsubmittedReceivedCreate(operation), isTrue);
-      final preflight = ObjectBoxCloudSyncPreflightReader(
-        store: f.store,
-        localSendJournal: f.localSends,
-        now: () => _now,
-        isPausedReceivedAttachmentCreate: (id) =>
-            id == operation.operationId &&
-            durable.isPausedUnsubmittedReceivedCreate(operation),
-      ).read();
-      expect(preflight.outboxCount, 1);
-      expect(preflight.settledOutboxFingerprint, isNotNull);
-      expect(
-        await durable.leaseEligibleOutbox(
+  for (final mediaOnly in [false, true]) {
+    test(
+      'received child pause skips pristine create, never its exact unknown readback, mediaOnly=$mediaOnly',
+      () async {
+        final uploaded = f.complete();
+        f.admit(uploaded.id);
+        final operation = f.operation(uploaded.id);
+        final sourceBytes = f.source.encode();
+        bool paused = true;
+        final durable = ObjectBoxCloudSyncStore(
+          store: f.store,
+          protector: _TestProtector(),
+          clock: () => _now,
+          localSendJournal: f.localSends,
+          receivedArchiveJournal: f.received,
+          attachmentUploadJournal: f.uploads,
+          pauseUnsubmittedReceivedCreates: () => paused && !mediaOnly,
+          pauseUnsubmittedReceivedMediaCreates: () => paused && mediaOnly,
+        );
+        expect(durable.isPausedUnsubmittedReceivedCreate(operation), isTrue);
+        final preflight = ObjectBoxCloudSyncPreflightReader(
+          store: f.store,
+          localSendJournal: f.localSends,
+          now: () => _now,
+          isPausedReceivedAttachmentCreate: (id) =>
+              id == operation.operationId &&
+              durable.isPausedUnsubmittedReceivedCreate(operation),
+        ).read();
+        expect(preflight.outboxCount, 1);
+        expect(preflight.settledOutboxFingerprint, isNotNull);
+        expect(
+          await durable.leaseEligibleOutbox(
+            f.uploadScope,
+            now: _now,
+            limit: 1,
+            leaseId: 'paused-child',
+            leaseDuration: const Duration(minutes: 1),
+            allowedActions: const {CloudOutboxAction.save},
+          ),
+          isEmpty,
+        );
+        expect(f.outbox(uploaded.id).state, CloudOutboxStatus.pending.index);
+        expect(f.outbox(uploaded.id).leaseIdHash, isNull);
+        expect(
+          (await durable.readOutboxEntries(
+            f.uploadScope,
+          )).single.sameDurableSnapshotAs(operation),
+          isTrue,
+        );
+
+        paused = false;
+        expect(durable.isPausedUnsubmittedReceivedCreate(operation), isFalse);
+        final leased = await durable.leaseEligibleOutbox(
           f.uploadScope,
           now: _now,
           limit: 1,
-          leaseId: 'paused-child',
+          leaseId: 'entered-child',
           leaseDuration: const Duration(minutes: 1),
           allowedActions: const {CloudOutboxAction.save},
-        ),
-        isEmpty,
-      );
-      expect(f.outbox(uploaded.id).state, CloudOutboxStatus.pending.index);
-      expect(f.outbox(uploaded.id).leaseIdHash, isNull);
-      expect(
-        (await durable.readOutboxEntries(
+        );
+        expect(leased.single.operationId, operation.operationId);
+        final entered = (await durable.markOutboxSubmissionStarted(
           f.uploadScope,
-        )).single.sameDurableSnapshotAs(operation),
-        isTrue,
-      );
-
-      paused = false;
-      expect(durable.isPausedUnsubmittedReceivedCreate(operation), isFalse);
-      final leased = await durable.leaseEligibleOutbox(
-        f.uploadScope,
-        now: _now,
-        limit: 1,
-        leaseId: 'entered-child',
-        leaseDuration: const Duration(minutes: 1),
-        allowedActions: const {CloudOutboxAction.save},
-      );
-      expect(leased.single.operationId, operation.operationId);
-      final entered = (await durable.markOutboxSubmissionStarted(
-        f.uploadScope,
-        leaseId: 'entered-child',
-        submissionIdentity: testSubmissionIdentity([operation.operationId]),
-        now: _now.add(const Duration(seconds: 1)),
-      )).single;
-      expect(entered.status, CloudOutboxStatus.unknownOutcome);
-      paused = true;
-      final unknown = (await durable.readOutboxEntries(f.uploadScope)).single;
-      expect(durable.isPausedUnsubmittedReceivedCreate(unknown), isFalse);
-      expect(
-        f.uploads.readReceivedAdoptedSource(unknown, f.received).encode(),
-        sourceBytes,
-      );
-      final retryAt = _now.add(const Duration(minutes: 2));
-      expect(
-        await durable.leaseEligibleOutbox(
+          leaseId: 'entered-child',
+          submissionIdentity: testSubmissionIdentity([operation.operationId]),
+          now: _now.add(const Duration(seconds: 1)),
+        )).single;
+        expect(entered.status, CloudOutboxStatus.unknownOutcome);
+        paused = true;
+        final unknown = (await durable.readOutboxEntries(f.uploadScope)).single;
+        expect(durable.isPausedUnsubmittedReceivedCreate(unknown), isFalse);
+        expect(
+          f.uploads.readReceivedAdoptedSource(unknown, f.received).encode(),
+          sourceBytes,
+        );
+        final retryAt = _now.add(const Duration(minutes: 2));
+        expect(
+          await durable.leaseEligibleOutbox(
+            f.uploadScope,
+            now: retryAt,
+            limit: 1,
+            leaseId: 'still-paused-child',
+            leaseDuration: const Duration(minutes: 1),
+            allowedActions: const {CloudOutboxAction.save},
+          ),
+          isEmpty,
+        );
+        final readback = (await durable.leaseUnknownOutcomes(
           f.uploadScope,
           now: retryAt,
           limit: 1,
-          leaseId: 'still-paused-child',
+          leaseId: 'same-child-readback',
           leaseDuration: const Duration(minutes: 1),
-          allowedActions: const {CloudOutboxAction.save},
-        ),
-        isEmpty,
-      );
-      final readback = (await durable.leaseUnknownOutcomes(
-        f.uploadScope,
-        now: retryAt,
-        limit: 1,
-        leaseId: 'same-child-readback',
-        leaseDuration: const Duration(minutes: 1),
-        allowedPayloadVersions: const {1},
-      )).single;
-      expect(readback.status, CloudOutboxStatus.unknownOutcome);
-      expect(readback.operationId, entered.operationId);
-      expect(readback.appleRequestUuid, entered.appleRequestUuid);
-      expect(readback.appleOperationUuid, entered.appleOperationUuid);
-      expect(readback.payloadSha256, entered.payloadSha256);
-      expect(readback.protectedLeaseReference, entered.protectedLeaseReference);
-      expect(f.upload(uploaded.id).admittedOperationId, operation.operationId);
-      expect(f.intent.protectedSourceBinding, sourceBytes);
-      expect(f.store.box<CloudOutboxOperationEntity>().count(), 1);
-      expect(f.store.box<CloudSyncLocalSendIntentEntity>().count(), 0);
-    },
-  );
+          allowedPayloadVersions: const {1},
+        )).single;
+        expect(readback.status, CloudOutboxStatus.unknownOutcome);
+        expect(readback.operationId, entered.operationId);
+        expect(readback.appleRequestUuid, entered.appleRequestUuid);
+        expect(readback.appleOperationUuid, entered.appleOperationUuid);
+        expect(readback.payloadSha256, entered.payloadSha256);
+        expect(
+          readback.protectedLeaseReference,
+          entered.protectedLeaseReference,
+        );
+        expect(
+          f.upload(uploaded.id).admittedOperationId,
+          operation.operationId,
+        );
+        expect(f.intent.protectedSourceBinding, sourceBytes);
+        expect(f.store.box<CloudOutboxOperationEntity>().count(), 1);
+        expect(f.store.box<CloudSyncLocalSendIntentEntity>().count(), 0);
+      },
+    );
+  }
+
+  test('revoked media consent retains the uploaded receipt before durable child admission', () {
+    final uploaded = f.complete();
+    var mediaPaused = true;
+    final durable = ObjectBoxCloudSyncStore(store: f.store, protector: _TestProtector(),
+      localSendJournal: f.localSends, receivedArchiveJournal: f.received,
+      attachmentUploadJournal: f.uploads, pauseUnsubmittedReceivedCreates: () => false,
+      pauseUnsubmittedReceivedMediaCreates: () => mediaPaused, clock: () => _now);
+    CloudAttachmentUploadSnapshot admit() => durable.admitCompletedAttachmentUpload(
+      scope: f.uploadScope, uploads: f.uploads, uploadId: uploaded.id,
+      createdAt: _now, receivedJournal: f.received);
+    expect(admit, throwsStateError);
+    expect(f.upload(uploaded.id).state, CloudAttachmentUploadState.uploaded.index);
+    expect(f.store.box<CloudOutboxOperationEntity>().count(), 0);
+    mediaPaused = false;
+    final admitted = admit();
+    expect(admitted.state, CloudAttachmentUploadState.adopted);
+    final operation = durable.readReceivedAttachmentOperation(f.uploadScope, admitted.admittedOperationId!, f.received)!;
+    expect(operation.mutationRevision, greaterThan(0));
+    expect(() => f.uploads.readReceivedAdoptedSource(
+      CloudOutboxOperation(scope: operation.scope, operationId: operation.operationId,
+        logicalEntityKeyHash: operation.logicalEntityKeyHash, action: operation.action,
+        payloadVersion: operation.payloadVersion, mutationRevision: operation.mutationRevision + 1,
+        checkpointGeneration: operation.checkpointGeneration,
+        dependencyOperationIds: operation.dependencyOperationIds, createdAt: operation.createdAt,
+        encryptedPayloadReference: operation.encryptedPayloadReference,
+        payloadSha256: operation.payloadSha256, serverRecordIdHash: operation.serverRecordIdHash,
+        protectedLeaseReference: operation.protectedLeaseReference), f.received), throwsStateError);
+    mediaPaused = true;
+    expect(durable.isPausedUnsubmittedReceivedCreate(operation), isTrue);
+    expect(admit().admittedOperationId, admitted.admittedOperationId);
+    expect(f.upload(uploaded.id).attemptId, _attempt);
+    expect(f.store.box<CloudOutboxOperationEntity>().count(), 1);
+  });
 
   CloudSyncAttachmentUploadExecutor executor(
     _ExecutorBridge bridge,
@@ -1293,12 +1677,14 @@ void main() {
         source.createdAtMs,
         isUtc: true,
       );
+      var mediaPaused = false;
       ObjectBoxCloudSyncStore durable() => ObjectBoxCloudSyncStore(
         store: f.store,
         protector: _TestProtector(),
         localSendJournal: f.localSends,
         receivedArchiveJournal: f.received,
         attachmentUploadJournal: f.uploads,
+        pauseUnsubmittedReceivedMediaCreates: () => mediaPaused,
       );
       CloudOutboxOperation admit(String? children) =>
           durable().admitProtectedReceivedCreate(
@@ -1329,6 +1715,36 @@ void main() {
           );
       expect(() => admit(null), throwsStateError);
       final operation = admit(proof);
+      mediaPaused = true;
+      expect(durable().isPausedUnsubmittedReceivedCreate(operation), isTrue);
+      expect(
+        durable().readReceivedArchiveOperation(scope, operation.operationId),
+        isNotNull,
+      );
+      expect(
+        await durable().leaseEligibleOutbox(
+          scope,
+          now: now,
+          limit: 1,
+          leaseId: 'media-scope-held',
+          leaseDuration: const Duration(minutes: 1),
+          allowedActions: const {CloudOutboxAction.save},
+        ),
+        isEmpty,
+      );
+      expect(
+        ObjectBoxCloudSyncPreflightReader(
+          store: f.store,
+          isPausedReceivedMessageCreate: (id) {
+            final current = durable().readReceivedArchiveOperation(scope, id);
+            return current != null &&
+                durable().isPausedUnsubmittedReceivedCreate(current);
+          },
+        ).read().settledOutboxFingerprint,
+        isNotNull,
+      );
+      mediaPaused = false;
+      expect(durable().isPausedUnsubmittedReceivedCreate(operation), isFalse);
       expect(
         f.received
             .readAdoptedSource(transactionStore: f.store, operation: operation)!
@@ -1482,6 +1898,7 @@ final class _ExecutorBridge implements CloudSyncReceivedAttachmentUploadBridge {
   _ExecutorBridge(this.result);
   final CloudSyncProtectedOutboundStageData result;
   int receivedPrepares = 0, receivedRecoveries = 0, consumes = 0, disposals = 0;
+  bool unknown = false;
   api.CloudSyncNativeReceivedArchiveSourceBinding? seenSource;
   @override
   Future<CloudSyncPreparedUpload> prepareReceived({
@@ -1525,8 +1942,10 @@ final class _ExecutorPrepared implements CloudSyncPreparedUpload {
     bridge.consumes++;
     return api.CloudSyncAttachmentUploadConsumeResult(
       uploadAttemptId: _attempt,
-      disposition: api.CloudSyncOutboundSaveDisposition.succeeded,
-      stage: _nativeStage(bridge.result),
+      disposition: bridge.unknown
+          ? api.CloudSyncOutboundSaveDisposition.unknownOutcome
+          : api.CloudSyncOutboundSaveDisposition.succeeded,
+      stage: bridge.unknown ? null : _nativeStage(bridge.result),
     );
   }
 
@@ -1574,6 +1993,50 @@ final class _ExecutorAdmitter implements CloudSyncCompletedUploadAdmitter {
     required int uploadId,
     required DateTime createdAt,
   }) => fixture.admit(uploadId);
+}
+
+final class _ReceivedReceiptBinding
+    implements
+        CloudSyncNativeAuthBinding,
+        CloudKitWriterReceivedUploadReconciliationBinding {
+  int calls = 0;
+  String completedPayloadSha256 = 'e' * 64;
+  String account = _account;
+  bool missing = false, wrongAttempt = false;
+  void Function()? onVerify;
+  @override
+  Future<CloudSyncNativeAuthMetadata> capture({
+    required Object cloudMessagesClient,
+    required String privateStorageDirectory,
+  }) async => CloudSyncNativeAuthMetadata(
+    nativeSessionId: 'synthetic-received-upload-session',
+    accountFingerprint: account,
+    protectedStoreIdentity: _storeId,
+  );
+  @override
+  Future<api.CloudSyncAttachmentUploadReceiptEvidence?>
+  verifyReceivedAttachmentUploadReceipt({
+    required Object cloudMessagesClient,
+    required api.CloudSyncReceivedAttachmentContext context,
+    required api.CloudSyncAttachmentUploadPlanReference planStage,
+    required String expectedAttemptId,
+  }) async {
+    calls++;
+    expect(context.expectedAuth.accountFingerprint, _account);
+    onVerify?.call();
+    if (missing) return null;
+    return api.CloudSyncAttachmentUploadReceiptEvidence(
+      uploadAttemptId: wrongAttempt ? _otherAttempt : expectedAttemptId,
+      planPayloadSha256: planStage.payloadSha256,
+      logicalEntityKeyHash: planStage.logicalEntityKeyHash,
+      serverRecordIdHash: planStage.serverRecordIdHash,
+      completedPayloadSha256: completedPayloadSha256,
+    );
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) =>
+      throw StateError('unexpected_native_operation');
 }
 
 final class _Fixture {

@@ -56,6 +56,7 @@ Future<CloudSyncLocalSendConsumerResult> runCloudSyncLocalSendRecoveryPass({
           const {
             'cloud_sync_local_send_identity_changed',
             'cloud_sync_local_send_owner_changed',
+            'cloud_sync_received_archive_owner_changed',
           }.contains(failure.message));
   // A newly ambiguous byte upload keeps its E fence and unknown E+1 owner.
   // Only the guard's exact pass-local proof may schedule a receipt-first NEXT

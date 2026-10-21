@@ -63,10 +63,15 @@ final class CloudSyncAutomaticArchivePreference {
   /// switch would require per-source admission AND dispatch proof.
   bool get enabled => _enabledVersion != null;
 
-  /// Sent-only grants never inherit received-message consent.
-  bool get includesReceived => _enabledVersion == 2;
+  /// Received text, including supported mirrored plain text. V1 remains
+  /// sent-only; a V2 text grant never inherits received-media consent.
+  bool get includesReceived => _enabledVersion == 2 || _enabledVersion == 3;
 
-  /// Local source retention only, independent of a foreground upload worker.
+  /// Only an explicit V3 grant covers queued and future received media.
+  bool get includesReceivedMedia => _enabledVersion == 3;
+
+  /// Local received-text retention, independent of a foreground upload worker.
+  /// Media requires [permitsReceivedMediaCapture] instead.
   /// The caller supplies actual native identity, durable ownership and the
   /// reloaded preference. This does not authorize any CloudKit operation.
   bool permitsReceivedCapture({
@@ -83,6 +88,23 @@ final class CloudSyncAutomaticArchivePreference {
         ownershipEpoch: ownershipEpoch,
       );
 
+  /// Apply the same exact binding and reloaded-grant fence to media retention.
+  /// Neither capture helper is a gate on reading or reconciling an upload that
+  /// was already submitted. Revocation must preserve that exact readback path.
+  bool permitsReceivedMediaCapture({
+    required String accountFingerprint,
+    required String protectedStoreIdentity,
+    required int ownershipEpoch,
+    required Object? currentStoredValue,
+  }) =>
+      includesReceivedMedia &&
+      permitsReceivedCapture(
+        accountFingerprint: accountFingerprint,
+        protectedStoreIdentity: protectedStoreIdentity,
+        ownershipEpoch: ownershipEpoch,
+        currentStoredValue: currentStoredValue,
+      );
+
   int? get _enabledVersion {
     if (identity.ownershipEpoch <= 0 || storedValue is! String) return null;
     try {
@@ -93,7 +115,10 @@ final class CloudSyncAutomaticArchivePreference {
               ((value[0] == 1 && value[1] == 'queued-and-future-local-sends') ||
                   (value[0] == 2 &&
                       value[1] ==
-                          'queued-and-future-local-sends-and-receives')) &&
+                          'queued-and-future-local-sends-and-receives') ||
+                  (value[0] == 3 &&
+                      value[1] ==
+                          'queued-and-future-local-sends-and-received-text-and-media')) &&
               value[2] is int &&
               value[2] == identity.ownershipEpoch &&
               value[3] is String &&
@@ -178,15 +203,26 @@ final class CloudSyncAutomaticArchivePreferences {
   bool isReceivedGranted(CloudSyncAutomaticArchivePreference expected) =>
       isGranted(expected) && expected.includesReceived;
 
+  /// Fresh media admission/dispatch only. Exact readback of already-submitted
+  /// work must remain available after this grant is revoked or narrowed.
+  bool isReceivedMediaGranted(CloudSyncAutomaticArchivePreference expected) =>
+      isGranted(expected) && expected.includesReceivedMedia;
+
   Future<CloudSyncAutomaticArchivePreference> setEnabled(
     CloudSyncAutomaticArchivePreference expected,
     bool enabled, {
     required bool acknowledgeQueuedUploads,
     bool includeReceived = false,
+    bool includeReceivedMedia = false,
   }) async {
     // Reject before any setup or storage write. The UI must ask on every enable.
     if (enabled && !acknowledgeQueuedUploads) {
       throw StateError('cloud_sync_automatic_archive_confirmation_required');
+    }
+    if (enabled && includeReceivedMedia && !includeReceived) {
+      throw StateError(
+        'cloud_sync_automatic_archive_received_media_requires_text',
+      );
     }
     var current = await load();
     if (!expected.identity.sameIdentity(current.identity) ||
@@ -214,10 +250,12 @@ final class CloudSyncAutomaticArchivePreferences {
     }
     final value = enabled
         ? jsonEncode([
-            includeReceived ? 2 : 1,
-            includeReceived
-                ? 'queued-and-future-local-sends-and-receives'
-                : 'queued-and-future-local-sends',
+            includeReceivedMedia ? 3 : (includeReceived ? 2 : 1),
+            includeReceivedMedia
+                ? 'queued-and-future-local-sends-and-received-text-and-media'
+                : (includeReceived
+                      ? 'queued-and-future-local-sends-and-receives'
+                      : 'queued-and-future-local-sends'),
             current.identity.ownershipEpoch,
             grant,
           ])
@@ -233,7 +271,8 @@ final class CloudSyncAutomaticArchivePreferences {
     }
     if (saved.storedValue != value ||
         saved.enabled != enabled ||
-        saved.includesReceived != (enabled && includeReceived)) {
+        saved.includesReceived != (enabled && includeReceived) ||
+        saved.includesReceivedMedia != (enabled && includeReceivedMedia)) {
       throw StateError('cloud_sync_automatic_archive_save_failed');
     }
     return saved;

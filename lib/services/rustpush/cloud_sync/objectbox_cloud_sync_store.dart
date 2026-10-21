@@ -74,6 +74,7 @@ class ObjectBoxCloudSyncStore
     CloudSyncSemanticDiagnosticRecorder? recordExistingHistoryDiagnostic,
     void Function()? validateOutboxDispatch,
     bool Function()? pauseUnsubmittedReceivedCreates,
+    bool Function()? pauseUnsubmittedReceivedMediaCreates,
   }) : _store = store,
        // Keep the optional fence parameter public without exposing the field.
        // ignore: prefer_initializing_formals
@@ -81,6 +82,9 @@ class ObjectBoxCloudSyncStore
        // Keep the optional caller-scoped injection public and the field private.
        // ignore: prefer_initializing_formals
        _pauseUnsubmittedReceivedCreates = pauseUnsubmittedReceivedCreates,
+       // Preserve the public optional injection and private backing field.
+       // ignore: prefer_initializing_formals
+       _pauseUnsubmittedReceivedMediaCreates = pauseUnsubmittedReceivedMediaCreates,
        _localSendJournal = localSendJournal,
        _receivedArchiveJournal = receivedArchiveJournal,
        _localMutationJournal = localMutationJournal,
@@ -192,6 +196,7 @@ class ObjectBoxCloudSyncStore
   // transaction that leases a row or persists its submission identity.
   final void Function()? _validateOutboxDispatch;
   final bool Function()? _pauseUnsubmittedReceivedCreates;
+  final bool Function()? _pauseUnsubmittedReceivedMediaCreates;
 
   @override
   Future<CloudSyncCheckpoint> readCheckpoint(CloudSyncScope scope) async {
@@ -2345,6 +2350,10 @@ class ObjectBoxCloudSyncStore
   }) => _admitProtectedOutboundCreate(draft, recordMapping,
     receivedArchiveSource: source,
     validateFreshDependency: () {
+      if (_pauseUnsubmittedReceivedCreates?.call() == true ||
+          (attachmentReadbackProof != null && _pauseUnsubmittedReceivedMediaCreates?.call() == true)) {
+        throw StateError('cloud_sync_received_archive_confirmation_required');
+      }
       journal.validateCreateAdmission(transactionStore: _store, scope: draft.scope,
         expected: source, currentAuth: currentAuth, stillCurrent: stillCurrent);
       final message = _store.box<Message>().get(source.localMessageId);
@@ -2830,8 +2839,20 @@ class ObjectBoxCloudSyncStore
       });
 
   bool _isPausedUnsubmittedReceivedCreateLocked(CloudOutboxOperationEntity row) {
-    if (_pauseUnsubmittedReceivedCreates?.call() != true) return false;
-    if (_receivedArchiveJournal?.isUnsubmittedReceivedCreate(row) ?? false) return true;
+    final allReceived = _pauseUnsubmittedReceivedCreates?.call() == true;
+    final mediaReceived = _pauseUnsubmittedReceivedMediaCreates?.call() == true;
+    if (!allReceived && !mediaReceived) return false;
+    if (_receivedArchiveJournal?.isUnsubmittedReceivedCreate(row) ?? false) {
+      if (allReceived) return true;
+      // Only adopted media parents carry this immutable child readback proof.
+      // A mutable UI row cannot narrow an already-admitted media operation.
+      final scope = CloudSyncScope(accountFingerprint: row.accountFingerprint,
+        container: 'com.apple.messages.cloud', database: 'private',
+        zone: row.zone, persistenceLane: CloudSyncPersistenceLane.semantic);
+      final operation = _outboxFromEntity(scope, row);
+      return _receivedArchiveJournal!.readAdoptedSource(
+        transactionStore: _store, operation: operation)?.attachmentReadbackProof != null;
+    }
     // Pause only pristine child creates with an actual received owner. Entered
     // or uncertain operations remain visible to exact readback/recovery.
     if (row.zone != 'attachmentManateeZone' ||
@@ -2840,7 +2861,7 @@ class ObjectBoxCloudSyncStore
         row.attemptCount != 0 || row.appleRequestUuid != null || row.appleOperationUuid != null ||
         row.leaseIdHash != null || row.leaseExpiresAtMs != 0 || row.confirmedAtMs != 0 ||
         row.nextEligibleAtMs != 0 || row.lastErrorCategory != null ||
-        row.mutationRevision != 0 || row.dependencyOperationIdsJson != '[]') { return false; }
+        row.mutationRevision < 0 || row.dependencyOperationIdsJson != '[]') { return false; }
     final journal = _receivedArchiveJournal;
     final uploads = _attachmentUploadJournal;
     if (journal == null || uploads == null) return false;
@@ -3180,7 +3201,13 @@ class ObjectBoxCloudSyncStore
       case cloudSyncAttachmentOwnerKindReceived:
         if (receivedJournal == null) throw StateError(cloudSyncAttachmentOwnerChangedCode);
         return uploads.adoptReceivedRecordCreate(id: uploadId, now: createdAt,
-            admit: admit, receivedJournal: receivedJournal);
+            admit: (transactionStore, result) {
+              if (_pauseUnsubmittedReceivedCreates?.call() == true ||
+                  _pauseUnsubmittedReceivedMediaCreates?.call() == true) {
+                throw StateError('cloud_sync_received_archive_confirmation_required');
+              }
+              return admit(transactionStore, result);
+            }, receivedJournal: receivedJournal);
       default: throw StateError(cloudSyncAttachmentOwnerChangedCode);
     }
   }
@@ -6265,7 +6292,8 @@ class ObjectBoxCloudSyncStore
       case cloudSyncAttachmentOwnerKindReceived:
         final received = _receivedArchiveJournal;
         if (received == null) throw StateError(cloudSyncAttachmentOwnerChangedCode);
-        if (dispatch && _pauseUnsubmittedReceivedCreates?.call() == true) {
+        if (dispatch && (_pauseUnsubmittedReceivedCreates?.call() == true ||
+            _pauseUnsubmittedReceivedMediaCreates?.call() == true)) {
           throw StateError('cloud_sync_received_archive_confirmation_required');
         }
         if (dispatch) { uploads.requireReceivedAdoptedOperation(operation, received); }
@@ -6324,6 +6352,10 @@ class ObjectBoxCloudSyncStore
         journal.requireAdoptedDispatch(transactionStore: _store, operation: operation);
         final source = journal.readAdoptedSource(transactionStore: _store, operation: operation)!;
         final proof = source.attachmentReadbackProof;
+        if (_pauseUnsubmittedReceivedCreates?.call() == true ||
+            (proof != null && _pauseUnsubmittedReceivedMediaCreates?.call() == true)) {
+          throw StateError('cloud_sync_received_archive_confirmation_required');
+        }
         if (proof != null) {
           final uploads = _attachmentUploadJournal;
           if (uploads == null) throw StateError('cloud_sync_attachment_parent_inventory_required');

@@ -1779,9 +1779,7 @@ final class CloudSyncAttachmentUploadJournal {
     _validateStage(plan);
     final origin = _requireReceivedOrigin(receivedIntentId, receivedJournal,
       forDispatch: true);
-    if (_requireHistoricalWriterEpoch() != origin.writerEpoch) {
-      throw StateError('cloud_sync_attachment_upload_origin_changed');
-    }
+    _requireHistoricalWriterEpoch(); // Fresh stable permit, not the captured source epoch.
     // A changed source/generation must not make an older attempted plan look
     // absent under a new key. Resolve every retained child of this exact owner.
     final retainedQuery = _uploads.query(CloudAttachmentUploadEntity_.ownerKind
@@ -1889,8 +1887,8 @@ final class CloudSyncAttachmentUploadJournal {
     }
     final origin = _requireReceivedOrigin(row.ownerIntentId, receivedJournal,
       forDispatch: true);
-    if (_requireHistoricalWriterEpoch() != row.writerEpoch ||
-        origin.writerEpoch != row.writerEpoch) {
+    _requireHistoricalWriterEpoch();
+    if (origin.writerEpoch != row.writerEpoch) {
       throw StateError('cloud_sync_attachment_upload_origin_changed');
     }
     if (retainedSourceAttachmentKeys != null) {
@@ -2037,7 +2035,7 @@ final class CloudSyncAttachmentUploadJournal {
     final operation = admit(_store, _result(row));
     if (operation.scope != _scope || operation.action != CloudOutboxAction.save ||
         operation.payloadVersion != 1 || operation.checkpointGeneration != _generation ||
-        operation.mutationRevision != 0 || operation.dependencyOperationIds.isNotEmpty ||
+        operation.mutationRevision < 0 || operation.dependencyOperationIds.isNotEmpty ||
         operation.status != CloudOutboxStatus.pending || operation.attemptCount != 0 ||
         operation.appleRequestUuid != null || operation.appleOperationUuid != null ||
         operation.logicalEntityKeyHash != row.attachmentKeyHash ||
@@ -2047,7 +2045,11 @@ final class CloudSyncAttachmentUploadJournal {
         operation.payloadSha256 != row.resultPayloadSha256) {
       throw StateError('cloud_sync_attachment_upload_adoption_changed');
     }
-    _requireReceivedFinalOperation(row, operation.operationId);
+    final persisted = _requireReceivedFinalOperation(row, operation.operationId);
+    if (persisted.mutationRevision != operation.mutationRevision ||
+        persisted.createdAtMs != operation.createdAt.millisecondsSinceEpoch) {
+      throw StateError('cloud_sync_attachment_upload_adoption_changed');
+    }
     _requireReceivedMap(row, requireUnencumbered: true);
     // An admission callback cannot switch source/owner before the row links.
     final current = _readReceivedBound(id, receivedJournal);
@@ -2116,31 +2118,40 @@ final class CloudSyncAttachmentUploadJournal {
     final row = _readReceivedBound(candidate.id, receivedJournal);
     if (row.state != CloudAttachmentUploadState.adopted.index ||
         operation.action != CloudOutboxAction.save || operation.payloadVersion != 1 ||
-        operation.mutationRevision != 0 || operation.dependencyOperationIds.isNotEmpty ||
+        operation.mutationRevision < 0 || operation.dependencyOperationIds.isNotEmpty ||
         row.attachmentKeyHash != operation.logicalEntityKeyHash ||
         row.serverRecordIdHash != operation.serverRecordIdHash ||
         row.resultReference != operation.encryptedPayloadReference ||
         row.resultPayloadSha256 != operation.payloadSha256) {
       throw StateError('cloud_sync_attachment_upload_adoption_changed');
     }
-    _requireReceivedFinalOperation(row, operation.operationId);
+    final persisted = _requireReceivedFinalOperation(row, operation.operationId);
+    if (persisted.mutationRevision != operation.mutationRevision ||
+        persisted.createdAtMs != operation.createdAt.millisecondsSinceEpoch ||
+        persisted.protectedLeaseReference != operation.protectedLeaseReference) {
+      throw StateError('cloud_sync_attachment_upload_adoption_changed');
+    }
     _requireReceivedMap(row);
     return row;
   }
 
-  void _requireReceivedFinalOperation(CloudAttachmentUploadEntity upload, String operationId) {
+  CloudOutboxOperationEntity _requireReceivedFinalOperation(CloudAttachmentUploadEntity upload, String operationId) {
     _requireFinalOperation(upload, operationId);
     final query = _store.box<CloudOutboxOperationEntity>().query(
       CloudOutboxOperationEntity_.operationId.equals(operationId)).build();
     final CloudOutboxOperationEntity? operation;
     try { operation = query.findUnique(); } finally { query.close(); }
-    if (operation == null || operation.mutationRevision != 0 ||
+    // This is the queue's local ordering counter, not an edit revision. Real
+    // initial creates allocate positive values; deterministic identity proves
+    // initial-create semantics. Retain exact persisted equality at call sites.
+    if (operation == null || operation.mutationRevision < 0 ||
         operation.dependencyOperationIdsJson != '[]' ||
         (upload.state != CloudAttachmentUploadState.adopted.index &&
           (operation.confirmedAtMs != 0 || operation.leaseExpiresAtMs != 0 ||
             operation.nextEligibleAtMs != 0 || operation.lastErrorCategory != null))) {
       throw StateError('cloud_sync_attachment_upload_adoption_changed');
     }
+    return operation;
   }
 
   String captureReceivedParentReadbackProof({
@@ -2307,7 +2318,8 @@ final class CloudSyncAttachmentUploadJournal {
     CloudSyncReceivedArchiveJournal journal,
   ) {
     final origin = _requireReceivedOrigin(row.ownerIntentId, journal, forDispatch: true);
-    if (_requireHistoricalWriterEpoch() != row.writerEpoch || origin.writerEpoch != row.writerEpoch ||
+    _requireHistoricalWriterEpoch();
+    if (origin.writerEpoch != row.writerEpoch ||
         origin.source.messageGuidHash != row.messageGuidHash ||
         origin.source.sourceSha256 != row.sourceSha256 ||
         row.uploadKey != _receivedUploadKey(origin.source, row.ownerIntentId, row.attachmentKeyHash)) {

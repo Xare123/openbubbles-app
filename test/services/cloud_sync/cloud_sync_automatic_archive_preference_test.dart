@@ -25,6 +25,13 @@ String _receivedGrantFor(int epoch, {String? grant}) => jsonEncode([
   grant ?? 'f' * 32,
 ]);
 
+String _receivedMediaGrantFor(int epoch, {String? grant}) => jsonEncode([
+  3,
+  'queued-and-future-local-sends-and-received-text-and-media',
+  epoch,
+  grant ?? 'f' * 32,
+]);
+
 final class _Harness {
   _Harness({int epoch = 2, Object? stored}) : _epoch = epoch {
     if (stored != null) {
@@ -140,6 +147,421 @@ void main() {
         ),
         isFalse,
       );
+    },
+  );
+
+  test('v1 and v2 grants never inherit received media permission', () async {
+    for (final stored in [_grantFor(2), _receivedGrantFor(2)]) {
+      final harness = _Harness(stored: stored);
+      final prefs = harness.prefs();
+      final expected = await prefs.load();
+      expect(expected.enabled, isTrue);
+      expect(expected.includesReceived, stored == _receivedGrantFor(2));
+      expect(expected.includesReceivedMedia, isFalse);
+      expect(prefs.isGranted(expected), isTrue);
+      expect(prefs.isReceivedGranted(expected), expected.includesReceived);
+      expect(prefs.isReceivedMediaGranted(expected), isFalse);
+      expect(
+        expected.permitsReceivedMediaCapture(
+          accountFingerprint: expected.identity.accountFingerprint,
+          protectedStoreIdentity: expected.identity.protectedStoreIdentity,
+          ownershipEpoch: 2,
+          currentStoredValue: stored,
+        ),
+        isFalse,
+      );
+      expect(harness._store[expected.identity.preferenceKey], stored);
+      expect(harness.prepares, 0);
+      expect(harness.writes, 0);
+    }
+  });
+
+  test('received media requires the exact valid v3 scope', () async {
+    final valid = _Harness(stored: _receivedMediaGrantFor(2));
+    final prefs = valid.prefs();
+    final expected = await prefs.load();
+    expect(expected.enabled, isTrue);
+    expect(expected.includesReceived, isTrue);
+    expect(expected.includesReceivedMedia, isTrue);
+    expect(prefs.isReceivedGranted(expected), isTrue);
+    expect(prefs.isReceivedMediaGranted(expected), isTrue);
+    expect(valid.writes, 0);
+    for (final stored in <Object?>[
+      jsonEncode([
+        2,
+        'queued-and-future-local-sends-and-received-text-and-media',
+        2,
+        'f' * 32,
+      ]),
+      jsonEncode([
+        3,
+        'queued-and-future-local-sends-and-receives',
+        2,
+        'f' * 32,
+      ]),
+      jsonEncode([
+        4,
+        'queued-and-future-local-sends-and-received-text-and-media',
+        2,
+        'f' * 32,
+      ]),
+      jsonEncode([
+        3.0,
+        'queued-and-future-local-sends-and-received-text-and-media',
+        2,
+        'f' * 32,
+      ]),
+      jsonEncode([
+        3,
+        'queued-and-future-local-sends-and-received-text-and-media',
+        2.0,
+        'f' * 32,
+      ]),
+      jsonEncode([
+        3,
+        'queued-and-future-local-sends-and-received-text-and-media',
+        '2',
+        'f' * 32,
+      ]),
+      jsonEncode([
+        3,
+        'queued-and-future-local-sends-and-received-text-and-media',
+        2,
+      ]),
+      jsonEncode([
+        3,
+        'queued-and-future-local-sends-and-received-text-and-media',
+        2,
+        'f' * 32,
+        true,
+      ]),
+      jsonEncode([
+        3,
+        'future-local-sends-and-received-text-and-media',
+        2,
+        'f' * 32,
+      ]),
+      _receivedMediaGrantFor(9),
+      _receivedMediaGrantFor(2, grant: 'short'),
+      _receivedMediaGrantFor(2, grant: 'F' * 32),
+      _receivedMediaGrantFor(2, grant: 'g' * 32),
+    ]) {
+      final harness = _Harness(stored: stored);
+      final preferences = harness.prefs();
+      final preference = await preferences.load();
+      expect(preference.enabled, isFalse, reason: 'stored=$stored');
+      expect(preference.includesReceived, isFalse);
+      expect(preference.includesReceivedMedia, isFalse);
+      expect(preferences.isReceivedMediaGranted(preference), isFalse);
+    }
+    final zero = CloudSyncAutomaticArchivePreference(
+      identity: _identity(epoch: 0),
+      storedValue: _receivedMediaGrantFor(0),
+    );
+    expect(zero.enabled, isFalse);
+    expect(zero.includesReceivedMedia, isFalse);
+  });
+
+  test(
+    'media capture requires the current exact account store epoch and grant',
+    () {
+      final expected = CloudSyncAutomaticArchivePreference(
+        identity: _identity(),
+        storedValue: _receivedMediaGrantFor(2),
+      );
+      bool permits({
+        CloudSyncAutomaticArchiveIdentity? actual,
+        Object? current,
+      }) {
+        final binding = actual ?? _identity();
+        return expected.permitsReceivedMediaCapture(
+          accountFingerprint: binding.accountFingerprint,
+          protectedStoreIdentity: binding.protectedStoreIdentity,
+          ownershipEpoch: binding.ownershipEpoch,
+          currentStoredValue: current,
+        );
+      }
+
+      expect(permits(current: expected.storedValue), isTrue);
+      expect(
+        permits(
+          actual: _identity(account: 'B'),
+          current: expected.storedValue,
+        ),
+        isFalse,
+      );
+      expect(
+        permits(
+          actual: _identity(protectedStore: 'T'),
+          current: expected.storedValue,
+        ),
+        isFalse,
+      );
+      expect(
+        permits(actual: _identity(epoch: 3), current: expected.storedValue),
+        isFalse,
+      );
+      expect(
+        permits(actual: _identity(epoch: 0), current: expected.storedValue),
+        isFalse,
+      );
+      for (final current in <Object?>[
+        null,
+        false,
+        'invalid',
+        jsonEncode([1, 'off']),
+        _grantFor(2),
+        _receivedGrantFor(2),
+        _receivedMediaGrantFor(2, grant: 'a' * 32),
+        _receivedMediaGrantFor(3),
+      ]) {
+        expect(permits(current: current), isFalse, reason: 'current=$current');
+      }
+      expect(
+        expected.permitsReceivedCapture(
+          accountFingerprint: expected.identity.accountFingerprint,
+          protectedStoreIdentity: expected.identity.protectedStoreIdentity,
+          ownershipEpoch: 2,
+          currentStoredValue: expected.storedValue,
+        ),
+        isTrue,
+        reason: 'V3 still covers received text',
+      );
+    },
+  );
+
+  test(
+    'media enable requires acknowledgment and text scope before any I/O',
+    () async {
+      for (final stored in <Object?>[
+        null,
+        _receivedGrantFor(2),
+        _receivedMediaGrantFor(2),
+      ]) {
+        for (final acknowledged in [false, true]) {
+          final harness = _Harness(stored: stored);
+          final prefs = harness.prefs();
+          final expected = await prefs.load();
+          await expectLater(
+            prefs.setEnabled(
+              expected,
+              true,
+              acknowledgeQueuedUploads: acknowledged,
+              includeReceived: !acknowledged,
+              includeReceivedMedia: true,
+            ),
+            throwsA(
+              isA<StateError>().having(
+                (error) => error.message,
+                'message',
+                acknowledged
+                    ? 'cloud_sync_automatic_archive_received_media_requires_text'
+                    : 'cloud_sync_automatic_archive_confirmation_required',
+              ),
+            ),
+          );
+          expect(harness.reloads, 1);
+          expect(harness.prepares, 0);
+          expect(harness.writes, 0);
+        }
+      }
+    },
+  );
+
+  test(
+    'explicit media opt-in saves v3 in the same preference lineage',
+    () async {
+      for (final stored in <Object?>[
+        null,
+        _grantFor(2),
+        _receivedGrantFor(2),
+      ]) {
+        final harness = _Harness(stored: stored);
+        final prefs = harness.prefs(newGrant: () => 'a' * 32);
+        final expected = await prefs.load();
+        final saved = await prefs.setEnabled(
+          expected,
+          true,
+          acknowledgeQueuedUploads: true,
+          includeReceived: true,
+          includeReceivedMedia: true,
+        );
+        expect(saved.storedValue, _receivedMediaGrantFor(2, grant: 'a' * 32));
+        expect(saved.identity.sameIdentity(expected.identity), isTrue);
+        expect(saved.identity.preferenceKey, expected.identity.preferenceKey);
+        expect(saved.enabled, isTrue);
+        expect(saved.includesReceived, isTrue);
+        expect(saved.includesReceivedMedia, isTrue);
+        expect(prefs.isGranted(expected), isFalse);
+        expect(prefs.isReceivedGranted(saved), isTrue);
+        expect(prefs.isReceivedMediaGranted(saved), isTrue);
+        expect(harness._store, hasLength(1));
+        expect(harness.prepares, 1);
+        expect(harness.writes, 1);
+      }
+    },
+  );
+
+  test(
+    'narrowing media to text revokes the old grant and preserves v2 text',
+    () async {
+      final harness = _Harness(stored: _receivedMediaGrantFor(2));
+      final prefs = harness.prefs(newGrant: () => 'a' * 32);
+      final media = await prefs.load();
+      final text = await prefs.setEnabled(
+        media,
+        true,
+        acknowledgeQueuedUploads: true,
+        includeReceived: true,
+      );
+      expect(text.storedValue, _receivedGrantFor(2, grant: 'a' * 32));
+      expect(text.includesReceivedMedia, isFalse);
+      expect(prefs.isGranted(media), isFalse);
+      expect(prefs.isReceivedMediaGranted(media), isFalse);
+      expect(prefs.isReceivedGranted(text), isTrue);
+      expect(prefs.isReceivedMediaGranted(text), isFalse);
+    },
+  );
+
+  test(
+    'media revocation uses the existing off value without writer setup',
+    () async {
+      final harness = _Harness(stored: _receivedMediaGrantFor(2));
+      final prefs = harness.prefs(newGrant: () => 'a' * 32);
+      final media = await prefs.load();
+      final off = await prefs.setEnabled(
+        media,
+        false,
+        acknowledgeQueuedUploads: false,
+        includeReceived: true,
+        includeReceivedMedia: true,
+      );
+      expect(off.storedValue, '[1,"off"]');
+      expect(off.enabled, isFalse);
+      expect(off.includesReceived, isFalse);
+      expect(off.includesReceivedMedia, isFalse);
+      expect(prefs.isReceivedGranted(media), isFalse);
+      expect(prefs.isReceivedMediaGranted(media), isFalse);
+      expect(harness.prepares, 0);
+      expect(harness.writes, 1);
+      final text = await prefs.setEnabled(
+        off,
+        true,
+        acknowledgeQueuedUploads: true,
+        includeReceived: true,
+      );
+      expect(
+        text.includesReceivedMedia,
+        isFalse,
+        reason: 'enabling text cannot restore old media consent',
+      );
+      expect(prefs.isReceivedGranted(text), isTrue);
+      expect(prefs.isReceivedMediaGranted(media), isFalse);
+    },
+  );
+
+  test(
+    'media grants reject revocation narrowing epoch token and currency drift',
+    () async {
+      for (final mutate in <void Function(_Harness)>[
+        (harness) =>
+            harness._store[_identity().preferenceKey] = jsonEncode([1, 'off']),
+        (harness) =>
+            harness._store[_identity().preferenceKey] = _receivedGrantFor(2),
+        (harness) => harness._epoch = 9,
+        (harness) => harness._store[_identity().preferenceKey] =
+            _receivedMediaGrantFor(2, grant: 'a' * 32),
+        (harness) => harness.current = false,
+      ]) {
+        final harness = _Harness(stored: _receivedMediaGrantFor(2));
+        final prefs = harness.prefs();
+        final expected = await prefs.load();
+        expect(prefs.isReceivedMediaGranted(expected), isTrue);
+        mutate(harness);
+        expect(prefs.isGranted(expected), isFalse);
+        expect(prefs.isReceivedGranted(expected), isFalse);
+        expect(prefs.isReceivedMediaGranted(expected), isFalse);
+      }
+    },
+  );
+
+  test(
+    'media saves reject account store epoch and token drift before writing',
+    () async {
+      for (final duringPrepare in [false, true]) {
+        for (final mutate in <void Function(_Harness)>[
+          (harness) => harness.onCapture = () async => _identity(account: 'B'),
+          (harness) =>
+              harness.onCapture = () async => _identity(protectedStore: 'T'),
+          (harness) => harness._epoch = 9,
+          (harness) =>
+              harness._store[_identity().preferenceKey] = _receivedGrantFor(2),
+          (harness) => harness._store[_identity().preferenceKey] =
+              _receivedMediaGrantFor(2, grant: 'a' * 32),
+          (harness) => harness.current = false,
+        ]) {
+          final harness = _Harness(stored: _receivedMediaGrantFor(2));
+          final prefs = harness.prefs();
+          final expected = await prefs.load();
+          if (duringPrepare) {
+            harness.onPrepare = () async {
+              mutate(harness);
+            };
+          } else {
+            mutate(harness);
+          }
+          await expectLater(
+            prefs.setEnabled(
+              expected,
+              true,
+              acknowledgeQueuedUploads: true,
+              includeReceived: true,
+              includeReceivedMedia: true,
+            ),
+            throwsA(
+              isA<StateError>().having(
+                (error) => error.message,
+                'message',
+                'cloud_sync_automatic_archive_identity_changed',
+              ),
+            ),
+          );
+          expect(harness.writes, 0);
+        }
+      }
+    },
+  );
+
+  test(
+    'media save confirms exact stored scope and prepared identity after write',
+    () async {
+      for (final mutate in <void Function(_Harness, String)>[
+        (harness, key) => harness._store[key] = _receivedGrantFor(2),
+        (harness, key) => harness._epoch = 9,
+        (harness, key) =>
+            harness.onCapture = () async => _identity(account: 'B'),
+        (harness, key) =>
+            harness.onCapture = () async => _identity(protectedStore: 'T'),
+      ]) {
+        final harness = _Harness();
+        harness.onWrite = (key) {
+          mutate(harness, key);
+          return null;
+        };
+        final prefs = harness.prefs();
+        final expected = await prefs.load();
+        await expectLater(
+          prefs.setEnabled(
+            expected,
+            true,
+            acknowledgeQueuedUploads: true,
+            includeReceived: true,
+            includeReceivedMedia: true,
+          ),
+          throwsA(isA<StateError>()),
+        );
+        expect(harness.writes, 1);
+      }
     },
   );
 

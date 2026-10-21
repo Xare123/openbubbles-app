@@ -305,10 +305,11 @@ final class CloudSyncAttachmentPlanCoordinator {
       final origin = receivedJournal.requireReceivedAttachmentOrigin(
         transactionStore: _store, intentId: receivedIntentId, currentAuth: auth);
       final source = origin.source;
-      Future<void> validate() async {
+      Future<void> validate({bool forDispatch = false}) async {
         final current = await _liveAuth();
         final now = receivedJournal.requireReceivedAttachmentOrigin(
-          transactionStore: _store, intentId: receivedIntentId, currentAuth: current);
+          transactionStore: _store, intentId: receivedIntentId, currentAuth: current,
+          forDispatch: forDispatch);
         if (!auth.sameIdentity(current) || now.writerEpoch != origin.writerEpoch ||
             now.source.encode() != source.encode()) {
           throw StateError('cloud_sync_attachment_plan_origin_changed');
@@ -336,13 +337,13 @@ final class CloudSyncAttachmentPlanCoordinator {
           }
           continue;
         }
-        await validate();
+        await validate(forDispatch: true);
         final staged = await stagePlan(item, source, auth);
         try {
           if (staged.logicalEntityKeyHash != item.logicalEntityKeyHash) {
             throw StateError('cloud_sync_attachment_plan_stage_invalid');
           }
-          await validate();
+          await validate(forDispatch: true);
         } catch (_) { await _rollbackBestEffort(staged); rethrow; }
         final adopted = _uploads.adoptReceivedPlan(receivedIntentId: receivedIntentId,
           plan: staged, now: _clock(), receivedJournal: receivedJournal);

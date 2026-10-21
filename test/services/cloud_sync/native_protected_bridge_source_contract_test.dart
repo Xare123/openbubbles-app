@@ -624,6 +624,7 @@ void main() {
     final worker = _section(service, 'void _startCloudSyncV2AutomaticArchive(',
         '/// Local-only receive capture');
     expect(worker, contains('preferences.isReceivedGranted(consent)'));
+    expect(worker, contains('preferences.isReceivedMediaGranted(consent)'));
     expect(worker, contains('receivedArchiveAllowed: () => stillCurrent()'));
     expect(worker, contains('_queueCloudSyncV2ReceivedSources(trigger)'));
     final received = _section(service, 'Future<({bool more, bool deferred})> _materializeCloudSyncV2ReceivedSources()',
@@ -647,7 +648,12 @@ void main() {
     expect(automatic, contains('receivedArchiveAllowed: () => selection == null && historical == null'));
     expect(automatic, contains('_receivedArchiveAllowed?.call() == true'));
     expect(automatic, contains('validateMutationAdmission: () => fence.requireCurrentBinding(auth)'));
-    expect(automatic, contains('pauseUnsubmittedReceivedCreates: () => selection == null && historical == null'));
+    expect(automatic, contains('pauseUnsubmittedReceivedCreates: () => !receivedArchiveDispatchAllowed()'));
+    expect(automatic, contains('bool receivedArchiveDispatchAllowed() => selection == null && historical == null'));
+    expect(automatic, contains('pauseUnsubmittedReceivedMediaCreates:'));
+    expect(automatic, contains('requireReceivedAdmission: validateReceivedMediaSelection'));
+    expect(automatic, contains('_receivedMediaArchiveAllowed?.call() != true'));
+    expect(automatic, contains('isPausedReceivedMessageCreate:'));
     expect(automatic, contains('durable.isPausedUnsubmittedReceivedCreate(operation)'));
     expect(automatic, contains('pausedReceivedArchiveJournal: selection == null && historical == null'));
     final creates = File('lib/services/rustpush/cloud_sync/cloud_sync_received_create_adapter.dart').readAsStringSync();
@@ -661,7 +667,9 @@ void main() {
         reason: 'sent-only operations must not be denied by the optional received proof reader');
     expect(open, contains('operation.status == CloudOutboxStatus.unknownOutcome'));
     expect(open, contains('operation.status == CloudOutboxStatus.confirmed'));
-    expect(open, contains('if (!readbackOnly) _requireReceivedConsent()'));
+    expect(open, contains('if (!readbackOnly) {'));
+    expect(open, contains('_requireReceivedConsent()'));
+    expect(open, contains('attachmentReadbackProof != null && receivedMediaArchiveAllowed?.call() != true'));
     expect(open, contains('current.status != operation.status'));
   });
 
@@ -678,7 +686,8 @@ void main() {
     expect(capture, isNot(contains('_cloudSyncV2AutomaticArchiveIdentity')));
     expect(capture, isNot(contains('ls.isUiThread')));
     expect(capture, contains('await ss.prefs.reload()'));
-    expect(capture, contains('consent.permitsReceivedCapture('));
+    expect(capture, contains('identity.hasMedia'));
+    expect(capture, contains('consent.permitsReceivedMediaCapture : consent.permitsReceivedCapture'));
     expect(capture, contains('currentOwner.automaticArchiveEpoch'));
     expect(capture, contains('currentStoredValue: ss.prefs.get(consent.identity.preferenceKey)'));
     _expectBefore(capture, 'await api.cloudSyncCaptureReceivedIdentity(',
@@ -777,7 +786,7 @@ void main() {
     for (final required in ['pending.lock().await.take()',
         'CloudSyncReceivedRecordDisposition::Absent', 'pending.raw_found.is_some()',
         'pending.prepared_at.elapsed()', 'cloud_sync_validate_received_create_proof(',
-        'stage_received_message(']) {
+        'stage_received_message_bound(', 'proof.attachment_readback_binding_sha256.as_deref()']) {
       expect(stage, contains(required));
     }
     for (final forbidden in ['send_message', 'sendMsg', 'positiveIdsReceipt',
@@ -787,7 +796,7 @@ void main() {
     final open = _section(native, 'fn cloud_sync_open_message_create_bound(',
         'mod cloud_sync_attachment_parent_create_tests');
     expect(open, contains('input.received_archive_proof'));
-    expect(open, contains('open_staged_received_message('));
+    expect(open, contains('open_staged_received_message_bound('));
     expect(open, contains('verify_deterministic_message_record_name('));
     final adapter = File('lib/services/rustpush/cloud_sync/cloud_sync_received_create_adapter.dart').readAsStringSync();
     expect(adapter, contains('!CloudSyncDevGate.receivedArchiveUploadsEnabled'));

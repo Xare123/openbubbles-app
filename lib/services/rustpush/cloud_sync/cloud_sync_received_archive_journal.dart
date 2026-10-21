@@ -153,7 +153,7 @@ final class CloudSyncReceivedArchiveJournal {
     }
     var condition =
       CloudSyncReceivedArchiveIntentEntity_.accountFingerprint.equals(_binding.scope.accountFingerprint)
-        .and(CloudSyncReceivedArchiveIntentEntity_.writerEpoch.equals(_binding.epoch))
+        .and(_candidateEpochs())
         .and(CloudSyncReceivedArchiveIntentEntity_.state.equals(2))
         .and(CloudSyncReceivedArchiveIntentEntity_.recordObservationBinding.startsWith('[1,0,')
           .or(CloudSyncReceivedArchiveIntentEntity_.recordObservationBinding.startsWith('[1,1,')));
@@ -184,7 +184,7 @@ final class CloudSyncReceivedArchiveJournal {
     }
     var condition =
       CloudSyncReceivedArchiveIntentEntity_.accountFingerprint.equals(_binding.scope.accountFingerprint)
-        .and(CloudSyncReceivedArchiveIntentEntity_.writerEpoch.equals(_binding.epoch))
+        .and(_candidateEpochs())
         .and(CloudSyncReceivedArchiveIntentEntity_.state.equals(1))
         .and(CloudSyncReceivedArchiveIntentEntity_.recordObservationBinding.isNull()
           .or(CloudSyncReceivedArchiveIntentEntity_.recordObservationBinding.startsWith('[1,4,')));
@@ -463,7 +463,7 @@ final class CloudSyncReceivedArchiveJournal {
     if (limit < 1 || limit > 20) throw ArgumentError('cloud_sync_received_archive_limit_invalid');
     final query = _store.box<CloudSyncReceivedArchiveIntentEntity>().query(
       CloudSyncReceivedArchiveIntentEntity_.accountFingerprint.equals(_binding.scope.accountFingerprint)
-        .and(CloudSyncReceivedArchiveIntentEntity_.writerEpoch.equals(_binding.epoch))
+        .and(_candidateEpochs())
         .and(CloudSyncReceivedArchiveIntentEntity_.state.equals(2))
         .and(CloudSyncReceivedArchiveIntentEntity_.recordObservationBinding
           .startsWith('[1,${CloudSyncReceivedRecordState.absent.index},')))
@@ -595,7 +595,7 @@ final class CloudSyncReceivedArchiveJournal {
     if (!identical(transactionStore, _store)) {
       throw StateError('cloud_sync_received_archive_admission_changed');
     }
-    _verifyOwnership();
+    _verifyOwnership(allowRetainedEvidence: true);
     final intent = _readUnique(_store.box<CloudSyncReceivedArchiveIntentEntity>().query(
       CloudSyncReceivedArchiveIntentEntity_.admittedOperationId.equals(operation.operationId)));
     if (intent == null) return null;
@@ -617,6 +617,8 @@ final class CloudSyncReceivedArchiveJournal {
   void requireAdoptedDispatch({
     required Store transactionStore, required CloudOutboxOperation operation,
   }) {
+    _verifyOwnership();
+    _authority.issuePermit(_binding.scope, expectedOwner: CloudKitWriterOwner.v2);
     final source = readAdoptedSource(transactionStore: transactionStore, operation: operation);
     if (source == null) throw StateError('cloud_sync_received_archive_admitted_operation_changed');
     final intent = _readBoundIntent(source.intentId);
@@ -815,9 +817,7 @@ final class CloudSyncReceivedArchiveJournal {
               CloudSyncReceivedArchiveIntentEntity_.accountFingerprint
                   .equals(_binding.scope.accountFingerprint)
                   .and(
-                    CloudSyncReceivedArchiveIntentEntity_.writerEpoch.equals(
-                      _binding.epoch,
-                    ),
+                    _candidateEpochs(),
                   ),
             )..order(
               CloudSyncReceivedArchiveIntentEntity_.id,
@@ -1119,14 +1119,14 @@ final class CloudSyncReceivedArchiveJournal {
     required CloudSyncNativeAuthSnapshot currentAuth,
     bool forDispatch = false,
   }) => _store.runInTransaction(TxMode.read, () {
-    _verifyOwnership();
+    _verifyOwnership(allowRetainedEvidence: !forDispatch);
     if (!identical(transactionStore, _store) ||
         currentAuth.accountFingerprint != _binding.scope.accountFingerprint) {
       throw StateError('cloud_sync_received_attachment_origin_changed');
     }
     final row = intentId > 0 ? _store.box<CloudSyncReceivedArchiveIntentEntity>().get(intentId) : null;
     if (row == null || row.accountFingerprint != currentAuth.accountFingerprint ||
-        row.writerEpoch <= 0 || row.writerEpoch > _binding.epoch ||
+        !_retainsCapturedEpoch(row.writerEpoch) ||
         row.localMessageId <= 0 || row.localChatId <= 0 ||
         row.state < 1 || row.state > 4 ||
         (row.origin != CloudSyncReceivedArchiveOrigin.incoming.index &&
@@ -1141,6 +1141,9 @@ final class CloudSyncReceivedArchiveJournal {
       messageGuidHash: row.messageGuidHash, sourceSha256: row.sourceSha256);
     if (source.isSeed) throw StateError('cloud_sync_received_archive_not_ready');
     if (forDispatch) {
+      // Retained source is not a permit. The next pass must bind the current
+      // stable owner and revalidate the absent parent and visible reflection.
+      _authority.issuePermit(_binding.scope, expectedOwner: CloudKitWriterOwner.v2);
       final expected = readForCreateAdmission(intentId: intentId, currentAuth: currentAuth);
       validateCreateAdmission(transactionStore: transactionStore,
         scope: CloudSyncScope(accountFingerprint: currentAuth.accountFingerprint,
@@ -1160,7 +1163,7 @@ final class CloudSyncReceivedArchiveJournal {
     required int intentId,
     required CloudSyncNativeAuthSnapshot currentAuth,
   }) => _store.runInTransaction(TxMode.read, () {
-    _verifyOwnership();
+    _verifyOwnership(allowRetainedEvidence: true);
     final intent = _readBoundIntent(intentId);
     final source = CloudSyncReceivedArchiveSourceBinding.decode(
       intent.protectedSourceBinding,
@@ -1228,9 +1231,7 @@ final class CloudSyncReceivedArchiveJournal {
       var base = CloudSyncReceivedArchiveIntentEntity_.accountFingerprint
           .equals(_binding.scope.accountFingerprint)
           .and(
-            CloudSyncReceivedArchiveIntentEntity_.writerEpoch.equals(
-              _binding.epoch,
-            ),
+            _candidateEpochs(),
           )
           .and(
             onlyPendingMaterialization
@@ -1439,7 +1440,8 @@ final class CloudSyncReceivedArchiveJournal {
   ) {
     try {
       if (candidate.accountFingerprint != _binding.scope.accountFingerprint ||
-          candidate.writerEpoch != _binding.epoch ||
+          _binding.state != CloudKitWriterAuthorityState.stable ||
+          !_retainsCapturedEpoch(candidate.writerEpoch) ||
           (candidate.state < 0 || candidate.state > 2) ||
           candidate.intentKey !=
               intentKeyFor(
@@ -1563,7 +1565,7 @@ final class CloudSyncReceivedArchiveJournal {
         : null;
     if (intent == null ||
         intent.accountFingerprint != _binding.scope.accountFingerprint ||
-        intent.writerEpoch != _binding.epoch ||
+        !_retainsCapturedEpoch(intent.writerEpoch) ||
         (intent.state < 0 || intent.state > 4) ||
         (intent.origin != CloudSyncReceivedArchiveOrigin.incoming.index &&
             intent.origin != CloudSyncReceivedArchiveOrigin.mirrored.index) ||
@@ -1670,7 +1672,24 @@ final class CloudSyncReceivedArchiveJournal {
     }
   }
 
-  void _verifyOwnership() {
+  /// Only a positively persisted, uninterrupted V2 ownership lineage can reopen
+  /// older source epochs. A larger integer alone, a reset, or a new owner cannot.
+  bool _retainsCapturedEpoch(int epoch) => epoch > 0 &&
+      (epoch == _binding.epoch || _binding.continuesCapturedEpoch(
+        epoch, allowMutationUnknown: true));
+
+  Condition<CloudSyncReceivedArchiveIntentEntity> _candidateEpochs() {
+    final epochs = CloudSyncReceivedArchiveIntentEntity_.writerEpoch;
+    // Unknown owners may inspect exact evidence but cannot discover fresh work.
+    if (_binding.state != CloudKitWriterAuthorityState.stable ||
+        _binding.ownershipEpoch <= 0) {
+      return epochs.equals(_binding.epoch);
+    }
+    return epochs.greaterOrEqual(_binding.ownershipEpoch)
+        .and(epochs.lessOrEqual(_binding.epoch));
+  }
+
+  void _verifyOwnership({bool allowRetainedEvidence = false}) {
     if (_binding.owner != CloudKitWriterOwner.v2 ||
         _binding.epoch <= 0 ||
         _binding.scope.container != 'com.apple.messages.cloud' ||
@@ -1680,7 +1699,11 @@ final class CloudSyncReceivedArchiveJournal {
     final current = _authority.read(_binding.scope);
     if (current == null ||
         current.owner != _binding.owner ||
-        current.epoch != _binding.epoch) {
+        current.automaticArchiveEpoch <= 0 ||
+        current.automaticArchiveEpoch != _binding.automaticArchiveEpoch ||
+        (current.epoch != _binding.epoch &&
+            !(allowRetainedEvidence && current.continuesCapturedEpoch(
+              _binding.epoch, allowMutationUnknown: true)))) {
       throw StateError('cloud_sync_received_archive_owner_changed');
     }
   }
