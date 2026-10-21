@@ -4,10 +4,39 @@ title: Cloud Sync V2 Current Connection Treemap
 description: Current source of truth for CloudKit V2 architecture, safety boundaries, qualification state, and next gates.
 resource: openbubbles-app
 tags: [openbubbles, cloudkit, messages-in-icloud, architecture, recovery, canary]
-timestamp: 2026-09-26
+timestamp: 2026-10-21
 ---
 
 # Cloud Sync V2 current connection treemap
+
+## Current source-qualified candidate, October21
+
+Code25674843ed626c2d366ec160ff9c18fb91df63e1 integrates received edits/unsends
+into the existing automatic queue, typed conditional executor and exact native
+readback. No outgoing IDS receipt is invented. Mixed local/mirrored lineage
+preserves existing local snapshot bytes; source retirement follows finalized
+native leases. One appended epoch field preserves staged ownership on restart.
+
+Native28b70237b/39610600307 passed966appRust/449rustpush/16provider(1ignored,
+12filtered)/40protector;11newregressions/11successsteps independently verified.
+All12generatedfiles match artifact12349674781, codegen40816598. Drift gate was
+intentionally skipped for new APIs, not passed. Model25fdd5ce appends property22
+to entity38, preserving29otherentities and21priorreceivedproperties.
+
+Affected12filebatch:462passed/2newfixturefailures. Corrected route/virtual-clock
+fixtures and focused59tests passed, including mixed ordering, real ownership
+advance/reopen, lost response, late retained event, paused archival readback and
+shared recovery ordering. Final4pathanalysis clean; production haszeroerrors and
+exact8priorservice diagnostics, not whole-app clean. Initialfailures retained.
+
+This is offline/source qualification, NOT Apple/Android acceptance of this slice.
+All5receivedflags remain OFF. No current-source APK or phone/account operation.
+Last installed624/signedd259 cannot serve codegen40816598. No active job/test/
+analyzer/helper; Franklin reviewed/integrated/closed/not_found, work preserved.
+Relay public fork complete. Alpha693-tombstone disposition unanswered. Rich/media
+receive, unavailable pre-seal capture and controlled rollout remain open. Resume
+from canonical build-evidence/received-mutation-write-20261021/NEXT_SLICE.md;
+do not repeat unchanged native suites or relay login. Full goal ACTIVE.
 
 ## October21 current source checkpoint
 

@@ -7764,3 +7764,37 @@ Historical tests do not establish current-device behavior.
 - No child agent or live write remains active. Next: publish the test-corrected
   candidate, repeat the required full integration/build on that new source once,
   then verify/install and exercise the explicitly authorized retained upload.
+
+## October21: received conditional queue integration source-qualified
+
+Code25674843ed626c2d366ec160ff9c18fb91df63e1 published normalFF to the fork only,
+22paths on native28b70237b. Received edit/unsend adoption, typed origin dispatch,
+shared executor/readback/lease retirement and automatic queue wiring implemented.
+No fake outgoing IDS receipt or second sync engine. Common local/mirrored graph
+preserves localv1snapshotbytes and immutable source hashes. Entity38/property22
+pins staged writer epoch;29otherentities/21priorproperties unchanged, model25fdd5ce.
+Original-send reconstruction stays strict local-only; pre-release missing proofs
+remain held. All5receivedflagsOFF, no current-sourceAPK/device/account work.
+
+Sole native39610600307/job119258144903 SUCCESS18m36s:966appRust/449rustpush/
+16provider(1ignored12filtered)/40protector,11newcases/11successsteps verified.
+Actual log4b4038715d1c88562558c7985aee4388cf3e69c3607fbfc080679bb32d065c77.
+Artifact12349674781 ZIPdb906e0b/454502B, all12allowedfiles byteexact;codegen40816598.
+Drift gate intentionally skipped for generation, not passed. Native logic stays
+identical to qualified input; imported generatedRust matches compiled artifact.
+
+Initial34testbatch33pass/1Nevercallbackfixturefailure corrected<void>. Affected
+12filebatch462pass/2newfixturefailures: synthetic outgoing route didn't match
+actualChat, and virtual executor clock differed from recovery clock. Fixed exact
+route and later-pass clock; focused59passed, including queue grant/unknown retry,
+paused readback, mixed ordering, real ownership advance/reopen and schema upgrade.
+Existing recovery helper now warms protected storage once, updates beforecreate
+fence;2orderingcases passed. Final4pathanalysisclean;12pathanalysiszeroerrors,
+exact8priorservicebaseline plus1teststyleinfo nowfixed. Initiallogs retained.
+
+Franklin3filework reviewed/integrated, parent fixed fixtures/addedguardcases,
+supportedclose/wait:not_found; no active job/test/analyzer/helper. Last installed
+624/signedd259 unchanged and incompatible with newAPIs. Relay publicfork complete;
+Alpha693-tombstone decision unanswered. Rich/media/pre-seal receive and controlled
+rollout remain. Canonical received-mutation-write-20261021 owns receipts/nextslice.
+No phone/account/Apple/send/upload/merge/APK/GCE/cleanup operation. Goal ACTIVE.

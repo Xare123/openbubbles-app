@@ -1,5 +1,15 @@
 # Direct source-only GCE runs
 
+October21 current code25674843e is source-qualified, not an APK. Native input
+28b70237b completed sole bridge39610600307, independently966/449/16(1ignored,
+12filtered)/40 with11newregressions. All12generated files match12349674781;
+codegen40816598, ObjectBoxmodel25fdd5ce/property22 require a matching native APK.
+Committed-drift was skipped for generation, not passed. No new standalone native
+run for unchanged logic: reuse this receipt and exact import. Affected source
+batch462passed/2fixturefailures, corrected focused59passed; final4pathanalysis
+clean and exact8priorservicebaseline. All5receivedflags OFF. No APK/Pixel/GCE
+operation. Canonical received-mutation-write-20261021 owns evidence/next slice.
+
 The current primary owner in AGENTS.md owns this workflow end to end under the
 user's standing authorization. On September 26 the user transferred that role
 from Muse to task `01a098ec-c448-73a1-a73f-696d142de228`. Delegated helpers do not
