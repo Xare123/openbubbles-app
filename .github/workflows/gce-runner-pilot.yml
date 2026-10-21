@@ -90,6 +90,7 @@ on:
           - iphone-usb-control-only
           - iphone-native-relay-only
           - iphone-aps-identity-only
+          - iphone-aps-auth-only
       outbound_writer:
         description: Build the isolated Android Canary with one-message V2 writer controls
         required: true
@@ -151,7 +152,7 @@ env:
 jobs:
   create-runner:
     name: Create ephemeral Google Cloud runner
-    if: ${{ inputs.validation_mode != 'corten-android-login-only' && inputs.validation_mode != 'corten-host-readiness-only' && inputs.validation_mode != 'corten-windows-readiness-only' && inputs.validation_mode != 'corten-windows-machine-only' && inputs.validation_mode != 'corten-windows-engine-only' && inputs.validation_mode != 'corten-windows-component-only' && inputs.validation_mode != 'corten-android-cleanup-only' && inputs.validation_mode != 'corten-android-auth-transport-only' && inputs.validation_mode != 'iphone-activation-static-only' && inputs.validation_mode != 'iphone-account-signing-preflight-only' && inputs.validation_mode != 'iphone-account-qualifier-fixture-only' && inputs.validation_mode != 'iphone-usb-control-only' && inputs.validation_mode != 'iphone-native-relay-only' && inputs.validation_mode != 'iphone-aps-identity-only' }}
+    if: ${{ inputs.validation_mode != 'corten-android-login-only' && inputs.validation_mode != 'corten-host-readiness-only' && inputs.validation_mode != 'corten-windows-readiness-only' && inputs.validation_mode != 'corten-windows-machine-only' && inputs.validation_mode != 'corten-windows-engine-only' && inputs.validation_mode != 'corten-windows-component-only' && inputs.validation_mode != 'corten-android-cleanup-only' && inputs.validation_mode != 'corten-android-auth-transport-only' && inputs.validation_mode != 'iphone-activation-static-only' && inputs.validation_mode != 'iphone-account-signing-preflight-only' && inputs.validation_mode != 'iphone-account-qualifier-fixture-only' && inputs.validation_mode != 'iphone-usb-control-only' && inputs.validation_mode != 'iphone-native-relay-only' && inputs.validation_mode != 'iphone-aps-identity-only' && inputs.validation_mode != 'iphone-aps-auth-only' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -1375,6 +1376,37 @@ jobs:
             ${{ runner.temp }}/aps-identity-check/OBAPSIdentityCheck.tipa
             ${{ runner.temp }}/aps-identity-check/SHA256SUMS
             ${{ runner.temp }}/aps-identity-check/SOURCE_SHA
+          if-no-files-found: error
+          retention-days: 7
+
+  iphone-aps-auth:
+    name: Build separate one-shot native APS authentication diagnostic
+    if: ${{ inputs.validation_mode == 'iphone-aps-auth-only' }}
+    runs-on: macos-15
+    timeout-minutes: 8
+    permissions:
+      contents: read
+    steps:
+      - name: Check out exact diagnostic without submodules or credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          submodules: false
+      - name: Run diagnostic guards and real nonce boundaries, compile ARM64
+        env:
+          OB_SOURCE_SHA: ${{ github.sha }}
+        run: |
+          python3 -B -m unittest discover -s tooling/ci -p test_iphone_aps_auth_probe.py -v
+          bash tooling/ios/aps-auth-check/build.sh "$RUNNER_TEMP/aps-auth-check"
+      - name: Retain only code-only package and hashes
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: iphone-aps-auth-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/aps-auth-check/OBAPSAuthCheck.tipa
+            ${{ runner.temp }}/aps-auth-check/SHA256SUMS
+            ${{ runner.temp }}/aps-auth-check/SOURCE_SHA
           if-no-files-found: error
           retention-days: 7
 
