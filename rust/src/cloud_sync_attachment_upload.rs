@@ -54,6 +54,7 @@ mod wire {
 
 const VERSION: u32 = 2;
 const HISTORICAL_VERSION: u32 = 3;
+const RECEIVED_VERSION: u32 = 4;
 const MAX_PLAN_BYTES: usize = 2 * 1024 * 1024;
 const MAX_METADATA_BYTES: usize = 1024 * 1024;
 const MAX_IDENTIFIER_BYTES: usize = 4096;
@@ -193,6 +194,38 @@ pub(crate) async fn prepare_verified_historical_upload_plan<R: Read + Send>(
     .await
 }
 
+/// Local preparation from the complete protected received body. Origin and
+/// parent hash come from that source, never a caller direction flag or an IDS
+/// receipt. The caller separately pins the committed source/account/store and
+/// must durably own the original attempt before any network submission.
+pub(crate) async fn prepare_verified_received_upload_plan<R: Read + Send>(
+    client: &CloudMessagesClient<DefaultAnisetteProvider>,
+    received: &crate::cloud_sync_received_source::ReceivedArchiveSource,
+    original_attachment_guid: &str,
+    record_identifier: RecordIdentifier,
+    source: &mut R,
+    private_directory: &Path,
+) -> Result<AttachmentUploadPlan, AttachmentUploadPreparationFailure> {
+    let material = received.media_upload_material(original_attachment_guid)?;
+    let snapshot = crate::cloud_sync_attachment_source_file::snapshot_verified_source(
+        source,
+        &material.file,
+        private_directory,
+    )
+    .await
+    .map_err(|_| AttachmentUploadPreparationFailure::SourceUnavailable)?;
+    prepare_attachment_upload_plan(
+        client,
+        AttachmentUploadSourceKind::received(received),
+        received.guid().to_owned(),
+        received.source_sha256()?,
+        record_identifier,
+        material.meta,
+        snapshot,
+    )
+    .await
+}
+
 /// Fixed native-only diagnostics; key lookup failure is not falsely labeled
 /// protected-store corruption and carries no raw keychain/auth error outward.
 #[derive(Clone, Copy, Debug, thiserror::Error, Eq, PartialEq)]
@@ -275,6 +308,14 @@ impl AttachmentUploadPlan {
     }
 
     fn validated_preparation_snapshot(&self) -> Result<Vec<u8>, Failure> {
+        if matches!(
+            self.source_kind,
+            AttachmentUploadSourceKind::ReceivedIncoming
+                | AttachmentUploadSourceKind::ReceivedMirrored
+        ) && self.upload_identity.is_none()
+        {
+            return Err(Failure::MalformedMessage);
+        }
         if let Some(identity) = &self.upload_identity {
             validate_upload_identity(identity)?;
         }
@@ -459,6 +500,67 @@ impl AttachmentUploadPlan {
         .await
     }
 
+    /// Reopen the SAME received plan and persisted attempt. Complete source
+    /// kind/hash/metadata and the descriptor-verified immutable snapshot must
+    /// still match. Neither missing remote records nor this local preparation
+    /// authorize another upload attempt or manufacture an outgoing receipt.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn prepare_verified_received_submission<R: Read + Send>(
+        &self,
+        client: &CloudMessagesClient<DefaultAnisetteProvider>,
+        writer_binding: &CloudMessagesWriterPreparationBinding<DefaultAnisetteProvider>,
+        received: &crate::cloud_sync_received_source::ReceivedArchiveSource,
+        original_attachment_guid: &str,
+        record_identifier: &RecordIdentifier,
+        local_operation_id: String,
+        source: &mut R,
+        private_directory: &Path,
+        timeout: Duration,
+    ) -> Result<
+        CloudMessagesPreparedUploadSubmission<
+            DefaultAnisetteProvider,
+            crate::cloud_sync_attachment_source_file::OwnedAttachmentSource,
+        >,
+        AttachmentUploadPreparationFailure,
+    > {
+        let kind = AttachmentUploadSourceKind::received(received);
+        let source_hash = received.source_sha256()?;
+        self.validate_source_origin(kind, received.guid(), &source_hash, record_identifier)?;
+        let material = received.media_upload_material(original_attachment_guid)?;
+        self.validate_received_metadata(&material.meta)?;
+        let snapshot = crate::cloud_sync_attachment_source_file::snapshot_verified_source(
+            source,
+            &material.file,
+            private_directory,
+        )
+        .await
+        .map_err(|_| AttachmentUploadPreparationFailure::SourceUnavailable)?;
+        self.prepare_native_submission_for_source(
+            kind,
+            client,
+            writer_binding,
+            received.guid(),
+            &source_hash,
+            record_identifier,
+            local_operation_id,
+            snapshot,
+            timeout,
+        )
+        .await
+    }
+
+    fn validate_received_metadata(&self, metadata: &AttachmentMeta) -> Result<(), Failure> {
+        let mut expected = Vec::new();
+        let mut actual = Vec::new();
+        plist::to_writer_binary(&mut expected, &self.metadata)
+            .map_err(|_| Failure::MalformedMessage)?;
+        plist::to_writer_binary(&mut actual, metadata).map_err(|_| Failure::MalformedMessage)?;
+        if expected != actual {
+            return Err(Failure::BindingMismatch);
+        }
+        Ok(())
+    }
+
     /// The receipt must contain the original metadata and the exact asset
     /// validated by this plan, not merely another completed attachment.
     pub(crate) fn validate_completed_envelope(
@@ -527,6 +629,45 @@ impl AttachmentUploadPlan {
             &source.source_sha256()?,
             &self.record_identifier,
         )
+    }
+
+    /// Validate the complete retained received source before recovery/readback.
+    /// Body-local IDs are not the projected Apple attachment GUID, so require
+    /// exactly one original body selection whose complete metadata matches.
+    /// Unsupported auxiliary parts remain in the original source/hash; they
+    /// are neither stripped nor promoted into independently writable children.
+    pub(crate) fn validate_received_parent_source(
+        &self,
+        source: &crate::cloud_sync_received_source::ReceivedArchiveSource,
+    ) -> Result<(), Failure> {
+        self.validate_source_origin(
+            AttachmentUploadSourceKind::received(source),
+            source.guid(),
+            &source.source_sha256()?,
+            &self.record_identifier,
+        )?;
+        self.validated_preparation_snapshot()?;
+        let body = source.media_body()?;
+        let mut matched = false;
+        for original_guid in &body.attachment_guids {
+            let material = match source.media_upload_material(original_guid) {
+                Ok(material) => material,
+                Err(Failure::UnsupportedMessage) => continue,
+                Err(error) => return Err(error),
+            };
+            if material.meta.guid != self.metadata.guid {
+                continue;
+            }
+            if matched {
+                return Err(Failure::BindingMismatch);
+            }
+            self.validate_received_metadata(&material.meta)?;
+            matched = true;
+        }
+        if !matched {
+            return Err(Failure::BindingMismatch);
+        }
+        Ok(())
     }
 
     /// Inspect a completed receipt without creating a new envelope or lease.
@@ -697,12 +838,13 @@ impl AttachmentUploadPlan {
             return Err(Failure::OversizedMessage);
         }
         let wire = wire::CloudSyncAttachmentUploadV1 {
-            schema_version: if self.source_kind != AttachmentUploadSourceKind::IdsSent {
-                HISTORICAL_VERSION
-            } else if self.upload_identity.is_some() {
-                VERSION
-            } else {
-                1
+            schema_version: match self.source_kind {
+                AttachmentUploadSourceKind::IdsSent if self.upload_identity.is_some() => VERSION,
+                AttachmentUploadSourceKind::IdsSent => 1,
+                AttachmentUploadSourceKind::HistoricalSent
+                | AttachmentUploadSourceKind::HistoricalReceived => HISTORICAL_VERSION,
+                AttachmentUploadSourceKind::ReceivedIncoming
+                | AttachmentUploadSourceKind::ReceivedMirrored => RECEIVED_VERSION,
             },
             parent_message_guid: self.parent_message_guid.clone(),
             parent_source_sha256: self.parent_source_sha256.clone(),
@@ -734,8 +876,10 @@ impl AttachmentUploadPlan {
         }
         let wire = wire::CloudSyncAttachmentUploadV1::decode(bytes)
             .map_err(|_| Failure::MalformedMessage)?;
-        if !matches!(wire.schema_version, 1 | VERSION | HISTORICAL_VERSION)
-            || wire.attachment_meta_plist.len() > MAX_METADATA_BYTES
+        if !matches!(
+            wire.schema_version,
+            1 | VERSION | HISTORICAL_VERSION | RECEIVED_VERSION
+        ) || wire.attachment_meta_plist.len() > MAX_METADATA_BYTES
             || wire.record_identifier_proto.len() > MAX_IDENTIFIER_BYTES
         {
             return Err(Failure::MalformedMessage);
@@ -744,13 +888,15 @@ impl AttachmentUploadPlan {
             (1 | VERSION, 0) => AttachmentUploadSourceKind::IdsSent,
             (HISTORICAL_VERSION, 1) => AttachmentUploadSourceKind::HistoricalSent,
             (HISTORICAL_VERSION, 2) => AttachmentUploadSourceKind::HistoricalReceived,
+            (RECEIVED_VERSION, 3) => AttachmentUploadSourceKind::ReceivedIncoming,
+            (RECEIVED_VERSION, 4) => AttachmentUploadSourceKind::ReceivedMirrored,
             _ => return Err(Failure::MalformedMessage),
         };
         let upload_identity = match wire.schema_version {
             1 if wire.upload_request_uuid.is_empty() && wire.upload_operation_uuid.is_empty() => {
                 None
             }
-            VERSION | HISTORICAL_VERSION => Some(
+            VERSION | HISTORICAL_VERSION | RECEIVED_VERSION => Some(
                 CloudKitRequestIdentity::new(
                     wire.upload_request_uuid,
                     vec![wire.upload_operation_uuid],
@@ -1520,6 +1666,337 @@ mod tests {
         )
         .unwrap();
         assert_eq!(journaled.encode().unwrap(), original.encode().unwrap());
+    }
+
+    // Synthetic native source and local cryptographic preparation only. These
+    // fixtures do not establish authenticated receipt or remote permission.
+    fn received_source(
+        mirrored: bool,
+        mutate: impl FnOnce(&mut rustpush::MessageInst),
+    ) -> crate::cloud_sync_received_source::ReceivedArchiveSource {
+        use crate::cloud_sync_received_source::{tests::media_fixture, ReceivedArchiveSource};
+        let (mut wire, handles) = media_fixture(mirrored, false);
+        let rustpush::Message::Message(normal) = &mut wire.message else {
+            unreachable!()
+        };
+        let rustpush::MessagePart::Attachment(attachment) = &mut normal.parts.0[1].part else {
+            unreachable!()
+        };
+        let rustpush::AttachmentType::MMCS(file) = &mut attachment.a_type else {
+            unreachable!()
+        };
+        file.size = CONTENT.len();
+        mutate(&mut wire);
+        let source = ReceivedArchiveSource::capture(&wire, &handles).unwrap();
+        ReceivedArchiveSource::decode(&source.encode().unwrap()).unwrap()
+    }
+
+    async fn plan_for_received(
+        source: &crate::cloud_sync_received_source::ReceivedArchiveSource,
+    ) -> AttachmentUploadPlan {
+        let material = source.media_upload_material("received:0").unwrap();
+        let prepared = prepare_put_v2(
+            FileContainer::new(Cursor::new(CONTENT.to_vec())),
+            &[0x42; 32],
+        )
+        .await
+        .unwrap();
+        AttachmentUploadPlan::new_for_source(
+            AttachmentUploadSourceKind::received(source),
+            source.guid().to_owned(),
+            source.source_sha256().unwrap(),
+            record(),
+            material.meta,
+            prepared,
+            digest(CONTENT),
+        )
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn received_plan_round_trip_binds_actual_origin_source_and_original_attempt() {
+        for mirrored in [false, true] {
+            let source = received_source(mirrored, |_| {});
+            let original = plan_for_received(&source).await;
+            let encoded = original.encode().unwrap();
+            let wire = wire::CloudSyncAttachmentUploadV1::decode(encoded.as_slice()).unwrap();
+            assert_eq!(wire.schema_version, 4);
+            assert_eq!(wire.source_kind, if mirrored { 4 } else { 3 });
+            let reopened = AttachmentUploadPlan::decode(&encoded).unwrap();
+            assert_eq!(reopened.encode().unwrap(), encoded);
+            assert_eq!(
+                reopened.parent_source_sha256,
+                source.source_sha256().unwrap()
+            );
+            assert_eq!(reopened.metadata.is_outgoing, mirrored);
+            assert_eq!(
+                reopened.source_kind(),
+                AttachmentUploadSourceKind::received(&source)
+            );
+            assert_eq!(
+                reopened.upload_attempt_id().unwrap(),
+                original.upload_attempt_id().unwrap()
+            );
+            reopened.validate_received_parent_source(&source).unwrap();
+            assert!(reopened
+                .validate_parent_source(source.guid(), &source.source_sha256().unwrap())
+                .is_err());
+            assert!(reopened
+                .native_upload_input(
+                    source.guid(),
+                    &source.source_sha256().unwrap(),
+                    &record(),
+                    "synthetic-upload".into(),
+                    reopened.upload_attempt_id().unwrap().into(),
+                    Cursor::new(CONTENT),
+                )
+                .is_err());
+            let input = reopened
+                .native_upload_input_for_source(
+                    AttachmentUploadSourceKind::received(&source),
+                    source.guid(),
+                    &source.source_sha256().unwrap(),
+                    &record(),
+                    "synthetic-upload".into(),
+                    reopened.upload_attempt_id().unwrap().into(),
+                    Cursor::new(CONTENT),
+                )
+                .unwrap();
+            assert_eq!(
+                input.prepared.encode_v2_upload_snapshot().unwrap(),
+                original.prepared.encode_v2_upload_snapshot().unwrap()
+            );
+            let completed = reopened.complete(asset(&reopened)).unwrap();
+            assert_eq!(completed.cm.0.is_outgoing, mirrored);
+            let completed_bytes =
+                encode_attachment_for_source(reopened.source_kind(), &completed, RECORD).unwrap();
+            reopened
+                .validate_completed_envelope(&completed_bytes)
+                .unwrap();
+        }
+        // Existing IDs/historical wire versions and retained bytes stay on
+        // their original paths; none is implicitly upgraded to version 4.
+        let ids = plan().await.encode().unwrap();
+        let ids_wire = wire::CloudSyncAttachmentUploadV1::decode(ids.as_slice()).unwrap();
+        assert_eq!((ids_wire.schema_version, ids_wire.source_kind), (2, 0));
+        assert_eq!(
+            AttachmentUploadPlan::decode(&ids)
+                .unwrap()
+                .encode()
+                .unwrap(),
+            ids
+        );
+        for sent in [false, true] {
+            let (historical, _) = historical_plan(sent).await;
+            let bytes = historical.encode().unwrap();
+            let wire = wire::CloudSyncAttachmentUploadV1::decode(bytes.as_slice()).unwrap();
+            assert_eq!(
+                (wire.schema_version, wire.source_kind),
+                (3, if sent { 1 } else { 2 })
+            );
+            assert_eq!(
+                AttachmentUploadPlan::decode(&bytes)
+                    .unwrap()
+                    .encode()
+                    .unwrap(),
+                bytes
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn received_plan_rejects_cross_origin_versions_source_and_full_metadata_drift() {
+        for mirrored in [false, true] {
+            let source = received_source(mirrored, |_| {});
+            let original = plan_for_received(&source).await;
+            let encoded = original.encode().unwrap();
+            for version in [1, VERSION, HISTORICAL_VERSION, RECEIVED_VERSION + 1] {
+                let mut wire =
+                    wire::CloudSyncAttachmentUploadV1::decode(encoded.as_slice()).unwrap();
+                wire.schema_version = version;
+                assert!(AttachmentUploadPlan::decode(&wire.encode_to_vec()).is_err());
+            }
+            for other in [
+                AttachmentUploadSourceKind::IdsSent,
+                AttachmentUploadSourceKind::HistoricalSent,
+                AttachmentUploadSourceKind::HistoricalReceived,
+                AttachmentUploadSourceKind::ReceivedIncoming,
+                AttachmentUploadSourceKind::ReceivedMirrored,
+            ] {
+                if other == original.source_kind() {
+                    continue;
+                }
+                assert!(original
+                    .validate_source_origin(
+                        other,
+                        source.guid(),
+                        &source.source_sha256().unwrap(),
+                        &record(),
+                    )
+                    .is_err());
+                let mut wire =
+                    wire::CloudSyncAttachmentUploadV1::decode(encoded.as_slice()).unwrap();
+                wire.source_kind = other.wire();
+                assert!(AttachmentUploadPlan::decode(&wire.encode_to_vec()).is_err());
+            }
+            for mutate in [
+                (|wire: &mut wire::CloudSyncAttachmentUploadV1| wire.upload_request_uuid.clear())
+                    as fn(&mut wire::CloudSyncAttachmentUploadV1),
+                |wire| wire.upload_operation_uuid.clear(),
+            ] {
+                let mut wire =
+                    wire::CloudSyncAttachmentUploadV1::decode(encoded.as_slice()).unwrap();
+                mutate(&mut wire);
+                assert!(AttachmentUploadPlan::decode(&wire.encode_to_vec()).is_err());
+            }
+            let changed_source = received_source(mirrored, |wire| {
+                wire.conversation.as_mut().unwrap().cv_name = Some("changed source".into());
+            });
+            assert!(original
+                .validate_received_parent_source(&changed_source)
+                .is_err());
+            let other_origin = received_source(!mirrored, |_| {});
+            assert!(original
+                .validate_received_parent_source(&other_origin)
+                .is_err());
+            let (_, historical) = historical_plan(mirrored).await;
+            assert!(original
+                .validate_historical_parent_source(&historical)
+                .is_err());
+            for change in [
+                (|m: &mut AttachmentMeta| m.guid = "foreign-guid".into())
+                    as fn(&mut AttachmentMeta),
+                |m| m.is_outgoing = !m.is_outgoing,
+                |m| m.start_date += 1,
+                |m| m.created_date += 1,
+                |m| m.mime_type = Some("wrong/type".into()),
+                |m| m.transfer_name = Some("wrong-name".into()),
+                |m| m.user_info = None,
+            ] {
+                let mut changed = AttachmentUploadPlan::decode(&encoded).unwrap();
+                change(&mut changed.metadata);
+                assert!(changed.validate_received_parent_source(&source).is_err());
+            }
+            let mut missing_attempt = AttachmentUploadPlan::decode(&encoded).unwrap();
+            missing_attempt.upload_identity = None;
+            assert!(missing_attempt.encode().is_err());
+        }
+    }
+
+    #[tokio::test]
+    async fn received_plan_keeps_non_v4_parent_and_complete_auxiliary_body() {
+        for mirrored in [false, true] {
+            let source = received_source(mirrored, |wire| {
+                wire.id = "received-parent-without-v4".into();
+                let rustpush::Message::Message(normal) = &mut wire.message else {
+                    unreachable!()
+                };
+                let mut companion = normal.parts.0[1].clone();
+                companion.idx = Some(8);
+                let rustpush::MessagePart::Attachment(attachment) = &mut companion.part else {
+                    unreachable!()
+                };
+                attachment.iris = true;
+                attachment.part = 3;
+                attachment.name = "auxiliary.mov".into();
+                normal.parts.0.push(companion);
+            });
+            let original_source = source.encode().unwrap();
+            let plan = plan_for_received(&source).await;
+            let reopened = AttachmentUploadPlan::decode(&plan.encode().unwrap()).unwrap();
+            reopened.validate_received_parent_source(&source).unwrap();
+            assert_eq!(reopened.parent_message_guid, "received-parent-without-v4");
+            assert_eq!(source.media_body().unwrap().attachments().len(), 2);
+            assert!(source.media_body().unwrap().attachments()[1].iris);
+            assert_eq!(source.encode().unwrap(), original_source);
+            assert!(source.media_upload_material("received:1").is_err());
+        }
+    }
+
+    #[tokio::test]
+    async fn received_protected_plan_and_completed_receipt_recover_without_a_new_attempt() {
+        use crate::cloud_sync_attachment_upload_receipt::{
+            claim_attempt, persist_completed, AttachmentUploadReceiptBinding,
+        };
+        for mirrored in [false, true] {
+            let source = received_source(mirrored, |_| {});
+            let original = plan_for_received(&source).await;
+            let directory = tempfile::tempdir().unwrap();
+            let account = "A".repeat(43);
+            let stage =
+                stage_attachment_upload(directory.path().into(), account.clone(), &original)
+                    .unwrap();
+            crate::cloud_sync_native_fetch::cloud_sync_commit_protected_page_lease(
+                directory.path().into(),
+                &stage.lease_reference,
+                std::slice::from_ref(&stage.protected_payload_reference),
+            )
+            .unwrap();
+            let reopened =
+                open_attachment_upload(directory.path().into(), account.clone(), &stage).unwrap();
+            reopened.validate_received_parent_source(&source).unwrap();
+            assert_eq!(reopened.encode().unwrap(), original.encode().unwrap());
+            assert_eq!(
+                reopened.upload_attempt_id().unwrap(),
+                original.upload_attempt_id().unwrap()
+            );
+            assert!(
+                open_attachment_upload(directory.path().into(), "B".repeat(43), &stage).is_err()
+            );
+            let binding = AttachmentUploadReceiptBinding {
+                account_fingerprint: account,
+                protected_store_identity: crate::cloud_sync_protector::protected_store_identity(
+                    directory.path().to_string_lossy().into_owned(),
+                )
+                .unwrap(),
+                plan_payload_sha256: stage.payload_sha256.clone(),
+                upload_attempt_id: original.upload_attempt_id().unwrap().to_owned(),
+            };
+            // Absence remains absence: no replacement identity or preparation.
+            let before = reopened.encode().unwrap();
+            assert!(reopened
+                .recover_completed_receipt(directory.path(), &binding)
+                .unwrap()
+                .is_none());
+            claim_attempt(directory.path(), &binding).unwrap();
+            assert!(reopened
+                .recover_completed_receipt(directory.path(), &binding)
+                .unwrap()
+                .is_none());
+            assert_eq!(reopened.encode().unwrap(), before);
+            assert!(claim_attempt(directory.path(), &binding).is_err());
+            let encoded = encode_attachment_for_source(
+                reopened.source_kind(),
+                &reopened.complete(asset(&reopened)).unwrap(),
+                RECORD,
+            )
+            .unwrap();
+            persist_completed(directory.path(), &binding, &encoded).unwrap();
+            for _ in 0..2 {
+                assert_eq!(
+                    reopened
+                        .recover_completed_receipt(directory.path(), &binding)
+                        .unwrap(),
+                    Some(encoded.clone())
+                );
+            }
+            // Matching content/direction cannot borrow historical/IDS provenance.
+            let mut relabeled = AttachmentUploadPlan::decode(&before).unwrap();
+            relabeled.source_kind = if mirrored {
+                AttachmentUploadSourceKind::HistoricalSent
+            } else {
+                AttachmentUploadSourceKind::HistoricalReceived
+            };
+            assert!(relabeled.validate_received_parent_source(&source).is_err());
+            assert!(relabeled
+                .recover_completed_receipt(directory.path(), &binding)
+                .is_err());
+            let mut wrong_attempt = binding.clone();
+            wrong_attempt.upload_attempt_id = Uuid::new_v4().to_string().to_uppercase();
+            assert!(reopened
+                .recover_completed_receipt(directory.path(), &wrong_attempt)
+                .is_err());
+        }
     }
 
     async fn historical_plan(

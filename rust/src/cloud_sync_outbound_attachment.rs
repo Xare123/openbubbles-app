@@ -35,6 +35,7 @@ use wire::CloudSyncOutboundAttachmentV1;
 /// Envelope version. Any other version on decode is rejected, never migrated.
 const ATTACHMENT_PAYLOAD_VERSION: u32 = 1;
 const HISTORICAL_ATTACHMENT_PAYLOAD_VERSION: u32 = 2;
+const RECEIVED_ATTACHMENT_PAYLOAD_VERSION: u32 = 3;
 /// Upper bound for the encoded envelope. Mirrors the attachment metadata
 /// bound used by the legacy create path so readback stays bounded.
 const MAX_ATTACHMENT_ENVELOPE_BYTES: usize = 2 * 1024 * 1024;
@@ -47,16 +48,31 @@ const MAX_IDENTIFIER_BYTES: usize = 4 * 1024;
 /// ATTACHMENT_CREATE_ZONE in attachment_create.
 const ATTACHMENT_CREATE_ZONE: &str = "attachmentManateeZone";
 
-/// Retained provenance, not network authority. Historical-sent and IDS-sent
-/// remain different even when GUID, content and direction are identical.
+/// Retained provenance, not network authority. IDS, historical and received
+/// lanes remain different even when GUID, content and direction are identical.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum AttachmentSourceKind {
     IdsSent,
     HistoricalSent,
     HistoricalReceived,
+    ReceivedIncoming,
+    ReceivedMirrored,
 }
 
 impl AttachmentSourceKind {
+    pub(crate) fn received(
+        source: &crate::cloud_sync_received_source::ReceivedArchiveSource,
+    ) -> Self {
+        match source.origin() {
+            crate::cloud_sync_received_source::ReceivedArchiveOrigin::Incoming => {
+                Self::ReceivedIncoming
+            }
+            crate::cloud_sync_received_source::ReceivedArchiveOrigin::Mirrored => {
+                Self::ReceivedMirrored
+            }
+        }
+    }
+
     pub(crate) fn historical(
         source: &crate::cloud_sync_historical_source::HistoricalArchiveSource,
     ) -> Self {
@@ -75,6 +91,8 @@ impl AttachmentSourceKind {
             Self::IdsSent => 0,
             Self::HistoricalSent => 1,
             Self::HistoricalReceived => 2,
+            Self::ReceivedIncoming => 3,
+            Self::ReceivedMirrored => 4,
         }
     }
 
@@ -84,6 +102,8 @@ impl AttachmentSourceKind {
             Self::IdsSent => Native::IdsSent,
             Self::HistoricalSent => Native::HistoricalSent,
             Self::HistoricalReceived => Native::HistoricalReceived,
+            Self::ReceivedIncoming => Native::ReceivedIncoming,
+            Self::ReceivedMirrored => Native::ReceivedMirrored,
         }
     }
 
@@ -92,10 +112,12 @@ impl AttachmentSourceKind {
     }
 
     fn envelope_version(self) -> u32 {
-        if self == Self::IdsSent {
-            ATTACHMENT_PAYLOAD_VERSION
-        } else {
-            HISTORICAL_ATTACHMENT_PAYLOAD_VERSION
+        match self {
+            Self::IdsSent => ATTACHMENT_PAYLOAD_VERSION,
+            Self::HistoricalSent | Self::HistoricalReceived => {
+                HISTORICAL_ATTACHMENT_PAYLOAD_VERSION
+            }
+            Self::ReceivedIncoming | Self::ReceivedMirrored => RECEIVED_ATTACHMENT_PAYLOAD_VERSION,
         }
     }
 }
@@ -136,7 +158,7 @@ pub(crate) fn initial_attachment_create_operation_id(
 
 /// Serialize a completed attachment with its allocated record name.
 ///
-/// Requires the completed-asset shape: outgoing metadata version 1, matching
+/// Requires completed-asset shape: source-appropriate direction, metadata version 1, matching
 /// non-negative total bytes, 21-byte asset signatures with the exact leading
 /// bytes, a 32-byte protection key, a metadata plist within headroom, a
 /// non-empty upload receipt, and a random v4 record name.
@@ -190,7 +212,7 @@ pub(crate) fn decode_attachment_envelope(
 }
 
 /// Expected provenance must come from the committed owner/plan, not from the
-/// payload being inspected. Old envelopes cannot be promoted to history.
+/// payload being inspected. Old envelopes cannot be promoted to history/receive.
 pub(crate) fn decode_attachment_envelope_for_source(
     kind: AttachmentSourceKind,
     encoded: &[u8],
@@ -476,7 +498,7 @@ fn validate(
     Ok(())
 }
 
-/// Share the actual transport content validator so historical support cannot
+/// Share the actual transport content validator so retained origins cannot
 /// disagree between protected recovery, save and authenticated readback.
 /// Record/account binding and completed-upload receipts remain separate checks.
 fn validate_completed_attachment_shape(
@@ -655,6 +677,135 @@ mod tests {
             original,
             outbound_attachment_payload_sha256(&resized, RECORD).unwrap()
         );
+    }
+
+    #[test]
+    fn received_envelopes_have_distinct_versions_kinds_and_readback_witnesses() {
+        use AttachmentSourceKind::{
+            HistoricalReceived, HistoricalSent, IdsSent, ReceivedIncoming, ReceivedMirrored,
+        };
+        let kinds = [
+            IdsSent,
+            HistoricalSent,
+            HistoricalReceived,
+            ReceivedIncoming,
+            ReceivedMirrored,
+        ];
+        for kind in kinds {
+            let mut original = fixture();
+            original.cm.0.is_outgoing = kind.outgoing();
+            let encoded = encode_attachment_for_source(kind, &original, RECORD).unwrap();
+            let wire = CloudSyncOutboundAttachmentV1::decode(encoded.as_slice()).unwrap();
+            assert_eq!(
+                wire.schema_version,
+                match kind {
+                    IdsSent => 1,
+                    HistoricalSent | HistoricalReceived => 2,
+                    ReceivedIncoming | ReceivedMirrored => 3,
+                }
+            );
+            assert_eq!(wire.source_kind, kind.wire());
+            let (mut remote, name) = decode_attachment_envelope_for_source(kind, &encoded).unwrap();
+            assert_eq!(
+                encode_attachment_for_source(kind, &remote, &name).unwrap(),
+                encoded
+            );
+            remote.lqa.upload_receipt = None;
+            remote.lqa.record_id = None;
+            verify_attachment_readback_for_source(
+                kind,
+                &original,
+                &remote,
+                RECORD,
+                RECORD,
+                &digest(&encoded),
+            )
+            .unwrap();
+            for other in kinds {
+                if other == kind {
+                    continue;
+                }
+                assert!(decode_attachment_envelope_for_source(other, &encoded).is_err());
+                assert!(verify_attachment_readback_for_source(
+                    other,
+                    &original,
+                    &remote,
+                    RECORD,
+                    RECORD,
+                    &digest(&encoded),
+                )
+                .is_err());
+                if kind.outgoing() != other.outgoing() {
+                    assert!(encode_attachment_for_source(other, &original, RECORD).is_err());
+                } else {
+                    // Same-direction content does not erase the retained kind.
+                    assert_ne!(
+                        encode_attachment_for_source(other, &original, RECORD).unwrap(),
+                        encoded
+                    );
+                }
+            }
+        }
+        assert_eq!(ReceivedIncoming.wire(), 3);
+        assert_eq!(ReceivedMirrored.wire(), 4);
+    }
+
+    #[test]
+    fn received_completed_stage_recovery_requires_the_original_kind_account_and_bytes() {
+        for kind in [
+            AttachmentSourceKind::ReceivedIncoming,
+            AttachmentSourceKind::ReceivedMirrored,
+        ] {
+            let directory = tempfile::tempdir().unwrap();
+            let account = "A".repeat(43);
+            let mut original = fixture();
+            original.cm.0.is_outgoing = kind.outgoing();
+            let encoded = encode_attachment_for_source(kind, &original, RECORD).unwrap();
+            let stage = stage_attachment_for_source(
+                kind,
+                directory.path().into(),
+                account.clone(),
+                original,
+                RECORD,
+            )
+            .unwrap();
+            crate::cloud_sync_native_fetch::cloud_sync_commit_protected_page_lease(
+                directory.path().into(),
+                &stage.lease_reference,
+                std::slice::from_ref(&stage.protected_payload_reference),
+            )
+            .unwrap();
+            let reopen = |expected_kind, owner, payload: &str| {
+                open_staged_attachment_for_source(
+                    expected_kind,
+                    directory.path().into(),
+                    owner,
+                    &stage.protected_payload_reference,
+                    payload,
+                    &stage.server_record_id_hash,
+                )
+            };
+            for _ in 0..2 {
+                let (value, name) = reopen(kind, account.clone(), &stage.payload_sha256).unwrap();
+                assert_eq!(
+                    encode_attachment_for_source(kind, &value, &name).unwrap(),
+                    encoded
+                );
+            }
+            for other in [
+                AttachmentSourceKind::IdsSent,
+                AttachmentSourceKind::HistoricalSent,
+                AttachmentSourceKind::HistoricalReceived,
+                AttachmentSourceKind::ReceivedIncoming,
+                AttachmentSourceKind::ReceivedMirrored,
+            ] {
+                if other != kind {
+                    assert!(reopen(other, account.clone(), &stage.payload_sha256).is_err());
+                }
+            }
+            assert!(reopen(kind, "B".repeat(43), &stage.payload_sha256).is_err());
+            assert!(reopen(kind, account, &"f".repeat(64)).is_err());
+        }
     }
 
     #[test]

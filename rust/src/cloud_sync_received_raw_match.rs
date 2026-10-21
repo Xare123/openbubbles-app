@@ -159,6 +159,39 @@ pub(crate) fn verify_historical_media_raw(
     Ok(())
 }
 
+/// Exact readback of an owned received-media envelope. Validate the complete
+/// source-projected bodies semantically before comparing the remaining fields;
+/// dictionary encoding order may differ, but no body attribute is discarded.
+/// Not used to adopt arbitrary Found media or to prove child uploads.
+pub(crate) fn verify_received_media_raw(
+    expected: &CloudMessage,
+    found: &CloudMessage,
+    raw: &ReceivedRawProtos<'_>,
+    projection: &crate::cloud_sync_attachment_parent::ParentAttributedProjection,
+) -> Result<(), ReceivedRawMatchFailure> {
+    verify_raw_fields(found, raw)?;
+    for message in [expected, found] {
+        if message.msg_proto.0.text.as_deref() != Some(projection.text.as_str()) {
+            return Err(ReceivedRawMatchFailure::ValueMismatch);
+        }
+        let body = message.msg_proto.0.attributed_body.as_deref()
+            .ok_or(ReceivedRawMatchFailure::ValueMismatch)?;
+        projection.validate_encoded_body(body).map_err(|_| ReceivedRawMatchFailure::ValueMismatch)?;
+    }
+    let mut expected_headers = expected.clone();
+    let mut found_headers = found.clone();
+    expected_headers.msg_proto.0.attributed_body = None;
+    found_headers.msg_proto.0.attributed_body = None;
+    let group = expected.msg_proto_4.as_ref().and_then(|p| p.0.group_id.as_deref())
+        .is_some_and(|route| route.starts_with("iMessage;+;"));
+    let verdict = if group { compare_received_group_record(&expected_headers, &found_headers) }
+        else { compare_received_record(&expected_headers, &found_headers) };
+    if verdict != ReceivedRecordMatchVerdict::EquivalentSupportedPlainText {
+        return Err(ReceivedRawMatchFailure::ValueMismatch);
+    }
+    Ok(())
+}
+
 fn verify_raw_fields(
     found: &CloudMessage,
     raw: &ReceivedRawProtos<'_>,

@@ -127,6 +127,19 @@ pub(crate) fn project_received_media(
     Ok((message, projection))
 }
 
+/// Complete captured-body projection for read inspection. This is not create
+/// admission: media parents additionally require exact child readback binding.
+pub(crate) fn project_received_archive(
+    source: &ReceivedArchiveSource,
+    chat: &CloudCanonicalChatPayload,
+) -> Result<CloudMessage, Failure> {
+    if source.has_media() {
+        project_received_media(source, chat).map(|(message, _)| message)
+    } else {
+        project_received_archive_plain_text(source, chat)
+    }
+}
+
 fn project_headers(
     source: &ReceivedArchiveSource,
     chat_id: String,

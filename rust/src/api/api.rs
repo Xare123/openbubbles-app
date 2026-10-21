@@ -382,6 +382,7 @@ pub fn cloud_sync_release_local_store_lease(lease: &CloudSyncLocalStoreLease) {
 /// Opaque local ownership of a received source. This is neither an IDS send
 /// receipt nor permission to save a CloudKit record. No message content returns.
 #[frb(type_64bit_int)]
+#[derive(Clone)]
 pub struct CloudSyncNativeReceivedArchiveSourceBinding {
     pub account_fingerprint: String,
     pub protected_store_identity: String,
@@ -1010,7 +1011,7 @@ pub async fn cloud_sync_prepare_received_archive_inspection(
     let Some(CloudCanonicalPayload::Chat(chat))=decoded.payload() else {
         return Err(anyhow!("cloud_sync_received_archive_parent_not_ready"));
     };
-    let expected = crate::cloud_sync_received_projection::project_received_archive_plain_text(&received,chat)
+    let expected = crate::cloud_sync_received_projection::project_received_archive(&received,chat)
         .map_err(|_|anyhow!("cloud_sync_received_archive_parent_changed"))?;
     let container=cloud_messages_client.get_cached_container_for_read_authentication(&permit).await
         .map_err(|_|anyhow!("cloud_sync_received_archive_identity_unavailable"))?;
@@ -1587,6 +1588,7 @@ pub struct CloudSyncReceivedArchiveCreateProof {
     request: crate::cloud_sync_transient_bridge::CloudTransientDecodeRequest,
     route: crate::cloud_sync_canonical_dto::CloudCanonicalChatPayload,
     parent_binding_sha256: String,
+    attachment_readback_binding_sha256: Option<String>,
     expires_at: std::time::Instant,
 }
 
@@ -1603,12 +1605,14 @@ pub async fn cloud_sync_stage_received_archive_create(
     prepared: &CloudSyncPreparedReceivedInspection,
     native_writer_pause_token: u64,
     parent_binding_sha256: String,
+    attachment_readback_binding_sha256: Option<String>,
 ) -> anyhow::Result<CloudSyncProtectedOutboundStage> {
     let pending = prepared.pending.lock().await.take()
         .ok_or_else(|| anyhow!("cloud_sync_received_archive_inspection_consumed"))?;
     if pending.observation.disposition != CloudSyncReceivedRecordDisposition::Absent ||
         pending.raw_found.is_some() || pending.prepared_at.elapsed() > Duration::from_secs(60) ||
-        !is_cloud_sync_hex_digest(&parent_binding_sha256) {
+        !is_cloud_sync_hex_digest(&parent_binding_sha256) ||
+        attachment_readback_binding_sha256.as_ref().is_some_and(|v| !is_cloud_sync_hex_digest(v)) {
         return Err(anyhow!("cloud_sync_received_archive_not_absent"));
     }
     let permit = acquire_cloudkit_read_authentication(native_writer_pause_token)
@@ -1628,13 +1632,15 @@ pub async fn cloud_sync_stage_received_archive_create(
         storage_directory: pending.storage_directory.clone(), auth: Arc::new(auth),
         source: pending.source, chat_generation: pending.chat_generation,
         chat_source: pending.chat_source, request, route: pending.route,
-        parent_binding_sha256, expires_at: std::time::Instant::now() + Duration::from_secs(300),
+        parent_binding_sha256, attachment_readback_binding_sha256,
+        expires_at: std::time::Instant::now() + Duration::from_secs(300),
     };
     let source = cloud_sync_validate_received_create_proof(&proof.storage_directory, &proof.auth, &proof)
         .map_err(|_| anyhow!("cloud_sync_received_archive_source_changed"))?;
-    let stage = crate::cloud_sync_outbound::received::stage_received_message(
+    let stage = crate::cloud_sync_outbound::received::stage_received_message_bound(
         PathBuf::from(&proof.storage_directory), proof.auth.account_fingerprint.clone(),
-        &container.user_id, &source, &proof.route, &proof.parent_binding_sha256)
+        &container.user_id, &source, &proof.route, &proof.parent_binding_sha256,
+        proof.attachment_readback_binding_sha256.as_deref())
         .map_err(|_| anyhow!("cloud_sync_received_archive_source_stage_failed"))?;
     Ok(cloud_sync_bridge_stage(stage))
 }
@@ -1652,11 +1658,13 @@ pub async fn cloud_sync_open_received_archive_create_proof(
     chat_logical_entity_key_hash: String,
     chat_source: super::cloud_sync_chat_identity::CloudSyncChatIdentitySourceInput,
     parent_binding_sha256: String,
+    attachment_readback_binding_sha256: Option<String>,
 ) -> anyhow::Result<CloudSyncReceivedArchiveCreateProof> {
     use crate::cloud_sync_canonical_dto::CloudCanonicalPayload;
     use crate::cloud_sync_transient_bridge::{cloud_sync_decode_transient_record_cached_only,
         CloudTransientDecodeOutcome};
     if !is_cloud_sync_hex_digest(&parent_binding_sha256) || chat_generation == 0 ||
+        attachment_readback_binding_sha256.as_ref().is_some_and(|v| !is_cloud_sync_hex_digest(v)) ||
         received_source.account_fingerprint != expected_auth.account_fingerprint ||
         received_source.protected_store_identity != expected_auth.protected_store_identity {
         return Err(anyhow!("cloud_sync_received_archive_identity_changed"));
@@ -1693,6 +1701,7 @@ pub async fn cloud_sync_open_received_archive_create_proof(
             payload_length: received_source.payload_length,
         },
         chat_generation, chat_source, request, route: (**chat).clone(), parent_binding_sha256,
+        attachment_readback_binding_sha256,
         expires_at: std::time::Instant::now() + Duration::from_secs(300),
     };
     cloud_sync_validate_received_create_proof(&proof.storage_directory, &proof.auth, &proof)
@@ -1723,7 +1732,10 @@ fn cloud_sync_validate_received_create_proof(
     let source = crate::cloud_sync_received_source_stage::open_received_archive_source(
         PathBuf::from(storage), auth.account_fingerprint.clone(), &proof.source)
         .map_err(map_cloud_sync_outbound_failure)?;
-    crate::cloud_sync_received_projection::project_received_archive_plain_text(&source, &proof.route)
+    if source.has_media() != proof.attachment_readback_binding_sha256.is_some() {
+        return Err(CloudSyncOutboundSafeCode::BindingMismatch);
+    }
+    crate::cloud_sync_received_projection::project_received_archive(&source, &proof.route)
         .map_err(map_cloud_sync_outbound_failure)?;
     Ok(source)
 }
@@ -2544,6 +2556,21 @@ impl std::fmt::Debug for CloudSyncHistoricalAttachmentContext {
     }
 }
 
+/// Committed native receive evidence for an attachment. Direction is decoded
+/// from this protected source, never supplied as an outgoing/historical claim.
+#[derive(Clone)]
+pub struct CloudSyncReceivedAttachmentContext {
+    pub storage_directory: String,
+    pub expected_auth: CloudSyncNativeAuthMetadata,
+    pub source: CloudSyncNativeReceivedArchiveSourceBinding,
+}
+
+impl std::fmt::Debug for CloudSyncReceivedAttachmentContext {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("CloudSyncReceivedAttachmentContext(redacted)")
+    }
+}
+
 /// Stage local preparation only. The historical journal must adopt and commit
 /// it under the selected immutable source before a byte upload is authorized.
 pub async fn cloud_sync_stage_historical_attachment_upload_plan(
@@ -2552,7 +2579,7 @@ pub async fn cloud_sync_stage_historical_attachment_upload_plan(
     original_attachment_guid: String,
     source_path: String,
 ) -> anyhow::Result<CloudSyncAttachmentUploadPlanResult> {
-    cloud_sync_historical_attachment::stage_plan(cloud_messages_client, context,
+    cloud_sync_historical_attachment::stage_plan(cloud_messages_client, context.into(),
         original_attachment_guid, source_path).await
 }
 
@@ -2564,7 +2591,7 @@ pub async fn cloud_sync_prepare_historical_attachment_upload(
     source_path: String,
     request_timeout_seconds: u64,
 ) -> anyhow::Result<CloudSyncPreparedAttachmentUploadResult> {
-    cloud_sync_historical_attachment::prepare_upload(cloud_messages_client, context,
+    cloud_sync_historical_attachment::prepare_upload(cloud_messages_client, context.into(),
         plan_stage, original_attachment_guid, source_path, request_timeout_seconds).await
 }
 
@@ -2575,7 +2602,7 @@ pub async fn cloud_sync_verify_historical_attachment_upload_receipt(
     plan_stage: CloudSyncAttachmentUploadPlanReference,
     expected_attempt_id: String,
 ) -> anyhow::Result<Option<CloudSyncAttachmentUploadReceiptEvidence>> {
-    cloud_sync_historical_attachment::verify_receipt(cloud_messages_client, context,
+    cloud_sync_historical_attachment::verify_receipt(cloud_messages_client, context.into(),
         plan_stage, expected_attempt_id).await
 }
 
@@ -2586,7 +2613,62 @@ pub async fn cloud_sync_recover_historical_attachment_upload(
     context: CloudSyncHistoricalAttachmentContext,
     plan_stage: CloudSyncAttachmentUploadPlanReference,
 ) -> anyhow::Result<Option<CloudSyncProtectedOutboundStage>> {
-    cloud_sync_historical_attachment::recover(cloud_messages_client, context, plan_stage).await
+    cloud_sync_historical_attachment::recover(cloud_messages_client, context.into(), plan_stage).await
+}
+
+pub async fn cloud_sync_inspect_received_attachment_sources(
+    cloud_messages_client: &Arc<CloudMessagesClient<DefaultAnisetteProvider>>,
+    context: CloudSyncReceivedAttachmentContext,
+) -> anyhow::Result<Vec<CloudSyncAttachmentSourceEntry>> {
+    let auth = cloud_sync_capture_auth_snapshot(cloud_messages_client, context.storage_directory.clone()).await
+        .map_err(|_| anyhow!("cloud_sync_received_attachment_auth_unavailable"))?;
+    let entries = cloud_sync_historical_attachment::inspect_received_sources(&context, &auth)?;
+    let after = cloud_sync_capture_auth_snapshot(cloud_messages_client, context.storage_directory.clone()).await
+        .map_err(|_| anyhow!("cloud_sync_received_attachment_auth_unavailable"))?;
+    cloud_sync_historical_attachment::open_received_source(&context, &after)?;
+    Ok(entries)
+}
+
+/// Local preparation only; the received journal must adopt/commit the plan
+/// before the existing one-shot upload consumer may receive a capability.
+pub async fn cloud_sync_stage_received_attachment_upload_plan(
+    cloud_messages_client: &Arc<CloudMessagesClient<DefaultAnisetteProvider>>,
+    context: CloudSyncReceivedAttachmentContext,
+    original_attachment_guid: String,
+    source_path: String,
+) -> anyhow::Result<CloudSyncAttachmentUploadPlanResult> {
+    cloud_sync_historical_attachment::stage_plan(cloud_messages_client, context.into(),
+        original_attachment_guid, source_path).await
+}
+
+pub async fn cloud_sync_prepare_received_attachment_upload(
+    cloud_messages_client: &Arc<CloudMessagesClient<DefaultAnisetteProvider>>,
+    context: CloudSyncReceivedAttachmentContext,
+    plan_stage: CloudSyncAttachmentUploadPlanReference,
+    original_attachment_guid: String,
+    source_path: String,
+    request_timeout_seconds: u64,
+) -> anyhow::Result<CloudSyncPreparedAttachmentUploadResult> {
+    cloud_sync_historical_attachment::prepare_upload(cloud_messages_client, context.into(),
+        plan_stage, original_attachment_guid, source_path, request_timeout_seconds).await
+}
+
+pub async fn cloud_sync_verify_received_attachment_upload_receipt(
+    cloud_messages_client: &Arc<CloudMessagesClient<DefaultAnisetteProvider>>,
+    context: CloudSyncReceivedAttachmentContext,
+    plan_stage: CloudSyncAttachmentUploadPlanReference,
+    expected_attempt_id: String,
+) -> anyhow::Result<Option<CloudSyncAttachmentUploadReceiptEvidence>> {
+    cloud_sync_historical_attachment::verify_receipt(cloud_messages_client, context.into(),
+        plan_stage, expected_attempt_id).await
+}
+
+pub async fn cloud_sync_recover_received_attachment_upload(
+    cloud_messages_client: &Arc<CloudMessagesClient<DefaultAnisetteProvider>>,
+    context: CloudSyncReceivedAttachmentContext,
+    plan_stage: CloudSyncAttachmentUploadPlanReference,
+) -> anyhow::Result<Option<CloudSyncProtectedOutboundStage>> {
+    cloud_sync_historical_attachment::recover(cloud_messages_client, context.into(), plan_stage).await
 }
 
 /// Stage one original upload plan from the exact retained IDS source. The
@@ -4592,7 +4674,7 @@ enum CloudSyncPreparedMessageCreateOwner {
         received_archive_proofs: Vec<CloudSyncReceivedArchiveCreateProof>,
         historical_archive_proofs: Vec<CloudSyncHistoricalArchiveCreateProof>,
         historical_chat_proofs: Vec<cloud_sync_historical_chat::HistoricalChatPreparation>,
-        historical_attachment_contexts: Vec<CloudSyncHistoricalAttachmentContext>,
+        archive_attachment_contexts: Vec<cloud_sync_historical_attachment::ArchiveContext>,
     },
     #[cfg(test)]
     Test {
@@ -4622,7 +4704,7 @@ impl CloudSyncPreparedMessageCreateOwner {
                 received_archive_proofs,
                 historical_archive_proofs,
                 historical_chat_proofs,
-                historical_attachment_contexts,
+                archive_attachment_contexts,
             } => {
                 cloud_messages_client
                     .validate_writer_preparation_binding(&writer_binding)
@@ -4666,11 +4748,11 @@ impl CloudSyncPreparedMessageCreateOwner {
                 for proof in &historical_chat_proofs {
                     proof.revalidate(&cloud_messages_client).await?;
                 }
-                for context in &historical_attachment_contexts {
+                for context in &archive_attachment_contexts {
                     let auth = cloud_sync_capture_auth_snapshot(&cloud_messages_client,
-                        context.storage_directory.clone()).await
+                        context.storage_directory().to_owned()).await
                         .map_err(|_| CloudSyncOutboundSafeCode::NativeAuthUnavailable)?;
-                    cloud_sync_historical_attachment::open_source(context, &auth)
+                    cloud_sync_historical_attachment::open_archive_source(context, &auth)
                         .map_err(|_| CloudSyncOutboundSafeCode::BindingMismatch)?;
                 }
                 let outcomes = native_writer_permit
@@ -5866,7 +5948,7 @@ pub async fn cloud_sync_prepare_message_create(
                             received_archive_proofs,
                             historical_archive_proofs,
                             historical_chat_proofs: vec![],
-                            historical_attachment_contexts: vec![],
+                            archive_attachment_contexts: vec![],
                         },
                     )),
                     storage_directory,
@@ -6049,7 +6131,7 @@ pub async fn cloud_sync_prepare_chat_create(
                             received_archive_proofs: vec![],
                             historical_archive_proofs: vec![],
                             historical_chat_proofs,
-                            historical_attachment_contexts: vec![],
+                            archive_attachment_contexts: vec![],
                         },
                     )),
                     storage_directory,
@@ -6311,9 +6393,10 @@ fn cloud_sync_open_message_create_bound(
     .map_err(|_| CloudSyncOutboundSafeCode::ProtectedStorage)?;
     let (opened, kind) = if let Some(proof) = &input.received_archive_proof {
         let source = cloud_sync_validate_received_create_proof(storage_directory, auth, proof)?;
-        let received = crate::cloud_sync_outbound::received::open_staged_received_message(
+        let received = crate::cloud_sync_outbound::received::open_staged_received_message_bound(
             storage.clone(), auth.account_fingerprint.clone(), &input.protected_payload_reference,
-            &input.payload_sha256, &source, &proof.route, &proof.parent_binding_sha256)
+            &input.payload_sha256, &source, &proof.route, &proof.parent_binding_sha256,
+            proof.attachment_readback_binding_sha256.as_deref())
             .map_err(map_cloud_sync_outbound_failure)?;
         (CloudSyncOpenedMessageCreate::ReceivedArchive { received }, CloudCanonicalEntityKind::Message)
     } else if let Some(proof) = &input.historical_archive_proof {
@@ -6899,7 +6982,22 @@ pub async fn cloud_sync_prepare_historical_attachment_create(
     cloud_sync_prepare_attachment_create_bound(cloud_messages_client,
         context.storage_directory.clone(), context.expected_auth.account_fingerprint.clone(),
         context.expected_auth.protected_store_identity.clone(), request_uuid,
-        request_timeout_seconds, inputs, Some(context)).await
+        request_timeout_seconds, inputs, Some(context.into())).await
+}
+
+/// Received child record save uses its committed receive source and the same
+/// one-shot native consumer, never an invented outgoing delivery receipt.
+pub async fn cloud_sync_prepare_received_attachment_create(
+    cloud_messages_client: &Arc<CloudMessagesClient<DefaultAnisetteProvider>>,
+    context: CloudSyncReceivedAttachmentContext,
+    request_uuid: String,
+    request_timeout_seconds: u64,
+    inputs: Vec<CloudSyncPreparedMessageCreateInput>,
+) -> CloudSyncPreparedMessageCreateResult {
+    cloud_sync_prepare_attachment_create_bound(cloud_messages_client,
+        context.storage_directory.clone(), context.expected_auth.account_fingerprint.clone(),
+        context.expected_auth.protected_store_identity.clone(), request_uuid,
+        request_timeout_seconds, inputs, Some(context.into())).await
 }
 
 #[frb(ignore)]
@@ -6912,7 +7010,7 @@ async fn cloud_sync_prepare_attachment_create_bound(
     request_uuid: String,
     request_timeout_seconds: u64,
     inputs: Vec<CloudSyncPreparedMessageCreateInput>,
-    historical: Option<CloudSyncHistoricalAttachmentContext>,
+    archive: Option<cloud_sync_historical_attachment::ArchiveContext>,
 ) -> CloudSyncPreparedMessageCreateResult {
     if !is_valid_cloud_sync_attachment_create_request(
         &expected_account_fingerprint,
@@ -6989,8 +7087,8 @@ async fn cloud_sync_prepare_attachment_create_bound(
         return cloud_sync_prepare_failure(CloudSyncOutboundSafeCode::ProtectedStorage);
     }
     let (source_kind, attachment, server_record_name) =
-        match cloud_sync_historical_attachment::open_record(&storage_directory,
-            &auth_after_preparation, input, historical.as_ref()) {
+        match cloud_sync_historical_attachment::open_archive_record(&storage_directory,
+            &auth_after_preparation, input, archive.as_ref()) {
             Ok(value) => value,
             Err(failure) => return cloud_sync_prepare_failure(failure),
         };
@@ -7074,7 +7172,7 @@ async fn cloud_sync_prepare_attachment_create_bound(
                             received_archive_proofs: vec![],
                             historical_archive_proofs: vec![],
                             historical_chat_proofs: vec![],
-                            historical_attachment_contexts: historical.into_iter().collect(),
+                            archive_attachment_contexts: archive.into_iter().collect(),
                         },
                     )),
                     storage_directory,
@@ -8581,7 +8679,20 @@ pub async fn cloud_sync_reconcile_historical_attachment_create(
     cloud_sync_reconcile_attachment_create_bound(cloud_messages_client,
         context.storage_directory.clone(), context.expected_auth.account_fingerprint.clone(),
         context.expected_auth.protected_store_identity.clone(), request_uuid,
-        input, Some(context)).await
+        input, Some(context.into())).await
+}
+
+/// Exact received child readback. NotFound never permits another byte upload.
+pub async fn cloud_sync_reconcile_received_attachment_create(
+    cloud_messages_client: &Arc<CloudMessagesClient<DefaultAnisetteProvider>>,
+    context: CloudSyncReceivedAttachmentContext,
+    request_uuid: String,
+    input: CloudSyncPreparedMessageCreateInput,
+) -> CloudSyncOutboundReconcileResult {
+    cloud_sync_reconcile_attachment_create_bound(cloud_messages_client,
+        context.storage_directory.clone(), context.expected_auth.account_fingerprint.clone(),
+        context.expected_auth.protected_store_identity.clone(), request_uuid,
+        input, Some(context.into())).await
 }
 
 #[frb(ignore)]
@@ -8592,7 +8703,7 @@ async fn cloud_sync_reconcile_attachment_create_bound(
     expected_protected_store_identity: String,
     request_uuid: String,
     input: CloudSyncPreparedMessageCreateInput,
-    historical: Option<CloudSyncHistoricalAttachmentContext>,
+    archive: Option<cloud_sync_historical_attachment::ArchiveContext>,
 ) -> CloudSyncOutboundReconcileResult {
     if !is_valid_cloud_sync_attachment_create_input(
         &expected_account_fingerprint,
@@ -8664,8 +8775,8 @@ async fn cloud_sync_reconcile_attachment_create_bound(
         return cloud_sync_reconcile_failure(CloudSyncOutboundSafeCode::ProtectedStorage);
     }
     let (source_kind, expected_attachment, server_record_name) =
-        match cloud_sync_historical_attachment::open_record(&storage_directory,
-            &auth_after_preparation, &input, historical.as_ref()) {
+        match cloud_sync_historical_attachment::open_archive_record(&storage_directory,
+            &auth_after_preparation, &input, archive.as_ref()) {
             Ok(value) => value,
             Err(failure) => return cloud_sync_reconcile_failure(failure),
         };
@@ -8720,8 +8831,8 @@ async fn cloud_sync_reconcile_attachment_create_bound(
     }
     // The lookup may yield while the source lease or snapshot is changed.
     // Validate the retained historical source again before admitting evidence.
-    if let Some(context) = &historical {
-        if cloud_sync_historical_attachment::open_record(&storage_directory,
+    if let Some(context) = &archive {
+        if cloud_sync_historical_attachment::open_archive_record(&storage_directory,
             &auth_after_lookup, &input, Some(context)).is_err() {
             return cloud_sync_reconcile_failure(CloudSyncOutboundSafeCode::BindingMismatch);
         }
@@ -21802,7 +21913,7 @@ async fn cloud_sync_prepare_conditional_message_update_submission_bound(
                 received_archive_proofs: vec![],
                 historical_archive_proofs: vec![],
                 historical_chat_proofs: vec![],
-                historical_attachment_contexts: vec![],
+                archive_attachment_contexts: vec![],
             })),
             storage_directory,
             expected_account_fingerprint,
