@@ -8837,8 +8837,14 @@ class RustPushService extends GetxService {
       isExpectedCommitted: (saved) => saved.chat.targetId == chat.id &&
           saved.isFromMe == message.isFromMe && saved.handleId == message.handleId &&
           saved.dateCreated == message.dateCreated,
-      onDeferred: (code, committed) => Logger.warn(
-          'Cloud Sync V2 received archive deferred code=$code messagePersisted=$committed'),
+      onDeferred: (code, committed) {
+        Logger.warn(
+          'Cloud Sync V2 received archive deferred code=$code messagePersisted=$committed');
+        // A post-seal check may fail after the source was durably retained.
+        // Wake the existing bounded worker; it independently revalidates all
+        // ownership/rollout gates and cannot invent a new send or upload grant.
+        if (committed) _queueCloudSyncV2ReceivedSources(CloudSyncTrigger.localOutbox);
+      },
     );
   }
 

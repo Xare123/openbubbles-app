@@ -59,8 +59,12 @@ final class CloudSyncReceivedArchiveStaging {
     if (existing == null && !source.isSeed) {
       throw StateError('cloud_sync_received_archive_protected_source_invalid');
     }
-    await validateCurrentIdentity();
-    return journal.saveReceivedCapture(
+    // Native sealing already checked the captured account/store/handles on
+    // both sides of encryption. Retain that validated source before another
+    // await can fail or the process can stop. The transaction still checks
+    // current Dart profile/epoch ownership and exact persisted wire content.
+    // This is local retention, never inspection or remote write admission.
+    final intentId = journal.saveReceivedCapture(
       wire: wire,
       liveContext: liveContext,
       localChatId: localChatId,
@@ -70,6 +74,11 @@ final class CloudSyncReceivedArchiveStaging {
       stillCurrent: stillCurrent,
       now: clock().toUtc(),
     );
+    // Do not drop an adopted seed when this check fails. Ordinary delivery
+    // reuses the committed row; the received worker revalidates the original
+    // account/store again before materialization, inspection or any upload.
+    await validateCurrentIdentity();
+    return intentId;
   }
 
   /// Bounded worker/restart handoff. Original encrypted seed remains durable

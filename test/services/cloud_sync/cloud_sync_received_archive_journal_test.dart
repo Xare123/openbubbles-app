@@ -14,6 +14,7 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_received_arc
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_received_archive_source_binding.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_received_discovery_retain_adapter.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_received_archive_staging.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_received_delivery.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_store.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_transport.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_received_inspection.dart';
@@ -639,6 +640,88 @@ void main() {
       );
     },
   );
+
+  test('sealed receive survives post-seal identity-check failure and reopen', () async {
+    const guid = 'sealed-before-validation-failure';
+    final staged = _staged(guid, 'original', chat);
+    final seed = CloudSyncReceivedArchiveSourceBinding.sealed(
+      accountFingerprint: staged.accountFingerprint,
+      protectedStoreIdentity: staged.protectedStoreIdentity,
+      messageGuidHash: staged.messageGuidHash, sourceSha256: staged.sourceSha256,
+      ciphertext: 'obcs2.test.U3ludGhldGlj');
+    final auth = _auth(Object());
+    final wire = _wire(id: guid, text: 'original', sentAt: _time(2).millisecondsSinceEpoch);
+    // Match reflectMessageDyn's local DateTime representation. The shared
+    // journal fixtures use UTC, while ObjectBox reloads dates as local time.
+    final message = _fresh(guid, 'original', chat)
+      ..dateCreated = DateTime.fromMillisecondsSinceEpoch(wire.sentTimestamp);
+    var validations = 0, seals = 0, ordinarySaves = 0;
+    final deferred = <bool>[];
+    final received = await persistReceivedMessageWithoutLoss(
+      message: message,
+      capture: () async {
+        await CloudSyncReceivedArchiveStaging.persistSealed(
+          journal: journal, capturedIdentity: auth,
+          validateCurrentIdentity: () async {
+            if (++validations == 2) throw StateError('cloud_sync_received_archive_identity_unavailable');
+          },
+          stillCurrent: () => true, wire: wire, liveContext: _live,
+          localChatId: chat.id!, persistMessage: () => store.box<Message>().put(message),
+          sealNative: () async { seals++; return seed; }, clock: () => _time(3));
+        return _byGuid(guid)!;
+      },
+      persistOrdinary: () { ordinarySaves++; store.box<Message>().put(message); return message; },
+      findCommitted: () => _byGuid(guid),
+      isExpectedCommitted: (saved) => saved.chat.targetId == chat.id &&
+        saved.isFromMe == message.isFromMe && saved.handleId == message.handleId &&
+        saved.dateCreated == message.dateCreated,
+      sameReceiveIdentity: () => true,
+      onDeferred: (_, saved) => deferred.add(saved),
+    );
+    expect(received.guid, guid);
+    expect(deferred, [true]);
+    expect(ordinarySaves, 0);
+    expect(store.box<Message>().count(), 1);
+    expect(store.box<CloudSyncReceivedArchiveIntentEntity>().count(), 1);
+    final id = store.box<CloudSyncReceivedArchiveIntentEntity>().getAll().single.id;
+    expect(journal.readProtectedSource(intentId: id, currentAuth: auth).encode(), seed.encode());
+    final chatId = chat.id!;
+    await reopen();
+    chat = store.box<Chat>().get(chatId)!;
+    final replayed = await CloudSyncReceivedArchiveStaging.persistSealed(
+      journal: journal, capturedIdentity: auth, validateCurrentIdentity: () async {},
+      stillCurrent: () => true, wire: wire, liveContext: _live, localChatId: chat.id!,
+      persistMessage: () => _byGuid(guid)!.id!,
+      sealNative: () async => throw StateError('must reuse retained original'),
+      clock: () => _time(4));
+    expect(replayed, id);
+    expect(seals, 1);
+    expect(store.box<Message>().count(), 1);
+    expect(journal.readProtectedSource(intentId: id, currentAuth: auth).encode(), seed.encode());
+    expect(store.box<CloudOutboxOperationEntity>().count(), 0);
+  });
+
+  test('sealed receive still rejects a profile replacement before local commit', () async {
+    const guid = 'sealed-profile-replaced';
+    final staged = _staged(guid, 'original', chat);
+    final seed = CloudSyncReceivedArchiveSourceBinding.sealed(
+      accountFingerprint: staged.accountFingerprint,
+      protectedStoreIdentity: staged.protectedStoreIdentity,
+      messageGuidHash: staged.messageGuidHash, sourceSha256: staged.sourceSha256,
+      ciphertext: 'obcs2.test.U3ludGhldGlj');
+    var current = true;
+    await expectLater(CloudSyncReceivedArchiveStaging.persistSealed(
+      journal: journal, capturedIdentity: _auth(Object()),
+      validateCurrentIdentity: () async {}, stillCurrent: () => current,
+      wire: _wire(id: guid, text: 'original', sentAt: _time(2).millisecondsSinceEpoch),
+      liveContext: _live, localChatId: chat.id!,
+      persistMessage: () => store.box<Message>().put(_fresh(guid, 'original', chat)),
+      sealNative: () async { current = false; return seed; }, clock: () => _time(3)),
+      throwsA(_fails('cloud_sync_received_archive_identity_changed')));
+    expect(store.box<Message>().count(), 0);
+    expect(store.box<CloudSyncReceivedArchiveIntentEntity>().count(), 0);
+    expect(store.box<CloudOutboxOperationEntity>().count(), 0);
+  });
 
   test(
     'source mismatch before durable adoption rolls back only fresh lease',
