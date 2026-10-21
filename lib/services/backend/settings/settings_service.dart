@@ -8,6 +8,7 @@ import 'package:bluebubbles/app/wrappers/theme_switcher.dart';
 import 'package:bluebubbles/helpers/helpers.dart';
 import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/main.dart';
+import 'package:bluebubbles/services/backend/settings/client_update_version.dart';
 import 'package:bluebubbles/services/network/backend_service.dart';
 import 'package:bluebubbles/services/services.dart';
 import 'package:flutter/foundation.dart';
@@ -417,7 +418,7 @@ class SettingsService extends GetxService {
     final version = release.tagName!.split("+").first.replaceAll("v", "");
     final code = release.tagName!.split("+").last;
     final buildNumber = fs.packageInfo.buildNumber.lastChars(min(4, fs.packageInfo.buildNumber.length));
-    if (int.parse(code) <= int.parse(buildNumber) || prefs.getString("client-update-check") == code) return;
+    if (!isNewerClientUpdateBuild(code, buildNumber) || prefs.getString("client-update-check") == code) return;
     showDialog(
       context: Get.context!,
       builder: (context) => AlertDialog(
