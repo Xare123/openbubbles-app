@@ -33,9 +33,23 @@ final changed-path analysis40977 is terminal0/clean. Source receipt is in canoni
 wait:not_found. Alpha693-tombstone disposition is still unanswered, preserve
 backups and the completed204-file media backfill. Relay publication is done.
 
-Next: define/recover pre-seal native-key/account failures without fabricating live
-origin from historical rows, then one coherent APK/consolidated Android window.
-Installed624/signedd259 cannot serve these APIs. Goal active, not production-ready.
+Pre-seal support boundary is now source-reviewed: cached native account
+composition and the platform-protected key are genuinely required. Ordinary
+same-profile delivery survives capture failure, but an arrival without an
+encrypted seed has no automatic archive retry. Profile/opt-in and history-upload
+copy now disclose that limit. The existing historical action reuses one fixed
+snapshot, not later arrivals; endpoint evidence can independently prevent a new
+received create. It is not guaranteed missed-message/edit/undo recovery.
+Sourceea27db4d174d81e8e1d858364f78b6623a702460: two affected widget files passed41
+tests (62551); four-path analysis22942 terminal0/no issues. This is presentation
+only, not a durable-retry repair or rollout proof.
+Canonical `received-capture-support-boundary-20261021` owns the checkpoint.
+
+Relay publication was independently reverified: public NativeValidationRelay
+mainfca66e2 / source-build39554981206 success, matching modified client required.
+No extra Pixel gate for publication. Next use one coherent candidate/consolidated
+Android window, not repeated unrelated qualifications. Installed624/signedd259
+cannot serve these APIs. Goal active; full continuity/production remain unproven.
 
 ## Received-media lifecycle: source-qualified
 

@@ -7904,3 +7904,31 @@ Source frozen as a778e90f5b2c37714d853fc72e26f1634b2d0b29 (18 paths). Finalchang
 initial verifier omittedsingleline Git hunkcounts corrected withoutproductdelta.
 All12bindings/model/locks/sixpins/workflow/flags verified invariant. Final455log
 SHA3a70eb5e5a61490c31b822dcd6cf71e9ff23d93a7005b32e4436f6e04afe48f7.
+
+## October21: relay publication verified; receive support boundary disclosed
+
+Relay publication is complete: GitHub reverified public NativeValidationRelay
+mainfca66e2fd7b39acaacbf1e1b713d8fe4481e664f and successful sourcebuild39554981206.
+It is a standalone replacement repository, not an old-relay network fork; a
+matching modified client is required. No new build/login/device gate added.
+
+Codeea27db4d174d81e8e1d858364f78b6623a702460 is four Profile/test paths only.
+Native account composition and platform-secret unavailability before receive
+sealing cannot be replaced by plaintext/asserted identity. Ordinary same-profile
+delivery survives, but no encrypted retry exists for that failed capture.
+Heisenberg's bounded historical audit was independently checked and accepted:
+Profile reuses the retained snapshot, later arrivals are not included, completed
+passes retry attachments only, and missing endpoint proof can hold received
+creates. UI/consent now discloses these limits without guaranteed recovery.
+
+Two affected widget files62551 terminal0:41passed, including new disclosure and
+failed-load cases plus existing large-text/consent/history cases. Four-path
+analysis22942 terminal0/noissues; scoped diffcheck clean. No runtime/schema/API/
+native/bindings/locks/pins/workflow/flags change. Reuse39631211759, no duplicate
+native CI/APK. All5receivedflagsOFF. No phone/account/send/upload/merge/GCE or
+cleanup. Helper reviewed/closed/wait:not_found; no activeprocess/child remains.
+Case received-capture-support-boundary-20261021 records source findings/results.
+Alpha693tombstone disposition unanswered; snapshots/queues and completed204-file
+backfill preserved. This is not full received-archive continuity or production
+acceptance. Next one coherent candidate/consolidated Android window, not another
+series of unrelated relay tests. GoalACTIVE/incomplete.

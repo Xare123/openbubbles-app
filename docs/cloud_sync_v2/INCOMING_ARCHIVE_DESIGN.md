@@ -30,10 +30,20 @@ Final12-file455Dart passed/1m20s. No native/binding/schema/lock/pin/flag changes
 new APK. All five received flags remain OFF. Canonical case
 `received-media-recovery-consent-20261021` owns commands, failures and receipt.
 Pre-seal account/key unavailability still leaves ordinary Message persistence
-without an authenticated retry seed. Historical recovery requires its separately
-confirmed snapshot and is not equivalent live provenance. Resolve that boundary
-before claiming full continuity or enabling rollout. These are offline results,
-not new Apple or Android acceptance. Earlier dated sections are historical.
+without an authenticated retry seed. This is an explicit support limit, not a
+silent claim of deferred automatic recovery. The native cached composition and
+platform-protected secret are required; no caller metadata/plaintext fallback is
+accepted. Profile and its received opt-in now disclose this limit, including
+failed preference loading. Historical upload reuses an existing fixed snapshot
+and cannot include later arrivals or recreate missed edit/undo events. Missing
+endpoint evidence may also hold historical received creates. Its confirmed
+snapshot is not equivalent live provenance or guaranteed recovery.
+Sourceea27db4d174d81e8e1d858364f78b6623a702460: the two affected widget files passed41
+tests (62551); four-path analysis22942 terminal0/no issues.
+No native/API/schema/flag/engine change. Case
+`received-capture-support-boundary-20261021` records the exact source review.
+Do not claim full continuity or Android/Apple acceptance. Earlier sections are
+historical, not current rollout authority.
 
 ## Current received-media lifecycle, October21
 
