@@ -5,6 +5,8 @@ use anyhow::anyhow;
 mod phone_registration_push_refresh;
 #[path = "relay_setup_reuse.rs"]
 mod relay_setup_reuse;
+#[path = "cloud_sync_clique_status.rs"]
+mod cloud_sync_clique_status;
 use async_recursion::async_recursion;
 use base64::prelude::*;
 pub use broadcast::Receiver;
@@ -18672,6 +18674,19 @@ pub async fn is_in_clique(keychain: &Arc<KeychainClient<DefaultAnisetteProvider>
             false
         }
     }
+}
+
+/// Checked CloudKit trust status. A writer pause or failed trust refresh is
+/// unavailable, never a conclusive false that could disable sync or start
+/// recovery. Keep the legacy API for unrelated consumers and binary history.
+pub async fn cloud_sync_check_clique(
+    keychain: &Arc<KeychainClient<DefaultAnisetteProvider>>,
+) -> anyhow::Result<bool> {
+    cloud_sync_clique_status::check(
+        rustpush::cloudkit_operation_gate::try_acquire_cloudkit_operation,
+        |permit| async move { permit.run(keychain.checked_is_in_clique()).await },
+    )
+    .await
 }
 
 pub async fn join_clique_with_bottle(
