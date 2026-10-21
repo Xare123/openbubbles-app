@@ -87,6 +87,19 @@ pub(super) fn prepare_existing_push_for_refresh(
     if current.token.is_none() {
         return Err("Apple Push is not ready for phone-number registration. Reconnect and retry; saved credentials have been kept.");
     }
+    if let Some(native)=&current.native_push {
+        if current.keypair.is_some() || !current.has_push_identity() {
+            return Err("The saved native push identity is unusable. Existing messages and credentials have been kept.");
+        }
+        let certificate_key=X509::from_der(&native.certificate).and_then(|cert| cert.public_key())
+            .map_err(|_| "The saved native push certificate could not be read. Existing credentials have been kept.")?;
+        let public=PKey::public_key_from_der(protected_public_key)
+            .map_err(|_| "The native push public key could not be read. Existing credentials have been kept.")?;
+        if !certificate_key.public_eq(&public) {
+            return Err("The saved native push identity changed. Existing credentials have been kept.");
+        }
+        let mut prepared=current.clone(); prepared.token=None; return Ok(prepared);
+    }
     let pair = current.keypair.as_ref().ok_or(
         "The saved Apple Push certificate is unavailable. Existing messages and device details have been kept.")?;
     let certificate_key = X509::from_der(&pair.cert)
@@ -107,13 +120,20 @@ pub(super) fn fresh_token_was_issued(previous: Option<[u8; 32]>, next: Option<[u
 }
 
 pub(super) fn validate_push_snapshot(state: &APSState) -> Result<(), &'static str> {
-    if state.token.is_none() || state.keypair.is_none() {
+    if state.token.is_none() || !state.has_push_identity() {
         return Err("Apple Push is not ready for setup. Your existing device credentials have been kept; reconnect and retry.");
     }
     Ok(())
 }
 
 pub(super) fn saved_push_belongs_to_connection(current: &APSState, saved: &APSState) -> bool {
+    if current.native_push.is_some() || saved.native_push.is_some() {
+        return current.keypair.is_none() && saved.keypair.is_none()
+            && current.has_push_identity() && saved.has_push_identity()
+            && match (&current.native_push,&saved.native_push) {
+                (Some(a),Some(b))=>a.same_owner(b), _=>false,
+            };
+    }
     match (&current.keypair, &saved.keypair) {
         (Some(current), Some(saved)) => current.cert == saved.cert && current.private.0 == saved.private.0,
         _ => false,
@@ -163,6 +183,43 @@ mod tests {
         let new = next.keypair.as_ref().unwrap();
         assert_eq!(new.cert, old.cert);
         assert_eq!(new.private.0, old.private.0);
+    }
+
+    fn native_fixture() -> (APSState,Vec<u8>) {
+        let (mut state,public)=fixture();
+        let cert=state.keypair.take().unwrap().cert;
+        state.native_push=Some(rustpush::native_push::NativePushIdentity {
+            certificate:cert,device_id:"synthetic-phone".into(),device_uuid:"synthetic-client".into(),
+        });
+        (state,public)
+    }
+
+    #[test]
+    fn native_phone_refresh_retains_owner_and_certificate_without_software_alias() {
+        let (state,public)=native_fixture();
+        let prepared=prepare_existing_push_for_refresh(&state,true,&public).unwrap();
+        assert!(prepared.token.is_none());assert!(prepared.keypair.is_none());
+        assert!(saved_push_belongs_to_connection(&state,&prepared));
+        assert!(validate_push_snapshot(&state).is_ok());
+        assert!(validate_push_snapshot(&prepared).is_err());
+        assert_eq!(state.token,Some([7;32]));
+        assert!(prepare_existing_push_for_refresh(&state,false,&public).is_err());
+    }
+
+    #[test]
+    fn native_wrong_key_owner_or_mixed_identity_cannot_replace_saved_state() {
+        let (state,public)=native_fixture();let (_,wrong)=fixture();
+        assert!(prepare_existing_push_for_refresh(&state,true,&wrong).is_err());
+        let mut changed=state.clone();changed.native_push.as_mut().unwrap().device_uuid="another-client".into();
+        assert!(!saved_push_belongs_to_connection(&state,&changed));
+        changed=state.clone();changed.native_push.as_mut().unwrap().device_id="another-phone".into();
+        assert!(!saved_push_belongs_to_connection(&state,&changed));
+        changed=state.clone();changed.native_push.as_mut().unwrap().certificate=b"bad-der".to_vec();
+        assert!(!saved_push_belongs_to_connection(&state,&changed));
+        changed=state.clone();changed.keypair=fixture().0.keypair;
+        assert!(validate_push_snapshot(&changed).is_err());
+        assert!(prepare_existing_push_for_refresh(&changed,true,&public).is_err());
+        assert!(!saved_push_belongs_to_connection(&state,&changed));
     }
 
     #[test]

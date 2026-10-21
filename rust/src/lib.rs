@@ -59,6 +59,7 @@ fn contains_sensitive_log_material(message: &str) -> bool {
         "decoded_spd",
         "device-key",
         "mailto:",
+        "ob-push-v1.",
         "password data",
         "plist",
         "private-key",
@@ -236,6 +237,7 @@ mod tests {
 
     #[test]
     fn suppresses_ids_secrets_and_raw_responses() {
+        assert!(contains_sensitive_log_material("native request https://relay.example/api/v1/bridge/ob-push-v1.synthetic-private-proof"));
         assert!(contains_sensitive_log_material(
             r#"session-token": Data([1, 2, 3])"#
         ));

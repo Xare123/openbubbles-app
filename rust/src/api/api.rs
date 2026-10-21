@@ -12102,7 +12102,7 @@ pub fn read_hardware(path: String) -> Option<SavedHardwareState> {
         validate_findmy_probe_retained_state(
             account.postdata_done,
             !hardware.identity.is_empty(),
-            hardware.push.keypair.is_some(),
+            hardware.push.has_push_identity(),
             hardware.push.token.is_some(),
         )
         .ok()?;
@@ -13277,10 +13277,16 @@ pub async fn refresh_phone_registration_push(
         return Err(anyhow!("Device setup changed while preparing phone-number registration. Retry with the current device; saved credentials have been kept."));
     }
     let saved = current.state.read().await.clone();
-    let pair = saved.keypair.as_ref().ok_or_else(|| anyhow!(
-        "The saved Apple Push certificate is unavailable. Existing messages and device details have been kept."))?;
-    let public = pair.private.get_public_key().map_err(|_| anyhow!(
-        "The saved Apple Push key could not be accessed. Unlock this device and retry; do not clear app data."))?;
+    let public = match (&saved.keypair,&saved.native_push) {
+        (Some(pair),None)=>pair.private.get_public_key().map_err(|_| anyhow!(
+            "The saved Apple Push key could not be accessed. Unlock this device and retry; do not clear app data."))?,
+        (None,Some(native))=> {
+            let transport=wanted.native_push_transport().ok_or_else(||anyhow!("The native relay is unavailable. Existing credentials have been kept."))?;
+            if !native.matches(&transport) { return Err(anyhow!("The native relay owner changed. Existing credentials have been kept.")); }
+            rustpush::native_push::certificate_public_key(&native.certificate)?.public_key_to_der()?
+        },
+        _=>return Err(anyhow!("The saved Apple Push certificate is unavailable. Existing messages and device details have been kept.")),
+    };
     let prepared = phone_registration_push_refresh::prepare_existing_push_for_refresh(
         &saved, same_device, &public).map_err(|reason| anyhow!("{reason}"))?;
     let expected = fs::read(PathBuf::from(&state_path).join("hw_info.plist"))
@@ -13592,8 +13598,9 @@ pub async fn config_from_relay(
     host: String,
     token: &Option<String>,
 ) -> anyhow::Result<JoinedOSConfig> {
-    let (version, native_auth_v1) = RelayConfig::get_versions_with_native_auth(&host, &code, token).await?;
+    let (version, native_auth_v1, native_push_v1) = RelayConfig::get_versions_with_capabilities(&host, &code, token).await?;
     Ok(JoinedOSConfig::Relay(Arc::new(RelayConfig {
+        native_push_v1,
         version,
         icloud_ua: "com.apple.iCloudHelper/282 CFNetwork/1408.0.4 Darwin/22.5.0".to_string(),
         aoskit_version: "com.apple.AOSKit/282 (com.apple.accountsd/113)".to_string(),
