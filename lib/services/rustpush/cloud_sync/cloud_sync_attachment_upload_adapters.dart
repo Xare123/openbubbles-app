@@ -11,6 +11,8 @@ import 'cloud_sync_historical_protected_source_binding.dart';
 import 'cloud_sync_local_send_source_binding.dart';
 import 'cloud_sync_manual_shadow_sampler.dart';
 import 'cloud_sync_outbound_staging.dart';
+import 'cloud_sync_received_archive_journal.dart';
+import 'cloud_sync_received_archive_source_binding.dart';
 import 'cloud_sync_safe_failure.dart';
 import 'cloudkit_writer_mutation_guard.dart';
 import 'cloudkit_writer_ownership.dart';
@@ -20,10 +22,26 @@ import 'objectbox_cloud_sync_store.dart';
 /// fence. No substitute token or new ownership rules are introduced here.
 final class GuardedCloudSyncAttachmentUploadMutationGate
     implements CloudSyncAttachmentUploadMutationGate {
-  const GuardedCloudSyncAttachmentUploadMutationGate(this.guard, {this.historicalJournal});
+  const GuardedCloudSyncAttachmentUploadMutationGate(
+    this.guard, {
+    this.historicalJournal,
+    this.receivedJournal,
+    this.requireReceivedAdmission,
+  });
 
   final CloudKitWriterMutationGuard guard;
   final CloudSyncHistoricalArchiveJournal? historicalJournal;
+  final CloudSyncReceivedArchiveJournal? receivedJournal;
+
+  /// Fresh-consume fence for received rows (main passes
+  /// validateReceivedSelection). Runs immediately before the wrapped
+  /// requireAdmission and requireDurableAdmission, so revoked consent
+  /// cannot pass a fresh consume while original receipt recovery stays
+  /// identity-only. It also runs after the durable-admission await and
+  /// immediately before the single-use token is consumed, so consent
+  /// revoked mid-flight still fails closed. Never runs for read-only
+  /// reconcile.
+  final void Function()? requireReceivedAdmission;
 
   @override
   Future<T> runAuthorized<T>({
@@ -35,16 +53,34 @@ final class GuardedCloudSyncAttachmentUploadMutationGate
     required void Function() requireAdmission,
     required Future<void> Function() requireDurableAdmission,
     required Future<T> Function(String capabilityToken) action,
-  }) => guard.runAuthorized(
+  }) {
+    final requireReceived = requireReceivedAdmission;
+    return guard.runAuthorized(
     owner: owner,
     expectedClient: expectedClient,
     expectedAccountFingerprint: expectedAccountFingerprint,
     preparedHandleBindingSha256: preparedHandleBindingSha256,
     reconciliationBindingSha256: reconciliationBindingSha256,
-    requireAdmission: requireAdmission,
-    requireDurableAdmission: requireDurableAdmission,
-    action: (capability) => action(capability.consumeForNative()),
-  );
+    requireAdmission: () {
+      // Sync pre-action gate: received consent first, then the lane check.
+      requireReceived?.call();
+      requireAdmission();
+    },
+    requireDurableAdmission: () async {
+      // Around the await: consent must hold both before the durable check
+      // is issued and after it returns.
+      requireReceived?.call();
+      await requireDurableAdmission();
+      requireReceived?.call();
+    },
+    // Immediately before the one-shot token crosses into native: the last
+    // point where revoked consent can still stop the consume.
+    action: (capability) {
+      requireReceived?.call();
+      return action(capability.consumeForNative());
+    },
+    );
+  }
 
   @override
   Future<bool> reconcileAttachmentUpload({
@@ -56,6 +92,7 @@ final class GuardedCloudSyncAttachmentUploadMutationGate
     uploads: uploads,
     uploadId: uploadId,
     historicalJournal: historicalJournal,
+    receivedJournal: receivedJournal,
   );
 
   @override
@@ -66,10 +103,15 @@ final class GuardedCloudSyncAttachmentUploadMutationGate
 /// checks shared ownership, checkpoint generation, IDS proof and read readiness.
 final class ObjectBoxCloudSyncCompletedUploadAdmitter
     implements CloudSyncCompletedUploadAdmitter {
-  const ObjectBoxCloudSyncCompletedUploadAdmitter(this.store, {this.historicalJournal});
+  const ObjectBoxCloudSyncCompletedUploadAdmitter(
+    this.store, {
+    this.historicalJournal,
+    this.receivedJournal,
+  });
 
   final ObjectBoxCloudSyncStore store;
   final CloudSyncHistoricalArchiveJournal? historicalJournal;
+  final CloudSyncReceivedArchiveJournal? receivedJournal;
 
   @override
   CloudAttachmentUploadSnapshot admitCompletedAttachmentUpload({
@@ -82,6 +124,8 @@ final class ObjectBoxCloudSyncCompletedUploadAdmitter
     uploadId: uploadId,
     createdAt: createdAt,
     historicalJournal: historicalJournal,
+    // The store selects the row's durable owner and exact typed journal.
+    receivedJournal: receivedJournal,
   );
 }
 
@@ -130,6 +174,56 @@ final class FrbCloudSyncAttachmentPlanSource {
     final result = await _nativePlanCall('cloud_sync_attachment_plan_native_stage_failed',
       () => api.cloudSyncStageHistoricalAttachmentUploadPlan(
         cloudMessagesClient: _client(auth), context: historicalContext(source, auth),
+        originalAttachmentGuid: item.originalAttachmentGuid, sourcePath: sourcePath));
+    final stage = result.stage;
+    return CloudSyncProtectedOutboundStageData(
+      logicalEntityKeyHash: stage.logicalEntityKeyHash,
+      protectedEnvelopeReference: stage.protectedPayloadReference,
+      payloadSha256: stage.payloadSha256, serverRecordIdHash: stage.serverRecordIdHash,
+      leaseReference: stage.leaseReference);
+  }
+
+  /// Same exact context for received inventory, upload plans and the
+  /// containing record. Reuses the shared origin so the context always
+  /// matches the committed binding the journal owns.
+  api.CloudSyncReceivedAttachmentContext receivedContext(
+    CloudSyncReceivedArchiveSourceBinding source,
+    CloudSyncNativeAuthSnapshot auth,
+  ) => CloudSyncAttachmentUploadOrigin.received(source).receivedContext(
+    storageDirectory: storageDirectory,
+    auth: api.CloudSyncNativeAuthMetadata(nativeSessionId: auth.nativeSessionId,
+      accountFingerprint: auth.accountFingerprint,
+      protectedStoreIdentity: auth.protectedStoreIdentity));
+
+  /// Received inventory through the native received API (parent's coherent
+  /// binding import provides it). Same item shape and error mapping as the
+  /// historical path; the caller supplies the journal-validated source.
+  Future<List<CloudSyncAttachmentPlanInventoryItem>> inspectReceived(
+    CloudSyncReceivedArchiveSourceBinding source,
+    CloudSyncNativeAuthSnapshot auth,
+  ) async {
+    final entries = await _nativePlanCall('cloud_sync_attachment_plan_inventory_failed',
+      () => api.cloudSyncInspectReceivedAttachmentSources(
+        cloudMessagesClient: _client(auth), context: receivedContext(source, auth)));
+    return List.unmodifiable(entries.map((item) => CloudSyncAttachmentPlanInventoryItem(
+      originalAttachmentGuid: item.originalAttachmentGuid,
+      reflectedAttachmentGuid: item.reflectedAttachmentGuid,
+      logicalEntityKeyHash: item.logicalEntityKeyHash)));
+  }
+
+  /// Stages one received upload plan. Mirrors stageHistorical (no caller
+  /// timestamps; the native received stage takes only the source path).
+  /// The coordinator checks identity, adopts and commits this exact lease.
+  Future<CloudSyncProtectedOutboundStageData> stageReceived(
+    CloudSyncAttachmentPlanInventoryItem item,
+    CloudSyncReceivedArchiveSourceBinding source,
+    CloudSyncNativeAuthSnapshot auth, {
+    required String sourcePath,
+  }) async {
+    if (sourcePath.isEmpty) throw StateError('cloud_sync_attachment_plan_source_unavailable');
+    final result = await _nativePlanCall('cloud_sync_attachment_plan_native_stage_failed',
+      () => api.cloudSyncStageReceivedAttachmentUploadPlan(
+        cloudMessagesClient: _client(auth), context: receivedContext(source, auth),
         originalAttachmentGuid: item.originalAttachmentGuid, sourcePath: sourcePath));
     final stage = result.stage;
     return CloudSyncProtectedOutboundStageData(

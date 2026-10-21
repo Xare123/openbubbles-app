@@ -562,6 +562,7 @@ final class CloudSyncReceivedArchiveJournal {
     required CloudSyncNativeAuthSnapshot currentAuth,
     required bool Function() stillCurrent,
     required CloudOutboxOperation operation,
+    String? attachmentReadbackProof,
   }) {
     validateCreateAdmission(transactionStore: transactionStore, scope: operation.scope,
       expected: expected, currentAuth: currentAuth, stillCurrent: stillCurrent);
@@ -581,7 +582,7 @@ final class CloudSyncReceivedArchiveJournal {
     intent
       ..state = 3
       ..admittedOperationId = operation.operationId
-      ..admittedBinding = _admittedOperationBinding(operation, intent);
+      ..admittedBinding = _encodeAdmittedOperationBinding(operation, intent, attachmentReadbackProof);
     _store.box<CloudSyncReceivedArchiveIntentEntity>().put(intent);
   }
 
@@ -607,7 +608,7 @@ final class CloudSyncReceivedArchiveJournal {
         operation.scope.container != 'com.apple.messages.cloud' ||
         operation.scope.database != 'private' || operation.scope.zone != 'messageManateeZone' ||
         operation.scope.persistenceLane != CloudSyncPersistenceLane.semantic ||
-        bound.admittedBinding != _admittedOperationBinding(operation, bound)) {
+        bound.admittedBinding != _encodeAdmittedOperationBinding(operation, bound, _admittedAttachmentProof(bound))) {
       throw StateError('cloud_sync_received_archive_admitted_operation_changed');
     }
     return CloudSyncReceivedArchiveAdmissionSource._(bound, source, observation);
@@ -657,6 +658,37 @@ final class CloudSyncReceivedArchiveJournal {
     intent.writerEpoch, intent.localMessageId, intent.localChatId,
     intent.protectedSourceBinding, intent.recordObservationBinding,
   ]);
+
+  // Plain-v1 bytes remain unchanged. Media retains its complete content-free
+  // child proof beside the original immutable operation digest, without a new
+  // schema property. Native payloads independently pin this proof's digest.
+  static String _encodeAdmittedOperationBinding(CloudOutboxOperation operation,
+      CloudSyncReceivedArchiveIntentEntity intent, String? proof) {
+    final binding = _admittedOperationBinding(operation, intent);
+    if (proof == null) return binding;
+    if (proof.isEmpty || proof.length > 65536) {
+      throw StateError('cloud_sync_received_archive_attachment_proof_invalid');
+    }
+    return jsonEncode([2, 'received-media-create-admission-v1', binding, proof]);
+  }
+
+  static String? _admittedAttachmentProof(CloudSyncReceivedArchiveIntentEntity intent) {
+    final value = intent.admittedBinding;
+    if (value == null || RegExp(r'^[0-9a-f]{64}$').hasMatch(value)) return null;
+    try {
+      final data = jsonDecode(value);
+      if (data is! List || data.length != 4 || data[0] != 2 ||
+          data[1] != 'received-media-create-admission-v1' || data[2] is! String ||
+          !RegExp(r'^[0-9a-f]{64}$').hasMatch(data[2] as String) || data[3] is! String ||
+          (data[3] as String).isEmpty || (data[3] as String).length > 65536 ||
+          jsonEncode(data) != value) {
+        throw const FormatException();
+      }
+      return data[3] as String;
+    } on FormatException {
+      throw StateError('cloud_sync_received_archive_attachment_proof_invalid');
+    }
+  }
 
   void adoptRecordObservation({
     required int intentId,
@@ -1075,6 +1107,52 @@ final class CloudSyncReceivedArchiveJournal {
     // An idempotent source recommit cannot undo completed local inspection.
     if (intent.state == 0) intent.state = 1;
     _store.box<CloudSyncReceivedArchiveIntentEntity>().put(intent);
+  });
+
+  /// Content-free owner for the shared attachment lifecycle. Evidence reads
+  /// can recover an older original epoch without rewriting it or requiring a
+  /// still-visible UI row. Fresh dispatch additionally needs the existing
+  /// absent-only parent gate, current epoch, unchanged message and parent.
+  CloudSyncReceivedAttachmentOrigin requireReceivedAttachmentOrigin({
+    required Store transactionStore,
+    required int intentId,
+    required CloudSyncNativeAuthSnapshot currentAuth,
+    bool forDispatch = false,
+  }) => _store.runInTransaction(TxMode.read, () {
+    _verifyOwnership();
+    if (!identical(transactionStore, _store) ||
+        currentAuth.accountFingerprint != _binding.scope.accountFingerprint) {
+      throw StateError('cloud_sync_received_attachment_origin_changed');
+    }
+    final row = intentId > 0 ? _store.box<CloudSyncReceivedArchiveIntentEntity>().get(intentId) : null;
+    if (row == null || row.accountFingerprint != currentAuth.accountFingerprint ||
+        row.writerEpoch <= 0 || row.writerEpoch > _binding.epoch ||
+        row.localMessageId <= 0 || row.localChatId <= 0 ||
+        row.state < 1 || row.state > 4 ||
+        (row.origin != CloudSyncReceivedArchiveOrigin.incoming.index &&
+            row.origin != CloudSyncReceivedArchiveOrigin.mirrored.index) ||
+        row.intentKey != intentKeyFor(accountFingerprint: row.accountFingerprint, messageGuidHash: row.messageGuidHash) ||
+        !_hasConsistentBinding(row)) {
+      throw StateError('cloud_sync_received_attachment_origin_changed');
+    }
+    final source = CloudSyncReceivedArchiveSourceBinding.decode(row.protectedSourceBinding);
+    source.requireOrigin(accountFingerprint: currentAuth.accountFingerprint,
+      protectedStoreIdentity: currentAuth.protectedStoreIdentity,
+      messageGuidHash: row.messageGuidHash, sourceSha256: row.sourceSha256);
+    if (source.isSeed) throw StateError('cloud_sync_received_archive_not_ready');
+    if (forDispatch) {
+      final expected = readForCreateAdmission(intentId: intentId, currentAuth: currentAuth);
+      validateCreateAdmission(transactionStore: transactionStore,
+        scope: CloudSyncScope(accountFingerprint: currentAuth.accountFingerprint,
+          container: 'com.apple.messages.cloud', database: 'private', zone: 'messageManateeZone',
+          persistenceLane: CloudSyncPersistenceLane.semantic),
+        expected: expected, currentAuth: currentAuth, stillCurrent: () => true);
+      final message = _store.box<Message>().get(row.localMessageId);
+      if (message == null || !message.hasAttachments) {
+        throw StateError('cloud_sync_received_attachment_origin_changed');
+      }
+    }
+    return CloudSyncReceivedAttachmentOrigin._(row, source);
   });
 
   /// Recovers the exact adopted lease after crash. Never rolls back.
@@ -1528,6 +1606,7 @@ final class CloudSyncReceivedArchiveJournal {
               observation?.state != CloudSyncReceivedRecordState.absent)) {
         return false;
       }
+      if (intent.state == 3) _admittedAttachmentProof(intent);
     if (intent.state == 4 &&
         (intent.readerChangeId == null ||
             ((observation?.state != CloudSyncReceivedRecordState.equivalent &&
@@ -1651,24 +1730,38 @@ final class CloudSyncReceivedArchiveJournal {
   );
 }
 
-/// Immutable metadata passed from source validation to the same-store outbox
-/// transaction. The original protected source, not a mutable Message, encodes
-/// the archive body. No local-send receipt is synthesized by this snapshot.
+/// Original received-media ownership for the shared attachment lifecycle.
+/// It grants no independent permission to mutate or upload.
+final class CloudSyncReceivedAttachmentOrigin {
+  CloudSyncReceivedAttachmentOrigin._(CloudSyncReceivedArchiveIntentEntity row, this.source)
+      : intentId = row.id, writerEpoch = row.writerEpoch,
+        localMessageId = row.localMessageId, localChatId = row.localChatId;
+  final int intentId, writerEpoch, localMessageId, localChatId;
+  final CloudSyncReceivedArchiveSourceBinding source;
+  @override
+  String toString() => 'CloudSyncReceivedAttachmentOrigin(redacted)';
+}
+
+/// Immutable source and parent evidence passed to the same-store outbox
+/// transaction. No local-send receipt is synthesized by this snapshot.
 final class CloudSyncReceivedArchiveAdmissionSource {
   CloudSyncReceivedArchiveAdmissionSource._(
     CloudSyncReceivedArchiveIntentEntity intent, this.source, this.observation,
   ) : intentId = intent.id, localMessageId = intent.localMessageId,
       localChatId = intent.localChatId, writerEpoch = intent.writerEpoch,
-      createdAtMs = intent.createdAtMs, admittedOperationId = intent.admittedOperationId;
+      createdAtMs = intent.createdAtMs, admittedOperationId = intent.admittedOperationId,
+      attachmentReadbackProof = CloudSyncReceivedArchiveJournal._admittedAttachmentProof(intent);
 
   final int intentId, localMessageId, localChatId, writerEpoch, createdAtMs;
   final String? admittedOperationId;
+  final String? attachmentReadbackProof;
   final CloudSyncReceivedArchiveSourceBinding source;
   final CloudSyncReceivedRecordObservation observation;
   bool sameSourceAs(CloudSyncReceivedArchiveAdmissionSource other) =>
     intentId == other.intentId && localMessageId == other.localMessageId &&
     localChatId == other.localChatId && writerEpoch == other.writerEpoch &&
     createdAtMs == other.createdAtMs && admittedOperationId == other.admittedOperationId &&
+    attachmentReadbackProof == other.attachmentReadbackProof &&
     source.encode() == other.source.encode() && observation.encode() == other.observation.encode();
   @override
   String toString() => 'CloudSyncReceivedArchiveAdmissionSource(redacted)';

@@ -6,6 +6,7 @@ import 'package:bluebubbles/src/rust/lib.dart' as native;
 import 'package:crypto/crypto.dart';
 
 import 'cloud_protected_page_lease_lifecycle.dart';
+import 'cloud_sync_attachment_upload_journal.dart';
 import 'cloud_sync_dev_gate.dart';
 import 'cloud_sync_manual_shadow_sampler.dart';
 import 'cloud_sync_models.dart';
@@ -33,6 +34,7 @@ final class CloudSyncReceivedCreateAdapter {
     required this.validate,
     required this.stillCurrent,
     required this.receivedArchiveAllowed,
+    this.attachmentUploads,
   });
   final Store store;
   final ObjectBoxCloudSyncStore durable;
@@ -44,6 +46,47 @@ final class CloudSyncReceivedCreateAdapter {
   final Future<void> Function() validate;
   final bool Function() stillCurrent;
   final bool Function() receivedArchiveAllowed;
+  final CloudSyncAttachmentUploadJournal? attachmentUploads;
+
+  void _requireMediaReadback(int intentId, String? proof) {
+    if (proof == null) return;
+    final uploads = attachmentUploads;
+    if (uploads == null) {
+      throw StateError('cloud_sync_attachment_parent_inventory_required');
+    }
+    uploads.requireReceivedParentReadbackProof(
+      receivedIntentId: intentId, proof: proof, receivedJournal: journal);
+  }
+
+  Future<String?> _captureMediaReadback(
+    CloudSyncScope scope,
+    CloudSyncReceivedArchiveAdmissionSource source,
+  ) async {
+    final message = store.box<Message>().get(source.localMessageId);
+    if (message == null) {
+      throw StateError('cloud_sync_received_archive_admission_changed');
+    }
+    if (!message.hasAttachments) return null;
+    final uploads = attachmentUploads;
+    if (uploads == null) {
+      throw StateError('cloud_sync_attachment_parent_inventory_required');
+    }
+    final inventory = await readSession.run((token) {
+      _requireReceivedConsent();
+      return api.cloudSyncInspectReceivedAttachmentSources(
+        cloudMessagesClient: _client,
+        context: api.CloudSyncReceivedAttachmentContext(
+          storageDirectory: storageDirectory, expectedAuth: _nativeAuth,
+          source: _source(source.source)));
+    });
+    await _validateReceived();
+    journal.validateCreateAdmission(transactionStore: store, scope: scope,
+      expected: source, currentAuth: auth,
+      stillCurrent: _receivedStillCurrent);
+    return uploads.captureReceivedParentReadbackProof(
+      receivedIntentId: source.intentId, receivedJournal: journal,
+      sourceAttachmentKeys: inventory.map((item) => item.logicalEntityKeyHash));
+  }
 
   void _requireReceivedConsent() {
     if (!receivedArchiveAllowed() || !stillCurrent()) {
@@ -133,6 +176,7 @@ final class CloudSyncReceivedCreateAdapter {
       transactionStore: store,
       operation: operation,
     )!;
+    _requireMediaReadback(source.intentId, source.attachmentReadbackProof);
     final parent = _parent(scope, source);
     final proof = await readSession.run((token) {
       requireProofAccess();
@@ -146,9 +190,12 @@ final class CloudSyncReceivedCreateAdapter {
         chatLogicalEntityKeyHash: parent.logicalEntityKeyHash,
         chatSource: parent.source,
         parentBindingSha256: _parentDigest(parent.binding),
+        attachmentReadbackBindingSha256: source.attachmentReadbackProof == null
+            ? null : _parentDigest(source.attachmentReadbackProof!),
       );
     });
     await validateProofAccess();
+    _requireMediaReadback(source.intentId, source.attachmentReadbackProof);
     final current = durable.readReceivedArchiveOperation(scope, operationId);
     if (current == null ||
         current.operationId != operation.operationId ||
@@ -189,6 +236,9 @@ final class CloudSyncReceivedCreateAdapter {
     if (checkpoint.generation != source.observation.generation) {
       throw StateError('cloud_sync_received_archive_admission_changed');
     }
+    final attachmentProof = await _captureMediaReadback(scope, source);
+    await _validateReceived();
+    _requireMediaReadback(source.intentId, attachmentProof);
     return readSession.run((token) async {
       _requireReceivedConsent();
       final prepared = await api.cloudSyncPrepareReceivedArchiveInspection(
@@ -216,6 +266,7 @@ final class CloudSyncReceivedCreateAdapter {
             if (_parent(scope, source).source != parent.source) {
               throw StateError('cloud_sync_received_archive_parent_changed');
             }
+            _requireMediaReadback(source.intentId, attachmentProof);
             final disposition = await api
                 .cloudSyncReceivedArchiveInspectionDisposition(
                   prepared: prepared,
@@ -281,10 +332,13 @@ final class CloudSyncReceivedCreateAdapter {
               prepared: prepared,
               nativeWriterPauseToken: token,
               parentBindingSha256: _parentDigest(parent.binding),
+              attachmentReadbackBindingSha256: attachmentProof == null
+                  ? null : _parentDigest(attachmentProof),
             );
             var owned = false;
             try {
               await _validateReceived();
+              _requireMediaReadback(source.intentId, attachmentProof);
               if (stage.logicalEntityKeyHash !=
                       source.observation.logicalEntityKeyHash ||
                   stage.serverRecordIdHash !=
@@ -323,6 +377,7 @@ final class CloudSyncReceivedCreateAdapter {
                 source: source,
                 currentAuth: auth,
                 stillCurrent: _receivedStillCurrent,
+                attachmentReadbackProof: attachmentProof,
               );
               owned = true;
               await transport.commitProtectedPageLease(stage.leaseReference, {

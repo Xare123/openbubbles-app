@@ -32,6 +32,7 @@ import 'cloud_sync_protector.dart';
 import 'cloud_sync_safe_failure.dart';
 import 'cloud_sync_semantic_diagnostics.dart';
 import 'cloud_sync_store.dart';
+import 'cloudkit_writer_authority.dart' show CloudKitWriterAuthorityFailure;
 import 'objectbox_canonical_semantic_entity_adapter.dart';
 
 /// Durable ObjectBox implementation of the Cloud Sync V2 journal and outbox.
@@ -1200,12 +1201,7 @@ class ObjectBoxCloudSyncStore
         if (uploads == null) {
           throw _storageFailure('attachment_upload_journal_required');
         }
-        final historical = _historicalAttachmentJournal;
-        if (historical == null) {
-          uploads.requireAdoptedOperation(current);
-        } else {
-          uploads.requireHistoricalAdoptedOperation(current, historical);
-        }
+        _requireAttachmentOwnerOperation(current, dispatch: false);
       }
       if (recordVerifiedLocalSendReadback) {
         final journal = _localSendJournal;
@@ -2345,14 +2341,27 @@ class ObjectBoxCloudSyncStore
     required CloudSyncReceivedArchiveAdmissionSource source,
     required CloudSyncNativeAuthSnapshot currentAuth,
     required bool Function() stillCurrent,
+    String? attachmentReadbackProof,
   }) => _admitProtectedOutboundCreate(draft, recordMapping,
     receivedArchiveSource: source,
-    validateFreshDependency: () => journal.validateCreateAdmission(
-      transactionStore: _store, scope: draft.scope, expected: source,
-      currentAuth: currentAuth, stillCurrent: stillCurrent),
+    validateFreshDependency: () {
+      journal.validateCreateAdmission(transactionStore: _store, scope: draft.scope,
+        expected: source, currentAuth: currentAuth, stillCurrent: stillCurrent);
+      final message = _store.box<Message>().get(source.localMessageId);
+      if (message == null || message.hasAttachments != (attachmentReadbackProof != null)) {
+        throw StateError('cloud_sync_attachment_parent_inventory_required');
+      }
+      if (attachmentReadbackProof != null) {
+        final uploads = _attachmentUploadJournal;
+        if (uploads == null) throw StateError('cloud_sync_attachment_parent_inventory_required');
+        uploads.requireReceivedParentReadbackProof(receivedIntentId: source.intentId,
+          proof: attachmentReadbackProof, receivedJournal: journal);
+      }
+    },
     onAdopt: (operation) => journal.adoptInOutboxTransaction(
       transactionStore: _store, expected: source, currentAuth: currentAuth,
-      stillCurrent: stillCurrent, operation: operation),
+      stillCurrent: stillCurrent, operation: operation,
+      attachmentReadbackProof: attachmentReadbackProof),
   );
 
   /// Historical sources retain their own snapshot/provenance journal. They
@@ -2820,9 +2829,30 @@ class ObjectBoxCloudSyncStore
             _isPausedUnsubmittedReceivedCreateLocked(row);
       });
 
-  bool _isPausedUnsubmittedReceivedCreateLocked(CloudOutboxOperationEntity row) =>
-      _pauseUnsubmittedReceivedCreates?.call() == true &&
-      (_receivedArchiveJournal?.isUnsubmittedReceivedCreate(row) ?? false);
+  bool _isPausedUnsubmittedReceivedCreateLocked(CloudOutboxOperationEntity row) {
+    if (_pauseUnsubmittedReceivedCreates?.call() != true) return false;
+    if (_receivedArchiveJournal?.isUnsubmittedReceivedCreate(row) ?? false) return true;
+    // Pause only pristine child creates with an actual received owner. Entered
+    // or uncertain operations remain visible to exact readback/recovery.
+    if (row.zone != 'attachmentManateeZone' ||
+        row.state != CloudOutboxStatus.pending.index ||
+        row.action != CloudOutboxAction.save.index || row.payloadVersion != 1 ||
+        row.attemptCount != 0 || row.appleRequestUuid != null || row.appleOperationUuid != null ||
+        row.leaseIdHash != null || row.leaseExpiresAtMs != 0 || row.confirmedAtMs != 0 ||
+        row.nextEligibleAtMs != 0 || row.lastErrorCategory != null ||
+        row.mutationRevision != 0 || row.dependencyOperationIdsJson != '[]') { return false; }
+    final journal = _receivedArchiveJournal;
+    final uploads = _attachmentUploadJournal;
+    if (journal == null || uploads == null) return false;
+    final scope = uploads.scope;
+    if (row.scopeKey != _scopeKey(scope)) return false;
+    try {
+      if (readAttachmentOwnerKind(scope, row.operationId) != cloudSyncAttachmentOwnerKindReceived) return false;
+      return readReceivedAttachmentOperation(scope, row.operationId, journal) != null;
+    } on StateError { return false; }
+      on ArgumentError { return false; }
+      on CloudKitWriterAuthorityFailure { return false; }
+  }
 
   /// Candidate capture only, never adoption or permission to create remotely.
   CloudSyncOutboundChatOrigin captureOutboundChatObservationOrigin(
@@ -3112,6 +3142,7 @@ class ObjectBoxCloudSyncStore
     required int uploadId,
     required DateTime createdAt,
     CloudSyncHistoricalArchiveJournal? historicalJournal,
+    CloudSyncReceivedArchiveJournal? receivedJournal,
   }) {
     if (!uploads.isBoundTo(_store, scope)) {
       throw _storageFailure('attachment_upload_adoption_store_mismatch');
@@ -3139,10 +3170,19 @@ class ObjectBoxCloudSyncStore
         ),
         isAttachmentCreate: true,
       );
-    return historicalJournal == null
-        ? uploads.adoptRecordCreate(id: uploadId, now: createdAt, admit: admit)
-        : uploads.adoptHistoricalRecordCreate(id: uploadId, now: createdAt,
+    switch (uploads.readOwnerKind(uploadId)) {
+      case cloudSyncAttachmentOwnerKindLocalSend:
+        return uploads.adoptRecordCreate(id: uploadId, now: createdAt, admit: admit);
+      case cloudSyncAttachmentOwnerKindHistorical:
+        if (historicalJournal == null) throw StateError(cloudSyncAttachmentOwnerChangedCode);
+        return uploads.adoptHistoricalRecordCreate(id: uploadId, now: createdAt,
             admit: admit, historicalJournal: historicalJournal);
+      case cloudSyncAttachmentOwnerKindReceived:
+        if (receivedJournal == null) throw StateError(cloudSyncAttachmentOwnerChangedCode);
+        return uploads.adoptReceivedRecordCreate(id: uploadId, now: createdAt,
+            admit: admit, receivedJournal: receivedJournal);
+      default: throw StateError(cloudSyncAttachmentOwnerChangedCode);
+    }
   }
 
   CloudOutboxOperation _admitProtectedOutboundCreate(
@@ -4832,6 +4872,22 @@ class ObjectBoxCloudSyncStore
 
   /// Lookup-only historical child ownership. The upload journal checks the
   /// original result, checkpoint, retained source and exact outbox identity.
+  int readAttachmentOwnerKind(CloudSyncScope scope, String operationId) =>
+      _store.runInTransaction(TxMode.read, () {
+    final uploads = _attachmentUploadJournal;
+    final operation = _findOutboxByOperationIdLocked(operationId);
+    if (uploads == null || !uploads.isBoundTo(_store, scope) || operation == null ||
+        operation.scopeKey != _scopeKey(scope)) {
+      throw StateError('cloud_sync_attachment_upload_adoption_changed');
+    }
+    final query = _store.box<CloudAttachmentUploadEntity>().query(
+      CloudAttachmentUploadEntity_.admittedOperationId.equals(operationId)).build();
+    final CloudAttachmentUploadEntity? row;
+    try { row = query.findUnique(); } finally { query.close(); }
+    if (row == null) throw StateError('cloud_sync_attachment_upload_origin_missing');
+    return uploads.readOwnerKind(row.id);
+  });
+
   CloudOutboxOperation readHistoricalAttachmentOperation(
     CloudSyncScope scope, String operationId,
     CloudSyncHistoricalArchiveJournal journal,
@@ -4844,6 +4900,29 @@ class ObjectBoxCloudSyncStore
     }
     final operation = _outboxFromEntity(scope, row);
     uploads.readHistoricalAdoptedSource(operation, journal);
+    return operation;
+  });
+
+  /// Readback-only lookup derives ownership from the committed upload row.
+  /// Absence of a received owner returns null; malformed ownership still fails.
+  CloudOutboxOperation? readReceivedAttachmentOperation(
+    CloudSyncScope scope, String operationId, CloudSyncReceivedArchiveJournal journal,
+  ) => _store.runInTransaction(TxMode.read, () {
+    final query = _store.box<CloudAttachmentUploadEntity>().query(
+      CloudAttachmentUploadEntity_.admittedOperationId.equals(operationId)).build();
+    final CloudAttachmentUploadEntity? owner;
+    try { owner = query.findUnique(); } finally { query.close(); }
+    if (owner == null) throw StateError('cloud_sync_attachment_upload_origin_missing');
+    validateCloudAttachmentUploadRow(owner);
+    if (owner.ownerKind != cloudSyncAttachmentOwnerKindReceived) return null;
+    final uploads = _attachmentUploadJournal;
+    final row = _findOutboxByOperationIdLocked(operationId);
+    if (uploads == null || !uploads.isBoundTo(_store, scope) ||
+        row == null || row.scopeKey != _scopeKey(scope)) {
+      throw StateError('cloud_sync_attachment_upload_adoption_changed');
+    }
+    final operation = _outboxFromEntity(scope, row);
+    uploads.readReceivedAdoptedSource(operation, journal);
     return operation;
   });
 
@@ -4882,8 +4961,16 @@ class ObjectBoxCloudSyncStore
       throw StateError('cloud_sync_received_archive_admitted_operation_changed');
     }
     final operation = _outboxFromEntity(scope, entity);
-    if (journal.readAdoptedSource(transactionStore: _store, operation: operation) == null) {
+    final source = journal.readAdoptedSource(transactionStore: _store, operation: operation);
+    if (source == null) {
       throw StateError('cloud_sync_received_archive_admitted_operation_changed');
+    }
+    final mediaProof = source.attachmentReadbackProof;
+    if (mediaProof != null) {
+      final uploads = _attachmentUploadJournal;
+      if (uploads == null) throw StateError('cloud_sync_attachment_parent_inventory_required');
+      uploads.requireReceivedParentReadbackProof(receivedIntentId: source.intentId,
+        proof: mediaProof, receivedJournal: journal);
     }
     final checkpoint = _findCheckpointByKeyLocked(_scopeKey(scope));
     final map = cloudSyncFindRecordMap(store: _store, scope: scope,
@@ -6157,6 +6244,37 @@ class ObjectBoxCloudSyncStore
     return null;
   }
 
+  void _requireAttachmentOwnerOperation(CloudOutboxOperation operation, {required bool dispatch}) {
+    final uploads = _attachmentUploadJournal;
+    if (uploads == null) throw StateError('cloud_sync_attachment_upload_journal_required');
+    final query = _store.box<CloudAttachmentUploadEntity>().query(
+      CloudAttachmentUploadEntity_.admittedOperationId.equals(operation.operationId)).build();
+    final CloudAttachmentUploadEntity? row;
+    try { row = query.findUnique(); } finally { query.close(); }
+    if (row == null) throw StateError('cloud_sync_attachment_upload_origin_missing');
+    validateCloudAttachmentUploadRow(row);
+    switch (row.ownerKind) {
+      case cloudSyncAttachmentOwnerKindLocalSend:
+        uploads.requireAdoptedOperation(operation); return;
+      case cloudSyncAttachmentOwnerKindHistorical:
+        final historical = _historicalAttachmentJournal;
+        if (historical == null) throw StateError(cloudSyncAttachmentOwnerChangedCode);
+        if (dispatch) { uploads.requireHistoricalAdoptedOperation(operation, historical); }
+        else { uploads.readHistoricalAdoptedSource(operation, historical); }
+        return;
+      case cloudSyncAttachmentOwnerKindReceived:
+        final received = _receivedArchiveJournal;
+        if (received == null) throw StateError(cloudSyncAttachmentOwnerChangedCode);
+        if (dispatch && _pauseUnsubmittedReceivedCreates?.call() == true) {
+          throw StateError('cloud_sync_received_archive_confirmation_required');
+        }
+        if (dispatch) { uploads.requireReceivedAdoptedOperation(operation, received); }
+        else { uploads.readReceivedAdoptedSource(operation, received); }
+        return;
+      default: throw StateError(cloudSyncAttachmentOwnerChangedCode);
+    }
+  }
+
   void _requireOperationProjectionReadyLocked(
     CloudSyncScope scope,
     CloudOutboxOperationEntity entity,
@@ -6204,6 +6322,14 @@ class ObjectBoxCloudSyncStore
         final journal = _receivedArchiveJournal;
         if (journal == null) throw StateError('cloud_sync_received_archive_journal_required');
         journal.requireAdoptedDispatch(transactionStore: _store, operation: operation);
+        final source = journal.readAdoptedSource(transactionStore: _store, operation: operation)!;
+        final proof = source.attachmentReadbackProof;
+        if (proof != null) {
+          final uploads = _attachmentUploadJournal;
+          if (uploads == null) throw StateError('cloud_sync_attachment_parent_inventory_required');
+          uploads.requireReceivedParentReadbackProof(receivedIntentId: source.intentId,
+            proof: proof, receivedJournal: journal);
+        }
         _requireMessagesCloudAccountProjectionReadyLocked(scope,
           allowRetainedForFreshCreate: true, freshRecordIdHash: operation.serverRecordIdHash);
         return;
@@ -6267,12 +6393,7 @@ class ObjectBoxCloudSyncStore
       if (uploads == null || !uploads.isBoundTo(_store, scope)) {
         throw StateError('cloud_sync_attachment_upload_journal_required');
       }
-      final historical = _historicalAttachmentJournal;
-      if (historical == null) {
-        uploads.requireAdoptedOperation(operation);
-      } else {
-        uploads.requireHistoricalAdoptedOperation(operation, historical);
-      }
+      _requireAttachmentOwnerOperation(operation, dispatch: true);
       _requireMessagesCloudAccountProjectionReadyLocked(
         scope,
         allowRetainedForFreshCreate: true,

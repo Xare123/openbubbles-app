@@ -22,6 +22,7 @@ final class ObjectBoxCloudSyncPreflightReader {
     Set<String>? ignoredScopeKeys,
     CloudSyncLocalSendJournal? localSendJournal,
     CloudSyncReceivedArchiveJournal? pausedReceivedArchiveJournal,
+    bool Function(String operationId)? isPausedReceivedAttachmentCreate,
   }) : _store = store,
        // Keep this optional injection named without exposing the private field.
        // ignore: prefer_initializing_formals
@@ -29,6 +30,9 @@ final class ObjectBoxCloudSyncPreflightReader {
        // Keep the optional caller-scoped injection public and the field private.
        // ignore: prefer_initializing_formals
        _pausedReceivedArchiveJournal = pausedReceivedArchiveJournal,
+       // Public optional injection without exposing its backing field.
+       // ignore: prefer_initializing_formals
+       _isPausedReceivedAttachmentCreate = isPausedReceivedAttachmentCreate,
        _leases = store.box<CloudSyncLeaseEntity>(),
        _outbox = store.box<CloudOutboxOperationEntity>(),
        _checkpoints = store.box<CloudSyncCheckpointEntity>(),
@@ -43,6 +47,7 @@ final class ObjectBoxCloudSyncPreflightReader {
   final Store _store;
   final CloudSyncLocalSendJournal? _localSendJournal;
   final CloudSyncReceivedArchiveJournal? _pausedReceivedArchiveJournal;
+  final bool Function(String operationId)? _isPausedReceivedAttachmentCreate;
   final Box<CloudSyncLeaseEntity> _leases;
   final Box<CloudOutboxOperationEntity> _outbox;
   final Box<CloudSyncCheckpointEntity> _checkpoints;
@@ -91,6 +96,10 @@ final class ObjectBoxCloudSyncPreflightReader {
           final received = _pausedReceivedArchiveJournal;
           if (received != null && received.isBoundToStore(_store) &&
               received.isUnsubmittedReceivedCreate(row)) {
+            heldRows.add(row.id);
+          }
+          if (row.zone == 'attachmentManateeZone' &&
+              _isPausedReceivedAttachmentCreate?.call(row.operationId) == true) {
             heldRows.add(row.id);
           }
         }

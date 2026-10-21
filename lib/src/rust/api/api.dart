@@ -428,10 +428,12 @@ Future<CloudSyncProtectedOutboundStage> cloudSyncStageReceivedArchiveCreate({
   required CloudSyncPreparedReceivedInspection prepared,
   required BigInt nativeWriterPauseToken,
   required String parentBindingSha256,
+  String? attachmentReadbackBindingSha256,
 }) => RustLib.instance.api.crateApiApiCloudSyncStageReceivedArchiveCreate(
   prepared: prepared,
   nativeWriterPauseToken: nativeWriterPauseToken,
   parentBindingSha256: parentBindingSha256,
+  attachmentReadbackBindingSha256: attachmentReadbackBindingSha256,
 );
 
 /// Reopen source + current exact Chat for prepare/reconciliation. This
@@ -447,6 +449,7 @@ cloudSyncOpenReceivedArchiveCreateProof({
   required String chatLogicalEntityKeyHash,
   required CloudSyncChatIdentitySourceInput chatSource,
   required String parentBindingSha256,
+  String? attachmentReadbackBindingSha256,
 }) => RustLib.instance.api.crateApiApiCloudSyncOpenReceivedArchiveCreateProof(
   cloudMessagesClient: cloudMessagesClient,
   nativeWriterPauseToken: nativeWriterPauseToken,
@@ -457,6 +460,7 @@ cloudSyncOpenReceivedArchiveCreateProof({
   chatLogicalEntityKeyHash: chatLogicalEntityKeyHash,
   chatSource: chatSource,
   parentBindingSha256: parentBindingSha256,
+  attachmentReadbackBindingSha256: attachmentReadbackBindingSha256,
 );
 
 /// Cached-only parent decode plus committed historical source reopening. No
@@ -663,6 +667,73 @@ cloudSyncRecoverHistoricalAttachmentUpload({
       context: context,
       planStage: planStage,
     );
+
+Future<List<CloudSyncAttachmentSourceEntry>>
+cloudSyncInspectReceivedAttachmentSources({
+  required ArcCloudMessagesClientDefaultAnisetteProvider cloudMessagesClient,
+  required CloudSyncReceivedAttachmentContext context,
+}) => RustLib.instance.api.crateApiApiCloudSyncInspectReceivedAttachmentSources(
+  cloudMessagesClient: cloudMessagesClient,
+  context: context,
+);
+
+/// Local preparation only; the received journal must adopt/commit the plan
+/// before the existing one-shot upload consumer may receive a capability.
+Future<CloudSyncAttachmentUploadPlanResult>
+cloudSyncStageReceivedAttachmentUploadPlan({
+  required ArcCloudMessagesClientDefaultAnisetteProvider cloudMessagesClient,
+  required CloudSyncReceivedAttachmentContext context,
+  required String originalAttachmentGuid,
+  required String sourcePath,
+}) =>
+    RustLib.instance.api.crateApiApiCloudSyncStageReceivedAttachmentUploadPlan(
+      cloudMessagesClient: cloudMessagesClient,
+      context: context,
+      originalAttachmentGuid: originalAttachmentGuid,
+      sourcePath: sourcePath,
+    );
+
+Future<CloudSyncPreparedAttachmentUploadResult>
+cloudSyncPrepareReceivedAttachmentUpload({
+  required ArcCloudMessagesClientDefaultAnisetteProvider cloudMessagesClient,
+  required CloudSyncReceivedAttachmentContext context,
+  required CloudSyncAttachmentUploadPlanReference planStage,
+  required String originalAttachmentGuid,
+  required String sourcePath,
+  required BigInt requestTimeoutSeconds,
+}) => RustLib.instance.api.crateApiApiCloudSyncPrepareReceivedAttachmentUpload(
+  cloudMessagesClient: cloudMessagesClient,
+  context: context,
+  planStage: planStage,
+  originalAttachmentGuid: originalAttachmentGuid,
+  sourcePath: sourcePath,
+  requestTimeoutSeconds: requestTimeoutSeconds,
+);
+
+Future<CloudSyncAttachmentUploadReceiptEvidence?>
+cloudSyncVerifyReceivedAttachmentUploadReceipt({
+  required ArcCloudMessagesClientDefaultAnisetteProvider cloudMessagesClient,
+  required CloudSyncReceivedAttachmentContext context,
+  required CloudSyncAttachmentUploadPlanReference planStage,
+  required String expectedAttemptId,
+}) => RustLib.instance.api
+    .crateApiApiCloudSyncVerifyReceivedAttachmentUploadReceipt(
+      cloudMessagesClient: cloudMessagesClient,
+      context: context,
+      planStage: planStage,
+      expectedAttemptId: expectedAttemptId,
+    );
+
+Future<CloudSyncProtectedOutboundStage?>
+cloudSyncRecoverReceivedAttachmentUpload({
+  required ArcCloudMessagesClientDefaultAnisetteProvider cloudMessagesClient,
+  required CloudSyncReceivedAttachmentContext context,
+  required CloudSyncAttachmentUploadPlanReference planStage,
+}) => RustLib.instance.api.crateApiApiCloudSyncRecoverReceivedAttachmentUpload(
+  cloudMessagesClient: cloudMessagesClient,
+  context: context,
+  planStage: planStage,
+);
 
 /// Stage one original upload plan from the exact retained IDS source. The
 /// caller holds the V2 writer interlock and protected-store exclusion, proves
@@ -1032,6 +1103,23 @@ cloudSyncPrepareHistoricalAttachmentCreate({
       inputs: inputs,
     );
 
+/// Received child record save uses its committed receive source and the same
+/// one-shot native consumer, never an invented outgoing delivery receipt.
+Future<CloudSyncPreparedMessageCreateResult>
+cloudSyncPrepareReceivedAttachmentCreate({
+  required ArcCloudMessagesClientDefaultAnisetteProvider cloudMessagesClient,
+  required CloudSyncReceivedAttachmentContext context,
+  required String requestUuid,
+  required BigInt requestTimeoutSeconds,
+  required List<CloudSyncPreparedMessageCreateInput> inputs,
+}) => RustLib.instance.api.crateApiApiCloudSyncPrepareReceivedAttachmentCreate(
+  cloudMessagesClient: cloudMessagesClient,
+  context: context,
+  requestUuid: requestUuid,
+  requestTimeoutSeconds: requestTimeoutSeconds,
+  inputs: inputs,
+);
+
 /// Drops only an unconsumed prepared owner and its native writer permit.
 /// Idempotent: true means an owner was released; false means no owner remains
 /// in this handle. An already-taken consume owner is untouched, so false is
@@ -1148,6 +1236,21 @@ cloudSyncReconcileHistoricalAttachmentCreate({
   required CloudSyncPreparedMessageCreateInput input,
 }) => RustLib.instance.api
     .crateApiApiCloudSyncReconcileHistoricalAttachmentCreate(
+      cloudMessagesClient: cloudMessagesClient,
+      context: context,
+      requestUuid: requestUuid,
+      input: input,
+    );
+
+/// Exact received child readback. NotFound never permits another byte upload.
+Future<CloudSyncOutboundReconcileResult>
+cloudSyncReconcileReceivedAttachmentCreate({
+  required ArcCloudMessagesClientDefaultAnisetteProvider cloudMessagesClient,
+  required CloudSyncReceivedAttachmentContext context,
+  required String requestUuid,
+  required CloudSyncPreparedMessageCreateInput input,
+}) =>
+    RustLib.instance.api.crateApiApiCloudSyncReconcileReceivedAttachmentCreate(
       cloudMessagesClient: cloudMessagesClient,
       context: context,
       requestUuid: requestUuid,
@@ -5842,6 +5945,33 @@ class CloudSyncRawSystemFields {
           createdAt == other.createdAt &&
           modifiedAt == other.modifiedAt &&
           permission == other.permission;
+}
+
+/// Committed native receive evidence for an attachment. Direction is decoded
+/// from this protected source, never supplied as an outgoing/historical claim.
+class CloudSyncReceivedAttachmentContext {
+  final String storageDirectory;
+  final CloudSyncNativeAuthMetadata expectedAuth;
+  final CloudSyncNativeReceivedArchiveSourceBinding source;
+
+  const CloudSyncReceivedAttachmentContext({
+    required this.storageDirectory,
+    required this.expectedAuth,
+    required this.source,
+  });
+
+  @override
+  int get hashCode =>
+      storageDirectory.hashCode ^ expectedAuth.hashCode ^ source.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is CloudSyncReceivedAttachmentContext &&
+          runtimeType == other.runtimeType &&
+          storageDirectory == other.storageDirectory &&
+          expectedAuth == other.expectedAuth &&
+          source == other.source;
 }
 
 /// One exact lookup handed to the semantic reader. Deliberately has no zone

@@ -19,6 +19,8 @@ import 'cloud_sync_historical_protected_source_binding.dart';
 import 'cloud_sync_historical_attachment_source.dart';
 import 'cloud_sync_local_send_journal.dart';
 import 'cloud_sync_local_send_source_binding.dart';
+import 'cloud_sync_received_archive_journal.dart';
+import 'cloud_sync_received_archive_source_binding.dart';
 import 'cloud_sync_manual_shadow_sampler.dart';
 import 'cloud_sync_outbound_staging.dart';
 
@@ -278,6 +280,79 @@ final class CloudSyncAttachmentPlanCoordinator {
       }
       return List.unmodifiable(inventory.map((item) => existing[item.logicalEntityKeyHash]!));
     } finally { _active.remove(historicalIntentId); }
+  }
+
+  /// Received origins use the same durable plan/lease mechanism. Existing
+  /// attempts are immutable: this entrypoint reuses every original plan and
+  /// never replaces a started/uncertain one after an absent receipt.
+  Future<List<CloudAttachmentUploadSnapshot>> ensureReceivedPlans({
+    required int receivedIntentId,
+    required CloudSyncReceivedArchiveJournal receivedJournal,
+    required Future<List<CloudSyncAttachmentPlanInventoryItem>> Function(
+      CloudSyncReceivedArchiveSourceBinding, CloudSyncNativeAuthSnapshot) readInventory,
+    required Future<CloudSyncProtectedOutboundStageData> Function(
+      CloudSyncAttachmentPlanInventoryItem, CloudSyncReceivedArchiveSourceBinding,
+      CloudSyncNativeAuthSnapshot) stagePlan,
+  }) async {
+    if (receivedIntentId <= 0 || !receivedJournal.isBoundToStore(_store)) {
+      throw StateError('cloud_sync_attachment_plan_store_invalid');
+    }
+    // Received and historical IDs live in different tables.
+    final activeKey = -receivedIntentId;
+    if (!_active.add(activeKey)) throw StateError('cloud_sync_attachment_plan_busy');
+    try {
+      final auth = await _liveAuth();
+      final origin = receivedJournal.requireReceivedAttachmentOrigin(
+        transactionStore: _store, intentId: receivedIntentId, currentAuth: auth);
+      final source = origin.source;
+      Future<void> validate() async {
+        final current = await _liveAuth();
+        final now = receivedJournal.requireReceivedAttachmentOrigin(
+          transactionStore: _store, intentId: receivedIntentId, currentAuth: current);
+        if (!auth.sameIdentity(current) || now.writerEpoch != origin.writerEpoch ||
+            now.source.encode() != source.encode()) {
+          throw StateError('cloud_sync_attachment_plan_origin_changed');
+        }
+      }
+      final inventory = List<CloudSyncAttachmentPlanInventoryItem>.unmodifiable(
+        await readInventory(source, auth));
+      _validateInventory(inventory);
+      await validate();
+      final keys = inventory.map((item) => item.logicalEntityKeyHash).toSet();
+      final existing = <String, CloudAttachmentUploadSnapshot>{};
+      for (final item in inventory) {
+        final found = _uploads.findReceivedForAttachment(receivedIntentId: receivedIntentId,
+          logicalEntityKeyHash: item.logicalEntityKeyHash, sourceAttachmentKeys: keys,
+          receivedJournal: receivedJournal);
+        if (found != null) existing[item.logicalEntityKeyHash] = found;
+      }
+      for (final item in inventory) {
+        final old = existing[item.logicalEntityKeyHash];
+        if (old != null) {
+          if (old.state == CloudAttachmentUploadState.prepared) {
+            await _staging.commitOutboundLease(old.plan.leaseReference,
+              old.plan.protectedEnvelopeReference);
+            await validate();
+          }
+          continue;
+        }
+        await validate();
+        final staged = await stagePlan(item, source, auth);
+        try {
+          if (staged.logicalEntityKeyHash != item.logicalEntityKeyHash) {
+            throw StateError('cloud_sync_attachment_plan_stage_invalid');
+          }
+          await validate();
+        } catch (_) { await _rollbackBestEffort(staged); rethrow; }
+        final adopted = _uploads.adoptReceivedPlan(receivedIntentId: receivedIntentId,
+          plan: staged, now: _clock(), receivedJournal: receivedJournal);
+        await _staging.commitOutboundLease(adopted.plan.leaseReference,
+          adopted.plan.protectedEnvelopeReference);
+        await validate();
+        existing[item.logicalEntityKeyHash] = adopted;
+      }
+      return List.unmodifiable(inventory.map((item) => existing[item.logicalEntityKeyHash]!));
+    } finally { _active.remove(activeKey); }
   }
 
   /// Bounded nonempty control-free identifier. Native guids are authoritative

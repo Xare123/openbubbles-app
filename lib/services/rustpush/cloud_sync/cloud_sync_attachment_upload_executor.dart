@@ -24,6 +24,7 @@ import 'cloud_sync_attachment_upload_origin.dart';
 import 'cloud_sync_historical_archive_journal.dart';
 import 'cloud_sync_manual_shadow_sampler.dart';
 import 'cloud_sync_outbound_staging.dart';
+import 'cloud_sync_received_archive_journal.dart';
 import 'cloudkit_writer_authority.dart';
 import 'cloudkit_writer_ownership.dart';
 
@@ -136,6 +137,28 @@ abstract interface class CloudSyncHistoricalAttachmentUploadBridge
   });
 }
 
+/// Explicit received capability. A bridge with only the IDS or historical
+/// API cannot silently service a received upload or drop its owning
+/// receive evidence. Mirrors the historical capability one-for-one.
+///
+/// Depends on the generated CloudSyncReceivedAttachmentContext (parent's
+/// coherent binding import); no analyzer/test/build until then.
+abstract interface class CloudSyncReceivedAttachmentUploadBridge
+    implements CloudSyncAttachmentUploadBridge {
+  Future<CloudSyncPreparedUpload> prepareReceived({
+    required frb_api.CloudSyncReceivedAttachmentContext context,
+    required frb_api.CloudSyncAttachmentUploadPlanReference planStage,
+    required String originalAttachmentGuid,
+    required String sourcePath,
+    required BigInt requestTimeoutSeconds,
+  });
+
+  Future<frb_api.CloudSyncProtectedOutboundStage?> recoverReceived({
+    required frb_api.CloudSyncReceivedAttachmentContext context,
+    required frb_api.CloudSyncAttachmentUploadPlanReference planStage,
+  });
+}
+
 /// Narrow mutation gate. The parent adapts the real guard to this shape by
 /// running it with a token-forwarding action, so the single-consume token
 /// crosses exactly once. Fakes use an opaque test token.
@@ -182,7 +205,8 @@ abstract interface class CloudSyncCompletedUploadAdmitter {
 /// instead of staging under a foreign protected store.
 final class FrbCloudSyncAttachmentUploadBridge
     implements CloudSyncAttachmentUploadBridge,
-        CloudSyncHistoricalAttachmentUploadBridge {
+        CloudSyncHistoricalAttachmentUploadBridge,
+        CloudSyncReceivedAttachmentUploadBridge {
   FrbCloudSyncAttachmentUploadBridge({
     required frb_lib.ArcCloudMessagesClientDefaultAnisetteProvider
     cloudMessagesClient,
@@ -271,6 +295,36 @@ final class FrbCloudSyncAttachmentUploadBridge
     return frb_api.cloudSyncRecoverHistoricalAttachmentUpload(
       cloudMessagesClient: _client, context: context, planStage: planStage);
   }
+
+  @override
+  Future<CloudSyncPreparedUpload> prepareReceived({
+    required frb_api.CloudSyncReceivedAttachmentContext context,
+    required frb_api.CloudSyncAttachmentUploadPlanReference planStage,
+    required String originalAttachmentGuid,
+    required String sourcePath,
+    required BigInt requestTimeoutSeconds,
+  }) async {
+    if (context.storageDirectory != _storageDirectory) {
+      throw StateError('cloud_sync_attachment_upload_storage_changed');
+    }
+    return _FrbPreparedUpload(await frb_api.cloudSyncPrepareReceivedAttachmentUpload(
+      cloudMessagesClient: _client, context: context, planStage: planStage,
+      originalAttachmentGuid: originalAttachmentGuid, sourcePath: sourcePath,
+      requestTimeoutSeconds: requestTimeoutSeconds,
+    ));
+  }
+
+  @override
+  Future<frb_api.CloudSyncProtectedOutboundStage?> recoverReceived({
+    required frb_api.CloudSyncReceivedAttachmentContext context,
+    required frb_api.CloudSyncAttachmentUploadPlanReference planStage,
+  }) {
+    if (context.storageDirectory != _storageDirectory) {
+      throw StateError('cloud_sync_attachment_upload_storage_changed');
+    }
+    return frb_api.cloudSyncRecoverReceivedAttachmentUpload(
+      cloudMessagesClient: _client, context: context, planStage: planStage);
+  }
 }
 
 final class _FrbPreparedUpload implements CloudSyncPreparedUpload {
@@ -314,6 +368,7 @@ final class CloudSyncAttachmentUploadExecutor {
     required CloudSyncCompletedUploadAdmitter completedAdmitter,
     required String privateStorageDirectory,
     CloudSyncHistoricalArchiveJournal? historicalJournal,
+    CloudSyncReceivedArchiveJournal? receivedJournal,
     DateTime Function()? clock,
   }) : _uploads = uploads,
        _readLiveAuth = readLiveAuth,
@@ -323,6 +378,7 @@ final class CloudSyncAttachmentUploadExecutor {
        _completedAdmitter = completedAdmitter,
        _privateStorageDirectory = privateStorageDirectory,
        _historicalJournal = historicalJournal,
+       _receivedJournal = receivedJournal,
        _clock = clock ?? DateTime.now {
     if (privateStorageDirectory.isEmpty) {
       throw ArgumentError.value(
@@ -341,6 +397,7 @@ final class CloudSyncAttachmentUploadExecutor {
   final CloudSyncCompletedUploadAdmitter _completedAdmitter;
   final String _privateStorageDirectory;
   final CloudSyncHistoricalArchiveJournal? _historicalJournal;
+  final CloudSyncReceivedArchiveJournal? _receivedJournal;
   final DateTime Function() _clock;
   final Set<int> _active = <int>{};
 
@@ -428,8 +485,22 @@ final class CloudSyncAttachmentUploadExecutor {
       );
       // Durable attempt BEFORE the single native consume. The original
       // native attempt id binds journal, fence, and receipt together.
+      // Role-routed on the pinned typed origin: journal presence never
+      // selects the lane.
       final historical = _historicalJournal;
-      if (historical != null) {
+      if (pinnedSource.isReceived) {
+        final received = _receivedJournal;
+        if (received == null) {
+          throw StateError(cloudSyncAttachmentOwnerChangedCode);
+        }
+        _uploads.beginReceivedAttempt(
+          id: input.uploadId, attemptId: prepared.uploadAttemptId, now: _clock(),
+          receivedJournal: received,
+          retainedSourceAttachmentKeys: retainedKeys);
+      } else if (pinnedSource.isHistorical) {
+        if (historical == null) {
+          throw StateError(cloudSyncAttachmentOwnerChangedCode);
+        }
         _uploads.beginHistoricalAttempt(
           id: input.uploadId, attemptId: prepared.uploadAttemptId, now: _clock(),
           historicalJournal: historical,
@@ -442,9 +513,20 @@ final class CloudSyncAttachmentUploadExecutor {
           id: input.uploadId, attemptId: prepared.uploadAttemptId,
           sourceAttachmentKeys: retainedKeys, now: _clock());
       }
-      final fenceBinding = historical == null
-          ? _uploads.reconciliationBindingSha256(input.uploadId)
-          : _uploads.reconciliationHistoricalBindingSha256(input.uploadId, historical);
+      // Fence binds the same pinned role. A local row uses the local
+      // binding even when lane journals are wired.
+      final String fenceBinding;
+      if (pinnedSource.isReceived) {
+        fenceBinding = _uploads.reconciliationReceivedBindingSha256(
+            input.uploadId, _requireReceivedJournal());
+      } else if (pinnedSource.isHistorical) {
+        if (historical == null) {
+          throw StateError(cloudSyncAttachmentOwnerChangedCode);
+        }
+        fenceBinding = _uploads.reconciliationHistoricalBindingSha256(input.uploadId, historical);
+      } else {
+        fenceBinding = _uploads.reconciliationBindingSha256(input.uploadId);
+      }
       late final frb_api.CloudSyncAttachmentUploadConsumeResult consumed;
       try {
         consumed = await _mutationGate.runAuthorized(
@@ -701,11 +783,24 @@ final class CloudSyncAttachmentUploadExecutor {
       rethrow;
     }
     final historical = _historicalJournal;
-    final uploaded = historical == null
-        ? _uploads.recordUploaded(id: uploadId, attemptId: attemptId,
-            result: result, now: _clock())
-        : _uploads.recordHistoricalUploaded(id: uploadId, attemptId: attemptId,
-            result: result, now: _clock(), historicalJournal: historical);
+    // Result commits through the row's actual owning lane. The lane
+    // journal is required; presence of another lane's journal never
+    // reroutes the commit.
+    final ownerKind = _uploads.readOwnerKind(uploadId);
+    final CloudAttachmentUploadSnapshot uploaded;
+    if (ownerKind == cloudSyncAttachmentOwnerKindReceived) {
+      uploaded = _uploads.recordReceivedUploaded(id: uploadId, attemptId: attemptId,
+          result: result, now: _clock(), receivedJournal: _requireReceivedJournal());
+    } else if (ownerKind == cloudSyncAttachmentOwnerKindHistorical) {
+      if (historical == null) {
+        throw StateError(cloudSyncAttachmentOwnerChangedCode);
+      }
+      uploaded = _uploads.recordHistoricalUploaded(id: uploadId, attemptId: attemptId,
+          result: result, now: _clock(), historicalJournal: historical);
+    } else {
+      uploaded = _uploads.recordUploaded(id: uploadId, attemptId: attemptId,
+          result: result, now: _clock());
+    }
     final resultLease = uploaded.result;
     if (resultLease == null) {
       throw StateError('cloud_sync_attachment_upload_result_missing');
@@ -815,11 +910,19 @@ final class CloudSyncAttachmentUploadExecutor {
   void _markUnknownBestEffort(int uploadId, String attemptId) {
     try {
       final historical = _historicalJournal;
-      if (historical == null) {
-        _uploads.markUnknown(id: uploadId, attemptId: attemptId, now: _clock());
-      } else {
+      // Unknown marking follows the row's actual lane.
+      final ownerKind = _uploads.readOwnerKind(uploadId);
+      if (ownerKind == cloudSyncAttachmentOwnerKindReceived) {
+        _uploads.markReceivedUnknown(id: uploadId, attemptId: attemptId,
+            now: _clock(), receivedJournal: _requireReceivedJournal());
+      } else if (ownerKind == cloudSyncAttachmentOwnerKindHistorical) {
+        if (historical == null) {
+          throw StateError(cloudSyncAttachmentOwnerChangedCode);
+        }
         _uploads.markHistoricalUnknown(id: uploadId, attemptId: attemptId,
             now: _clock(), historicalJournal: historical);
+      } else {
+        _uploads.markUnknown(id: uploadId, attemptId: attemptId, now: _clock());
       }
     } on StateError {
       // Terminal rows (uploaded/adopted) keep their stronger state.
@@ -851,12 +954,34 @@ final class CloudSyncAttachmentUploadExecutor {
   );
 
   CloudAttachmentUploadSnapshot _read(int id) {
-    final historical = _historicalJournal;
-    return historical == null ? _uploads.read(id) : _uploads.readHistorical(id, historical);
+    // Actual-role routing: a row is read through its owning lane only.
+    // A role without its matching journal fails closed here, never by
+    // falling through to another lane.
+    switch (_uploads.readOwnerKind(id)) {
+      case cloudSyncAttachmentOwnerKindReceived:
+        return _uploads.readReceived(id, _requireReceivedJournal());
+      case cloudSyncAttachmentOwnerKindHistorical:
+        final historical = _historicalJournal;
+        if (historical == null) {
+          throw StateError(cloudSyncAttachmentOwnerChangedCode);
+        }
+        return _uploads.readHistorical(id, historical);
+      default:
+        return _uploads.read(id);
+    }
   }
 
   CloudSyncAttachmentUploadOrigin _source(int id) => CloudSyncAttachmentUploadOrigin.read(
-    uploads: _uploads, uploadId: id, historicalJournal: _historicalJournal);
+    uploads: _uploads, uploadId: id, historicalJournal: _historicalJournal,
+    receivedJournal: _receivedJournal);
+
+  CloudSyncReceivedArchiveJournal _requireReceivedJournal() {
+    final received = _receivedJournal;
+    if (received == null) {
+      throw StateError(cloudSyncAttachmentOwnerChangedCode);
+    }
+    return received;
+  }
 
   Future<CloudSyncPreparedUpload> _prepare({
     required CloudSyncAttachmentUploadOrigin source,
@@ -866,6 +991,16 @@ final class CloudSyncAttachmentUploadExecutor {
     required String sourcePath,
     required BigInt requestTimeoutSeconds,
   }) {
+    if (source.isReceived) {
+      final bridge = _bridge;
+      if (bridge is! CloudSyncReceivedAttachmentUploadBridge) {
+        throw StateError(cloudSyncAttachmentOwnerChangedCode);
+      }
+      return bridge.prepareReceived(context: source.receivedContext(
+          storageDirectory: _privateStorageDirectory, auth: _nativeAuth(auth)),
+        planStage: planStage, originalAttachmentGuid: originalAttachmentGuid,
+        sourcePath: sourcePath, requestTimeoutSeconds: requestTimeoutSeconds);
+    }
     if (!source.isHistorical) {
       return _bridge.prepare(context: source.localContext(
           storageDirectory: _privateStorageDirectory, auth: _nativeAuth(auth)),
@@ -886,6 +1021,14 @@ final class CloudSyncAttachmentUploadExecutor {
     CloudSyncAttachmentUploadOrigin source, CloudSyncNativeAuthSnapshot auth,
     frb_api.CloudSyncAttachmentUploadPlanReference planStage,
   ) {
+    if (source.isReceived) {
+      final bridge = _bridge;
+      if (bridge is! CloudSyncReceivedAttachmentUploadBridge) {
+        throw StateError(cloudSyncAttachmentOwnerChangedCode);
+      }
+      return bridge.recoverReceived(context: source.receivedContext(
+        storageDirectory: _privateStorageDirectory, auth: _nativeAuth(auth)), planStage: planStage);
+    }
     if (!source.isHistorical) {
       return _bridge.recover(context: source.localContext(
         storageDirectory: _privateStorageDirectory, auth: _nativeAuth(auth)), planStage: planStage);

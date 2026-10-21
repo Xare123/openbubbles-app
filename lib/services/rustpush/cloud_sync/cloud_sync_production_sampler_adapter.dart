@@ -2,6 +2,7 @@
 
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'dart:math';
 
 import 'package:bluebubbles/src/rust/api/api.dart' as frb_api;
@@ -9,6 +10,7 @@ import 'package:bluebubbles/src/rust/api/cloud_sync_chat_identity.dart' as ident
 import 'package:bluebubbles/src/rust/frb_generated.dart' as frb_generated;
 import 'package:bluebubbles/src/rust/lib.dart' as frb_lib;
 import 'package:bluebubbles/database/database.dart';
+import 'package:bluebubbles/services/network/backend_service.dart';
 import 'package:bluebubbles/database/models.dart'
     show Attachment, Message, Message_, Store, TxMode, CloudOutboxOperationEntity, CloudSyncCheckpointEntity;
 import 'package:bluebubbles/utils/logger/logger.dart';
@@ -17,6 +19,7 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart'
     as frb;
 
 import 'cloud_inbox_applier.dart';
+import 'cloud_attachment_provenance.dart';
 import 'cloud_protected_page_lease_lifecycle.dart';
 import 'cloud_sync_engine.dart';
 import 'cloud_sync_dev_gate.dart';
@@ -958,11 +961,12 @@ final class CloudSyncProductionLocalSendAdapter {
     final receivedMutationJournal = CloudSyncReceivedMutationJournal(
       store: objectBox, authority: authority, owner: owner);
     final imClient = _readActiveImClient?.call();
-    bool receivedMutationDispatchAllowed() => selection == null && historical == null &&
+    bool receivedArchiveDispatchAllowed() => selection == null && historical == null &&
         _receivedArchiveAllowed?.call() == true &&
         CloudSyncDevGate.receivedArchiveUploadsEnabled &&
         CloudSyncDevGate.receivedArchiveCaptureEnabled &&
-        CloudSyncDevGate.receivedArchiveInspectionEnabled &&
+        CloudSyncDevGate.receivedArchiveInspectionEnabled;
+    bool receivedMutationDispatchAllowed() => receivedArchiveDispatchAllowed() &&
         imClient != null && identical(imClient, _readActiveImClient?.call());
     // Ephemeral per pass. Admission changes the read-set revision; refresh
     // against the ORIGINAL staged operation before lease, including restart.
@@ -977,8 +981,7 @@ final class CloudSyncProductionLocalSendAdapter {
       receivedArchiveJournal: receivedJournal,
       localMutationJournal: mutationJournal,
       receivedMutationJournal: receivedMutationJournal,
-      pauseUnsubmittedReceivedCreates: () => selection == null && historical == null &&
-          _receivedArchiveAllowed?.call() != true,
+      pauseUnsubmittedReceivedCreates: () => !receivedArchiveDispatchAllowed(),
       attachmentUploadJournal: uploads,
       historicalAttachmentJournal: historicalJournal,
       readChatIdentityEvidence: (operation) => chatEvidence[operation.operationId],
@@ -1011,10 +1014,13 @@ final class CloudSyncProductionLocalSendAdapter {
     final attachmentPlans = FrbCloudSyncAttachmentPlanSource(
         storageDirectory: _privateStorageDirectory);
     final bindings = FrbNativeProtectedCloudSyncBindings(
-      readHistoricalAttachmentContext: historicalJournal == null ? null : (input) async {
+      readHistoricalAttachmentContext: (input) async {
         fence.requireCurrentBinding(auth);
+        if (durable.readAttachmentOwnerKind(attachmentScope, input.localOperationId) !=
+            cloudSyncAttachmentOwnerKindHistorical) { return null; }
+        if (historicalJournal == null) throw StateError('cloud_sync_attachment_owner_changed');
         final operation = durable.readHistoricalAttachmentOperation(
-          attachmentScope, input.localOperationId, historicalJournal!);
+          attachmentScope, input.localOperationId, historicalJournal);
         if (operation.logicalEntityKeyHash != input.logicalEntityKeyHash ||
             operation.serverRecordIdHash != input.serverRecordIdHash ||
             operation.encryptedPayloadReference != input.protectedPayloadReference ||
@@ -1025,6 +1031,24 @@ final class CloudSyncProductionLocalSendAdapter {
         }
         return attachmentPlans.historicalContext(
           uploads.readHistoricalAdoptedSource(operation, historicalJournal), auth);
+      },
+      readReceivedAttachmentContext: (input) async {
+        fence.requireCurrentBinding(auth);
+        if (durable.readAttachmentOwnerKind(attachmentScope, input.localOperationId) !=
+            cloudSyncAttachmentOwnerKindReceived) { return null; }
+        final operation = durable.readReceivedAttachmentOperation(
+          attachmentScope, input.localOperationId, receivedJournal);
+        if (operation == null ||
+            operation.logicalEntityKeyHash != input.logicalEntityKeyHash ||
+            operation.serverRecordIdHash != input.serverRecordIdHash ||
+            operation.encryptedPayloadReference != input.protectedPayloadReference ||
+            input.protectedServerRecordReference != input.protectedPayloadReference ||
+            operation.payloadSha256 != input.payloadSha256 ||
+            operation.protectedLeaseReference != input.protectedLeaseReference) {
+          throw StateError('cloud_sync_attachment_upload_adoption_changed');
+        }
+        return attachmentPlans.receivedContext(
+          uploads.readReceivedAdoptedSource(operation, receivedJournal), auth);
       });
     late final Future<frb_api.CloudSyncAttachmentParentGroupProof?> Function(
         CloudSyncScope, String) readParentGroupProof;
@@ -1126,6 +1150,7 @@ final class CloudSyncProductionLocalSendAdapter {
     );
     receivedCreates = CloudSyncReceivedCreateAdapter(
       store: objectBox, durable: durable, journal: receivedJournal, transport: transport,
+      attachmentUploads: uploads,
       auth: auth, storageDirectory: _privateStorageDirectory, readSession: identitySession,
       validate: () => fence.run(() {}, accountFingerprint: scope.accountFingerprint),
       receivedArchiveAllowed: () => selection == null && historical == null &&
@@ -1362,6 +1387,7 @@ final class CloudSyncProductionLocalSendAdapter {
               uploads: uploads,
               onlyIntentId: historical?.intentId ?? selection?.intentId,
               historicalJournal: historicalJournal,
+              receivedJournal: receivedJournal,
             )),
       )) {
         return false;
@@ -1474,7 +1500,13 @@ final class CloudSyncProductionLocalSendAdapter {
       final local = ObjectBoxCloudSyncPreflightReader(
         store: objectBox, localSendJournal: journal,
         pausedReceivedArchiveJournal: selection == null && historical == null &&
-            _receivedArchiveAllowed?.call() != true ? receivedJournal : null).read();
+            !receivedArchiveDispatchAllowed() ? receivedJournal : null,
+        isPausedReceivedAttachmentCreate: (operationId) {
+          if (receivedArchiveDispatchAllowed()) return false;
+          final operation = durable.readReceivedAttachmentOperation(attachmentScope,
+            operationId, receivedJournal);
+          return operation != null && durable.isPausedUnsubmittedReceivedCreate(operation);
+        }).read();
       if (!local.objectBoxReady || local.coordinatorLeaseActive ||
           (local.outboxCount != 0 && local.settledOutboxFingerprint == null)) {
         return false;
@@ -1581,6 +1613,170 @@ final class CloudSyncProductionLocalSendAdapter {
           await validateSelection();
         },
         drainExisting: drainExisting);
+    }
+
+    void validateReceivedSelection() {
+      fence.requireCurrentBinding(auth);
+      if (selection != null || historical != null ||
+          _receivedArchiveAllowed?.call() != true ||
+          !CloudSyncDevGate.receivedArchiveUploadsEnabled ||
+          !CloudSyncDevGate.receivedArchiveCaptureEnabled ||
+          !CloudSyncDevGate.receivedArchiveInspectionEnabled) {
+        throw StateError('cloud_sync_received_archive_confirmation_required');
+      }
+    }
+
+    // Exact receipt recovery is identity-bound, not future-upload consent.
+    // The mutation gate separately rechecks consent at the consume boundary.
+    Future<CloudSyncNativeAuthSnapshot?> receivedLiveAuth() => fence.run(() => auth,
+      accountFingerprint: scope.accountFingerprint);
+
+    CloudSyncAttachmentUploadExecutor receivedExecutor() {
+      final client = auth.cloudMessagesClient;
+      if (client is! frb_lib.ArcCloudMessagesClientDefaultAnisetteProvider) {
+        throw StateError('cloud_sync_attachment_plan_client_invalid');
+      }
+      return CloudSyncAttachmentUploadExecutor(
+        uploads: uploads, receivedJournal: receivedJournal, readLiveAuth: receivedLiveAuth,
+        mutationGate: GuardedCloudSyncAttachmentUploadMutationGate(guard,
+          receivedJournal: receivedJournal, requireReceivedAdmission: validateReceivedSelection),
+        bridge: FrbCloudSyncAttachmentUploadBridge(cloudMessagesClient: client,
+          storageDirectory: _privateStorageDirectory),
+        staging: transport,
+        completedAdmitter: ObjectBoxCloudSyncCompletedUploadAdmitter(durable,
+          receivedJournal: receivedJournal),
+        privateStorageDirectory: _privateStorageDirectory);
+    }
+
+    Future<String?> receivedSourcePath(int intentId,
+        CloudSyncAttachmentPlanInventoryItem item) async {
+      final selected = await fence.run(() {
+        validateReceivedSelection();
+        final origin = receivedJournal.requireReceivedAttachmentOrigin(
+          transactionStore: objectBox, intentId: intentId, currentAuth: auth,
+          forDispatch: true);
+        final message = objectBox.box<Message>().get(origin.localMessageId);
+        if (message == null) throw StateError('cloud_sync_attachment_plan_source_unavailable');
+        return (attachment: cloudSyncAttachmentPlanLocalSource(message, item),
+          source: origin.source.encode());
+      }, accountFingerprint: scope.accountFingerprint);
+      final attachment = selected.attachment;
+      final path = attachment.path;
+      if (!await File(path).exists()) {
+        // A live received source still owns its original IDS descriptor. Only
+        // that original transport may fill a missing local source here. Never
+        // enter a nested CloudKit materializer under this pass's writer lock.
+        if (cloudAttachmentDownloadLaneFor(attachment.metadata) != CloudAttachmentDownloadLane.ids) {
+          return null;
+        }
+        await backend.downloadAttachment(attachment, original: true);
+      }
+      await fence.run(() {
+        validateReceivedSelection();
+        final current = receivedJournal.requireReceivedAttachmentOrigin(
+          transactionStore: objectBox, intentId: intentId, currentAuth: auth,
+          forDispatch: true);
+        final message = objectBox.box<Message>().get(current.localMessageId);
+        if (current.source.encode() != selected.source || message == null ||
+            cloudSyncAttachmentPlanLocalSource(message, item).id != attachment.id ||
+            attachment.path != path) {
+          throw StateError('cloud_sync_attachment_plan_origin_changed');
+        }
+      }, accountFingerprint: scope.accountFingerprint);
+      return await File(path).exists() ? path : null;
+    }
+
+    Future<void> prepareReceivedAttachments(int intentId) async {
+      await recoverProtectedStore();
+      validateReceivedSelection();
+      final retained = receivedJournal.requireReceivedAttachmentOrigin(
+        transactionStore: objectBox, intentId: intentId, currentAuth: auth);
+      final inventory = await attachmentPlans.inspectReceived(retained.source, auth);
+      validateReceivedSelection();
+      final keys = Set<String>.unmodifiable(inventory.map((item) => item.logicalEntityKeyHash));
+      final executor = receivedExecutor();
+      // Recover original attempts before asking for files or staging new plans.
+      // Missing local media never waives an uncertain upload's readback.
+      await transport.runOutboundAdmissionExclusive(() async {
+        for (final item in inventory) {
+          final old = uploads.findReceivedForAttachment(receivedIntentId: intentId,
+            logicalEntityKeyHash: item.logicalEntityKeyHash,
+            sourceAttachmentKeys: keys, receivedJournal: receivedJournal);
+          if (old == null || old.state == CloudAttachmentUploadState.prepared) continue;
+          final recovered = await executor.execute(CloudSyncAttachmentUploadExecutionInput(
+            uploadId: old.id, originalAttachmentGuid: '', sourcePath: '',
+            requestTimeoutSeconds: BigInt.from(120), retainedSourceAttachmentKeys: keys));
+          if (recovered.status != CloudAttachmentUploadExecutionStatus.completed &&
+              recovered.status != CloudAttachmentUploadExecutionStatus.recoveredAndCompleted &&
+              recovered.status != CloudAttachmentUploadExecutionStatus.alreadyCompleted) {
+            throw StateError('cloud_sync_attachment_parent_upload_unresolved');
+          }
+          validateReceivedSelection();
+        }
+      });
+      if (!await drainExisting()) throw StateError('cloud_sync_attachment_parent_readback_pending');
+      validateReceivedSelection();
+      // Resolve the WHOLE inventory before creating any fresh randomized plan.
+      final paths = <String, String>{};
+      for (final item in inventory) {
+        final old = uploads.findReceivedForAttachment(receivedIntentId: intentId,
+          logicalEntityKeyHash: item.logicalEntityKeyHash,
+          sourceAttachmentKeys: keys, receivedJournal: receivedJournal);
+        if (old != null && !uploads.receivedUploadNeedsLocalSource(old.id, receivedJournal)) continue;
+        final path = await receivedSourcePath(intentId, item);
+        if (path == null) throw StateError('cloud_sync_attachment_plan_source_unavailable');
+        paths[item.logicalEntityKeyHash] = path;
+      }
+      await prepareCloudSyncAttachmentParent(
+        staging: transport,
+        prepareChildren: () async {
+          validateReceivedSelection();
+          final coordinator = CloudSyncAttachmentPlanCoordinator(
+            store: objectBox, localSends: journal, uploads: uploads,
+            readLiveAuth: receivedLiveAuth, staging: transport,
+            readInventory: (source, current) => throw StateError('cloud_sync_attachment_owner_changed'),
+            stagePlan: (item, source, current) => throw StateError('cloud_sync_attachment_owner_changed'));
+          final plans = await coordinator.ensureReceivedPlans(
+            receivedIntentId: intentId, receivedJournal: receivedJournal,
+            readInventory: (source, current) async {
+              final found = await attachmentPlans.inspectReceived(source, current);
+              if (found.length != inventory.length || found.any((item) =>
+                  !inventory.any((old) => old.logicalEntityKeyHash == item.logicalEntityKeyHash &&
+                    old.originalAttachmentGuid == item.originalAttachmentGuid &&
+                    old.reflectedAttachmentGuid == item.reflectedAttachmentGuid))) {
+                throw StateError('cloud_sync_attachment_upload_inventory_changed');
+              }
+              return found;
+            },
+            stagePlan: (item, source, current) async {
+              validateReceivedSelection();
+              final path = paths[item.logicalEntityKeyHash];
+              if (path == null) throw StateError('cloud_sync_attachment_plan_source_unavailable');
+              return attachmentPlans.stageReceived(item, source, current, sourcePath: path);
+            });
+          for (final plan in plans) {
+            validateReceivedSelection();
+            final item = inventory.singleWhere((item) => item.logicalEntityKeyHash == plan.plan.logicalEntityKeyHash);
+            final fresh = uploads.readReceived(plan.id, receivedJournal).state == CloudAttachmentUploadState.prepared;
+            if (fresh) attemptedUploadId = plan.id;
+            final result = await executor.execute(CloudSyncAttachmentUploadExecutionInput(
+              uploadId: plan.id, originalAttachmentGuid: item.originalAttachmentGuid,
+              sourcePath: fresh ? paths[item.logicalEntityKeyHash]! : '',
+              requestTimeoutSeconds: BigInt.from(120), retainedSourceAttachmentKeys: keys));
+            if (result.status != CloudAttachmentUploadExecutionStatus.completed &&
+                result.status != CloudAttachmentUploadExecutionStatus.recoveredAndCompleted &&
+                result.status != CloudAttachmentUploadExecutionStatus.alreadyCompleted) {
+              throw StateError('cloud_sync_attachment_parent_upload_unresolved');
+            }
+            attemptedUploadId = null;
+          }
+        },
+        drainChildren: drainExisting,
+        requireChildReadback: () => fence.run(() {
+          validateReceivedSelection();
+          uploads.captureReceivedParentReadbackProof(receivedIntentId: intentId,
+            sourceAttachmentKeys: keys, receivedJournal: receivedJournal);
+        }, accountFingerprint: scope.accountFingerprint));
     }
     Future<void> prepareHistoricalAttachments(int localChatId) async {
       final selected = historical!;
@@ -1743,6 +1939,7 @@ final class CloudSyncProductionLocalSendAdapter {
               expectedClient: auth.cloudMessagesClient, uploads: uploads,
               uploadId: uploadId, expectedEpoch: owner.epoch,
               historicalJournal: historicalJournal,
+              receivedJournal: receivedJournal,
             );
             return allowed && sameOwnerContext();
           },
@@ -1904,6 +2101,11 @@ final class CloudSyncProductionLocalSendAdapter {
                 intentId: candidate.intentId, now: DateTime.now().toUtc()),
               accountFingerprint: scope.accountFingerprint);
             try {
+              final hasMedia = await fence.run(() {
+                validateReceivedSelection();
+                return objectBox.box<Message>().get(candidate.localMessageId)?.hasAttachments == true;
+              }, accountFingerprint: scope.accountFingerprint);
+              if (hasMedia) await prepareReceivedAttachments(candidate.intentId);
               await receivedCreates.admit(scope, candidate.intentId);
               receivedAdmitted++;
             } catch (error) {

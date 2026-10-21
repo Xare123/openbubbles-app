@@ -48,6 +48,15 @@ api.CloudSyncHistoricalAttachmentContext _context({
   source: _source(account: account, store: store, sha: sha),
 );
 
+api.CloudSyncReceivedAttachmentContext _receivedContext({String? account, String? store, String? sha}) =>
+    api.CloudSyncReceivedAttachmentContext(storageDirectory: 'store-dir',
+      expectedAuth: _auth(account: account, store: store),
+      source: api.CloudSyncNativeReceivedArchiveSourceBinding(
+        accountFingerprint: account ?? _accountA, protectedStoreIdentity: store ?? _storeA,
+        messageGuidHash: 'b' * 64, sourceSha256: sha ?? 'c' * 64,
+        protectedReference: 'obcs2.ref.${'H' * 43}', leaseReference: 'obcs2.lease.${'a' * 32}',
+        payloadSha256: 'd' * 64, payloadLength: 128));
+
 api.CloudSyncPreparedMessageCreateInput _input() =>
     api.CloudSyncPreparedMessageCreateInput(
       localOperationId: 'op1:${'e' * 64}',
@@ -69,11 +78,14 @@ void main() {
       api.CloudSyncPreparedMessageCreateInput,
     )?
     context,
+    FutureOr<api.CloudSyncReceivedAttachmentContext?> Function(
+      api.CloudSyncPreparedMessageCreateInput)? received,
   }) => FrbNativeProtectedCloudSyncBindings(
     api: bridge,
     readHistoricalAttachmentContext: context == null
         ? null
         : (input) async => context(input),
+    readReceivedAttachmentContext: received == null ? null : (input) async => received(input),
   );
 
   setUp(() {
@@ -247,6 +259,69 @@ void main() {
     expect(bridge.releasedHandles, hasLength(1));
   });
 
+  test('received-only reader uses the received API and exact context for prepare and readback', () async {
+    final context = _receivedContext();
+    final selected = bindings(received: (_) => context);
+    await prepare(selected);
+    await reconcile(selected);
+    expect(bridge.receivedPrepareCalls, 1);
+    expect(bridge.receivedReconcileCalls, 1);
+    expect(bridge.receivedContext, same(context));
+    expect(bridge.ordinaryPrepareCalls + bridge.ordinaryReconcileCalls, 0);
+    expect(bridge.historicalPrepareCalls + bridge.historicalReconcileCalls, 0);
+    expect(bridge.prepareInputs!.single.logicalEntityKeyHash, _input().logicalEntityKeyHash);
+    expect(bridge.prepareTimeoutSeconds, BigInt.from(30));
+    expect(bridge.prepareRequestUuid, 'req-uuid');
+  });
+
+  test('both typed readers preserve ordinary batching when neither owns the records', () async {
+    final batch = [_input(), _input()];
+    await bindings(context: (_) => null, received: (_) => null).prepareAttachmentCreate(
+      cloudMessagesClient: client, storageDirectory: 'store-dir', expectedAccountFingerprint: _accountA,
+      expectedProtectedStoreIdentity: _storeA, requestUuid: 'req-uuid',
+      requestTimeout: const Duration(seconds: 30), inputs: batch);
+    expect(bridge.ordinaryPrepareCalls, 1);
+    expect(bridge.prepareInputs, same(batch));
+    expect(bridge.receivedPrepareCalls + bridge.historicalPrepareCalls, 0);
+  });
+
+  test('competing historical and received owners fail before native work', () async {
+    final selected = bindings(context: (_) => _context(), received: (_) => _receivedContext());
+    await expectLater(prepare(selected), throwsA(isA<StateError>()));
+    await expectLater(reconcile(selected), throwsA(isA<StateError>()));
+    expect(bridge.totalCalls, 0);
+  });
+
+  test('received account and store drift never fall back to local or historical APIs', () async {
+    for (final context in [_receivedContext(account: _accountB), _receivedContext(store: _storeB)]) {
+      final selected = bindings(context: (_) => null, received: (_) => context);
+      await expectLater(prepare(selected), throwsA(isA<StateError>()));
+      await expectLater(reconcile(selected), throwsA(isA<StateError>()));
+    }
+    expect(bridge.totalCalls, 0);
+  });
+
+  test('received source or role drift after preparation releases the original handle', () async {
+    for (final disappears in [false, true]) {
+      var reads = 0;
+      final selected = bindings(received: (_) => ++reads == 1 ? _receivedContext()
+          : disappears ? null : _receivedContext(sha: 'f' * 64));
+      bridge.prepareResult = api.CloudSyncPreparedMessageCreateResult(handle: _Handle(), handleBindingSha256: 'f' * 64);
+      await expectLater(prepare(selected), throwsA(isA<StateError>()));
+    }
+    expect(bridge.receivedPrepareCalls, 2);
+    expect(bridge.releasedHandles, hasLength(2));
+    expect(bridge.ordinaryPrepareCalls + bridge.historicalPrepareCalls, 0);
+  });
+
+  test('received readback rejects a source change after the exact native lookup', () async {
+    var reads = 0;
+    await expectLater(reconcile(bindings(received: (_) => ++reads == 1
+        ? _receivedContext() : _receivedContext(sha: 'f' * 64))), throwsA(isA<StateError>()));
+    expect(bridge.receivedReconcileCalls, 1);
+    expect(bridge.ordinaryReconcileCalls + bridge.historicalReconcileCalls, 0);
+  });
+
   test('historical failure never falls back to the ordinary API', () async {
     final failure = StateError('synthetic-native-failure');
     bridge.historicalFailure = failure;
@@ -329,11 +404,14 @@ class _Bridge implements frb.RustLibApi {
   int historicalPrepareCalls = 0;
   int ordinaryReconcileCalls = 0;
   int historicalReconcileCalls = 0;
+  int receivedPrepareCalls = 0;
+  int receivedReconcileCalls = 0;
   int get totalCalls =>
       ordinaryPrepareCalls +
       historicalPrepareCalls +
       ordinaryReconcileCalls +
-      historicalReconcileCalls;
+      historicalReconcileCalls + receivedPrepareCalls + receivedReconcileCalls;
+  api.CloudSyncReceivedAttachmentContext? receivedContext;
   api.CloudSyncHistoricalAttachmentContext? prepareContext;
   List<api.CloudSyncPreparedMessageCreateInput>? prepareInputs;
   String? prepareRequestUuid;
@@ -419,6 +497,31 @@ class _Bridge implements frb.RustLibApi {
   }) async {
     releasedHandles.add(handle);
     return true;
+  }
+
+  @override
+  Future<api.CloudSyncPreparedMessageCreateResult> crateApiApiCloudSyncPrepareReceivedAttachmentCreate({
+    required native.ArcCloudMessagesClientDefaultAnisetteProvider cloudMessagesClient,
+    required api.CloudSyncReceivedAttachmentContext context, required String requestUuid,
+    required BigInt requestTimeoutSeconds, required List<api.CloudSyncPreparedMessageCreateInput> inputs,
+  }) async {
+    receivedPrepareCalls++;
+    receivedContext = context;
+    prepareInputs = inputs;
+    prepareRequestUuid = requestUuid;
+    prepareTimeoutSeconds = requestTimeoutSeconds;
+    return prepareResult;
+  }
+
+  @override
+  Future<api.CloudSyncOutboundReconcileResult> crateApiApiCloudSyncReconcileReceivedAttachmentCreate({
+    required native.ArcCloudMessagesClientDefaultAnisetteProvider cloudMessagesClient,
+    required api.CloudSyncReceivedAttachmentContext context, required String requestUuid,
+    required api.CloudSyncPreparedMessageCreateInput input,
+  }) async {
+    receivedReconcileCalls++;
+    receivedContext = context;
+    return const api.CloudSyncOutboundReconcileResult();
   }
 
   @override

@@ -1849,6 +1849,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  CloudSyncReceivedAttachmentContext
+  dco_decode_box_autoadd_cloud_sync_received_attachment_context(dynamic raw);
+
+  @protected
   CloudSyncReceivedFoundProjection
   dco_decode_box_autoadd_cloud_sync_received_found_projection(dynamic raw);
 
@@ -2539,6 +2543,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   CloudSyncRawSystemFields dco_decode_cloud_sync_raw_system_fields(dynamic raw);
+
+  @protected
+  CloudSyncReceivedAttachmentContext
+  dco_decode_cloud_sync_received_attachment_context(dynamic raw);
 
   @protected
   CloudSyncReceivedFoundProjection
@@ -5905,6 +5913,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  CloudSyncReceivedAttachmentContext
+  sse_decode_box_autoadd_cloud_sync_received_attachment_context(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   CloudSyncReceivedFoundProjection
   sse_decode_box_autoadd_cloud_sync_received_found_projection(
     SseDeserializer deserializer,
@@ -6793,6 +6807,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   CloudSyncRawSystemFields sse_decode_cloud_sync_raw_system_fields(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  CloudSyncReceivedAttachmentContext
+  sse_decode_cloud_sync_received_attachment_context(
     SseDeserializer deserializer,
   );
 
@@ -10735,6 +10755,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_box_autoadd_cloud_sync_received_attachment_context(
+    CloudSyncReceivedAttachmentContext self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_box_autoadd_cloud_sync_received_found_projection(
     CloudSyncReceivedFoundProjection self,
     SseSerializer serializer,
@@ -11788,6 +11814,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_cloud_sync_raw_system_fields(
     CloudSyncRawSystemFields self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_cloud_sync_received_attachment_context(
+    CloudSyncReceivedAttachmentContext self,
     SseSerializer serializer,
   );
 
