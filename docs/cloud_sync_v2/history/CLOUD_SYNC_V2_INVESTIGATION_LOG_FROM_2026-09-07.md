@@ -7822,3 +7822,44 @@ locks/sixpins/workflow/12generatedfiles unchanged. C:26,637,393,920Bfree atrecei
 No APK/device/account/send/upload/merge/GCE/cleanup. Relaypublicforkdone and
 reverified; Alpha disposition unanswered. Canonical received-media-source-20261021
 owns verification/evidence/NEXT_SLICE. Goal ACTIVE/incomplete.
+
+## October21 received-media lifecycle source qualification
+
+Native6048efcbb0a2d5960211290fdf2ea292fe1a60c8 pins reviewed rustpush
+ea85b514d09f758eea7afeadb2865495f8033e5b. Dart+generated19path code
+73bbebc4d3b33fd42dc835d1c35cec91e9e77d06 published fork-only normalFF.
+Shared journal/executor now carries ownerKind2, exact received native source,
+original plan/attempt/completion, typed child save/readback and complete parent
+proof. No IDS/historical relabel, schema change or second sync engine. Actual
+row roles select sources/states/transport even with both journals wired. Ordinary
+batching preserved, paused pristine received child creates leave sent work free;
+unknown operations retain original UUIDs/source for readback.
+
+Sole native39631211759/job119329577139 TERMINAL SUCCESS15m3s, watch90366 terminal0:
+988appRust/450rustpush/16provider(1ignored12filtered)/40protector;12newapp/1nested
+and11requiredsteps verified from log
+1973d7fa595cf69c216229abde50fa27ed6228db922fc292bf339bd4c7510781.
+All12generatedfiles exact12360595133/ZIP41a6f7a232cedfb633d31b2552f493b401726d4cfc17f444cff31b229692d482/
+456661B,5changed,codegen-1216115562. Generation-mode drift intentionallyskipped,
+notpassed. No duplicate CI. Native logic/locks/model25fdd5ce/workflow unchanged.
+
+Initial focused load/analysis failed on main's missing authority-failure import;
+corrected40passed/91262 terminal0. Final9-file77584 passed326/12s, including
+actual shared executor and parent-proof ObjectBox reopen, paused child/preflight.
+Logec7099022cc70740fe03e1dcc585c5210ea58ca4b363df73ee2cd516a8c7a0b9.
+Fourteen-path44462 and final2changed35415 analysis terminal0 noissues. Parent-only
+86704 failed because its new synthetic Message draft used attachment-v1;
+corrected constant,74945 passed1. No guard relaxed. Native verifier initially
+counted protector's zero-case doc-test line as a second unit suite; positive-suite
+selection corrected it, verifier passed. Initial logs retained in canonical case.
+
+Franklin journal/tests and Sartre fourfile bridge/guard work reviewed/integrated,
+parent fixed routing/batching gaps and added shared executor/parent cases. Both
+supportedclosed/wait:not_found. No active job/test/analyzer/child. All5flagsOFF;
+noAPK/Pixel/account/Apple/send/upload/merge/GCE/cleanup. Installed624/signedd259
+unchanged/incompatible with newAPIs. Relaypublicfca66e2/build39554981206 complete.
+Next: actual received guard epoch-handoff/fresh-permit re-admission (current gate
+in executor tests is synthetic), and media-aware consent before rollout because
+the current Profile grant says plain text. Pre-seal and Alpha693-tombstone
+disposition remain open. Canonical received-media-write-20261021 owns evidence/
+NEXT_SLICE. GoalACTIVE; do not expand Pixel gates for relay publication.

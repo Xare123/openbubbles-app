@@ -2,17 +2,19 @@
 
 ## Current source qualification, October21
 
-Code4ec8b2d828f2280992f45cf283f282441fbfa52d on native0cf023579e8eee96983e27fc9a2744a59d826ab8:
-sole bridge39622341885/job119298820364 SUCCESS19m56s. Actual976appRust/
-449rustpush/16provider(1ignored12filtered)/40protector,10newregressions and12steps
-verified from log05df371f. Strict generated drift passed. Artifact12354754228
-metadata only; all12committedfiles unchanged, no reimport or duplicate run.
-Seven-file234Dartpassed, five-pathanalysis clean. Codegen40816598/model25fdd5ce
-unchanged. Installed624/signedd259 are not current-library proof. No new APK,
-Pixel/account operation or GCE VM. All5receivedflagsOFF. Media capture/projection
-is not full archival: next integrate typed child upload/readback and parent
-admission in the existing lifecycle. Canonical received-media-source-20261021
-owns receipts/NEXT_SLICE. Publicrelayfork complete; no extra Pixel gate for it.
+Code73bbebc4d on native6048efcbb/rustpush ea85b514 is source-qualified only.
+Sole bridge39631211759/job119329577139 SUCCESS15m3s:988appRust/450rustpush/
+16provider(1ignored12filtered)/40protector,12newapp/1nested and11requiredsteps.
+Actual log1973d7fa independently verified. Manual generation-mode drift was
+intentionally skipped, not passed; workflow itself is unchanged. Artifact
+12360595133 ZIP41a6f7a2/456661B and all12imported files exact, codegen-1216115562.
+Nine-file326Dartpassed;14pathanalysis plus2finalchangedpaths clean. No duplicate
+native run for unchanged logic/generated artifact. Model25fdd5ce/locks unchanged.
+All5receivedflagsOFF; noAPK/Pixel/account/GCE/cleanup. Installed624/signedd259
+cannot serve these APIs. Shared received-media lifecycle is implemented, not
+live-qualified or publicly enabled. Canonical received-media-write-20261021
+owns receipts/importer/NEXT_SLICE. Public relay fork is complete; do not expand
+Pixel gates for that publication.
 
 ## Earlier qualification context
 

@@ -9,7 +9,31 @@ timestamp: 2026-10-21
 
 # Decision
 
-## Current integration boundary, October21
+## Current received-media lifecycle, October21
+
+Code73bbebc4d on native6048efcbb/rustpush ea85b514 joins complete received-media
+sources to the existing upload journal, one-shot byte executor and child record
+readback. Received incoming/mirrored provenance stays distinct from local IDS
+and historical sources. Parent create requires the complete child proof, retained
+through actual ObjectBox reopen and bound into the native media envelope. Plain
+V1/V2 source, proof and queue contracts remain unchanged. No second sync engine.
+
+Final9-file326Dartpassed,14pathanalysis+2finalchangedpaths clean. Native bridge
+39631211759 passed988appRust/450rustpush/16provider(1ignored12filtered)/40protector,
+12newapp/1nested regressions and11requiredsteps verified. All12generatedfiles
+match12360595133/ZIP41a6f7a2/456661B, contenthash-1216115562. Generation drift
+intentionally skipped, not passed. This is offline source evidence, not a live
+Apple/Android acceptance result. All five flags remain off; no matching APK.
+
+Before enabling media, qualify the actual received guard epoch handoff and
+fresh-permit re-admission; current tests prove immutable receipt recovery, not
+that full real-guard transition. The current Profile acknowledgment describes
+plain received text, so media needs a reviewed explicit consent/version update,
+not silent expansion of an old grant. Unsupported auxiliary bodies remain held.
+Pre-seal unavailability and Alpha deletion disposition remain separate gaps.
+Canonical received-media-write-20261021 owns receipts and NEXT_SLICE.md.
+
+## Previous source-capture boundary, October21
 
 Received text edits/unsends were integrated in25674843e through the existing
 automatic queue and typed conditional executor with independent native proof,

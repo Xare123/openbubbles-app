@@ -9,6 +9,20 @@ timestamp: 2026-10-21
 
 # OpenBubbles Windows ARM64 host build environment
 
+## October21 received-media lifecycle source lane
+
+Code73bbebc4d uses native6048efcbb/rustpush ea85b514. Sole bridge39631211759
+passed native compilation and988/450/16(1ignored12filtered)/40 executed suites;
+12newapp/1nested regressions and11steps independently verified. Twelve generated
+files match artifact12360595133/ZIP41a6f7a2/456661B;5changed, contenthash-1216115562.
+Generation-mode drift intentionally skipped, not passed. ObjectBox25fdd5ce and
+locks unchanged. Do not rerun unchanged native source or mix with624/d259 APKs.
+Nine-file326Dartpassed,14pathanalysis+2finalchangedpaths clean. No matching APK
+or Apple/Android acceptance yet; all5flagsOFF. Original received upload evidence
+is distinct from fresh dispatch permission. Resolve actual guard epoch handoff
+and media-aware consent before enabled rollout; see canonical
+received-media-write-20261021/NEXT_SLICE.md. Public relay publication is complete.
+
 ## October21 received-mutation replay source lane
 
 Frozen native source4fb3aab3a06cce3fc9745ef65ae8f7ce33e3b336 adds typed local

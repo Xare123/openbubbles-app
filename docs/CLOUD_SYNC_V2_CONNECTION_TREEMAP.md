@@ -9,6 +9,29 @@ timestamp: 2026-10-21
 
 # Cloud Sync V2 current connection treemap
 
+## Received-media lifecycle: source-qualified
+
+Code73bbebc4d3b33fd42dc835d1c35cec91e9e77d06 published fork-only normalFF,19paths,
+on native6048efcbb/rustpush ea85b514. Shared queue/journal/executor now carries
+distinct incoming/mirrored media, original byte attempts and exact child/parent
+readbacks. No fabricated IDS/historical origin, second engine or schema change.
+Sole native39631211759/job119329577139 SUCCESS15m3s:988appRust/450rustpush/
+16provider(1ignored12filtered)/40protector;12newapp/1nested and11steps verified
+actual log1973d7fa. Generation-mode drift intentionallyskipped, NOTpassed.
+Artifact12360595133 ZIP41a6f7a2/456661B, all12files exact/5changed/codegen-1216115562.
+Final9file326Dart passed12s/session77584 terminal0;14pathanalysis44462 and final
+2changedpaths35415 terminal0clean. Parent proof realObjectBox reopen case passed.
+Initial import/fixture/verifier failures retained in canonical case/history.
+Native logic/locks/model25fdd5ce/workflow unchanged since qualification.
+Both helpers reviewed/integrated/closed/wait:not_found. No activejob/test/analyzer.
+All5receivedflagsOFF. No matchingAPK/Pixel/account/send/upload/merge/GCE/cleanup.
+Installed624/signedd259 cannot serve newAPIs. Relaypublicfca66e2/build39554981206
+complete, no extra gate. Alpha693-tombstone choice unanswered, preserve backups.
+NEXT_SLICE: actual received guard epoch-handoff/re-admission and media-aware
+consent before any enabled rollout, plus pre-seal limitation. Source qualification
+is not Apple/Android acceptance. Canonical received-media-write-20261021 owns
+receipts/commands. GoalACTIVE/incomplete; no duplicate native qualification.
+
 ## Current qualification: received media source
 
 Code4ec8b2d828f2280992f45cf283f282441fbfa52d published fork-only on native
