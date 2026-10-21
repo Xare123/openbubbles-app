@@ -41,6 +41,37 @@ pub(crate) struct ReceivedMessageUpdateBinding {
     pub(crate) raw_generation: u64,
 }
 
+/// Journal correlation supplied at recovery. The original-author proof is
+/// recovered only from the native-authenticated envelope, never invented by
+/// Dart or substituted for an outgoing IDS receipt.
+pub(crate) struct ReceivedMessageUpdateContext {
+    pub(crate) logical_entity_key_hash: String,
+    pub(crate) server_record_id_hash: String,
+    pub(crate) predecessor_etag_hash: String,
+    pub(crate) mutation_source_sha256: String,
+    pub(crate) mutation_guid_hash: String,
+    pub(crate) target_guid_hash: String,
+    pub(crate) reflected_snapshot_sha256: String,
+    pub(crate) auth_binding_sha256: String,
+    pub(crate) writer_epoch: u64,
+    pub(crate) raw_generation: u64,
+}
+
+impl ReceivedMessageUpdateContext {
+    fn matches(&self, binding: &ReceivedMessageUpdateBinding) -> bool {
+        self.logical_entity_key_hash == binding.logical_entity_key_hash
+            && self.server_record_id_hash == binding.server_record_id_hash
+            && self.predecessor_etag_hash == binding.predecessor_etag_hash
+            && self.mutation_source_sha256 == binding.mutation_source_sha256
+            && self.mutation_guid_hash == binding.mutation_guid_hash
+            && self.target_guid_hash == binding.target_guid_hash
+            && self.reflected_snapshot_sha256 == binding.reflected_snapshot_sha256
+            && self.auth_binding_sha256 == binding.auth_binding_sha256
+            && self.writer_epoch == binding.writer_epoch
+            && self.raw_generation == binding.raw_generation
+    }
+}
+
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Envelope {
@@ -113,6 +144,34 @@ pub(crate) fn open_received_message_update(
     stage: &StagedMessageUpdate,
 ) -> Result<OpenedReceivedMessageUpdate, Failure> {
     validate_binding(expected)?;
+    let opened = open_authenticated_received_message_update(directory, account, stage)?;
+    if opened.binding != *expected {
+        return Err(Failure::BindingMismatch);
+    }
+    Ok(opened)
+}
+
+/// Open only a committed native stage and compare every restart-stable journal
+/// field. The original native proof is authenticated by the protector and
+/// remains private inside this result; no generic plaintext staging API exists.
+pub(crate) fn open_received_message_update_for_context(
+    directory: PathBuf,
+    account: String,
+    expected: &ReceivedMessageUpdateContext,
+    stage: &StagedMessageUpdate,
+) -> Result<OpenedReceivedMessageUpdate, Failure> {
+    let opened = open_authenticated_received_message_update(directory, account, stage)?;
+    if !expected.matches(&opened.binding) {
+        return Err(Failure::BindingMismatch);
+    }
+    Ok(opened)
+}
+
+fn open_authenticated_received_message_update(
+    directory: PathBuf,
+    account: String,
+    stage: &StagedMessageUpdate,
+) -> Result<OpenedReceivedMessageUpdate, Failure> {
     if !digest(&stage.payload_sha256) {
         return Err(Failure::MalformedMessage);
     }
@@ -133,11 +192,11 @@ pub(crate) fn open_received_message_update(
         serde_json::from_slice(&bytes).map_err(|_| Failure::MalformedMessage)?;
     if envelope.domain != DOMAIN
         || envelope.version != 1
-        || envelope.binding != *expected
         || serde_json::to_vec(&envelope).map_err(|_| Failure::MalformedMessage)? != bytes
     {
         return Err(Failure::BindingMismatch);
     }
+    validate_binding(&envelope.binding)?;
     let predecessor_bytes = decode(&envelope.predecessor_b64, MAX_RECORD_BYTES)?;
     let request_bytes = decode(&envelope.request_b64, MAX_RECORD_BYTES)?;
     let predecessor =
