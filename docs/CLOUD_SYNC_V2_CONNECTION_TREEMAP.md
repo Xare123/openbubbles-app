@@ -9,6 +9,31 @@ timestamp: 2026-10-21
 
 # Cloud Sync V2 current connection treemap
 
+## Current qualification: received media source
+
+Code4ec8b2d828f2280992f45cf283f282441fbfa52d published fork-only on native
+0cf023579e8eee96983e27fc9a2744a59d826ab8. Complete MMCS Received V3 capture,
+shared body projection/material and protected-seed coverage implemented. Old
+V1/V2 source bytes unchanged. Plain projection refuses media. Full media child
+upload/readback and parent admission are NOT integrated; all5receivedflagsOFF.
+Seven-file affected234Dart tests passed/session95824 terminal0; five-path
+analysis63818 terminal0 noissues. Franklin fourfilework reviewed/accepted,
+parent added realObjectBox mediareopen; supportedclose/wait:not_found. No child.
+Sole bridge39622341885/job119298820364 TERMINAL SUCCESS19m56s; watcher97419
+and verifier77944 terminal0. Actual976appRust/449rustpush/16provider(1ignored,
+12filtered)/40protector, all10newtests/12requiredsteps verified from saved log
+SHA05df371fb1b55fed5fed4ec077be30c3005d5001e9b16982b477353e49eece49.
+Strict generated drift passed. Artifact12354754228 metadata only, no reimport
+needed; all12committedfiles unchanged. No active job/test/analyzer/child.
+Codegen40816598/model25fdd5ce, all12generatedfiles/locks/sixpins/workflow unchanged.
+Native tree3a475c07/generatedDartb3b537c3. C:26,637,393,920B free. No cleanup.
+No APK/Pixel/account/send/upload/merge operation. Installed624/signedd259 stay
+unchanged/incompatible with priornewAPIs. Relaypublicforkcomplete, no extra test.
+Pre-seal failures lack retained authenticated retry; ordinary rows survive.
+Confirmed historical import is recovery, not equivalent live provenance.
+Alpha693-tombstone disposition unanswered; preserve all backups/queues/helpers.
+Canonical received-media-source-20261021 owns receipts and NEXT_SLICE. GoalACTIVE.
+
 ## Current source-qualified candidate, October21
 
 Code25674843ed626c2d366ec160ff9c18fb91df63e1 integrates received edits/unsends

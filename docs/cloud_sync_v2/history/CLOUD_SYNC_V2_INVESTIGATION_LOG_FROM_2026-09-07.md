@@ -7798,3 +7798,27 @@ supportedclose/wait:not_found; no active job/test/analyzer/helper. Last installe
 Alpha693-tombstone decision unanswered. Rich/media/pre-seal receive and controlled
 rollout remain. Canonical received-mutation-write-20261021 owns receipts/nextslice.
 No phone/account/Apple/send/upload/merge/APK/GCE/cleanup operation. Goal ACTIVE.
+
+## October21 received-media source implementation
+
+Native0cf023579e8eee96983e27fc9a2744a59d826ab8 (4paths) and Dart
+4ec8b2d828f2280992f45cf283f282441fbfa52d (5paths) published fork-only normalFF.
+Complete MMCS body capture uses internal Received V3; this is not a new CloudKit
+product version. Old V1/V2 bytes/hashes preserved. Shared projection/material keeps
+original direction/endpoint/timestamps; plain create refuses media. Full child
+upload/readback and parent admission remain unimplemented, all5flags off.
+
+Seven-file affected234Dart tests passed, including real disposable ObjectBox media
+retention/reopen. Five-path analysis clean, sessions95824/63818 terminal0. Helper
+fourfilework reviewed/accepted, parent added persistence case; supported close and
+wait:not_found. Formatting-only journal-test churn reversed, original code intact.
+Sole push bridge39622341885/job119298820364 TERMINAL SUCCESS19m56s. Actual
+976appRust/449rustpush/16provider(1ignored12filtered)/40protector, all10newtests/
+12requiredsteps verified from log05df371fb1b55fed5fed4ec077be30c3005d5001e9b16982b477353e49eece49.
+Strict generated drift passed. Artifact12354754228 metadata only, no reimport.
+Watch97419/verifier77944 terminal0; no active CI/test/analyzer/child.
+No duplicate run. Native tree3a475c07/generatedDartb3b537c3/codegen40816598/model25fdd5ce;
+locks/sixpins/workflow/12generatedfiles unchanged. C:26,637,393,920Bfree atreceipt.
+No APK/device/account/send/upload/merge/GCE/cleanup. Relaypublicforkdone and
+reverified; Alpha disposition unanswered. Canonical received-media-source-20261021
+owns verification/evidence/NEXT_SLICE. Goal ACTIVE/incomplete.

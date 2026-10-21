@@ -1,5 +1,21 @@
 # Direct source-only GCE runs
 
+## Current source qualification, October21
+
+Code4ec8b2d828f2280992f45cf283f282441fbfa52d on native0cf023579e8eee96983e27fc9a2744a59d826ab8:
+sole bridge39622341885/job119298820364 SUCCESS19m56s. Actual976appRust/
+449rustpush/16provider(1ignored12filtered)/40protector,10newregressions and12steps
+verified from log05df371f. Strict generated drift passed. Artifact12354754228
+metadata only; all12committedfiles unchanged, no reimport or duplicate run.
+Seven-file234Dartpassed, five-pathanalysis clean. Codegen40816598/model25fdd5ce
+unchanged. Installed624/signedd259 are not current-library proof. No new APK,
+Pixel/account operation or GCE VM. All5receivedflagsOFF. Media capture/projection
+is not full archival: next integrate typed child upload/readback and parent
+admission in the existing lifecycle. Canonical received-media-source-20261021
+owns receipts/NEXT_SLICE. Publicrelayfork complete; no extra Pixel gate for it.
+
+## Earlier qualification context
+
 October21 current code25674843e is source-qualified, not an APK. Native input
 28b70237b completed sole bridge39610600307, independently966/449/16(1ignored,
 12filtered)/40 with11newregressions. All12generated files match12349674781;

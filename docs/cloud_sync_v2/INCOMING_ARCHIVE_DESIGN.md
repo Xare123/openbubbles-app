@@ -9,6 +9,36 @@ timestamp: 2026-10-21
 
 # Decision
 
+## Current integration boundary, October21
+
+Received text edits/unsends were integrated in25674843e through the existing
+automatic queue and typed conditional executor with independent native proof,
+immutable epoch ownership and exact readback. The older dated sections below
+are historical, not the current remaining-update checklist. All five flags off.
+
+Source4ec8b2d82 on native0cf023579 adds full native Received V3 media capture,
+original direction/endpoint/timestamps, shared attributed-body projection and
+descriptor-derived metadata. Old V1/V2 contracts remain unchanged. Dart seven-file
+affected234passed and five-path analysis clean. Sole native39622341885 completed
+SUCCESS19m56s:976appRust/449rustpush/16provider(1ignored12filtered)/40protector,
+all10newregressions/12requiredsteps verified in saved log05df371f. Strict binding
+reproducibility, compile and postjobs passed. Artifact12354754228 metadata only;
+all12committedgeneratedfiles unchanged, no reimport. No active job or child.
+No API/schema/lock/pin/flag delta, new APK or live-account operation in this slice.
+V3 is only the internal received-source format; the product remains CloudKit V2.
+
+This is not completed received-media archival. The plain create path refuses
+media, preventing caption-only writes. Full typed child upload/readback and
+parent admission must reuse the existing attachment lifecycle and queue while
+retaining received provenance. Do not relabel media as IDS-sent or historical.
+Iris/SMIL descriptors remain in the native source even when omitted by the UI;
+unsupported or wholly hidden projections are held, not silently stripped.
+
+Pre-seal failures have no retained authenticated retry seed, although ordinary
+Message persistence survives under the same identity. The existing separately
+confirmed historical snapshot import is recovery, not substitute live proof.
+Canonical received-media-source-20261021/NEXT_SLICE.md records the next boundary.
+
 ## Current offline received-mutation replay, October21
 
 Sourceba099ccaf42752cda7e733eb39a3b03a4d39ccd6 adds typed, same-account/store
