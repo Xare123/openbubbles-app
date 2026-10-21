@@ -309,6 +309,15 @@ impl ReceivedMutationSource {
     pub(crate) fn recipient(&self) -> &str {
         &self.0.received_on_handle
     }
+    pub(crate) fn self_handles(&self) -> &[String] {
+        &self.0.self_handles
+    }
+    pub(crate) fn participants(&self) -> &[String] {
+        &self.0.participants
+    }
+    pub(crate) fn sender_guid(&self) -> Option<&str> {
+        self.0.sender_guid.as_deref()
+    }
     pub(crate) fn origin(&self) -> ReceivedArchiveOrigin {
         self.0.origin
     }

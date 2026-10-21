@@ -85,59 +85,68 @@ impl OpenedMessageUpdate {
     /// update. CloudKit's server-owned metadata may change, but the record
     /// identity, type, PCS metadata and full application field set may not.
     pub(crate) fn classify_readback(&self, remote: &Record) -> MessageUpdateReadbackState {
-        if predecessor_matches_remote(&self.predecessor, remote) {
-            return MessageUpdateReadbackState::NotApplied;
-        }
-        let Some(request_record) = self.request.record.as_ref() else {
+        classify_conditional_update_readback(&self.predecessor, &self.request, remote)
+    }
+}
+
+/// Shared conditional transport evidence, independent of outgoing/received
+/// source authority. Each caller must first open its own exact proof envelope.
+pub(crate) fn classify_conditional_update_readback(
+    predecessor: &Record,
+    request: &RecordSaveRequest,
+    remote: &Record,
+) -> MessageUpdateReadbackState {
+    if predecessor_matches_remote(predecessor, remote) {
+        return MessageUpdateReadbackState::NotApplied;
+    }
+    let Some(request_record) = request.record.as_ref() else {
+        return MessageUpdateReadbackState::Diverged;
+    };
+    if predecessor.record_identifier != remote.record_identifier
+        || predecessor.r#type != remote.r#type
+        || predecessor.pcs_key != remote.pcs_key
+        || predecessor.protection_info != remote.protection_info
+        || remote
+            .etag
+            .as_deref()
+            .is_none_or(|etag| etag.trim().is_empty())
+        || remote.etag == predecessor.etag
+    {
+        return MessageUpdateReadbackState::Diverged;
+    }
+    let mut expected_names = HashSet::new();
+    for predecessor_field in &predecessor.record_field {
+        let Some(name) = field_name(predecessor_field) else {
             return MessageUpdateReadbackState::Diverged;
         };
-        if self.predecessor.record_identifier != remote.record_identifier
-            || self.predecessor.r#type != remote.r#type
-            || self.predecessor.pcs_key != remote.pcs_key
-            || self.predecessor.protection_info != remote.protection_info
-            || remote
-                .etag
-                .as_deref()
-                .is_none_or(|etag| etag.trim().is_empty())
-            || remote.etag == self.predecessor.etag
-        {
+        if !expected_names.insert(name) {
             return MessageUpdateReadbackState::Diverged;
         }
-        let mut expected_names = HashSet::new();
-        for predecessor_field in &self.predecessor.record_field {
-            let Some(name) = field_name(predecessor_field) else {
-                return MessageUpdateReadbackState::Diverged;
-            };
-            if !expected_names.insert(name) {
-                return MessageUpdateReadbackState::Diverged;
-            }
-            let desired =
-                exact_field(&request_record.record_field, name).unwrap_or(predecessor_field);
-            if exact_field(&remote.record_field, name) != Some(desired) {
-                return MessageUpdateReadbackState::Diverged;
-            }
-        }
-        for requested_field in &request_record.record_field {
-            let Some(name) = field_name(requested_field) else {
-                return MessageUpdateReadbackState::Diverged;
-            };
-            if expected_names.insert(name)
-                && exact_field(&remote.record_field, name) != Some(requested_field)
-            {
-                return MessageUpdateReadbackState::Diverged;
-            }
-        }
-        let mut remote_names = HashSet::new();
-        if remote.record_field.len() != expected_names.len()
-            || remote
-                .record_field
-                .iter()
-                .any(|field| field_name(field).is_none_or(|name| !remote_names.insert(name)))
-        {
+        let desired = exact_field(&request_record.record_field, name).unwrap_or(predecessor_field);
+        if exact_field(&remote.record_field, name) != Some(desired) {
             return MessageUpdateReadbackState::Diverged;
         }
-        MessageUpdateReadbackState::Committed
     }
+    for requested_field in &request_record.record_field {
+        let Some(name) = field_name(requested_field) else {
+            return MessageUpdateReadbackState::Diverged;
+        };
+        if expected_names.insert(name)
+            && exact_field(&remote.record_field, name) != Some(requested_field)
+        {
+            return MessageUpdateReadbackState::Diverged;
+        }
+    }
+    let mut remote_names = HashSet::new();
+    if remote.record_field.len() != expected_names.len()
+        || remote
+            .record_field
+            .iter()
+            .any(|field| field_name(field).is_none_or(|name| !remote_names.insert(name)))
+    {
+        return MessageUpdateReadbackState::Diverged;
+    }
+    MessageUpdateReadbackState::Committed
 }
 
 fn field_name(field: &rustpush::cloudkit_proto::record::Field) -> Option<&str> {
@@ -334,7 +343,10 @@ fn is_keyed_hash(value: &str) -> bool {
 /// This lane may replace only encrypted msgProto and the unencrypted update
 /// clock. All server-only metadata and other fields remain server-owned via
 /// merge=true. It cannot express create, delete, PCS rotation or an override.
-fn validate_request(previous: &Record, request: &RecordSaveRequest) -> Result<(), Failure> {
+pub(crate) fn validate_request(
+    previous: &Record,
+    request: &RecordSaveRequest,
+) -> Result<(), Failure> {
     if previous.encoded_len() > MAX_RECORD_BYTES || request.encoded_len() > MAX_RECORD_BYTES {
         return Err(Failure::OversizedMessage);
     }
@@ -568,7 +580,7 @@ fn decode_bounded(encoded: &str, max: usize) -> Result<Vec<u8>, Failure> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::cloud_sync_native_fetch::{
         cloud_sync_commit_protected_page_lease, cloud_sync_open_protected_outbound_message,
@@ -604,7 +616,7 @@ mod tests {
         }
     }
 
-    fn fixture() -> (Record, RecordSaveRequest) {
+    pub(crate) fn fixture() -> (Record, RecordSaveRequest) {
         let predecessor = Record {
             record_identifier: Some(RecordIdentifier {
                 value: Some(Identifier {

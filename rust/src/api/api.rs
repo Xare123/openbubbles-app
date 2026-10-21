@@ -796,6 +796,106 @@ pub async fn cloud_sync_stage_received_archive_seed(
     })
 }
 
+/// Typed local recovery of an already encrypted receive, not a new live IDS
+/// observation, send receipt or remote update permit. No device reply token,
+/// receipt or caller-selected replacement body is restored.
+pub struct CloudSyncRestoredReceivedMutation {
+    pub account_fingerprint: String,
+    pub protected_store_identity: String,
+    pub mutation_guid_hash: String,
+    pub target_guid_hash: String,
+    pub source_sha256: String,
+    pub captured_local_handles: Vec<String>,
+    pub message: MessageInst,
+}
+
+impl std::fmt::Debug for CloudSyncRestoredReceivedMutation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("CloudSyncRestoredReceivedMutation(redacted)")
+    }
+}
+
+/// Reopen the captured source after restart using the actual persisted native
+/// account composition. This local-only operation performs no CloudKit warm,
+/// registration, IDS send or upload. A restart must never claim live receipt.
+pub async fn cloud_sync_restore_received_mutation_seed(
+    cloud_messages_client: &Arc<CloudMessagesClient<DefaultAnisetteProvider>>,
+    storage_directory: String,
+    expected_auth: CloudSyncNativeAuthMetadata,
+    seed: CloudSyncNativeReceivedArchiveSeed,
+) -> anyhow::Result<CloudSyncRestoredReceivedMutation> {
+    let before = cloud_sync_capture_cached_identity(cloud_messages_client, storage_directory.clone()).await?;
+    cloud_sync_require_received_auth(&expected_auth, &before)?;
+    let restored = cloud_sync_restore_received_mutation_seed_bound(&storage_directory, &before, &seed)?;
+    let after = cloud_sync_capture_cached_identity(cloud_messages_client, storage_directory).await?;
+    cloud_sync_require_received_auth(&before, &after)?;
+    Ok(restored)
+}
+
+#[frb(ignore)]
+fn cloud_sync_restore_received_mutation_seed_bound(
+    storage: &str,
+    auth: &CloudSyncNativeAuthMetadata,
+    seed: &CloudSyncNativeReceivedArchiveSeed,
+) -> anyhow::Result<CloudSyncRestoredReceivedMutation> {
+    if seed.account_fingerprint != auth.account_fingerprint
+        || seed.protected_store_identity != auth.protected_store_identity {
+        return Err(anyhow!("cloud_sync_received_mutation_identity_changed"));
+    }
+    let source = crate::cloud_sync_received_mutation_stage::open_received_mutation_seed(
+        PathBuf::from(storage), auth.account_fingerprint.clone(), &auth.protected_store_identity,
+        &crate::cloud_sync_received_mutation_stage::NativeReceivedMutationSeed {
+            mutation_guid_hash: seed.message_guid_hash.clone(), source_sha256: seed.source_sha256.clone(),
+            ciphertext: seed.ciphertext.clone(),
+        },
+    ).map_err(|_| anyhow!("cloud_sync_received_mutation_source_changed"))?;
+    Ok(CloudSyncRestoredReceivedMutation {
+        account_fingerprint: auth.account_fingerprint.clone(),
+        protected_store_identity: auth.protected_store_identity.clone(),
+        mutation_guid_hash: source.guid_hash().map_err(|_| anyhow!("cloud_sync_received_mutation_source_changed"))?,
+        target_guid_hash: source.target_guid_hash().map_err(|_| anyhow!("cloud_sync_received_mutation_source_changed"))?,
+        source_sha256: source.source_sha256().map_err(|_| anyhow!("cloud_sync_received_mutation_source_changed"))?,
+        captured_local_handles: source.self_handles().to_vec(),
+        message: source.message().map_err(|_| anyhow!("cloud_sync_received_mutation_source_changed"))?,
+    })
+}
+
+#[cfg(test)]
+mod received_mutation_restore_tests {
+    use super::*;
+
+    #[test]
+    fn received_mutation_restore_uses_the_encrypted_source_and_exact_account_store() {
+        for mirrored in [false, true] { for unsend in [false, true] {
+            let directory = tempfile::tempdir().unwrap();
+            let storage = directory.path().to_string_lossy().into_owned();
+            let identity = crate::cloud_sync_protector::protected_store_identity(storage.clone()).unwrap();
+            let auth = CloudSyncNativeAuthMetadata { account_fingerprint: "A".repeat(43),
+                protected_store_identity: identity.clone(), native_session_id: "N".repeat(43) };
+            let (wire, handles) = crate::cloud_sync_received_mutation_source::tests::fixture(mirrored, unsend);
+            let sealed = crate::cloud_sync_received_mutation_stage::seal_received_mutation_seed(
+                PathBuf::from(&storage), auth.account_fingerprint.clone(), &identity, &wire, &handles).unwrap();
+            let mut seed = CloudSyncNativeReceivedArchiveSeed { account_fingerprint: auth.account_fingerprint.clone(),
+                protected_store_identity: identity, message_guid_hash: sealed.mutation_guid_hash,
+                source_sha256: sealed.source_sha256, ciphertext: sealed.ciphertext };
+            let restored = cloud_sync_restore_received_mutation_seed_bound(&storage, &auth, &seed).unwrap();
+            assert_eq!(restored.message.id, wire.id);
+            assert_eq!(restored.message.sent_timestamp, wire.sent_timestamp);
+            assert_eq!(restored.message.received_on_handle, wire.received_on_handle);
+            assert_eq!(restored.captured_local_handles, handles);
+            assert!(restored.message.target.is_none());
+            assert!(!restored.message.send_delivered);
+            assert!(crate::cloud_sync_ids_mutation_source::encode_mutation_source(&restored.message).is_err());
+            assert_eq!(format!("{restored:?}"), "CloudSyncRestoredReceivedMutation(redacted)");
+            seed.account_fingerprint = "B".repeat(43);
+            assert!(cloud_sync_restore_received_mutation_seed_bound(&storage, &auth, &seed).is_err());
+            seed.account_fingerprint = auth.account_fingerprint.clone();
+            seed.message_guid_hash = "0".repeat(64);
+            assert!(cloud_sync_restore_received_mutation_seed_bound(&storage, &auth, &seed).is_err());
+        } }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CloudSyncReceivedRecordDisposition {
     Equivalent,
