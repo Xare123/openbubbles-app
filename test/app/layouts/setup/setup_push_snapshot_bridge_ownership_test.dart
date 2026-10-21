@@ -113,7 +113,7 @@ class _Encoder extends RustLibApiImpl {
 }
 
 void main() {
-  test('setupPush borrows config and identity across repeated bridge calls',
+  test('setupPushFresh borrows config and identity without a saved snapshot',
       () async {
     final binding = _Binding();
     addTearDown(binding.close);
@@ -122,10 +122,9 @@ void main() {
     final identity = _Handle();
     for (var repeat = 0; repeat < 2; repeat++) {
       await expectLater(
-        encoder.crateApiApiSetupPush(
+        encoder.crateApiApiSetupPushFresh(
           config: config,
           identity: identity,
-          state: null,
           statePath: 'synthetic-no-account',
         ),
         throwsA(isA<_EncodedOnly>()),

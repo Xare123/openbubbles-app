@@ -1186,7 +1186,9 @@ class SetupViewController extends StatefulController {
         (expectedPreviousConnection == null || identical(connection, expectedPreviousConnection));
     const superseded = 'Device setup changed while connecting. The newer connection and saved credentials have been kept; retry from the current screen.';
     if (!isCurrentSetup()) throw AnyhowException(superseded);
-    final data = await (createPush ?? () => api.setupPush(config: previousConfig!, identity: previousIdentity!, statePath: pushService.statePath, state: previousState))();
+    final data = await (createPush ?? () => previousState == null
+        ? api.setupPushFresh(config: previousConfig!, identity: previousIdentity!, statePath: pushService.statePath)
+        : api.setupPush(config: previousConfig!, identity: previousIdentity!, statePath: pushService.statePath, state: previousState))();
     final candidate = data.$1;
     final failure = data.$2;
     if (!isCurrentSetup()) {

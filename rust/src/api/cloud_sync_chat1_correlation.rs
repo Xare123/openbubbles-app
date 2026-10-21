@@ -5238,7 +5238,7 @@ mod windows_standalone_live_tests {
         let (connection, push_error) = api::setup_push(
             &config,
             &identity,
-            Some(&hardware.push),
+            &hardware.push,
             profile_string.clone(),
         )
         .await.expect("chat1_standalone_activation_state_preservation_failed");
