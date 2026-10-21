@@ -6811,7 +6811,7 @@ class RustPushService extends GetxService {
               observedViaLiveReceive: true, observedLocalHandles: handles,
               receivedOnHandle: myMsg.receivedOnHandle!),
           );
-          // Unsupported media/groups/SMS keep the original queue/duplicate path.
+          // Unsupported media/SMS keep the original queue/duplicate path.
           // Eligibility is rechecked inside persistence; this is only routing.
           if (shape is CloudSyncReceivedArchiveEligible) {
             receivedPersistence = (resolvedChat, received, persist) =>
@@ -8938,6 +8938,20 @@ class RustPushService extends GetxService {
           // Separate opt-in: local capture alone cannot start Apple requests.
           // The source lease has ended before the network interlock is taken.
           if (CloudSyncDevGate.receivedArchiveInspectionEnabled) {
+            final (_, received, _) = journal.readMaterializedForInspection(
+              intentId: intent.id, currentAuth: captured);
+            final receivedChat = received.chat.target;
+            if (receivedChat == null) {
+              throw StateError('cloud_sync_received_archive_parent_changed');
+            }
+            if (CloudSyncReceivedArchiveIdentity.requiresGroupDiscovery(receivedChat)) {
+              // Retain the original group source. Only the separately gated
+              // exact discovery below may read its GUID; no direct-parent
+              // inspection, absent-create wake or guessed owner is permitted.
+              // One candidate per pass remains bounded and round-robin.
+              _cloudSyncV2ReceivedPassDeferred = true;
+              continue;
+            }
             final observation = await inspectCloudSyncReceivedIntent(intentId: intent.id,
               privateStorageDirectory: storagePath, readActiveClient: () => state?.icloudServices?.cloudMessagesClient,
               stillCurrent: stillCurrent);

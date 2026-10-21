@@ -48,6 +48,10 @@ struct Source {
     sender_guid: Option<String>,
     conversation_name: Option<String>,
     after_guid: Option<String>,
+    // Trailing and omitted for V1 keeps every existing direct-source byte
+    // unchanged. A V2 group has no direct peer; exact discovery uses its GUID.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    group_id: Option<String>,
 }
 
 pub(crate) struct ReceivedArchiveSource(Source);
@@ -158,14 +162,39 @@ impl ReceivedArchiveSource {
             .filter(|h| !local_handles.contains(h))
             .map(|h| bare(h))
             .collect::<HashSet<_>>();
-        if counterparts.len() != 1 {
+        if counterparts.is_empty() {
             return Err(Failure::UnsupportedMessage);
         }
-        let peer = *counterparts
-            .iter()
-            .next()
-            .ok_or(Failure::MalformedMessage)?;
-        if origin == ReceivedArchiveOrigin::Incoming && bare(sender) != peer {
+        let group_id = if counterparts.len() > 1 {
+            // Direct sends also carry sender_guid, so UUID alone is not a
+            // group discriminator. Preserve the exact multi-party wire ID;
+            // no title/member hash/alias is promoted to parent or create proof.
+            let group = conversation
+                .sender_guid
+                .as_deref()
+                .filter(|value| group_uuid(value))
+                .ok_or(Failure::UnsupportedMessage)?;
+            if origin == ReceivedArchiveOrigin::Incoming
+                && !conversation
+                    .participants
+                    .iter()
+                    .any(|value| value == sender)
+            {
+                return Err(Failure::BindingMismatch);
+            }
+            Some(group.to_owned())
+        } else {
+            None
+        };
+        let peer = if group_id.is_none() {
+            *counterparts
+                .iter()
+                .next()
+                .ok_or(Failure::MalformedMessage)?
+        } else {
+            ""
+        };
+        if origin == ReceivedArchiveOrigin::Incoming && !counterparts.contains(bare(sender)) {
             return Err(Failure::BindingMismatch);
         }
         let mut participants = conversation.participants.clone();
@@ -184,7 +213,7 @@ impl ReceivedArchiveSource {
         self_handles.dedup();
         let source = Source {
             domain: DOMAIN.into(),
-            version: 1,
+            version: if group_id.is_some() { 2 } else { 1 },
             guid: message.id.clone(),
             sender: sender.into(),
             received_on_handle: recipient.into(),
@@ -197,6 +226,7 @@ impl ReceivedArchiveSource {
             sender_guid: conversation.sender_guid.clone(),
             conversation_name: conversation.cv_name.clone(),
             after_guid: conversation.after_guid.clone(),
+            group_id,
         };
         let received = Self(source);
         received.encode()?;
@@ -217,8 +247,16 @@ impl ReceivedArchiveSource {
         }
         let source: Source =
             serde_json::from_slice(bytes).map_err(|_| Failure::MalformedMessage)?;
-        if source.domain != DOMAIN || source.version != 1 {
+        if source.domain != DOMAIN || !matches!(source.version, 1 | 2) {
             return Err(Failure::UnsupportedMessage);
+        }
+        if (source.version == 1 && source.group_id.is_some())
+            || (source.version == 2
+                && (!source.peer.is_empty()
+                    || !source.group_id.as_deref().is_some_and(group_uuid)
+                    || source.group_id != source.sender_guid))
+        {
+            return Err(Failure::BindingMismatch);
         }
         // Reconstruct only privately to reapply bounds. No caller receives a
         // sendable MessageInst, a delivery receipt, or reply-device token.
@@ -261,6 +299,9 @@ impl ReceivedArchiveSource {
     pub(crate) fn peer(&self) -> &str {
         &self.0.peer
     }
+    pub(crate) fn group_id(&self) -> Option<&str> {
+        self.0.group_id.as_deref()
+    }
     pub(crate) fn text(&self) -> &str {
         &self.0.text
     }
@@ -276,14 +317,19 @@ impl ReceivedArchiveSource {
             self.0.guid
         ]))
     }
-    /// Exact v1 digest contract shared with CloudSyncReceivedArchiveIdentity.
+    /// Direct V1 and group V2 digest contracts shared with Dart. The group
+    /// identity replaces only the route field; it never becomes a direct peer.
     pub(crate) fn source_sha256(&self) -> Result<String, Failure> {
         let s = &self.0;
         digest(&serde_json::json!([
-            "cloud-sync-received-archive-source-v1",
+            if s.group_id.is_some() {
+                "cloud-sync-received-archive-source-v2"
+            } else {
+                "cloud-sync-received-archive-source-v1"
+            },
             s.guid,
             s.text,
-            s.peer,
+            s.group_id.as_deref().unwrap_or(&s.peer),
             s.sender,
             s.received_on_handle,
             s.sent_timestamp,
@@ -304,6 +350,16 @@ fn bare(value: &str) -> &str {
         .strip_prefix("mailto:")
         .or_else(|| value.strip_prefix("tel:"))
         .unwrap_or(value)
+}
+fn group_uuid(value: &str) -> bool {
+    value.len() == 36
+        && value.bytes().enumerate().all(|(index, byte)| {
+            if matches!(index, 8 | 13 | 18 | 23) {
+                byte == b'-'
+            } else {
+                byte.is_ascii_hexdigit()
+            }
+        })
 }
 fn identifier(value: &str) -> Result<(), Failure> {
     if value.is_empty() || value.trim_matches(dart_whitespace) != value || value.contains('\0') {
@@ -438,6 +494,159 @@ pub(crate) mod tests {
             );
             assert_eq!(source.source_sha256().unwrap(), expected);
         }
+    }
+
+    const GROUP_ID: &str = "77777777-8888-4999-aaaa-bbbbbbbbbbbb";
+    fn group_fixture(mirrored: bool) -> (MessageInst, Vec<String>) {
+        let (mut wire, handles) = fixture(mirrored, "ordinary group text");
+        let conversation = wire.conversation.as_mut().unwrap();
+        conversation.sender_guid = Some(GROUP_ID.into());
+        conversation.participants.push("tel:+15550000002".into());
+        (wire, handles)
+    }
+
+    #[test]
+    fn group_sources_round_trip_and_match_the_dart_v2_digest_contract() {
+        for (mirrored, expected) in [
+            (
+                false,
+                "ad58c48da78fecb8240d09454d1832d036e37cd46501a999167630a214fc9cff",
+            ),
+            (
+                true,
+                "da8ccfb5bff11ece54778b8ca7a68470fefc190c23c75e9f2a75cf8d89ff206b",
+            ),
+        ] {
+            let (mut wire, handles) = group_fixture(mirrored);
+            let source = ReceivedArchiveSource::capture(&wire, &handles).unwrap();
+            let bytes = source.encode().unwrap();
+            let decoded = ReceivedArchiveSource::decode(&bytes).unwrap();
+            assert_eq!(decoded.encode().unwrap(), bytes);
+            assert_eq!(decoded.group_id(), Some(GROUP_ID));
+            assert_eq!(decoded.peer(), "");
+            assert_eq!(decoded.sender(), wire.sender.as_deref().unwrap());
+            assert_eq!(decoded.recipient(), "mailto:owner@example.com");
+            assert_eq!(decoded.source_sha256().unwrap(), expected);
+            assert_eq!(
+                decoded.guid_hash().unwrap(),
+                "cd7c99cec32925c682dd556e85b3f86856765d9dadc8c3b5796f8f5f4deccf57"
+            );
+            wire.conversation.as_mut().unwrap().participants.reverse();
+            assert_eq!(
+                ReceivedArchiveSource::capture(&wire, &handles)
+                    .unwrap()
+                    .encode()
+                    .unwrap(),
+                bytes
+            );
+        }
+    }
+
+    #[test]
+    fn direct_v1_bytes_and_uuid_sender_guid_remain_direct() {
+        let (mut wire, handles) = fixture(false, "ordinary text");
+        let source = ReceivedArchiveSource::capture(&wire, &handles).unwrap();
+        assert_eq!(
+            std::str::from_utf8(&source.encode().unwrap()).unwrap(),
+            concat!(
+                r#"{"domain":"cloud-sync-ids-received-source","version":1,"guid":"11111111-2222-4333-8444-555555555555","sender":"mailto:remote@example.com","received_on_handle":"mailto:owner@example.com","origin":"incoming","peer":"remote@example.com","sent_timestamp":1700000000000,"text":"ordinary text","participants":["mailto:owner@example.com","mailto:remote@example.com"],"self_handles":["mailto:owner@example.com"],"sender_guid":"iMessage;-;remote@example.com","conversation_name":null,"after_guid":null}"#,
+            )
+        );
+        wire.conversation.as_mut().unwrap().sender_guid = Some(GROUP_ID.into());
+        let with_uuid = ReceivedArchiveSource::capture(&wire, &handles).unwrap();
+        assert_eq!(with_uuid.group_id(), None);
+        assert_eq!(with_uuid.peer(), "remote@example.com");
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&with_uuid.encode().unwrap()).unwrap()
+                ["version"],
+            serde_json::json!(1)
+        );
+    }
+
+    #[test]
+    fn group_sources_refuse_unproven_ids_sender_endpoints_and_rich_content() {
+        let (wire, handles) = group_fixture(false);
+        for mutate in [
+            (|m: &mut MessageInst| m.conversation.as_mut().unwrap().sender_guid = None)
+                as fn(&mut MessageInst),
+            |m| m.conversation.as_mut().unwrap().sender_guid = Some("group title".into()),
+            |m| {
+                m.conversation.as_mut().unwrap().sender_guid =
+                    Some(format!("iMessage;+;{GROUP_ID}"))
+            },
+            |m| m.sender = Some("mailto:stranger@example.com".into()),
+            |m| m.sender = Some("tel:remote@example.com".into()),
+            |m| m.received_on_handle = Some("mailto:other-account@example.com".into()),
+            |m| m.received_on_handle = None,
+            |m| m.verification_failed = true,
+            |m| {
+                if let Message::Message(normal) = &mut m.message {
+                    normal.voice = true;
+                }
+            },
+            |m| {
+                if let Message::Message(normal) = &mut m.message {
+                    normal.reply_guid = Some("reply".into());
+                }
+            },
+            |m| {
+                if let Message::Message(normal) = &mut m.message {
+                    normal.subject = Some("subject".into());
+                }
+            },
+        ] {
+            let mut altered = wire.clone();
+            mutate(&mut altered);
+            assert!(ReceivedArchiveSource::capture(&altered, &handles).is_err());
+        }
+        let mut alternate_spelling = wire.clone();
+        alternate_spelling
+            .conversation
+            .as_mut()
+            .unwrap()
+            .sender_guid = Some(GROUP_ID.to_uppercase());
+        let upper = ReceivedArchiveSource::capture(&alternate_spelling, &handles).unwrap();
+        assert_eq!(upper.group_id(), Some(GROUP_ID.to_uppercase().as_str()));
+        assert_ne!(
+            upper.source_sha256().unwrap(),
+            ReceivedArchiveSource::capture(&wire, &handles)
+                .unwrap()
+                .source_sha256()
+                .unwrap()
+        );
+    }
+
+    #[test]
+    fn group_source_versions_and_direct_group_relabeling_are_not_interchangeable() {
+        let (wire, handles) = group_fixture(false);
+        let group = ReceivedArchiveSource::capture(&wire, &handles).unwrap();
+        let bytes = group.encode().unwrap();
+        // Keep Source field order, rather than failing on Value map ordering
+        // before reaching the intended version/shape validation.
+        for mutate in [
+            (|v: &mut Source| v.version = 1) as fn(&mut Source),
+            |v| v.version = 3,
+            |v| v.group_id = None,
+            |v| v.peer = "remote@example.com".into(),
+            |v| v.group_id = Some("77777777-8888-4999-aaaa-cccccccccccc".into()),
+        ] {
+            let mut altered: Source = serde_json::from_slice(&bytes).unwrap();
+            mutate(&mut altered);
+            assert!(ReceivedArchiveSource::decode(&serde_json::to_vec(&altered).unwrap()).is_err());
+        }
+        let mut extra_field: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        extra_field["unexpected"] = serde_json::json!(true);
+        assert!(ReceivedArchiveSource::decode(&serde_json::to_vec(&extra_field).unwrap()).is_err());
+        let (wire, handles) = fixture(false, "direct");
+        let direct = ReceivedArchiveSource::capture(&wire, &handles)
+            .unwrap()
+            .encode()
+            .unwrap();
+        let mut altered: Source = serde_json::from_slice(&direct).unwrap();
+        altered.version = 2;
+        assert!(ReceivedArchiveSource::decode(&serde_json::to_vec(&altered).unwrap()).is_err());
+        altered.group_id = Some(GROUP_ID.into());
+        assert!(ReceivedArchiveSource::decode(&serde_json::to_vec(&altered).unwrap()).is_err());
     }
 
     #[test]

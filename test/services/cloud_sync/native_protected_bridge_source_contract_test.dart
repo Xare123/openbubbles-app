@@ -496,6 +496,12 @@ void main() {
         'Future<Message> _captureCloudSyncV2ReceivedMessage(');
     expect(materialize, contains('onlyPendingMaterialization: !CloudSyncDevGate.receivedArchiveInspectionEnabled'));
     expect(materialize, contains('if (CloudSyncDevGate.receivedArchiveInspectionEnabled)'));
+    final groupBranch = materialize.indexOf('CloudSyncReceivedArchiveIdentity.requiresGroupDiscovery(receivedChat)');
+    final directInspection = materialize.indexOf('await inspectCloudSyncReceivedIntent(');
+    expect(groupBranch, greaterThanOrEqualTo(0));
+    expect(directInspection, greaterThan(groupBranch));
+    expect(materialize.substring(groupBranch, directInspection), contains('continue;'));
+    expect(materialize, contains('CloudSyncDevGate.receivedArchiveDiscoveryEnabled'));
     expect(materialize, isNot(contains('onlyWithoutObservation')));
     expect(materialize, contains('maximumIntentId: _cloudSyncV2ReceivedRoundCeiling'));
     expect(materialize, contains('api.cloudSyncStageReceivedArchiveSeed('));

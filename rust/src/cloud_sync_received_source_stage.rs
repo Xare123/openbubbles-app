@@ -342,6 +342,61 @@ mod tests {
     }
 
     #[test]
+    fn sealed_group_source_reopens_for_exact_discovery_without_direct_peer() {
+        for mirrored in [false, true] {
+            let directory = tempfile::tempdir().unwrap();
+            let path = directory.path().to_path_buf();
+            let identity = crate::cloud_sync_protector::protected_store_identity(
+                path.to_string_lossy().into_owned(),
+            )
+            .unwrap();
+            let (mut wire, handles) = fixture(mirrored, "encrypted group original");
+            let conversation = wire.conversation.as_mut().unwrap();
+            conversation.sender_guid = Some("77777777-8888-4999-aaaa-bbbbbbbbbbbb".into());
+            conversation.participants.push("tel:+15550000002".into());
+            let seed = seal_received_archive_seed(
+                path.clone(),
+                "A".repeat(43),
+                &identity,
+                &wire,
+                &handles,
+            )
+            .unwrap();
+            assert!(!seed.ciphertext.contains("encrypted group original"));
+            assert!(!seed.ciphertext.contains("owner@example.com"));
+            let stage = stage_received_archive_seed(path.clone(), "A".repeat(43), &identity, &seed)
+                .unwrap();
+            assert!(open_received_archive_source(path.clone(), "A".repeat(43), &stage).is_err());
+            cloud_sync_commit_protected_page_lease(
+                path.clone(),
+                &stage.lease_reference,
+                std::slice::from_ref(&stage.protected_reference),
+            )
+            .unwrap();
+            let opened =
+                open_received_archive_source(path.clone(), "A".repeat(43), &stage).unwrap();
+            assert_eq!(
+                opened.group_id(),
+                Some("77777777-8888-4999-aaaa-bbbbbbbbbbbb")
+            );
+            assert_eq!(opened.peer(), "");
+            assert_eq!(opened.guid(), wire.id);
+            assert_eq!(opened.source_sha256().unwrap(), seed.source_sha256);
+            let discovery =
+                crate::cloud_sync_archive_discovery_source::ArchiveDiscoverySource::Received(stage);
+            assert_eq!(
+                discovery
+                    .open_guid(path.clone(), &"A".repeat(43), &identity)
+                    .unwrap(),
+                wire.id
+            );
+            assert!(discovery
+                .open_guid(path, &"B".repeat(43), &identity)
+                .is_err());
+        }
+    }
+
+    #[test]
     fn seed_refuses_account_store_ciphertext_and_descriptor_substitution() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().to_path_buf();

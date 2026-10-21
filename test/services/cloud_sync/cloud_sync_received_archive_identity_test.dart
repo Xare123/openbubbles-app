@@ -55,6 +55,35 @@ Chat _provisionalChat({int id = 71}) {
   return chat;
 }
 
+const _groupId = '77777777-8888-4999-aaaa-bbbbbbbbbbbb';
+const _secondRemote = '+15550000002';
+Chat _groupChat({bool provisional = false}) {
+  final peers = [
+    _remoteHandle(),
+    Handle(address: _secondRemote, service: 'iMessage'),
+  ];
+  final chat = Chat(
+    id: 73,
+    guid: provisional ? _groupId : 'iMessage;+;chat-exact-group',
+    chatIdentifier: provisional ? null : 'chat-exact-group',
+    style: provisional ? null : 43,
+    usingHandle: _owner,
+    participants: peers,
+    guidRefs: [_groupId],
+  );
+  chat.handles.addAll(peers);
+  return chat;
+}
+
+api.MessageInst _groupWire({bool mirrored = false}) => _wire(
+  id: '11111111-2222-4333-8444-555555555555',
+  sender: mirrored ? _owner : 'mailto:remote@example.com',
+  senderGuid: _groupId,
+  participants: [_owner, 'mailto:remote@example.com', 'tel:$_secondRemote'],
+  sentAt: 1700000000000,
+  normal: _plainNormal('ordinary group text'),
+);
+
 Message _row({
   required Chat chat,
   int? id = 90,
@@ -151,6 +180,314 @@ CloudSyncReceivedArchiveIdentity _eligible(
 }
 
 void main() {
+  group('exact group receive capture for discovery', () {
+    test('group native source golden digest contract', () {
+      for (final vector in [
+        (
+          false,
+          'ad58c48da78fecb8240d09454d1832d036e37cd46501a999167630a214fc9cff',
+        ),
+        (
+          true,
+          'da8ccfb5bff11ece54778b8ca7a68470fefc190c23c75e9f2a75cf8d89ff206b',
+        ),
+      ]) {
+        final chat = _groupChat();
+        final wire = _groupWire(mirrored: vector.$1);
+        final identity = _eligible(
+          CloudSyncReceivedArchiveIdentity.capture(
+            message: _row(
+              chat: chat,
+              guid: wire.id,
+              text: 'ordinary group text',
+              sentAt: wire.sentTimestamp,
+              isFromMe: vector.$1,
+              handleAddress: vector.$1 ? 'owner@example.com' : _remote,
+            ),
+            chat: chat,
+            wire: wire,
+            liveContext: _liveContext,
+          ),
+        );
+        expect(identity.sourceSha256, vector.$2);
+      }
+    });
+    test(
+      'group route needs the exact UUID spelling, never a title or prefix guess',
+      () {
+        for (final senderGuid in <String?>[
+          null,
+          '',
+          'group-title',
+          'iMessage;+;$_groupId',
+        ]) {
+          final chat = _groupChat();
+          final wire = _groupWire();
+          wire.conversation!.senderGuid = senderGuid;
+          expect(
+            _reason(
+              CloudSyncReceivedArchiveIdentity.capture(
+                message: _row(
+                  chat: chat,
+                  guid: wire.id,
+                  text: 'ordinary group text',
+                  sentAt: wire.sentTimestamp,
+                  isFromMe: false,
+                  handleAddress: _remote,
+                ),
+                chat: chat,
+                wire: wire,
+                liveContext: _liveContext,
+              ),
+            ),
+            CloudSyncReceivedArchiveIdentity.reasonGroup,
+          );
+        }
+      },
+    );
+    test('group identity spelling and original endpoint stay source-bound', () {
+      final chat = _groupChat();
+      final wire = _groupWire();
+      final row = _row(
+        chat: chat,
+        guid: wire.id,
+        text: 'ordinary group text',
+        sentAt: wire.sentTimestamp,
+        isFromMe: false,
+        handleAddress: _remote,
+      );
+      final original = _eligible(
+        CloudSyncReceivedArchiveIdentity.capture(
+          message: row,
+          chat: chat,
+          wire: wire,
+          liveContext: _liveContext,
+        ),
+      );
+      wire.conversation!.senderGuid = _groupId.toUpperCase();
+      expect(
+        _reason(
+          CloudSyncReceivedArchiveIdentity.capture(
+            message: row,
+            chat: chat,
+            wire: wire,
+            liveContext: _liveContext,
+          ),
+        ),
+        CloudSyncReceivedArchiveIdentity.reasonCounterparts,
+      );
+      // Even an explicitly stored additional spelling is a different wire
+      // source, not permission to reuse the old encrypted source digest.
+      chat.guidRefs.add(_groupId.toUpperCase());
+      expect(
+        _reason(
+          CloudSyncReceivedArchiveIdentity.capture(
+            message: row,
+            chat: chat,
+            wire: wire,
+            liveContext: _liveContext,
+            expectedSourceSha256: original.sourceSha256,
+          ),
+        ),
+        CloudSyncReceivedArchiveIdentity.reasonSourceChanged,
+      );
+    });
+    for (final mirrored in [false, true]) {
+      for (final provisional in [false, true]) {
+        test(
+          'group source preserves wire identity mirrored=$mirrored provisional=$provisional',
+          () {
+            final chat = _groupChat(provisional: provisional);
+            final wire = _groupWire(mirrored: mirrored);
+            final row = _row(
+              chat: chat,
+              guid: wire.id,
+              text: 'ordinary group text',
+              sentAt: wire.sentTimestamp,
+              isFromMe: mirrored,
+              handleAddress: mirrored ? 'owner@example.com' : _remote,
+            );
+            final identity = _eligible(
+              CloudSyncReceivedArchiveIdentity.capture(
+                message: row,
+                chat: chat,
+                wire: wire,
+                liveContext: _liveContext,
+              ),
+            );
+            expect(
+              identity.origin,
+              mirrored
+                  ? CloudSyncReceivedArchiveOrigin.mirrored
+                  : CloudSyncReceivedArchiveOrigin.incoming,
+            );
+            final digest = identity.sourceSha256;
+            chat.usingHandle = 'tel:+15550009999';
+            chat.displayName = 'unrelated presentation';
+            expect(
+              _eligible(
+                CloudSyncReceivedArchiveIdentity.capture(
+                  message: row,
+                  chat: chat,
+                  wire: wire,
+                  liveContext: _liveContext,
+                  expectedSourceSha256: digest,
+                ),
+              ).sourceSha256,
+              digest,
+            );
+            wire.conversation!.participants = wire
+                .conversation!
+                .participants
+                .reversed
+                .toList();
+            expect(
+              _eligible(
+                CloudSyncReceivedArchiveIdentity.capture(
+                  message: row,
+                  chat: chat,
+                  wire: wire,
+                  liveContext: _liveContext,
+                ),
+              ).sourceSha256,
+              digest,
+            );
+          },
+        );
+      }
+    }
+    test('group title and members alone never establish wire lineage', () {
+      final chat = _groupChat()..guidRefs = ['other-group'];
+      final wire = _groupWire();
+      expect(
+        _reason(
+          CloudSyncReceivedArchiveIdentity.capture(
+            message: _row(
+              chat: chat,
+              guid: wire.id,
+              text: 'ordinary group text',
+              sentAt: wire.sentTimestamp,
+              isFromMe: false,
+              handleAddress: _remote,
+            ),
+            chat: chat,
+            wire: wire,
+            liveContext: _liveContext,
+          ),
+        ),
+        CloudSyncReceivedArchiveIdentity.reasonCounterparts,
+      );
+    });
+    test('group sender must be an original remote participant', () {
+      final chat = _groupChat();
+      final wire = _groupWire()..sender = 'mailto:stranger@example.com';
+      expect(
+        _reason(
+          CloudSyncReceivedArchiveIdentity.capture(
+            message: _row(
+              chat: chat,
+              guid: wire.id,
+              text: 'ordinary group text',
+              sentAt: wire.sentTimestamp,
+              isFromMe: false,
+              handleAddress: 'stranger@example.com',
+            ),
+            chat: chat,
+            wire: wire,
+            liveContext: _liveContext,
+          ),
+        ),
+        CloudSyncReceivedArchiveIdentity.reasonRoute,
+      );
+    });
+    test(
+      'bare sender equality cannot substitute a different raw group sender',
+      () {
+        final chat = _groupChat();
+        final wire = _groupWire()..sender = 'tel:remote@example.com';
+        expect(
+          _reason(
+            CloudSyncReceivedArchiveIdentity.capture(
+              message: _row(
+                chat: chat,
+                guid: wire.id,
+                text: 'ordinary group text',
+                sentAt: wire.sentTimestamp,
+                isFromMe: false,
+                handleAddress: _remote,
+              ),
+              chat: chat,
+              wire: wire,
+              liveContext: _liveContext,
+            ),
+          ),
+          CloudSyncReceivedArchiveIdentity.reasonRoute,
+        );
+      },
+    );
+    test('group participant set must match the persisted parent', () {
+      final chat = _groupChat();
+      final wire = _groupWire();
+      wire.conversation!.participants = [
+        _owner,
+        'mailto:remote@example.com',
+        'tel:+15550000099',
+      ];
+      expect(
+        _reason(
+          CloudSyncReceivedArchiveIdentity.capture(
+            message: _row(
+              chat: chat,
+              guid: wire.id,
+              text: 'ordinary group text',
+              sentAt: wire.sentTimestamp,
+              isFromMe: false,
+              handleAddress: _remote,
+            ),
+            chat: chat,
+            wire: wire,
+            liveContext: _liveContext,
+          ),
+        ),
+        CloudSyncReceivedArchiveIdentity.reasonCounterparts,
+      );
+    });
+    test('group source changes when exact wire group ID changes', () {
+      final chat = _groupChat();
+      final wire = _groupWire();
+      final row = _row(
+        chat: chat,
+        guid: wire.id,
+        text: 'ordinary group text',
+        sentAt: wire.sentTimestamp,
+        isFromMe: false,
+        handleAddress: _remote,
+      );
+      final original = _eligible(
+        CloudSyncReceivedArchiveIdentity.capture(
+          message: row,
+          chat: chat,
+          wire: wire,
+          liveContext: _liveContext,
+        ),
+      );
+      const other = '77777777-8888-4999-aaaa-cccccccccccc';
+      chat.guidRefs.add(other);
+      wire.conversation!.senderGuid = other;
+      expect(
+        _reason(
+          CloudSyncReceivedArchiveIdentity.capture(
+            message: row,
+            chat: chat,
+            wire: wire,
+            liveContext: _liveContext,
+            expectedSourceSha256: original.sourceSha256,
+          ),
+        ),
+        CloudSyncReceivedArchiveIdentity.reasonSourceChanged,
+      );
+    });
+  });
   test('shape preview is not persisted-message admission', () {
     final chat = _directChat();
     final row = _row(
@@ -1120,40 +1457,46 @@ void main() {
       );
     });
 
-    test('group chats stay explicitly unsupported', () {
-      final first = Handle(address: 'first@example.com', service: 'iMessage');
-      final second = Handle(address: '+15550000002', service: 'iMessage');
-      final chat = Chat(
-        id: 73,
-        guid: 'iMessage;+;restored-group',
-        chatIdentifier: 'restored-group',
-        usingHandle: _owner,
-        style: 43,
-        participants: [first, second],
-      );
-      chat.handles.addAll([first, second]);
-      final row = Message(
-        id: 91,
-        guid: _incomingGuid,
-        text: _text,
-        dateCreated: DateTime.fromMillisecondsSinceEpoch(_sentAt, isUtc: true),
-        isFromMe: false,
-        attributedBody: [AttributedBody.raw(_text)],
-        handle: _storedHandle(_remote),
-      );
-      row.chat.target = chat;
-      expect(
-        _reason(
-          CloudSyncReceivedArchiveIdentity.capture(
-            message: row,
-            chat: chat,
-            wire: _wire(),
-            liveContext: _liveContext,
+    test(
+      'group chats without exact multi-party wire evidence stay unsupported',
+      () {
+        final first = Handle(address: 'first@example.com', service: 'iMessage');
+        final second = Handle(address: '+15550000002', service: 'iMessage');
+        final chat = Chat(
+          id: 73,
+          guid: 'iMessage;+;restored-group',
+          chatIdentifier: 'restored-group',
+          usingHandle: _owner,
+          style: 43,
+          participants: [first, second],
+        );
+        chat.handles.addAll([first, second]);
+        final row = Message(
+          id: 91,
+          guid: _incomingGuid,
+          text: _text,
+          dateCreated: DateTime.fromMillisecondsSinceEpoch(
+            _sentAt,
+            isUtc: true,
           ),
-        ),
-        CloudSyncReceivedArchiveIdentity.reasonGroup,
-      );
-    });
+          isFromMe: false,
+          attributedBody: [AttributedBody.raw(_text)],
+          handle: _storedHandle(_remote),
+        );
+        row.chat.target = chat;
+        expect(
+          _reason(
+            CloudSyncReceivedArchiveIdentity.capture(
+              message: row,
+              chat: chat,
+              wire: _wire(),
+              liveContext: _liveContext,
+            ),
+          ),
+          CloudSyncReceivedArchiveIdentity.reasonGroup,
+        );
+      },
+    );
   });
 
   group('unsupported shapes stay explicit', () {

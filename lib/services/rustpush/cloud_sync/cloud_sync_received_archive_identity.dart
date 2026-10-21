@@ -25,8 +25,9 @@ import 'package:crypto/crypto.dart';
 ///
 /// Plain text first: media, replies, reactions, and rich payloads are
 /// reported with explicit ineligibility codes so no caller can mistake them
-/// for covered archive shapes. Group chats stay explicitly unsupported in
-/// this bounded step; provisional (bare-UUID) direct rows are covered.
+/// for covered archive shapes. Plain group sources require exact wire lineage
+/// and participant binding; they can enter discovery, not the direct create
+/// lane. Provisional bare-UUID direct and group rows are covered separately.
 enum CloudSyncReceivedArchiveOrigin {
   /// Sender is not one of the locally observed handles. The row keeps
   /// `isFromMe == false`; this primitive preserves that value and never
@@ -98,8 +99,8 @@ final class CloudSyncReceivedArchiveIneligible
 /// namespace deliberately distinct from the `cloud-sync-local-send-*`
 /// namespace so a received candidate can never collide with an outgoing send
 /// identity. These are lane-local digests, not cross-lane deduplication proof.
-/// The source binds the wire conversation and direct peer, not mutable local
-/// chat aliases or the outgoing sender preference. Admission must separately
+/// The source binds the wire conversation and direct peer or exact group ID,
+/// not mutable local chat aliases or the outgoing sender preference. Admission must separately
 /// revalidate the persisted parent and its protected CloudKit binding.
 final class CloudSyncReceivedArchiveIdentity {
   const CloudSyncReceivedArchiveIdentity._(
@@ -340,18 +341,15 @@ final class CloudSyncReceivedArchiveIdentity {
       return const CloudSyncReceivedArchiveIneligible(reasonRoute);
     }
     final participants = chat.handles.toList(growable: false);
-    if (participants.length > 1 ||
-        chat.style == 43 ||
-        chat.guid.startsWith('iMessage;+;')) {
-      return const CloudSyncReceivedArchiveIneligible(reasonGroup);
-    }
-    if (participants.length != 1 ||
-        participants.single.service != 'iMessage' ||
-        participants.single.address.isEmpty) {
+    final isGroup = requiresGroupDiscovery(chat);
+    if (participants.isEmpty ||
+        chat.isRoutingStub ||
+        participants.any((p) => p.service != 'iMessage' || p.address.isEmpty)) {
       return const CloudSyncReceivedArchiveIneligible(reasonRoute);
     }
     final chatIdentifier = chat.chatIdentifier;
     final bool canonicalDirect =
+        !isGroup &&
         chat.style == 45 &&
         !chat.isRoutingStub &&
         chatIdentifier != null &&
@@ -362,19 +360,34 @@ final class CloudSyncReceivedArchiveIdentity {
     // guid, no style or chat identifier yet. Protected cloud-parent
     // resolution stays a later admission gate.
     final bool provisionalDirect =
+        !isGroup &&
         _uuid.hasMatch(chat.guid) &&
         chat.style == null &&
         chatIdentifier == null &&
         !chat.isRoutingStub;
-    if (!canonicalDirect && !provisionalDirect) {
+    final canonicalGroup =
+        isGroup &&
+        chat.style == 43 &&
+        chatIdentifier != null &&
+        chatIdentifier.isNotEmpty &&
+        chat.guid == 'iMessage;+;$chatIdentifier';
+    final provisionalGroup =
+        isGroup &&
+        _groupUuid.hasMatch(chat.guid) &&
+        chat.style == null &&
+        chatIdentifier == null;
+    if (!canonicalDirect &&
+        !provisionalDirect &&
+        !canonicalGroup &&
+        !provisionalGroup) {
       return const CloudSyncReceivedArchiveIneligible(reasonRoute);
     }
 
     // Conversation evidence is required, never bypassed when null. Peer
     // split mirrors `rustParticipantsToBB`: exact raw self entries are
-    // removed, and the remainder must be exactly the bound remote
-    // counterpart. The sender is deliberately not required to appear in
-    // participants: native receive may omit it for mirrored rows.
+    // removed, and the remainder must match the bound peer or group members.
+    // A remote sender must be a counterpart. Mirrored receives may omit self
+    // from participants, while retaining their independently observed sender.
     final conversation = wire.conversation;
     if (conversation == null || conversation.participants.isEmpty) {
       return const CloudSyncReceivedArchiveIneligible(reasonCounterparts);
@@ -383,19 +396,43 @@ final class CloudSyncReceivedArchiveIdentity {
         .where((p) => !liveContext.observedLocalHandles.contains(p))
         .map(_bare)
         .toSet();
-    if (remoteCounterparts.length != 1 ||
-        remoteCounterparts.single != participants.single.address) {
-      return const CloudSyncReceivedArchiveIneligible(reasonCounterparts);
-    }
     final senderGuid = conversation.senderGuid;
+    final String routeIdentity;
+    if (isGroup) {
+      // Multi-party wire identity is mandatory. A title, equal member set or
+      // current sender preference cannot identify a group. This only captures
+      // the original wire for exact discovery; it grants no parent/create proof.
+      if (participants.length < 2 ||
+          remoteCounterparts.length < 2 ||
+          senderGuid == null ||
+          !_groupUuid.hasMatch(senderGuid)) {
+        return const CloudSyncReceivedArchiveIneligible(reasonGroup);
+      }
+      final parentPeers = participants.map((p) => p.address).toSet();
+      if (parentPeers.length != participants.length ||
+          parentPeers.length != remoteCounterparts.length ||
+          !parentPeers.containsAll(remoteCounterparts)) {
+        return const CloudSyncReceivedArchiveIneligible(reasonCounterparts);
+      }
+      routeIdentity = senderGuid;
+    } else {
+      if (participants.length != 1 ||
+          remoteCounterparts.length != 1 ||
+          remoteCounterparts.single != participants.single.address) {
+        return const CloudSyncReceivedArchiveIneligible(reasonCounterparts);
+      }
+      routeIdentity = remoteCounterparts.single;
+    }
     if (senderGuid != null &&
         senderGuid != chat.guid &&
         senderGuid != chat.cloudGuid &&
+        !(canonicalGroup && senderGuid == chatIdentifier) &&
         !chat.guidRefs.contains(senderGuid)) {
       return const CloudSyncReceivedArchiveIneligible(reasonCounterparts);
     }
     if (origin == CloudSyncReceivedArchiveOrigin.incoming) {
-      if (_bare(sender) != remoteCounterparts.single) {
+      if (!remoteCounterparts.contains(_bare(sender)) ||
+          (isGroup && !conversation.participants.contains(sender))) {
         return const CloudSyncReceivedArchiveIneligible(reasonRoute);
       }
     }
@@ -475,10 +512,12 @@ final class CloudSyncReceivedArchiveIdentity {
       ..sort();
     final guidHash = _digest(['cloud-sync-received-archive-guid-v1', guid]);
     final sourceSha256 = _digest([
-      'cloud-sync-received-archive-source-v1',
+      isGroup
+          ? 'cloud-sync-received-archive-source-v2'
+          : 'cloud-sync-received-archive-source-v1',
       guid,
       text,
-      remoteCounterparts.single,
+      routeIdentity,
       sender,
       receivedOnHandle,
       wire.sentTimestamp,
@@ -499,8 +538,22 @@ final class CloudSyncReceivedArchiveIdentity {
   static bool _samePersistedChat(Chat a, Chat b) =>
       a.id != null && a.id! > 0 && a.id == b.id && a.guid == b.guid;
 
+  /// Routing only: a group may use exact discovery, never the direct-parent
+  /// inspection/create path. False is not direct-parent or upload authority;
+  /// native source projection and the ordinary parent proofs still decide.
+  static bool requiresGroupDiscovery(Chat chat) =>
+      chat.handles.length > 1 ||
+      chat.style == 43 ||
+      chat.guid.startsWith('iMessage;+;');
+
   static final _uuid = RegExp(
     r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$',
+  );
+
+  // Preserve wire spelling/case. Do not infer group identity from a title,
+  // membership hash or direct-chat sender_guid (which can also be a UUID).
+  static final _groupUuid = RegExp(
+    r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$',
   );
 
   static bool _isPlainBody(AttributedBody body, String text) {

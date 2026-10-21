@@ -2856,6 +2856,102 @@ void main() {
       expect(inbox.single.status, CloudInboxStatus.pending.index);
       expect(adoptDiscovery(generation: await currentGeneration()), isFalse);
     });
+    for (final mirrored in [false, true]) {
+      test('group receive seed survives restart and adopts exact reader work once mirrored=$mirrored', () async {
+        const groupId = '77777777-8888-4999-aaaa-bbbbbbbbbbbb';
+        const secondPeer = '+15550000002';
+        final second = Handle(address: secondPeer, service: 'iMessage',
+          uniqueAddressAndService: '$secondPeer/iMessage')..originalROWID = 9002;
+        final ownerHandle = Handle(address: 'owner@example.com', service: 'iMessage',
+          uniqueAddressAndService: 'owner@example.com/iMessage')..originalROWID = 9003;
+        store.box<Handle>().putMany([second, ownerHandle]);
+        final groupChat = Chat(guid: groupId, participants: [remote, second]);
+        groupChat.handles.addAll([remote, second]);
+        store.box<Chat>().put(groupChat);
+        const guid = '11111111-2222-4333-8444-555555555555';
+        final fresh = _fresh(guid, 'group original', groupChat,
+          handleAddr: mirrored ? 'owner@example.com' : 'remote@example.com');
+        fresh.isFromMe = mirrored;
+        fresh.handleId = mirrored ? 9003 : 9001;
+        fresh.handle!.originalROWID = fresh.handleId;
+        final wire = _wire(id: guid, text: 'group original',
+          sentAt: _time(2).millisecondsSinceEpoch,
+          sender: mirrored ? _owner : 'mailto:remote@example.com');
+        wire.conversation = api.ConversationData(
+          participants: [_owner, 'mailto:remote@example.com', 'tel:$secondPeer'],
+          senderGuid: groupId,
+        );
+        final shape = CloudSyncReceivedArchiveIdentity.preview(
+          message: fresh, chat: groupChat, wire: wire, liveContext: _live,
+        ) as CloudSyncReceivedArchiveEligible;
+        final seed = CloudSyncReceivedArchiveSourceBinding.sealed(
+          accountFingerprint: _account, protectedStoreIdentity: _storeId,
+          messageGuidHash: shape.identity.guidHash,
+          sourceSha256: shape.identity.sourceSha256,
+          ciphertext: 'obcs2.test.U3ludGhldGlj',
+        );
+        discoveryIntentId = await CloudSyncReceivedArchiveStaging.persistSealed(
+          journal: journal, capturedIdentity: auth,
+          validateCurrentIdentity: () async {}, stillCurrent: () => true,
+          wire: wire, liveContext: _live, localChatId: groupChat.id!,
+          persistMessage: () => store.box<Message>().put(fresh),
+          sealNative: () async => seed, clock: () => _time(3),
+        );
+        final messageId = fresh.id!;
+        final groupChatId = groupChat.id!;
+        expect(discoveryIntent().state, 0);
+        expect(discoveryIntent().origin, mirrored ? 1 : 0);
+        expect(store.box<CloudOutboxOperationEntity>().count(), 0);
+        await reopen();
+        expect(journal.readProtectedSource(intentId: discoveryIntentId,
+          currentAuth: auth).encode(), seed.encode());
+        discoverySource = CloudSyncReceivedArchiveSourceBinding(
+          accountFingerprint: seed.accountFingerprint,
+          protectedStoreIdentity: seed.protectedStoreIdentity,
+          messageGuidHash: seed.messageGuidHash, sourceSha256: seed.sourceSha256,
+          protectedReference: 'obcs2.ref.${_a43('R')}',
+          leaseReference: _lease('a'), payloadSha256: _h64('b'), payloadLength: 128,
+        );
+        final transport = _ReceivedLeaseTransport();
+        await CloudSyncReceivedArchiveStaging(journal: journal,
+          transport: transport, capturedIdentity: auth,
+          validateCurrentIdentity: () async {}, stillCurrent: () => true,
+        ).materialize(intentId: discoveryIntentId, stageSeedNative: (original) async {
+          expect(original.encode(), seed.encode());
+          return discoverySource;
+        });
+        expect(discoveryIntent().state, 1);
+        expect(journal.readDiscoveryCandidates(currentAuth: auth), [discoveryIntentId]);
+        final saved = store.box<Message>().get(messageId)!;
+        final savedGroup = store.box<Chat>().get(groupChatId)!;
+        expect(() => requireCloudSyncRestoredDirectChatProof(
+          store: store, messageScope: discoveryScope(), message: saved),
+          throwsA(isA<CloudSyncFailure>()));
+        // No direct-parent proof is invented for group capture. Its exact
+        // Found bytes enter the normal pending reader, never the create queue.
+        durable = ObjectBoxCloudSyncStore(store: store,
+          protector: _ReceivedTestProtector(), receivedArchiveJournal: journal,
+          clock: () => _time(4));
+        final generation = await currentGeneration();
+        expect(adoptDiscovery(generation: generation), isTrue);
+        expect(adoptDiscovery(generation: generation), isFalse);
+        expect(discoveryIntent().state, 4);
+        expect(store.box<CloudInboxChangeEntity>().count(), 1);
+        expect(store.box<CloudInboxChangeEntity>().getAll().single.status,
+          CloudInboxStatus.pending.index);
+        expect(store.box<CloudOutboxOperationEntity>().count(), 0);
+        expect(store.box<CloudSyncLocalSendIntentEntity>().count(), 0);
+        expect(savedGroup.guid, groupId);
+        expect(saved.text, 'group original');
+        expect(saved.isFromMe, mirrored);
+        await reopen();
+        expect(discoveryIntent().state, 4);
+        expect(journal.readDiscoveryCandidates(currentAuth: auth), isEmpty);
+        expect(store.box<Message>().count(), 1);
+        expect(store.box<Message>().get(messageId)!.isFromMe, mirrored);
+        expect(store.box<CloudOutboxOperationEntity>().count(), 0);
+      });
+    }
     test('generation drift rejects without writes', () async {
       await seedDiscovery('discovery-guid-2');
       expect(

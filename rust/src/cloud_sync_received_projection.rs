@@ -19,6 +19,7 @@ pub(crate) fn project_received_plain_text(
 ) -> Result<CloudMessage, Failure> {
     if chat.service() != CloudCanonicalService::IMessage
         || chat.style() != CloudCanonicalChatStyle::Direct
+        || source.group_id().is_some()
     {
         return Err(Failure::UnsupportedMessage);
     }
@@ -181,6 +182,30 @@ mod tests {
             )
         )
         .is_err());
+    }
+    #[test]
+    fn captured_group_source_cannot_enter_a_direct_projection_or_create() {
+        for mirrored in [false, true] {
+            let (mut wire, handles) = fixture(mirrored, "group source");
+            let conversation = wire.conversation.as_mut().unwrap();
+            conversation.sender_guid = Some("77777777-8888-4999-aaaa-bbbbbbbbbbbb".into());
+            conversation.participants.push("tel:+15550000002".into());
+            let source = ReceivedArchiveSource::capture(&wire, &handles).unwrap();
+            assert_eq!(
+                source.group_id(),
+                Some("77777777-8888-4999-aaaa-bbbbbbbbbbbb")
+            );
+            for style in [
+                CloudCanonicalChatStyle::Direct,
+                CloudCanonicalChatStyle::Group,
+            ] {
+                assert!(project_received_plain_text(
+                    &source,
+                    &chat("remote@example.com", style, "mailto:owner@example.com"),
+                )
+                .is_err());
+            }
+        }
     }
     #[test]
     fn invalid_apple_epoch_or_overflow_never_wraps() {
