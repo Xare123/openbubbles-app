@@ -9,6 +9,34 @@ timestamp: 2026-10-21
 
 # Cloud Sync V2 current connection treemap
 
+## Current checkpoint: received-media recovery and consent
+
+Code`a778e90f5b2c37714d853fc72e26f1634b2d0b29` on `c127fea2f`: actual guard/executor/ObjectBox restart recovery
+and fresh-pass re-admission now pass without rewriting the original upload epoch,
+attempt, plan or source. Only persisted uninterrupted V2 ownership can resume
+older captures. Actual database admission also exposed/fixed a zero-revision
+assumption: real initial creates use positive local ordering counters, now checked
+against the exact persisted operation rather than confused with semantic edits.
+
+Explicit consent v3 adds queued/future supported received media; old v2 remains
+text-only. Profile, capture, byte consume, child/parent admission and dispatch
+honor this scope. Pristine pending media pauses independently; exact entered
+readback remains available after revocation. This is not a CloudKit V3 product.
+
+Final twelve-file affected batch85053:455 passed/1m20s, terminal0. Native logic,
+all12 generated files, schema, locks, six pins, workflow and flags are unchanged;
+reuse native39631211759/codegen-1216115562, do not run it again. All five received
+flags remain OFF. No APK, Pixel, Apple/account, upload, merge, GCE or cleanup.
+Combined analysis has zero errors/17 verified unchanged Profile/service diagnostics;
+final changed-path analysis40977 is terminal0/clean. Source receipt is in canonical case
+`received-media-recovery-consent-20261021`. Heisenberg reviewed/integrated/closed,
+wait:not_found. Alpha693-tombstone disposition is still unanswered, preserve
+backups and the completed204-file media backfill. Relay publication is done.
+
+Next: define/recover pre-seal native-key/account failures without fabricating live
+origin from historical rows, then one coherent APK/consolidated Android window.
+Installed624/signedd259 cannot serve these APIs. Goal active, not production-ready.
+
 ## Received-media lifecycle: source-qualified
 
 Code73bbebc4d3b33fd42dc835d1c35cec91e9e77d06 published fork-only normalFF,19paths,

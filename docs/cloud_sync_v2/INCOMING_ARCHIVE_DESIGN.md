@@ -9,6 +9,32 @@ timestamp: 2026-10-21
 
 # Decision
 
+## Received-media recovery and consent, October21
+
+Source`a778e90f5b2c37714d853fc72e26f1634b2d0b29`: the real guard/executor/ObjectBox restart path is now exercised, not a synthetic
+mutation gate alone. Exact receipt recovery survives an E->unknownE+1->stableE+2
+transition, preserving original epoch/source/plan/attempt. Fresh dispatch requires
+a new current journal/permit within persisted V2 ownership lineage. A reset/new
+lineage cannot inherit it. Real completed-upload admission now accepts the shared
+queue's positive ordering revision, checked against the exact persisted operation
+and deterministic initial-create identity. It is not a semantic edit revision.
+
+Old v2 acknowledgment remains received-text-only. Explicit consent serialization
+v3 adds supported queued/future received media in the SAME preference lineage;
+this is still CloudKit V2. Profile, native-identity-bound capture, media planning,
+consume, child/parent admission and dispatch use the separate media scope.
+Revocation pauses pristine pending media without blocking unrelated text work;
+already-entered exact receipt/readback remains recoverable. No second engine.
+
+Final12-file455Dart passed/1m20s. No native/binding/schema/lock/pin/flag changes or
+new APK. All five received flags remain OFF. Canonical case
+`received-media-recovery-consent-20261021` owns commands, failures and receipt.
+Pre-seal account/key unavailability still leaves ordinary Message persistence
+without an authenticated retry seed. Historical recovery requires its separately
+confirmed snapshot and is not equivalent live provenance. Resolve that boundary
+before claiming full continuity or enabling rollout. These are offline results,
+not new Apple or Android acceptance. Earlier dated sections are historical.
+
 ## Current received-media lifecycle, October21
 
 Code73bbebc4d on native6048efcbb/rustpush ea85b514 joins complete received-media

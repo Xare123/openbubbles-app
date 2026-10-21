@@ -9,6 +9,19 @@ timestamp: 2026-10-21
 
 # OpenBubbles Windows ARM64 host build environment
 
+## October21 received-media recovery/consent follow-up
+
+Source`a778e90f5b2c37714d853fc72e26f1634b2d0b29` is Dart-only on `c127fea2f`; native6048efcbb/rustpush ea85b514,
+all12 generated files/codegen-1216115562, schema/locks/pins/workflow are unchanged.
+Reuse bridge39631211759. No native qualification, GCE run or APK was dispatched.
+Twelve affected files passed455 tests via local Flutter/ObjectBox, including real
+guard/executor/database admission and restart. Exact command/log/source receipt
+is in canonical `build-evidence/received-media-recovery-consent-20261021`.
+Received consent v3 is an internal grant version, not a new product version.
+All five flags remain OFF. Do not hot reload this code against installed624 or
+signedd259, whose native APIs are older. Next gap is pre-seal recovery/support
+policy, followed by one coherent candidate and consolidated Android acceptance.
+
 ## October21 received-media lifecycle source lane
 
 Code73bbebc4d uses native6048efcbb/rustpush ea85b514. Sole bridge39631211759

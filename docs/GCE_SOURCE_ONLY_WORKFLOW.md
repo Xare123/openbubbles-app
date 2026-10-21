@@ -1,5 +1,15 @@
 # Direct source-only GCE runs
 
+## Dart-only follow-up: no new native qualification
+
+Received-media guard recovery, positive queue-revision admission and explicit
+media consent are source`a778e90f5b2c37714d853fc72e26f1634b2d0b29`, Dart-only on `c127fea2f`. Final12-file455 local tests
+passed. Native6048efcbb/rustpush ea85b514, all12 generated files and codegen
+-1216115562 remain exact to39631211759. No new GCE/native run is justified for
+unchanged native logic. Canonical `received-media-recovery-consent-20261021`
+records source invariance and pending rollout gaps. All five flags remain OFF;
+no matching APK or Android/Apple acceptance is implied.
+
 ## Current source qualification, October21
 
 Code73bbebc4d on native6048efcbb/rustpush ea85b514 is source-qualified only.

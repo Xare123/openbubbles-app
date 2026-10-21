@@ -7863,3 +7863,44 @@ in executor tests is synthetic), and media-aware consent before rollout because
 the current Profile grant says plain text. Pre-seal and Alpha693-tombstone
 disposition remain open. Canonical received-media-write-20261021 owns evidence/
 NEXT_SLICE. GoalACTIVE; do not expand Pixel gates for relay publication.
+
+## October21, received-media guard recovery and scoped media consent
+
+On basec127fea2f, baseline actual-guard test6205 failed schedulingfalse after its
+own unknown upload invalidated the captured journal epoch. Narrow readback fix
+85877 reached the next failure: older original source could not re-admit after
+reopen. Fixed only positively persisted uninterrupted V2 lineage; original
+source/plan/attempt/epoch stay immutable, stale pass cannot dispatch, new stable
+journal/permit rechecks current parent/reflection. New/reset lineage rejected.
+Candidate scans resume same-lineage sources. Three-file3439:155pass/1rollback
+failure; restored fresh dispatch checks around plan staging, keeping unadopted
+rollback. File41592:36pass. Five-file67206:215pass/3stale sourceassertions; updated
+them for explicitmedia grants and the already-qualified bound nativeentrypoint.
+Twelve-file41992:454pass/33s/log4d3d45b9, no native or device operation.
+
+Actual ObjectBox completed-upload admission27838 then exposed a real zero-local-
+revision assumption, hidden by fixtureadmission. Shared queue allocates positive
+ordering counters even for initialcreates. Fixed nonnegative shape plus exact
+persisted revision/time/lease and existing deterministicinitialidentity. The
+intermediate21109 failed testload on nonexistentcopyWith parameter, not product;
+corrected explicitimmutablefixture. Realguard/executor now uses actualadmitter,
+67163passed. Final12file85053:455pass/1m20s terminal0, realstore revocation retains
+uploaded evidence and pauses pendingmedia, readback survives. No test skipped.
+
+Heisenberg's4file consent patch reviewed/integrated: v1sentonly, v2receivedtext,
+explicitv3 queued/future supportedreceivedmedia, same account/store/ownership/
+grant. Parent wired Profile/service/capture/media plans/consume/admission/dispatch
+and per-media pristinequeue pause/preflight; enteredexactreadback bypasses future
+consent only. Readonlyfinalreview accepted, supportedclose/wait:not_found. Native/
+all12bindings/schema/locks/sixpins/workflow/flags unchanged. No redundantnativeCI.
+Nine-path24053clean;18path9990zeroerrors/17existingProfile/service diagnostics,
+finalchanged40977 recordedseparately. Scopedgitdiffcheckclean. C:about26.2GBfree,
+nocleanup. NoAPK/Pixel/account/Apple/send/upload/merge/GCE. Installed624/signedd259
+remain unchanged/incompatible. Presealaccount/keyfailure and Alpha693tombstone
+disposition remain open. Canonicalcase received-media-recovery-consent-20261021
+owns logs, verifier and nextboundary; goalACTIVE/incomplete.
+Source frozen as a778e90f5b2c37714d853fc72e26f1634b2d0b29 (18 paths). Finalchanged
+40977 terminal0clean. Verifier proves all17diagnostic sourcecontexts unchanged;
+initial verifier omittedsingleline Git hunkcounts corrected withoutproductdelta.
+All12bindings/model/locks/sixpins/workflow/flags verified invariant. Final455log
+SHA3a70eb5e5a61490c31b822dcd6cf71e9ff23d93a7005b32e4436f6e04afe48f7.
