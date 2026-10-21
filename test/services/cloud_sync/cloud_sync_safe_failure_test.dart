@@ -11,6 +11,34 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_writer_authori
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('applied Chat ownership failures expose exact diagnostics, not retry permission', () {
+    for (final code in const ['projection_repair_alias_ownership_invalid',
+      'projection_repair_alias_chat_invalid']) {
+      final failure = CloudSyncFailure(category: CloudFailureCategory.localStorage, safeCode: code);
+      expect(cloudSyncV2SafeFailureCode(failure), code);
+      expect(cloudSyncV2MutationPredecessorNeedsRetry(failure), isFalse);
+      expect(cloudSyncV2SafeFailureCode(StateError('$code private record')),
+          'cloud_sync_unknown_failure');
+    }
+  });
+
+  test('lost inter-isolate reservation is an exact diagnostic, not retry permission', () {
+    const code = 'cloudkit_interlock_reservation_lost';
+    const failure = CloudKitOperationInterlockException(code);
+    expect(cloudSyncV2SafeFailureCode(failure), code);
+    expect(cloudSyncV2SafeFailureCodeForCandidate(code), code);
+    expect(cloudSyncV2MutationPredecessorNeedsRetry(failure), isFalse);
+    expect(cloudSyncV2MutationPredecessorNeedsRetry(StateError(code)), isFalse);
+    for (final unreviewed in <String>[
+      '${code}_unreviewed',
+      '$code private body',
+      'cloudkit_interlock_private_value',
+    ]) {
+      expect(cloudSyncV2SafeFailureCode(CloudKitOperationInterlockException(unreviewed)),
+          'cloud_sync_unknown_failure');
+    }
+  });
+
   test('received mutation failures are exact diagnostics, never retry permission', () {
     final journal = File('lib/services/rustpush/cloud_sync/cloud_sync_received_mutation_journal.dart').readAsStringSync();
     final suffixes = RegExp(r"_fail\('([a-z_]+)'\)").allMatches(journal).map((m) => m[1]!).toSet();

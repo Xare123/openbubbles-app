@@ -50,6 +50,104 @@ void main() {
     if (directory.existsSync()) await directory.delete(recursive: true);
   });
 
+  for (final changed in ['missing', 'replaced', 'binding']) {
+    test('applied repair holds $changed chat without erasing ownership or blocking another row', () async {
+      final chatScope = _scope(zone: 'chatManateeZone');
+      final registry = TransientCloudCanonicalIdentityRegistry();
+      final activeScope = CloudCanonicalActiveScope(scope: chatScope, generation: leaseFence.generation);
+      final realAdapter = ObjectBoxCanonicalSemanticEntityAdapter(
+        store: objectBox, activeScopeProvider: () => activeScope,
+        identityResolver: registry, semanticApplyEnabled: true, allowChatUpserts: true,
+      );
+      final holdCodes = <String>[];
+      final currentGateway = ObjectBoxCloudSemanticStoreGateway(
+        store: objectBox, canonicalAdapter: realAdapter, clock: () => now,
+        onAppliedChatProjectionHeld: (hold) => holdCodes.add(hold.safeCode),
+      );
+      for (var index = 1; index <= 2; index++) {
+        final entry = _entry(
+          scope: chatScope, sequence: index, changeId: _indexedDigest('hold-change-$index'),
+          recordIdHash: _indexedDigest('hold-record-$index'), etagHash: _indexedDigest('hold-etag-$index'),
+          payloadSha256: _sha256('hold-payload-$index'),
+          encryptedServerRecordId: _indexedProtectedReference('hold-server-$index'),
+          protectedSystemFieldsReference: _indexedProtectedReference('hold-fields-$index'),
+          encryptedPayloadReference: _indexedProtectedReference('hold-payload-$index'),
+        );
+        if (index == 1) {
+          _seedDurableFence(objectBox, entry: entry, leaseFence: leaseFence, now: now,
+              checkpointGeneration: entry.generation);
+        } else {
+          objectBox.runInTransaction(TxMode.write, () {
+            final checkpoints = objectBox.box<CloudSyncCheckpointEntity>();
+            final checkpoint = checkpoints.getAll().single
+              ..lastBatchId = entry.batchId ..fetchedSequence = entry.sequence
+              ..updatedAtMs = now.millisecondsSinceEpoch;
+            checkpoints.put(checkpoint);
+            _putPendingInboxEntry(objectBox, entry: entry, now: now);
+          });
+        }
+        final payload = _chatPayload(
+          includeServiceIdentifierAlias: true, logicalEntityKeyHash: _indexedDigest('hold-logical-$index'),
+          canonicalGuid: 'hold-chat-$index', chatIdentifier: 'iMessage;-;hold-chat-$index',
+          aliasKeyHash: _indexedDigest('hold-alias-$index'),
+        );
+        final snapshot = _chatSnapshot(logicalEntityKeyHash: payload.logicalEntityKeyHash,
+            encryptedRawRecordReference: entry.change.encryptedPayloadReference!, etagHash: entry.change.etagHash!);
+        final identity = registry.bind(CloudDecodedMutation.upsert(
+          scope: chatScope, generation: entry.generation, changeId: entry.change.changeId,
+          payload: payload, snapshot: snapshot,
+        ));
+        try {
+          await currentGateway.writeTransaction<void>(entry: entry, leaseFence: leaseFence,
+            action: (transaction) {
+              transaction.applyEntity(payload: payload, snapshot: snapshot);
+              transaction.markChangeApplied(entry.change.changeId);
+            });
+        } finally { identity.release(); }
+      }
+      final aliases = objectBox.box<CloudSemanticChatAliasEntity>();
+      final held = aliases.getAll().singleWhere((row) => row.chatLogicalEntityKeyHash == _indexedDigest('hold-logical-2'));
+      final repair = aliases.getAll().singleWhere((row) => row.chatLogicalEntityKeyHash == _indexedDigest('hold-logical-1'));
+      aliases.remove(repair.id);
+      if (changed == 'missing') {
+        objectBox.box<Chat>().remove(held.chatId);
+      } else if (changed == 'replaced') {
+        final chat = objectBox.box<Chat>().get(held.chatId)! ..guid = 'different-local-chat';
+        objectBox.box<Chat>().put(chat);
+      } else {
+        held.bindingKey = 'semantic-chat-strong2:${List.filled(64, '0').join()}';
+        aliases.put(held);
+      }
+      final control = _durableSyncControlFingerprint(objectBox);
+      final beforeChats = objectBox.box<Chat>().getAll().map((c) => '${c.id}:${c.guid}').toList();
+      final beforeAliases = aliases.getAll().map((a) => [a.id, a.bindingKey, a.chatId, a.canonicalGuidHash,
+          a.canonicalGuidLookupHash, a.updatedAtMs]).toList();
+      Future<List<CloudInboxEntry>> read() => currentGateway.readAppliedProjectionRepairCandidates(
+        scope: chatScope, generation: leaseFence.generation, leaseFence: leaseFence, limit: 8,
+      );
+      if (changed == 'binding') {
+        await expectLater(read(), throwsA(_failureCode('projection_repair_alias_ownership_invalid')));
+        expect(holdCodes, isEmpty);
+      } else {
+        final candidates = await read();
+        expect(candidates.map((e) => e.sequence), [1]);
+        expect(holdCodes, [changed == 'missing'
+            ? 'projection_repair_chat_missing_held' : 'projection_repair_chat_ownership_held']);
+        holdCodes.clear();
+        expect((await read()).map((e) => e.sequence), [1]);
+        expect(holdCodes, hasLength(1));
+      }
+      expect(_durableSyncControlFingerprint(objectBox), control);
+      expect(objectBox.box<Chat>().getAll().map((c) => '${c.id}:${c.guid}').toList(), beforeChats);
+      expect(aliases.getAll().map((a) => [a.id, a.bindingKey, a.chatId, a.canonicalGuidHash,
+          a.canonicalGuidLookupHash, a.updatedAtMs]).toList(), beforeAliases);
+      objectBox.close();
+      objectBox = await openStore(directory: directory.path);
+      expect(_durableSyncControlFingerprint(objectBox), control);
+      expect(objectBox.box<CloudSemanticChatAliasEntity>().count(), beforeAliases.length);
+    });
+  }
+
   test(
     'applied repair candidates page past 64 aliased rows to a later eligible row',
     () async {

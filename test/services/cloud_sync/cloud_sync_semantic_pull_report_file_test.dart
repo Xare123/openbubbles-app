@@ -784,6 +784,139 @@ void main() {
     expect(invalidStructure.projectionComplete, isFalse);
   });
 
+  test('held applied-chat debt stays drain-safe but incomplete', () {
+    Map<String, int> heldCounts(String code, int count) => {
+      'retained_backlog_summary_ready': 1,
+      code: count,
+    };
+    CloudSyncSemanticPullReport held(String code, int count) => _report(
+      DateTime.utc(2026, 10, 21, 1, 2, 3),
+      zoneReports: [
+        _cleanZone(
+          'chats',
+          observedEmptyTerminalRead: true,
+          diagnosticCounts: heldCounts(code, count),
+        ),
+        _cleanZone('messages', observedEmptyTerminalRead: true),
+        _cleanZone('attachments', observedEmptyTerminalRead: true),
+      ],
+    );
+    for (final code in const [
+      'projection_repair_chat_missing_held',
+      'projection_repair_chat_ownership_held',
+    ]) {
+      final report = held(code, 1);
+      expect(report.hasExactThreeZoneStructure, isTrue);
+      expect(report.safeToContinueDrain, isTrue, reason: code);
+      expect(report.projectionComplete, isFalse, reason: code);
+      expect(report.hasHeldChatRepairDebt, isTrue, reason: code);
+      expect(report.heldChatRepairCount, 1, reason: code);
+      expect(
+        report.zones.firstWhere((z) => z.zoneLabel == 'chats').hasHeldChatRepair,
+        isTrue,
+        reason: code,
+      );
+    }
+    // Zero/absent holds stay complete when no backlog remains.
+    final clean = _report(
+      DateTime.utc(2026, 10, 21, 1, 2, 4),
+      zoneReports: [
+        _cleanZone('chats', observedEmptyTerminalRead: true),
+        _cleanZone('messages', observedEmptyTerminalRead: true),
+        _cleanZone('attachments', observedEmptyTerminalRead: true),
+      ],
+    );
+    expect(clean.safeToContinueDrain, isTrue);
+    expect(clean.projectionComplete, isTrue);
+    expect(clean.hasHeldChatRepairDebt, isFalse);
+    expect(clean.heldChatRepairCount, 0);
+    // Both holds together still drain but never complete.
+    final both = _report(
+      DateTime.utc(2026, 10, 21, 1, 2, 5),
+      zoneReports: [
+        _cleanZone(
+          'chats',
+          observedEmptyTerminalRead: true,
+          diagnosticCounts: const {
+            'retained_backlog_summary_ready': 1,
+            'projection_repair_chat_missing_held': 1,
+            'projection_repair_chat_ownership_held': 1,
+          },
+        ),
+        _cleanZone('messages', observedEmptyTerminalRead: true),
+        _cleanZone('attachments', observedEmptyTerminalRead: true),
+      ],
+    );
+    expect(both.safeToContinueDrain, isTrue);
+    expect(both.projectionComplete, isFalse);
+    expect(both.heldChatRepairCount, 2);
+    // Restart-style modeled sweep replacement preserves exact head counts.
+    final headChats = both.zones.firstWhere((z) => z.zoneLabel == 'chats');
+    final modeledCounts = <String, int>{
+      'retained_backlog_summary_ready': 1,
+    };
+    for (final entry in headChats.diagnosticCounts.entries) {
+      if (entry.key == 'projection_repair_chat_missing_held' ||
+          entry.key == 'projection_repair_chat_ownership_held') {
+        final current = modeledCounts[entry.key] ?? 0;
+        if (entry.value > current) modeledCounts[entry.key] = entry.value;
+      }
+    }
+    final modeled = _report(
+      DateTime.utc(2026, 10, 21, 1, 2, 6),
+      mode: CloudSyncSemanticReportMode.retainedProjectionSweep,
+      zoneReports: [
+        _cleanZone(
+          'chats',
+          observedEmptyTerminalRead: false,
+          diagnosticCounts: modeledCounts,
+        ),
+        _cleanZone('messages', observedEmptyTerminalRead: false),
+        _cleanZone('attachments', observedEmptyTerminalRead: false),
+      ],
+    );
+    expect(modeled.safeToPersistProjectionSweep, isTrue);
+    expect(modeled.projectionComplete, isFalse);
+    expect(modeled.heldChatRepairCount, 2);
+    // Existing invalid/unknown failures still fail closed even with holds present.
+    final invalid = _report(
+      DateTime.utc(2026, 10, 21, 1, 2, 7),
+      zoneReports: [
+        _cleanZone(
+          'chats',
+          observedEmptyTerminalRead: true,
+          diagnosticCounts: const {
+            'retained_backlog_summary_ready': 1,
+            'projection_repair_chat_missing_held': 1,
+            'diagnostic_code_invalid': 1,
+          },
+        ),
+        _cleanZone('messages', observedEmptyTerminalRead: true),
+        _cleanZone('attachments', observedEmptyTerminalRead: true),
+      ],
+    );
+    expect(invalid.safeToContinueDrain, isFalse);
+    expect(invalid.projectionComplete, isFalse);
+    final unknown = _report(
+      DateTime.utc(2026, 10, 21, 1, 2, 8),
+      zoneReports: [
+        _cleanZone('chats', observedEmptyTerminalRead: true),
+        _cleanZone(
+          'messages',
+          observedEmptyTerminalRead: true,
+          diagnosticCounts: const {
+            'retained_backlog_summary_ready': 1,
+            'projection_repair_chat_ownership_held': 1,
+            'cloud_sync_unknown_failure': 1,
+          },
+        ),
+        _cleanZone('attachments', observedEmptyTerminalRead: true),
+      ],
+    );
+    expect(unknown.safeToContinueDrain, isFalse);
+    expect(unknown.projectionComplete, isFalse);
+  });
+
   test('admits only clean transient transport failures for session retry', () {
     CloudSyncSemanticPullReport transient(
       CloudFailureCategory category,

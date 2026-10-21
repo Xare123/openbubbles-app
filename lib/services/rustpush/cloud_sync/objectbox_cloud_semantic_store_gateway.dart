@@ -20,6 +20,21 @@ import 'objectbox_canonical_semantic_entity_adapter.dart';
 /// satisfying this contract accidentally.
 enum CloudCanonicalSemanticMutationReceipt { committed }
 
+/// An already-applied Chat no longer has a proven canonical local owner.
+/// Holding its repair preserves both the current local row and the original
+/// ownership evidence. It is never permission to recreate or rebind the Chat.
+enum CloudAppliedChatProjectionHold {
+  missingChat,
+  ownershipMismatch;
+
+  String get safeCode => switch (this) {
+    missingChat => 'projection_repair_chat_missing_held',
+    ownershipMismatch => 'projection_repair_chat_ownership_held',
+  };
+}
+
+enum _AppliedChatProjectionState { complete, needsRepair, held }
+
 abstract interface class CloudMessageContentTransitionProofAdapter {
   CloudMessageContentTransition? classifyMessageContentTransition({
     required CloudSyncScope scope,
@@ -405,6 +420,7 @@ final class ObjectBoxCloudSemanticStoreGateway
     DateTime Function()? clock,
     this.reconsiderExcludedChatMetadata = false,
     this.allowDirectChatRecordConvergence = false,
+    this.onAppliedChatProjectionHeld,
   }) : _store = store,
        _canonicalAdapter = canonicalAdapter,
        _clock = clock ?? DateTime.now,
@@ -425,12 +441,14 @@ final class ObjectBoxCloudSemanticStoreGateway
     required CloudCanonicalSemanticEntityAdapter canonicalAdapter,
     DateTime Function()? clock,
     bool reconsiderExcludedChatMetadata = false,
+    void Function(CloudAppliedChatProjectionHold hold)? onAppliedChatProjectionHeld,
   }) {
     return ObjectBoxCloudSemanticStoreGateway(
       store: Database.store,
       canonicalAdapter: canonicalAdapter,
       clock: clock,
       reconsiderExcludedChatMetadata: reconsiderExcludedChatMetadata,
+      onAppliedChatProjectionHeld: onAppliedChatProjectionHeld,
     );
   }
 
@@ -452,6 +470,10 @@ final class ObjectBoxCloudSemanticStoreGateway
   // Development opt-in only until outbound membership consumers are qualified.
   // No application composition currently enables it.
   final bool allowDirectChatRecordConvergence;
+  /// Production supplies a closed diagnostic collector so a held applied row
+  /// remains visible as incomplete projection. Without one, fail closed as
+  /// before rather than silently skipping a damaged ownership binding.
+  final void Function(CloudAppliedChatProjectionHold hold)? onAppliedChatProjectionHeld;
   final CloudCanonicalSemanticEntityAdapter _canonicalAdapter;
   final DateTime Function() _clock;
   final Box<CloudSyncCheckpointEntity> _checkpoints;
@@ -1205,7 +1227,8 @@ final class ObjectBoxCloudSemanticStoreGateway
               continue;
             }
             if (repairsChatProjection) {
-              if (_hasCompleteChatProjection(context, logicalEntityKeyHash)) {
+              if (_readChatProjectionState(context, logicalEntityKeyHash) !=
+                  _AppliedChatProjectionState.needsRepair) {
                 continue;
               }
             } else {
@@ -1577,7 +1600,7 @@ final class ObjectBoxCloudSemanticStoreGateway
     return Map<String, String>.unmodifiable(candidates);
   }
 
-  bool _hasCompleteChatProjection(
+  _AppliedChatProjectionState _readChatProjectionState(
     _SemanticTransactionContext context,
     String logicalEntityKeyHash,
   ) {
@@ -1602,6 +1625,7 @@ final class ObjectBoxCloudSemanticStoreGateway
       var hasAuthoritativeAlias = false;
       var missingGroupRoute = false;
       var requiresGroupMetadataDigest = false;
+      CloudAppliedChatProjectionHold? held;
       for (final row in rows) {
         if (row.bindingKey.startsWith(_legacyChatAliasBindingPrefix)) {
           continue;
@@ -1625,7 +1649,16 @@ final class ObjectBoxCloudSemanticStoreGateway
             row.chatId <= 0) {
           throw _failure('projection_repair_alias_binding_invalid');
         }
+        final expectedBindingKey =
+            'semantic-chat-strong2:${sha256.convert(utf8.encode('${context.entry.scope.storageKey}\u001f${context.entry.generation}\u001f${row.service}\u001f${CloudSemanticChatAliasKind.serviceIdentifier.name}\u001f${row.aliasKeyHash}')).toString()}';
+        if (row.bindingKey != expectedBindingKey) {
+          throw _failure('projection_repair_alias_ownership_invalid');
+        }
         final chat = _chats.get(row.chatId);
+        if (chat == null && onAppliedChatProjectionHeld != null) {
+          held ??= CloudAppliedChatProjectionHold.missingChat;
+          continue;
+        }
         final canonicalGuid = chat?.guid;
         if (canonicalGuid == null || canonicalGuid.isEmpty) {
           throw _failure('projection_repair_alias_chat_invalid');
@@ -1643,11 +1676,12 @@ final class ObjectBoxCloudSemanticStoreGateway
               generation: context.entry.generation,
               canonicalGuid: canonicalGuid,
             );
-        final expectedBindingKey =
-            'semantic-chat-strong2:${sha256.convert(utf8.encode('${context.entry.scope.storageKey}\u001f${context.entry.generation}\u001f${row.service}\u001f${CloudSemanticChatAliasKind.serviceIdentifier.name}\u001f${row.aliasKeyHash}')).toString()}';
-        if (row.bindingKey != expectedBindingKey ||
-            row.canonicalGuidHash != expectedGuidHash ||
+        if (row.canonicalGuidHash != expectedGuidHash ||
             row.canonicalGuidLookupHash != expectedLookupHash) {
+          if (onAppliedChatProjectionHeld != null) {
+            held = CloudAppliedChatProjectionHold.ownershipMismatch;
+            continue;
+          }
           throw _failure('projection_repair_alias_ownership_invalid');
         }
         // Older V2 builds persisted the strong alias but omitted the raw
@@ -1666,21 +1700,32 @@ final class ObjectBoxCloudSemanticStoreGateway
         }
         hasAuthoritativeAlias = true;
       }
+      if (held != null) {
+        // All alias rows were structurally validated first. Preserve every
+        // row and let independently fenced records continue; do not pass this
+        // logical owner to the canonical repair adapter.
+        onAppliedChatProjectionHeld!(held);
+        return _AppliedChatProjectionState.held;
+      }
       if (hasAuthoritativeAlias && requiresGroupMetadataDigest) {
         final snapshot = _findLegacyOwnershipSnapshot(
           context,
           logicalEntityKeyHash,
         );
-        if (snapshot == null) return false;
+        if (snapshot == null) return _AppliedChatProjectionState.needsRepair;
         _validateLegacyOwnershipSnapshot(
           context: context,
           snapshot: snapshot,
           expectedKinds: const {CloudEntityKind.chat},
           expectedLogicalKeyHash: logicalEntityKeyHash,
         );
-        if (snapshot.groupMetadataDigest == null) return false;
+        if (snapshot.groupMetadataDigest == null) {
+          return _AppliedChatProjectionState.needsRepair;
+        }
       }
-      return hasAuthoritativeAlias && !missingGroupRoute;
+      return hasAuthoritativeAlias && !missingGroupRoute
+          ? _AppliedChatProjectionState.complete
+          : _AppliedChatProjectionState.needsRepair;
     } finally {
       query.close();
     }

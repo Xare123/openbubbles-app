@@ -663,6 +663,7 @@ final class CloudSyncProductionSemanticPullAdapter {
         final gateway = ObjectBoxCloudSemanticStoreGateway.fromDatabase(
           canonicalAdapter: canonicalAdapter,
           reconsiderExcludedChatMetadata: reconsiderExcludedChatMetadata,
+          onAppliedChatProjectionHeld: (hold) => diagnostics.record(hold.safeCode),
         );
         final decoder = RustCloudSemanticDecoder(
             readAuthSnapshot: authProvider.capture,

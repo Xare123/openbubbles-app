@@ -383,4 +383,23 @@ void main() {
       );
     }
   });
+
+  test('held applied-chat debt uses a closed two-code vocabulary', () {
+    final diagnostics = CloudSyncSemanticDiagnosticCollector();
+    diagnostics.record('projection_repair_chat_missing_held');
+    diagnostics.record('projection_repair_chat_ownership_held');
+    diagnostics.record('projection_repair_chat_missing_held:private-x');
+    expect(diagnostics.snapshot(), <String, int>{
+      'diagnostic_code_invalid': 1,
+      'projection_repair_chat_missing_held': 1,
+      'projection_repair_chat_ownership_held': 1,
+    });
+    expect(
+      () => CloudSyncSemanticDiagnosticCollector.validatedSnapshot(const {
+        'projection_repair_chat_missing_held': 1,
+        'projection_repair_chat_ownership_held': 1,
+      }),
+      returnsNormally,
+    );
+  });
 }

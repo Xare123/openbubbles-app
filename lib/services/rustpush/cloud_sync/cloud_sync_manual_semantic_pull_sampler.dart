@@ -874,11 +874,35 @@ final class CloudSyncManualSemanticPullSampler {
         fetchedToken: checkpoint.fetchedToken,
       );
     }
+    // Capture exact head-zone hold counts from the current proof scope.
+    // Held applied rows stay preserved; they never become retainedUnprojected.
+    final headHeld = <String, Map<String, int>>{};
+    final reportsByLabel = <String, CloudSyncSemanticPullZoneReport>{
+      for (final zoneReport in report.zones) zoneReport.zoneLabel: zoneReport,
+    };
+    for (final zone in zones) {
+      final zoneReport = reportsByLabel[_zoneLabel(zone)];
+      if (zoneReport == null) continue;
+      final holds = <String, int>{};
+      final missing =
+          zoneReport.diagnosticCounts[CloudSyncSemanticPullZoneReport.heldMissingCode] ??
+              0;
+      if (missing > 0) {
+        holds[CloudSyncSemanticPullZoneReport.heldMissingCode] = missing;
+      }
+      final ownership = zoneReport.diagnosticCounts[CloudSyncSemanticPullZoneReport.heldOwnershipCode] ??
+          0;
+      if (ownership > 0) {
+        holds[CloudSyncSemanticPullZoneReport.heldOwnershipCode] = ownership;
+      }
+      if (holds.isNotEmpty) headHeld[zone] = Map.unmodifiable(holds);
+    }
     await _requireSameAuth(session.ensuredAuth);
     return _CloudSyncPersistedRemoteHeadProof(
       auth: session.ensuredAuth,
       bounds: bounds,
       preflight: preflight,
+      headHeldRepairCounts: headHeld,
     );
   }
 
@@ -1116,6 +1140,20 @@ final class CloudSyncManualSemanticPullSampler {
         retainedBacklog: retainedBacklog,
         projectionDiagnosticsOverride: state.diagnostics,
       );
+      // Preserve exact head-zone hold counts. New collector windows start
+      // fresh per session and must not erase head holds. Use max, not sum,
+      // so the same logical record seen in both phases does not double.
+      // This carries diagnostic debt only; it never mutates rows.
+      final headHolds = proof.headHeldRepairCounts[zone];
+      if (headHolds != null) {
+        for (final entry in headHolds.entries) {
+          if (entry.value <= 0) continue;
+          final current = diagnosticCounts[entry.key] ?? 0;
+          if (entry.value > current) {
+            diagnosticCounts[entry.key] = entry.value;
+          }
+        }
+      }
       // If the typed summary cannot be read, every retained row remains
       // blocking. Only an exact durable out-of-scope count may be subtracted.
       final hasTypedBacklogSummary =
@@ -1549,12 +1587,20 @@ final class _CloudSyncPersistedRemoteHeadProof {
     required this.auth,
     required Map<String, _CloudSyncRemoteHeadZoneBound> bounds,
     required this.preflight,
-  }) : bounds = Map.unmodifiable(bounds);
+    required Map<String, Map<String, int>> headHeldRepairCounts,
+  })  : bounds = Map.unmodifiable(bounds),
+        headHeldRepairCounts = Map.unmodifiable({
+          for (final entry in headHeldRepairCounts.entries)
+            entry.key: Map<String, int>.unmodifiable(entry.value),
+        });
 
   // Binds local projection to persisted head, never to a stale pause token.
   final CloudSyncNativeAuthSnapshot auth;
   final Map<String, _CloudSyncRemoteHeadZoneBound> bounds;
   final CloudSyncShadowPreflightState preflight;
+  // Exact head-zone held-repair debt. New collector windows must not erase it.
+  // Keyed by raw zone, never cross-account or global cache. No row mutation.
+  final Map<String, Map<String, int>> headHeldRepairCounts;
 }
 
 final class _CloudSyncRemoteHeadZoneBound {

@@ -147,6 +147,7 @@ CloudSyncManualSemanticPullSampler _sampler({
   CloudSyncSemanticSessionScheduler? scheduleSession,
   CloudSyncProtectedResetCoordinator? coordinateProtectedReset,
   CloudSyncPendingResetRecovery? recoverPendingReset,
+  CloudSyncSemanticDiagnosticSnapshotReader? readDiagnosticCounts,
 }) => CloudSyncManualSemanticPullSampler(
   readPreflight: readPreflight,
   ensureAuthSnapshot: ensureAuthSnapshot ?? () async => _auth(),
@@ -175,6 +176,7 @@ CloudSyncManualSemanticPullSampler _sampler({
   scheduleSession: scheduleSession,
   coordinateProtectedReset: coordinateProtectedReset,
   recoverPendingReset: recoverPendingReset,
+  readDiagnosticCounts: readDiagnosticCounts,
 );
 
 CloudSyncScope _semanticScope(String zone) => CloudSyncScope(
@@ -250,6 +252,7 @@ CloudSyncManualSemanticPullSampler _catchUpSampler({
   CloudSyncShadowPreflightReader? readPreflight,
   CloudSyncNativeAuthSnapshotReader? readAuthSnapshot,
   void Function(Object pauseToken)? onInboxPauseToken,
+  CloudSyncSemanticDiagnosticSnapshotReader? readDiagnosticCounts,
 }) {
   return _sampler(
     privateStorageDirectory: privateStorageDirectory,
@@ -286,6 +289,7 @@ CloudSyncManualSemanticPullSampler _catchUpSampler({
     nativeWriterPause: nativeWriterPause,
     scheduleSession: scheduleSession,
     onInboxPauseToken: onInboxPauseToken,
+    readDiagnosticCounts: readDiagnosticCounts,
   );
 }
 
@@ -4067,6 +4071,148 @@ void main() {
       );
       expect(coordinationCalls, 1);
       expect(persistedReports, 0);
+    },
+  );
+  test(
+    'held chat repair debt survives sweep windows without doubling',
+    () async {
+      final stores = <String, InMemoryCloudSyncStore>{
+        for (final zone in CloudSyncManualSemanticPullSampler.zones)
+          zone: InMemoryCloudSyncStore(),
+      };
+      final chatScope = _semanticScope('chatManateeZone');
+      await _seedRetainedSaves(stores[chatScope.zone]!, chatScope, count: 1);
+      var serveHolds = true;
+      Map<String, int> holdReader(CloudSyncScope scope) {
+        if (!serveHolds) return const <String, int>{};
+        if (scope.zone == 'chatManateeZone') {
+          return const <String, int>{
+            'projection_repair_chat_missing_held': 1,
+            'projection_repair_chat_ownership_held': 1,
+          };
+        }
+        return const <String, int>{};
+      }
+      var sweepCalls = 0;
+      final persistedModes = <CloudSyncSemanticReportMode>[];
+      final sampler = _catchUpSampler(
+        privateStorageDirectory: privateStorageDirectory,
+        stores: stores,
+        operationFenceStore: InMemoryCloudSyncStore(),
+        nativeWriterPause: _RecordingNativeWriterPause(),
+        readDiagnosticCounts: holdReader,
+        onReprojectWindow:
+            (
+              scope,
+              generation,
+              leaseFence,
+              afterFetchSequence,
+              throughFetchSequence,
+              limit,
+            ) async {
+              sweepCalls++;
+              expect(scope, chatScope);
+              return const CloudRetainedProjectionWindowResult(
+                examined: 1,
+                reprojected: 0,
+                retained: 1,
+                lastExaminedSequence: 1,
+                hasMoreWithinBound: false,
+              );
+            },
+      );
+      final result = await sampler.runConfirmedCatchUpAndPersist(
+        projectionBatchSize: 1,
+        persistReport: (report) async {
+          persistedModes.add(report.mode);
+          if (report.mode == CloudSyncSemanticReportMode.readOnlyCloudKit) {
+            expect(report.safeToContinueDrain, isTrue);
+            expect(report.projectionComplete, isFalse);
+            expect(report.hasRetainedSaveBacklog, isTrue);
+            final headChats = report.zones.firstWhere(
+              (zone) => zone.zoneLabel == 'chats',
+            );
+            expect(
+              headChats.diagnosticCounts[CloudSyncSemanticPullZoneReport.heldMissingCode],
+              1,
+            );
+            expect(
+              headChats.diagnosticCounts[CloudSyncSemanticPullZoneReport.heldOwnershipCode],
+              1,
+            );
+            for (final zone in report.zones.where(
+              (zone) => zone.zoneLabel != 'chats',
+            )) {
+              expect(zone.hasHeldChatRepair, isFalse);
+            }
+            serveHolds = false;
+            return 'remote-head-with-holds';
+          }
+          return 'projection-sweep-with-holds';
+        },
+      );
+      expect(sweepCalls, 1);
+      expect(persistedModes, const [
+        CloudSyncSemanticReportMode.readOnlyCloudKit,
+        CloudSyncSemanticReportMode.retainedProjectionSweep,
+      ]);
+      expect(result.remoteDrained, isTrue);
+      expect(result.reachedRemotePassLimit, isFalse);
+      expect(result.projectionReport, isNotNull);
+      final latest = result.latestReport;
+      expect(latest.mode, CloudSyncSemanticReportMode.retainedProjectionSweep);
+      expect(latest.safeToPersistProjectionSweep, isTrue);
+      expect(latest.projectionComplete, isFalse);
+      expect(latest.hasHeldChatRepairDebt, isTrue);
+      expect(latest.heldChatRepairCount, 2);
+      final sweptChats = latest.zones.firstWhere(
+        (zone) => zone.zoneLabel == 'chats',
+      );
+      expect(
+        sweptChats.diagnosticCounts[CloudSyncSemanticPullZoneReport.heldMissingCode],
+        1,
+      );
+      expect(
+        sweptChats.diagnosticCounts[CloudSyncSemanticPullZoneReport.heldOwnershipCode],
+        1,
+      );
+      expect(sweptChats.heldChatRepairCount, 2);
+      expect(sweptChats.retainedUnprojected, 1);
+      expect(
+        latest.zones.fold(0, (sum, zone) => sum + zone.retainedUnprojected),
+        1,
+      );
+      for (final zone in latest.zones) {
+        expect(
+          zone.diagnosticCounts[CloudSyncSemanticPullZoneReport.heldMissingCode] ?? 0,
+          lessThanOrEqualTo(1),
+        );
+        expect(
+          zone.diagnosticCounts[CloudSyncSemanticPullZoneReport.heldOwnershipCode] ?? 0,
+          lessThanOrEqualTo(1),
+        );
+      }
+      final second = await sampler.runConfirmedCatchUpAndPersist(
+        projectionBatchSize: 1,
+        persistReport: (report) async => 'clean-second-pass',
+      );
+      expect(second.remoteDrained, isTrue);
+      expect(second.latestReport.heldChatRepairCount, 0);
+      for (final zone in second.latestReport.zones) {
+        expect(
+          zone.diagnosticCounts.containsKey(
+            CloudSyncSemanticPullZoneReport.heldMissingCode,
+          ),
+          isFalse,
+        );
+        expect(
+          zone.diagnosticCounts.containsKey(
+            CloudSyncSemanticPullZoneReport.heldOwnershipCode,
+          ),
+          isFalse,
+        );
+      }
+      expect(sampler.isActive, isFalse);
     },
   );
 }

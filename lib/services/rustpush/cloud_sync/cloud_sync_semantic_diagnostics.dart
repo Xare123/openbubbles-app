@@ -155,6 +155,8 @@ abstract final class CloudSyncSemanticDiagnosticCodes {
     'outbound_chat_existing_history_tombstone_conflict',
     'projection_repair_active_scope_changed',
     'projection_repair_candidate_invalid',
+    'projection_repair_chat_missing_held',
+    'projection_repair_chat_ownership_held',
     'projection_repair_decode_retryable',
     'projection_repair_decoded_shape_invalid',
     'projection_repaired_attachment_capability',

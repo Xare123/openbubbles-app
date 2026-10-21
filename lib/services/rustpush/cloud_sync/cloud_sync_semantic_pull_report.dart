@@ -86,6 +86,18 @@ final class CloudSyncSemanticPullZoneReport {
   final String? failureSafeCode;
   final CloudSyncSkipReason? skipReason;
 
+  static const heldMissingCode = 'projection_repair_chat_missing_held';
+  static const heldOwnershipCode = 'projection_repair_chat_ownership_held';
+
+  /// Per-logical-record repair debt for an already-applied Chat whose
+  /// canonical owner is missing or mismatched. Held rows stay preserved
+  /// locally and never count as retainedUnprojected backlog.
+  int get heldChatRepairCount =>
+      (diagnosticCounts[heldMissingCode] ?? 0) +
+      (diagnosticCounts[heldOwnershipCode] ?? 0);
+
+  bool get hasHeldChatRepair => heldChatRepairCount > 0;
+
   Map<String, Object?> toJson() => {
     'zone': zoneLabel,
     'status': status.name,
@@ -348,7 +360,18 @@ final class CloudSyncSemanticPullReport {
 
   bool get projectionComplete =>
       hasExactThreeZoneStructure &&
-      zones.every((zone) => zone.retainedUnprojected == 0);
+      zones.every(
+        (zone) => zone.retainedUnprojected == 0 && !zone.hasHeldChatRepair,
+      );
+
+  /// Closed held-repair debt preserved through sweep replacement. Head-zone
+  /// counts survive new collector windows; they never count as
+  /// retainedUnprojected backlog and never veto safe drain on their own.
+  bool get hasHeldChatRepairDebt =>
+      zones.any((zone) => zone.hasHeldChatRepair);
+
+  int get heldChatRepairCount =>
+      zones.fold(0, (sum, zone) => sum + zone.heldChatRepairCount);
 
   bool get retainedSaveProjectionComplete =>
       hasExactThreeZoneStructure &&
