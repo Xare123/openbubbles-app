@@ -60,6 +60,7 @@ typedef NS_ENUM(NSUInteger, OBRelayPhase) {
 - (NSDictionary *)versionsForContext:(OBRelayRequestContext *)context bundle:(NSString *)bundle {
     NSMutableDictionary *versions = [context.identifiers mutableCopy];
     versions[OBRelayCapabilitiesField] = OBRelayCapabilitiesValue;
+    if (self.nativePushEnabled) versions[@"ob_push_capabilities"] = @"native-push-v1";
     if (bundle) versions[OBRelayAuthBundleField] = bundle;
     return @{@"versions":[versions copy]};
 }

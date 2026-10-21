@@ -20,6 +20,7 @@ typedef void (^OBRelayReply)(NSString *text);
 // Total generation budget in seconds, default 45 and clamped to (0, 45].
 // Set before use; present so Darwin tests can exercise the timeout path.
 @property(nonatomic) double generationSeconds;
+@property(nonatomic) BOOL nativePushEnabled;
 - (instancetype)initWithHeaderGenerator:(id<OBRelayHeaderGenerating>)headerGenerator
                     qualifierGenerator:(id<OBRelayEmptyQualifierGenerating>)qualifierGenerator
                                validator:(id<OBNACValidating>)validator;

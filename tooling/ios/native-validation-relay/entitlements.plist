@@ -2,7 +2,7 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
   <key>application-identifier</key><string>dev.openbubbles.relay.native</string>
-  <key>keychain-access-groups</key><array><string>dev.openbubbles.relay.native</string></array>
+  <key>keychain-access-groups</key><array><string>dev.openbubbles.relay.native</string><string>com.apple.apsd</string></array>
   <key>com.apple.private.MobileGestalt.AllowedProtectedKeys</key>
   <array><string>SerialNumber</string><string>UniqueDeviceID</string></array>
   <key>abs-client</key><integer>772496756</integer>

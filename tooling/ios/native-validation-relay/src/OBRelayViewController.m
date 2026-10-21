@@ -60,6 +60,7 @@
         initWithHeaderGenerator:[OBRelayHeaderGenerator new]
             qualifierGenerator:[OBRelayEmptyQualifierGenerator new]
                        validator:[OBNativeNACValidator new]];
+    dispatcher.nativePushEnabled=YES;
     OBRelayRegistrationStore *store = [[OBRelayRegistrationStore alloc] initWithRelayURL:url];
     if (store.hasSavedRegistration) self.codeLabel.text = store.code;
     self.connection = [[OBRelayConnection alloc] initWithDispatcher:dispatcher store:store url:url];

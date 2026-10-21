@@ -1,8 +1,29 @@
 # Private native iPhone relay qualification
 
 This is an independently implemented interoperability client for the existing
-Beeper provider protocol, not a public release. It is not yet built, installed
-or live-qualified. Do not substitute an account-signing proof for device NAC.
+Beeper provider protocol, not a public release. Version1/source6c5ad42c was
+installed and its separate account/NAC path qualified with retained push state.
+Version2 adds native APS signing and is not yet built, installed or live-qualified.
+Do not substitute an account-signing proof for device NAC.
+
+Version2 uses a bounded custom command on the existing gateway. Ordinary POST
+payloads are not forwarded there; small canonical command segments were observed
+to pass in the independent synthetic transport check. HMAC authenticates each
+request using the existing private relay ticket. This retains the existing
+gateway/ticket trust boundary, not new end-to-end secrecy from that gateway.
+No ticket/password/message body is placed in the command URL. Only bounded
+discovery, fresh APNs nonce signing and permitted registration-request SHA1
+digest signing are admitted; certificate pins and response MACs are checked by
+the client. The private APS key remains in the iPhone keychain. The sole added
+keychain group is com.apple.apsd, as qualified separately by the APS diagnostic.
+
+Replay metadata is limited to512 ticket-bound request-id hashes/timestamps,
+persisted before native work. Busy requests fail; a seven-second observation
+deadline quarantines new signing until restart. Socket/epoch replacement drops
+old replies but does not claim to interrupt native APIs. Foundation tests cover
+the actual parser and service with synthetic input. Native signature acceptance,
+full normal-client registration, restart and Android remain distinct live gates.
+Independent/forever-off iPhone operation is not implemented by this design.
 
 Source lineage: frozen Muse stage under project scratch/native-relay-stage;
 parent reviewed all21 source files. Twenty hashes matched its handoff. Its

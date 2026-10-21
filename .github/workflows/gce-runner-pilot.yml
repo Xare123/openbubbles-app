@@ -1334,6 +1334,7 @@ jobs:
         run: |
           python3 -B -m unittest discover -s tooling/ci -p test_native_relay_nac_contract.py -v
           python3 -B -m unittest discover -s tooling/ci -p test_native_relay_build_isolation.py -v
+          python3 -B -m unittest discover -s tooling/ci -p test_native_push_contract.py -v
           bash tooling/ios/native-validation-relay/build.sh "$RUNNER_TEMP/native-iphone-relay"
       - name: Retain credential-free private helper and qualification evidence
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a

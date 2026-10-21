@@ -32,6 +32,7 @@ class NativeRelayBuildIsolation(unittest.TestCase):
         self.assertEqual(set(entitlements), {'application-identifier', 'keychain-access-groups',
             'com.apple.private.MobileGestalt.AllowedProtectedKeys', 'abs-client', 'com.apple.authkit.client.private'})
         self.assertEqual(entitlements['application-identifier'], info['CFBundleIdentifier'])
+        self.assertEqual(entitlements['keychain-access-groups'], ['dev.openbubbles.relay.native', 'com.apple.apsd'])
         self.assertEqual(entitlements['abs-client'], 772496756)
 
     def test_build_requires_real_foundation_tests_and_generated_finite_mig(self):

@@ -1,11 +1,14 @@
 #import "OBRelayConnection.h"
 #import "OBRelayIdentifiers.h"
+#import "OBRelayPushService.h"
+#import "OBRelayNativePush.h"
 
 NSString *const OBRelayDefaultURLString = @"wss://registration-relay.beeper.com/api/v1/provider";
 
 @interface OBRelayConnection () <NSURLSessionWebSocketDelegate>
 @property(nonatomic, strong) OBRelayDispatcher *dispatcher;
 @property(nonatomic, strong) OBRelayRegistrationStore *store;
+@property(nonatomic, strong) OBRelayPushService *pushService;
 @property(nonatomic, copy) NSURL *url;
 @property(nonatomic, strong) NSURLSession *session;
 @property(nonatomic, strong) dispatch_queue_t stateQueue;
@@ -26,6 +29,8 @@ NSString *const OBRelayDefaultURLString = @"wss://registration-relay.beeper.com/
     if ((self = [super init])) {
         _dispatcher = dispatcher;
         _store = store;
+        _pushService = [[OBRelayPushService alloc] initWithDefaults:NSUserDefaults.standardUserDefaults
+            operation:^NSDictionary *(NSDictionary *request) { return OBRelayNativePushResult(request); }];
         _url = [url copy];
         _stateQueue = dispatch_queue_create("dev.openbubbles.relay.connection-state", DISPATCH_QUEUE_SERIAL);
         _sendQueue = dispatch_queue_create("dev.openbubbles.relay.send", DISPATCH_QUEUE_SERIAL);
@@ -71,6 +76,7 @@ NSString *const OBRelayDefaultURLString = @"wss://registration-relay.beeper.com/
 
 - (void)teardownOnStateQueue {
     [self.dispatcher invalidatePendingRequest];
+    [self.pushService invalidatePendingRequest];
     if (self.pingTimer) {
         dispatch_source_cancel(self.pingTimer);
         self.pingTimer = nil;
@@ -164,6 +170,9 @@ NSString *const OBRelayDefaultURLString = @"wss://registration-relay.beeper.com/
 }
 
 - (void)handleText:(NSString *)text fromTask:(NSURLSessionWebSocketTask *)task {
+    // Existing account replies fit this bound. Reject before JSON parsing so
+    // an untrusted provider command cannot allocate an unbounded input graph.
+    if (![text isKindOfClass:NSString.class] || text.length>65536) return;
     id parsed = [NSJSONSerialization JSONObjectWithData:[text dataUsingEncoding:NSUTF8StringEncoding]
         options:0 error:NULL];
     if (![parsed isKindOfClass:NSDictionary.class]) return;
@@ -193,8 +202,11 @@ NSString *const OBRelayDefaultURLString = @"wss://registration-relay.beeper.com/
                     [owner sendText:responseText onTask:boundTask];
             });
         };
-        [self.dispatcher handleCommand:command requestID:envelope[@"id"]
-            identifiers:identifiers reply:reply];
+        if ([command hasPrefix:@"ob-push-v1."]) {
+            [self.pushService handleCommand:command code:self.store.code requestID:envelope[@"id"] reply:reply];
+        } else {
+            [self.dispatcher handleCommand:command requestID:envelope[@"id"] identifiers:identifiers reply:reply];
+        }
     });
 }
 
