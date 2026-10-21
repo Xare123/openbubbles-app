@@ -56,6 +56,12 @@ class _CloudSyncAutomaticArchiveCardState
       'reactions, edits, and other message changes are not newly covered by this '
       'opt-in. Existing iCloud restores can still include media already archived '
       'by Apple.';
+  static const _receivedRecoveryNote =
+      'Messages saved locally remain here if secure iCloud capture is unavailable. '
+      'A receive that fails before protected capture has no saved automatic '
+      'archive retry. Finish setup for future archival. '
+      '"Upload existing messages" checks its reviewed snapshot only, not later '
+      'arrivals, and does not guarantee recovery of missed messages, edits, or undos.';
 
   CloudSyncAutomaticArchivePreference? _preference;
   bool _busy = true;
@@ -227,6 +233,13 @@ class _CloudSyncAutomaticArchiveCardState
                         ? _receivedMediaCoverageNote
                         : _receivedCoverageNote,
                   ),
+                  const SizedBox(height: 8),
+                  const Text(
+                    _receivedRecoveryNote,
+                    key: ValueKey(
+                      'automaticArchiveReceiveRecoveryConfirmation',
+                    ),
+                  ),
                 ],
                 CheckboxListTile(
                   key: const ValueKey('automaticArchiveQueuedAcknowledgment'),
@@ -341,6 +354,14 @@ class _CloudSyncAutomaticArchiveCardState
             (_preference?.includesReceivedMedia ?? false)
                 ? _receivedMediaCoverageNote
                 : _receivedCoverageNote,
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+        ],
+        if (widget.receivedArchiveAvailable) ...[
+          const SizedBox(height: 8),
+          Text(
+            _receivedRecoveryNote,
+            key: const ValueKey('automaticArchiveReceiveRecovery'),
             style: Theme.of(context).textTheme.bodySmall,
           ),
         ],

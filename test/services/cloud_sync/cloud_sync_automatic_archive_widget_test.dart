@@ -157,6 +157,58 @@ void main() {
   final receivedMediaCheckbox = find.byKey(
     const ValueKey('automaticArchiveIncludeReceivedMedia'),
   );
+  final receiveRecovery = find.byKey(
+    const ValueKey('automaticArchiveReceiveRecovery'),
+  );
+  final receiveRecoveryConfirmation = find.byKey(
+    const ValueKey('automaticArchiveReceiveRecoveryConfirmation'),
+  );
+
+  for (final failedLoad in [false, true]) {
+    testWidgets(
+      'receive recovery limits remain visible, failedLoad=$failedLoad',
+      (tester) async {
+        load = () async {
+          if (failedLoad) throw StateError('private-key-details');
+          return _preference(enabled: true, includeReceived: true);
+        };
+        await tester.pumpWidget(host(receivedArchiveAvailable: true));
+        await tester.pumpAndSettle();
+        expect(receiveRecovery, findsOneWidget);
+        final copy = tester.widget<Text>(receiveRecovery).data!;
+        expect(copy, contains('no saved automatic archive retry'));
+        expect(copy, contains('"Upload existing messages"'));
+        expect(copy, contains('reviewed snapshot only, not later arrivals'));
+        expect(
+          copy,
+          contains(
+            'does not guarantee recovery of missed messages, edits, or undos',
+          ),
+        );
+        expect(find.textContaining('private-key-details'), findsNothing);
+        expect(writes, 0, reason: 'a notice is not upload or reset permission');
+      },
+    );
+  }
+
+  testWidgets('received consent discloses capture limits before enabling', (
+    tester,
+  ) async {
+    await openEnableDialog(tester, receivedArchiveAvailable: true);
+    expect(receiveRecoveryConfirmation, findsOneWidget);
+    expect(
+      tester.widget<Text>(receiveRecoveryConfirmation).data,
+      tester.widget<Text>(receiveRecovery).data,
+    );
+    expect(
+      tester.widget<CheckboxListTile>(acknowledgmentCheckbox).value,
+      isFalse,
+    );
+    expect(writes, 0);
+    await tester.tap(find.text('Cancel'));
+    await tester.pumpAndSettle();
+    expect(writes, 0);
+  });
 
   testWidgets('opening loads a preference without side effects', (
     tester,
@@ -167,6 +219,7 @@ void main() {
     expect(writes, 0);
     expect(find.text('Archive sent messages to iCloud'), findsWidgets);
     expect(receivedCheckbox, findsNothing);
+    expect(receiveRecovery, findsNothing);
     expect(find.text('Change archival scope'), findsNothing);
     expect(
       find.textContaining('A batch already running may finish'),

@@ -99,6 +99,17 @@ void main() {
       findsWidgets,
     );
     expect(find.textContaining('3 local messages captured'), findsOneWidget);
+    expect(
+      find.textContaining('not a continuous backup of later messages'),
+      findsOneWidget,
+    );
+    expect(
+      find.textContaining(
+        'This fixed snapshot does not include messages received after its capture',
+      ),
+      findsOneWidget,
+    );
+    expect(find.textContaining('missed edits and undos'), findsOneWidget);
     expect(calls, 0);
     await tester.tap(find.text('Cancel'));
     await tester.pumpAndSettle();

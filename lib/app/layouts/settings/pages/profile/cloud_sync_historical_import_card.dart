@@ -142,7 +142,9 @@ class _HistoricalImportCardState extends State<CloudSyncHistoricalImportCard> {
                   'They will not be sent again to anyone. '
                   'Older messages can remain after signing out, so check the account above. '
                   'You can pause and resume. Messages that cannot be uploaded stay on this device. '
-                  'This does not turn on automatic uploads.',
+                  'This does not turn on automatic uploads. '
+                  'This fixed snapshot does not include messages received after its capture '
+                  'or recreate missed edits and undos.',
                 ),
             ],
           ),
@@ -225,7 +227,8 @@ class _HistoricalImportCardState extends State<CloudSyncHistoricalImportCard> {
             const SizedBox(height: 8),
             const Text(
               'Upload messages already on this device to iCloud. '
-              'They will not be sent again to anyone.',
+              'They will not be sent again to anyone. '
+              'This uses one saved snapshot, not a continuous backup of later messages.',
             ),
             if (c.active) ...[
               const SizedBox(height: 8),
