@@ -419,7 +419,7 @@ Future<CloudSyncProtectedOutboundStage> cloudSyncStageReceivedArchiveCreate({
   parentBindingSha256: parentBindingSha256,
 );
 
-/// Reopen source + current exact direct Chat for prepare/reconciliation. This
+/// Reopen source + current exact Chat for prepare/reconciliation. This
 /// does not establish remote absence, create files or change remote state.
 Future<CloudSyncReceivedArchiveCreateProof>
 cloudSyncOpenReceivedArchiveCreateProof({
