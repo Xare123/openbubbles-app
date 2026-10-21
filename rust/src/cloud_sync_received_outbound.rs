@@ -7,8 +7,10 @@
 use super::{CloudSyncOutboundFailure as Failure, NativeProtectedOutboundStage};
 use crate::cloud_sync_canonical_dto::{CloudCanonicalChatPayload, CloudCanonicalEntityKind};
 use crate::cloud_sync_native_fetch::cloud_sync_open_protected_outbound_message;
-use crate::cloud_sync_received_projection::project_received_plain_text;
-use crate::cloud_sync_received_raw_match::{compare_received_raw, ReceivedRawProtos};
+use crate::cloud_sync_received_projection::project_received_archive_plain_text;
+use crate::cloud_sync_received_raw_match::{
+    compare_received_group_raw, compare_received_raw, ReceivedRawProtos,
+};
 use crate::cloud_sync_received_record_match::ReceivedRecordMatchVerdict;
 use crate::cloud_sync_received_source::ReceivedArchiveSource;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
@@ -59,7 +61,7 @@ fn encode(
     if !valid_digest(parent_binding_sha256) {
         return Err(Failure::BindingMismatch);
     }
-    let message = project_received_plain_text(source, chat)?;
+    let message = project_received_archive_plain_text(source, chat)?;
     let bytes = super::encode_message_fields(message, server_record_name)?;
     let envelope = Envelope {
         version: 1,
@@ -108,7 +110,7 @@ fn decode(
     // Compare to the original protected source projection, not mutable UI or
     // a forgiving re-encoding of an arbitrary remote message. This also rejects
     // unknown/duplicate/noncanonical nested fields in this locally-owned format.
-    let expected = project_received_plain_text(source, chat)?;
+    let expected = project_received_archive_plain_text(source, chat)?;
     if super::encode_message_fields(expected, &record_name)? != bytes {
         return Err(Failure::BindingMismatch);
     }
@@ -185,9 +187,18 @@ pub(crate) fn verify_received_readback(
         msg_proto_3: actual.msg_proto_3.as_deref(),
         msg_proto_4: actual.msg_proto_4.as_deref(),
     };
-    if compare_received_raw(&opened.message, &actual.message, &raw)
-        != Ok(ReceivedRecordMatchVerdict::EquivalentSupportedPlainText)
-    {
+    let is_group = opened
+        .message
+        .msg_proto_4
+        .as_ref()
+        .and_then(|proto| proto.0.group_id.as_deref())
+        .is_some_and(|route| route.starts_with("iMessage;+;"));
+    let comparison = if is_group {
+        compare_received_group_raw(&opened.message, &actual.message, &raw)
+    } else {
+        compare_received_raw(&opened.message, &actual.message, &raw)
+    };
+    if comparison != Ok(ReceivedRecordMatchVerdict::EquivalentSupportedPlainText) {
         return Err(Failure::BindingMismatch);
     }
     Ok(opened.payload_sha256.clone())
@@ -367,5 +378,92 @@ mod tests {
         let mut unknown = inspection(opened.message.clone());
         unknown.msg_proto.extend([0xf8, 0x07, 0x01]); // unknown proto field127
         assert!(verify_received_readback(&opened, &unknown, &opened.payload_sha256).is_err());
+    }
+
+    #[test]
+    fn protected_group_roundtrip_preserves_endpoint_and_rejects_changed_parent() {
+        use crate::cloud_sync_received_projection::tests::{group_parent, group_source};
+        for mirrored in [false, true] {
+            let dir = tempfile::tempdir().unwrap();
+            let original = group_source(mirrored);
+            let parent = group_parent(1, true);
+            let stage = stage_received_message(
+                dir.path().into(),
+                "A".repeat(43),
+                "container-user",
+                &original,
+                &parent,
+                &"a".repeat(64),
+            )
+            .unwrap();
+            let opened = open_staged_received_message(
+                dir.path().into(),
+                "A".repeat(43),
+                &stage.protected_payload_reference,
+                &stage.payload_sha256,
+                &original,
+                &parent,
+                &"a".repeat(64),
+            )
+            .unwrap();
+            assert_eq!(opened.message.chat_id, parent.group_id());
+            assert_eq!(opened.message.destination_caller_id, "owner@example.com");
+            assert_eq!(
+                opened.message.flags.contains(MessageFlags::IS_FROM_ME),
+                mirrored
+            );
+            assert_eq!(
+                opened.message.sender,
+                if mirrored { "" } else { "remote@example.com" }
+            );
+            assert_eq!(
+                verify_received_readback(
+                    &opened,
+                    &inspection(opened.message.clone()),
+                    &stage.payload_sha256
+                )
+                .unwrap(),
+                stage.payload_sha256
+            );
+            // Even another exact source alias cannot substitute a new canonical
+            // parent for the parent pinned when this envelope was staged.
+            assert!(open_staged_received_message(
+                dir.path().into(),
+                "A".repeat(43),
+                &stage.protected_payload_reference,
+                &stage.payload_sha256,
+                &original,
+                &group_parent(2, true),
+                &"a".repeat(64),
+            )
+            .is_err());
+            assert!(super::super::open_staged_outbound_message(
+                dir.path().into(),
+                "A".repeat(43),
+                &stage.protected_payload_reference,
+                &stage.payload_sha256,
+            )
+            .is_err());
+            for field in 0..3 {
+                let mut changed = opened.message.clone();
+                match field {
+                    0 => changed.destination_caller_id.clear(),
+                    1 => changed.chat_id = parent.guid().to_owned(),
+                    _ => {
+                        changed.msg_proto_4.as_mut().unwrap().0.group_id =
+                            Some(parent.group_id().into())
+                    }
+                }
+                assert!(verify_received_readback(
+                    &opened,
+                    &inspection(changed),
+                    &stage.payload_sha256
+                )
+                .is_err());
+            }
+            let mut unknown = inspection(opened.message.clone());
+            unknown.msg_proto.extend([0xf8, 0x07, 0x01]);
+            assert!(verify_received_readback(&opened, &unknown, &stage.payload_sha256).is_err());
+        }
     }
 }

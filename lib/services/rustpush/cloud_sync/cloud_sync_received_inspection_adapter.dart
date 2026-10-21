@@ -3,7 +3,7 @@ import 'package:bluebubbles/src/rust/api/api.dart' as api;
 import 'package:bluebubbles/src/rust/lib.dart' as native;
 import 'cloud_sync_dev_gate.dart';
 import 'cloud_sync_models.dart';
-import 'cloud_sync_outbound_chat_binding.dart';
+import 'cloud_sync_historical_parent_binding.dart';
 import 'cloud_sync_production_sampler_adapter.dart';
 import 'cloud_sync_protector.dart';
 import 'cloud_sync_received_archive_journal.dart';
@@ -88,10 +88,10 @@ Future<CloudSyncReceivedRecordObservation> inspectCloudSyncReceivedIntent({
         intentId: intentId,
         currentAuth: auth,
       );
-      final parent = requireCloudSyncRestoredDirectChatProof(
+      final parent = requireCloudSyncHistoricalParentProof(
         store: store,
         messageScope: scope,
-        message: message,
+        chatId: message.chat.targetId,
       );
       void validateParent() {
         final (nowOrigin, nowMessage, nowSource) = journal
@@ -99,10 +99,11 @@ Future<CloudSyncReceivedRecordObservation> inspectCloudSyncReceivedIntent({
               intentId: intentId,
               currentAuth: auth,
             );
-        final nowParent = requireCloudSyncRestoredDirectChatProof(
+        final nowParent = requireCloudSyncHistoricalParentProof(
           store: store,
           messageScope: scope,
-          message: nowMessage,
+          chatId: nowMessage.chat.targetId,
+          expectedBinding: parent.binding,
         );
         if (nowOrigin.localMessageId != origin.localMessageId ||
             nowSource.encode() != source.encode() ||

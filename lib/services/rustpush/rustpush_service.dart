@@ -47,6 +47,7 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_dev_gate.dar
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_composer_admission.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_send_journal.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_received_archive_identity.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_historical_parent_binding.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_received_archive_journal.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_received_archive_source_binding.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_received_archive_staging.dart';
@@ -8945,12 +8946,24 @@ class RustPushService extends GetxService {
               throw StateError('cloud_sync_received_archive_parent_changed');
             }
             if (CloudSyncReceivedArchiveIdentity.requiresGroupDiscovery(receivedChat)) {
-              // Retain the original group source. Only the separately gated
-              // exact discovery below may read its GUID; no direct-parent
-              // inspection, absent-create wake or guessed owner is permitted.
-              // One candidate per pass remains bounded and round-robin.
-              _cloudSyncV2ReceivedPassDeferred = true;
-              continue;
+              // An unresolved/provisional group still uses exact discovery.
+              // Only an ordinary authenticated restored-group parent can
+              // enter parent-bound inspection. Native projection separately
+              // binds the captured wire group ID and original endpoint.
+              try {
+                requireCloudSyncHistoricalParentProof(
+                  store: objectBox,
+                  messageScope: CloudSyncScope(
+                    accountFingerprint: captured.accountFingerprint,
+                    container: 'com.apple.messages.cloud', database: 'private',
+                    zone: 'messageManateeZone',
+                    persistenceLane: CloudSyncPersistenceLane.semantic),
+                  chatId: receivedChat.id!,
+                );
+              } catch (_) {
+                _cloudSyncV2ReceivedPassDeferred = true;
+                continue;
+              }
             }
             final observation = await inspectCloudSyncReceivedIntent(intentId: intent.id,
               privateStorageDirectory: storagePath, readActiveClient: () => state?.icloudServices?.cloudMessagesClient,
@@ -9003,7 +9016,7 @@ class RustPushService extends GetxService {
           // Bounded parentless discovery: one state-1 intent with no proven
           // parent gets an exact native lookup; adoption stays pending for
           // the ordinary reader recovery below. All discovery gates default
-          // off; the direct parent-bound create path above is unchanged.
+          // off; missing/unproven parents never enter absent-only create.
           final discovery = journal.readDiscoveryCandidates(currentAuth: captured, limit: 1,
             maximumIntentId: _cloudSyncV2ReceivedRoundCeiling);
           for (final discoveryIntentId in discovery) {

@@ -42,7 +42,7 @@
 
 use crate::cloud_sync_received_record_match::{
     compare_historical_group_record, compare_historical_record_unknown_endpoint,
-    compare_received_record, ReceivedRecordMatchVerdict,
+    compare_received_group_record, compare_received_record, ReceivedRecordMatchVerdict,
 };
 use rustpush::cloud_messages::{
     cloudmessagesp::{MessageProto, MessageProto2, MessageProto3, MessageProto4},
@@ -104,6 +104,20 @@ pub(crate) fn compare_historical_group_raw(
 ) -> Result<ReceivedRecordMatchVerdict, ReceivedRawMatchFailure> {
     verify_raw_fields(found, raw)?;
     Ok(compare_historical_group_record(expected, found))
+}
+
+/// Received group readback: same strict raw-field checks, then the received
+/// group typed comparator. Requires nonempty ORIGINAL endpoint for incoming
+/// and mirrored, exact outer group ID and exact nested iMessage;+; route,
+/// and rejects a direct outer route masquerading as group. Caller separately
+/// proves the authenticated parent and the captured source.
+pub(crate) fn compare_received_group_raw(
+    expected: &CloudMessage,
+    found: &CloudMessage,
+    raw: &ReceivedRawProtos<'_>,
+) -> Result<ReceivedRecordMatchVerdict, ReceivedRawMatchFailure> {
+    verify_raw_fields(found, raw)?;
+    Ok(compare_received_group_record(expected, found))
 }
 
 /// Readback of our exact staged historical media, not equivalence of arbitrary
@@ -807,5 +821,130 @@ mod tests {
         let verdict = compare_received_raw(&projected.clone(), &projected, &raw_projected).unwrap();
         assert_eq!(verdict, Verdict::NeedsProjectionOrUnsupported);
         assert!(!verdict.authorizes_remote_write());
+    }
+    fn group_text_only(text: &str, mirrored: bool) -> CloudMessage {
+        CloudMessage {
+            r#type: 1,
+            chat_id: "opaque-group-9d2c".to_owned(),
+            sender: if mirrored {
+                String::new()
+            } else {
+                "tel:+15555550100".to_owned()
+            },
+            destination_caller_id: "tel:+15555550200".to_owned(),
+            time: 123_000_000,
+            msg_proto: GZipWrapper(MessageProto {
+                text: Some(text.to_owned()),
+                ..Default::default()
+            }),
+            guid: "expected-group-guid".to_owned(),
+            service: "iMessage".to_owned(),
+            flags: MessageFlags::IS_FINISHED
+                | MessageFlags::IS_SENT
+                | MessageFlags::WAS_DATA_DETECTED
+                | if mirrored {
+                    MessageFlags::IS_FROM_ME
+                } else {
+                    MessageFlags::empty()
+                },
+            msg_proto_3: Some(GZipWrapper(MessageProto3 {
+                unk2: Some(0),
+                unk3: Some(0),
+                ..Default::default()
+            })),
+            msg_proto_4: Some(GZipWrapper(MessageProto4 {
+                service: Some("iMessage".to_owned()),
+                group_id: Some("iMessage;+;group-9d2c-canonical".to_owned()),
+                schedule_type: Some(0),
+                schedule_state: Some(0),
+                sent_or_received_off_grid: Some(0),
+                ..Default::default()
+            })),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn received_group_raw_incoming_and_mirrored_match() {
+        use crate::cloud_sync_received_record_match::ReceivedRecordMatchVerdict as Verdict;
+        for mirrored in [false, true] {
+            let expected = group_text_only("hello group", mirrored);
+            let found = expected.clone();
+            let msg_proto = found.msg_proto.0.encode_to_vec();
+            let msg_proto_3 = found.msg_proto_3.as_ref().unwrap().0.encode_to_vec();
+            let msg_proto_4 = found.msg_proto_4.as_ref().unwrap().0.encode_to_vec();
+            let raw = raw_protos(&msg_proto, None, Some(&msg_proto_3), Some(&msg_proto_4));
+            let verdict = compare_received_group_raw(&expected, &found, &raw).unwrap();
+            assert_eq!(verdict, Verdict::EquivalentSupportedPlainText);
+            assert_eq!(
+                compare_received_raw(&expected, &found, &raw).unwrap(),
+                Verdict::NeedsProjectionOrUnsupported
+            );
+            assert!(verdict.precludes_duplicate_create());
+            assert!(!verdict.authorizes_remote_write());
+        }
+    }
+
+    #[test]
+    fn received_group_raw_rejects_unknown_and_duplicate_fields() {
+        let expected = group_text_only("hello group", false);
+        let found = expected.clone();
+        let msg_proto = found.msg_proto.0.encode_to_vec();
+        let msg_proto_3 = found.msg_proto_3.as_ref().unwrap().0.encode_to_vec();
+        let msg_proto_4 = found.msg_proto_4.as_ref().unwrap().0.encode_to_vec();
+        let mut unknown = msg_proto.clone();
+        unknown.extend_from_slice(&var_field(99, 1));
+        let raw_unknown = raw_protos(&unknown, None, Some(&msg_proto_3), Some(&msg_proto_4));
+        assert_eq!(
+            compare_received_group_raw(&expected, &found, &raw_unknown),
+            Err(ReceivedRawMatchFailure::UnknownField)
+        );
+        let mut unknown_nested = msg_proto_4.clone();
+        unknown_nested.extend_from_slice(&var_field(99, 1));
+        let raw_unknown_nested =
+            raw_protos(&msg_proto, None, Some(&msg_proto_3), Some(&unknown_nested));
+        assert_eq!(
+            compare_received_group_raw(&expected, &found, &raw_unknown_nested),
+            Err(ReceivedRawMatchFailure::UnknownField)
+        );
+        let duplicate = [len_field(3, b"hello group"), len_field(3, b"hello group")].concat();
+        let raw_duplicate = raw_protos(&duplicate, None, Some(&msg_proto_3), Some(&msg_proto_4));
+        assert_eq!(
+            compare_received_group_raw(&expected, &found, &raw_duplicate),
+            Err(ReceivedRawMatchFailure::DuplicateField)
+        );
+    }
+
+    #[test]
+    fn received_group_raw_refuses_direct_and_empty_endpoint() {
+        use crate::cloud_sync_received_record_match::ReceivedRecordMatchVerdict as Verdict;
+        let direct = text_only_message("hello");
+        let clean = direct.msg_proto.0.encode_to_vec();
+        let raw_direct = raw_protos(&clean, None, None, None);
+        assert_eq!(
+            compare_received_group_raw(&direct.clone(), &direct, &raw_direct).unwrap(),
+            Verdict::NeedsProjectionOrUnsupported
+        );
+        for mirrored in [false, true] {
+            let group = group_text_only("hello group", mirrored);
+            let msg_proto = group.msg_proto.0.encode_to_vec();
+            let msg_proto_3 = group.msg_proto_3.as_ref().unwrap().0.encode_to_vec();
+            let msg_proto_4 = group.msg_proto_4.as_ref().unwrap().0.encode_to_vec();
+            let raw = raw_protos(&msg_proto, None, Some(&msg_proto_3), Some(&msg_proto_4));
+            assert_eq!(
+                compare_received_raw(&group.clone(), &group, &raw).unwrap(),
+                Verdict::NeedsProjectionOrUnsupported
+            );
+        }
+        let mut empty = group_text_only("hello group", false);
+        empty.destination_caller_id.clear();
+        let msg_proto = empty.msg_proto.0.encode_to_vec();
+        let msg_proto_3 = empty.msg_proto_3.as_ref().unwrap().0.encode_to_vec();
+        let msg_proto_4 = empty.msg_proto_4.as_ref().unwrap().0.encode_to_vec();
+        let raw_empty = raw_protos(&msg_proto, None, Some(&msg_proto_3), Some(&msg_proto_4));
+        assert_eq!(
+            compare_received_group_raw(&empty.clone(), &empty, &raw_empty).unwrap(),
+            Verdict::NeedsProjectionOrUnsupported
+        );
     }
 }

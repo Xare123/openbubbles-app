@@ -6,6 +6,7 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_manual_shado
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_manual_semantic_pull_sampler.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_models.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_outbound_chat_binding.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_historical_parent_binding.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_persistent_keys.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_protector.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_received_archive_identity.dart';
@@ -1331,18 +1332,45 @@ void main() {
       String messageGuid = guid,
       String logicalMarker = 'L',
       String recordMarker = 'M',
+      String? groupId,
+      bool mirrored = false,
     }) async {
-      originalSource = _staged(messageGuid, 'original', chat);
+      final wire = _wire(id: messageGuid, text: 'original',
+        sentAt: _time(2).millisecondsSinceEpoch,
+        sender: mirrored ? _owner : null);
+      final fresh = _fresh(messageGuid, 'original', chat,
+        handleAddr: mirrored ? 'owner@example.com' : 'remote@example.com');
+      fresh.isFromMe = mirrored;
+      if (groupId == null) {
+        originalSource = _staged(messageGuid, 'original', chat);
+      } else {
+        wire.conversation = api.ConversationData(
+          participants: [_owner, 'mailto:remote@example.com', 'tel:+15550000002'],
+          senderGuid: groupId,
+        );
+        if (mirrored) {
+          final sender = Handle(address: 'owner@example.com', service: 'iMessage',
+            uniqueAddressAndService: 'owner@example.com/iMessage')..originalROWID = 9003;
+          store.box<Handle>().put(sender);
+          fresh.handleId = 9003;
+          fresh.handle!.originalROWID = 9003;
+        }
+        final captured = CloudSyncReceivedArchiveIdentity.preview(
+          message: fresh, chat: chat, wire: wire, liveContext: _live,
+        ) as CloudSyncReceivedArchiveEligible;
+        originalSource = CloudSyncReceivedArchiveSourceBinding(
+          accountFingerprint: _account, protectedStoreIdentity: _storeId,
+          messageGuidHash: captured.identity.guidHash,
+          sourceSha256: captured.identity.sourceSha256,
+          protectedReference: 'obcs2.ref.${_a43('R')}',
+          leaseReference: _lease('a'), payloadSha256: _h64('b'), payloadLength: 128,
+        );
+      }
       intentId = journal.saveReceivedCapture(
-        wire: _wire(
-          id: messageGuid,
-          text: 'original',
-          sentAt: _time(2).millisecondsSinceEpoch,
-        ),
+        wire: wire,
         liveContext: _live,
         localChatId: chat.id!,
-        persistMessage: () =>
-            store.box<Message>().put(_fresh(messageGuid, 'original', chat)),
+        persistMessage: () => store.box<Message>().put(fresh),
         source: originalSource,
         capturedAuth: auth,
         stillCurrent: () => true,
@@ -1368,11 +1396,11 @@ void main() {
         logicalEntityKeyHash: _a43(logicalMarker),
         serverRecordIdHash: _a43(recordMarker),
         generation: (await durable.readCheckpoint(scope)).generation,
-        parentBinding: requireCloudSyncRestoredDirectChat(
+        parentBinding: requireCloudSyncHistoricalParentProof(
           store: store,
           messageScope: scope,
-          message: _byGuid(messageGuid)!,
-        ),
+          chatId: chat.id!,
+        ).binding,
         observedAtMs: _time(4).millisecondsSinceEpoch,
         etagHash: found ? _a43('E') : null,
         rawReference: found ? 'obcs2.ref.${_a43('W')}' : null,
@@ -1436,6 +1464,92 @@ void main() {
         currentAuth: currentAuth ?? auth,
         stillCurrent: stillCurrent ?? () => true,
       );
+    }
+
+    const groupId = '77777777-8888-4999-aaaa-bbbbbbbbbbbb';
+    Future<void> seedGroupParent() async {
+      final second = Handle(address: '+15550000002', service: 'iMessage',
+        uniqueAddressAndService: '+15550000002/iMessage')..originalROWID = 9002;
+      store.box<Handle>().put(second);
+      chat = Chat(guid: 'iMessage;+;received-canonical-group',
+        chatIdentifier: 'received-canonical-group', style: 43,
+        usingHandle: 'mailto:owner@example.com')
+        ..cloudGuid = groupId
+        ..groupVersion = 8;
+      chat.handles.addAll([remote, second]);
+      store.box<Chat>().put(chat);
+      final chatScope = scopeFor('chatManateeZone');
+      final applied = await seedSyntheticRestoredChatAppliedSource(
+        objectBox: store, store: durable, chatScope: chatScope, now: _time(1),
+        recordIdHash: _a43('G'));
+      await seedSyntheticRestoredChatProof(objectBox: store, store: durable,
+        chatScope: chatScope, chat: chat, appliedSource: applied, now: _time(1));
+    }
+
+    for (final mirrored in [false, true]) {
+      test('received group create retains exact parent and source after reopen mirrored=$mirrored', () async {
+        await seedGroupParent();
+        await seedOrigin(groupId: groupId, mirrored: mirrored);
+        final parent = requireCloudSyncHistoricalParentProof(
+          store: store, messageScope: scope, chatId: chat.id!);
+        final source = admissionSource();
+        final operation = admit(source: source);
+        final messageId = source.localMessageId;
+        expect(intent().state, 3);
+        expect(intent().origin, mirrored ? 1 : 0);
+        expect(store.box<CloudSyncLocalSendIntentEntity>().count(), 0);
+        await reopen();
+        durable = bindDurable();
+        final reopened = journal.readAdoptedSource(
+          transactionStore: store, operation: operation)!;
+        expect(reopened.source.encode(), originalSource.encode());
+        expect(reopened.observation.parentBinding, parent.binding);
+        expect(requireCloudSyncHistoricalParentProof(store: store,
+          messageScope: scope, chatId: source.localChatId,
+          expectedBinding: parent.binding), parent);
+        expect(() => journal.requireAdoptedDispatch(
+          transactionStore: store, operation: operation), returnsNormally);
+        expect(store.box<Message>().get(messageId)!.isFromMe, mirrored);
+        // Reconciliation can use the pinned parent/source after local UI
+        // deletion, but deletion must still prohibit fresh submission.
+        store.box<Message>().remove(messageId);
+        expect(journal.readAdoptedSource(transactionStore: store,
+          operation: operation)!.source.encode(), originalSource.encode());
+        expect(requireCloudSyncHistoricalParentProof(store: store,
+          messageScope: scope, chatId: source.localChatId,
+          expectedBinding: parent.binding), parent);
+        expect(() => journal.requireAdoptedDispatch(transactionStore: store,
+          operation: operation), throwsA(_fails('cloud_sync_received_archive_admitted_source_changed')));
+        expect((await durable.readOutboxEntries(scope)).single
+          .sameDurableSnapshotAs(operation), isTrue);
+      });
+    }
+
+    for (final drift in ['route', 'version', 'parent deletion']) {
+      test('received group create refuses $drift without adopting outbox work', () async {
+        await seedGroupParent();
+        await seedOrigin(groupId: groupId);
+        final source = admissionSource();
+        if (drift == 'route') {
+          store.box<Chat>().put(chat..cloudGuid = 'changed-parent');
+        } else if (drift == 'version') {
+          store.box<Chat>().put(chat..groupVersion = 9);
+        } else {
+          final latest = store.box<CloudInboxChangeEntity>().getAll()
+            .singleWhere((row) => row.serverRecordIdHash == _a43('G'));
+          store.box<CloudInboxChangeEntity>().put(latest
+            ..isTombstone = true..changeType = CloudChangeType.delete.name);
+        }
+        expect(() => admit(source: source), throwsA(isA<CloudSyncFailure>()
+          .having((error) => error.safeCode, 'safeCode',
+            'cloud_sync_local_send_chat_not_ready')));
+        expect(intent().state, 2);
+        expect(intent().protectedSourceBinding, originalSource.encode());
+        expect(intent().recordObservationBinding, observation.encode());
+        expect(intent().admittedOperationId, isNull);
+        expect(store.box<CloudOutboxOperationEntity>().count(), 0);
+        expect(recordMapCountForZone(store, scope.zone), 0);
+      });
     }
 
     void expectUnadopted() {
@@ -2024,6 +2138,29 @@ void main() {
         expect(checkpoint().fetchedTokenCiphertext, isNotNull);
         expect(checkpoint().pendingFetchedTokenCiphertext, isNull);
       });
+
+      for (final mirrored in [false, true]) {
+        test('received group Found enters ordinary reader and cannot create mirrored=$mirrored', () async {
+          await seedGroupParent();
+          await seedOrigin(groupId: groupId, mirrored: mirrored,
+            disposition: CloudSyncReceivedRecordState.equivalent);
+          final before = durableReaderState();
+          final beforeToken = checkpoint().fetchedTokenCiphertext;
+          expect(admissionSource, throwsA(_fails('cloud_sync_received_archive_not_absent')));
+          expect(handoff(), isTrue);
+          expect(intent().state, 4);
+          expect(durableReaderState()['message'], before['message']);
+          expect(checkpoint().fetchedTokenCiphertext, beforeToken);
+          expect(store.box<CloudOutboxOperationEntity>().count(), 0);
+          expect(messageInbox().single.status, CloudInboxStatus.pending.index);
+          await reopen();
+          durable = bindDurable();
+          expect(intent().state, 4);
+          expect(_byGuid(guid)!.isFromMe, mirrored);
+          expect(store.box<CloudOutboxOperationEntity>().count(), 0);
+          expect(store.box<CloudSyncLocalSendIntentEntity>().count(), 0);
+        });
+      }
 
       test('Found scan honors round ceiling across reopen and excludes state3/state4 ownership',
           () async {

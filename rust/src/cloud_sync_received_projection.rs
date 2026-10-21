@@ -1,5 +1,5 @@
 //! Native received-source to CloudMessage projection, not send/write authority.
-//! Requires a separately authenticated canonical direct chat. Never calls IDS,
+//! Requires a separately authenticated canonical chat. Never calls IDS,
 //! uses the current sender preference, or changes outgoing receipt validators.
 #![cfg_attr(not(test), allow(dead_code))]
 
@@ -34,6 +34,56 @@ pub(crate) fn project_received_plain_text(
     {
         return Err(Failure::BindingMismatch);
     }
+    project_headers(source, expected_route.clone(), expected_route)
+}
+
+/// An exact captured wire group ID must belong to the authenticated parent.
+/// Current members/title/sender preference cannot establish that relationship:
+/// a former participant's old message still keeps its original sender.
+pub(crate) fn project_received_group_plain_text(
+    source: &ReceivedArchiveSource,
+    chat: &CloudCanonicalChatPayload,
+) -> Result<CloudMessage, Failure> {
+    let group = source.group_id().ok_or(Failure::UnsupportedMessage)?;
+    if chat.service() != CloudCanonicalService::IMessage
+        || chat.style() != CloudCanonicalChatStyle::Group
+        || !source.peer().is_empty()
+    {
+        return Err(Failure::UnsupportedMessage);
+    }
+    if chat.guid() != format!("iMessage;+;{}", chat.chat_identifier())
+        || ![
+            chat.chat_identifier(),
+            chat.group_id(),
+            chat.original_group_id(),
+        ]
+        .contains(&group)
+    {
+        return Err(Failure::BindingMismatch);
+    }
+    // CloudKit's outer chat_id is the parent's gid; proto4 carries the
+    // canonical iMessage route. They are deliberately not interchangeable.
+    project_headers(source, chat.group_id().to_owned(), chat.guid().to_owned())
+}
+
+/// Select only from the immutable source, never from mutable UI membership.
+/// Direct projection remains strict and cannot accept a group source.
+pub(crate) fn project_received_archive_plain_text(
+    source: &ReceivedArchiveSource,
+    chat: &CloudCanonicalChatPayload,
+) -> Result<CloudMessage, Failure> {
+    if source.group_id().is_some() {
+        project_received_group_plain_text(source, chat)
+    } else {
+        project_received_plain_text(source, chat)
+    }
+}
+
+fn project_headers(
+    source: &ReceivedArchiveSource,
+    chat_id: String,
+    route: String,
+) -> Result<CloudMessage, Failure> {
     // IDS stores Unix milliseconds; CloudMessage uses Apple-epoch nanoseconds.
     // Checked conversion preserves source precision and rejects impossible time.
     let millis = i64::try_from(source.sent_timestamp()).map_err(|_| Failure::MalformedMessage)?;
@@ -55,7 +105,7 @@ pub(crate) fn project_received_plain_text(
         utm: None,
         r#type: 1,
         error: 0,
-        chat_id: expected_route.clone(),
+        chat_id,
         sender: if mirrored {
             String::new()
         } else {
@@ -85,7 +135,7 @@ pub(crate) fn project_received_plain_text(
         service: "iMessage".into(),
         msg_proto_4: Some(GZipWrapper(MessageProto4 {
             service: Some("iMessage".into()),
-            group_id: Some(expected_route),
+            group_id: Some(route),
             schedule_type: Some(0),
             schedule_state: Some(0),
             sent_or_received_off_grid: Some(0),
@@ -102,7 +152,7 @@ fn bare(handle: &str) -> &str {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::cloud_sync_canonical_dto::CloudCanonicalField;
     use crate::cloud_sync_received_record_match::{
@@ -206,6 +256,115 @@ mod tests {
                 .is_err());
             }
         }
+    }
+    const GROUP: &str = "77777777-8888-4999-aaaa-bbbbbbbbbbbb";
+
+    pub(crate) fn group_source(mirrored: bool) -> ReceivedArchiveSource {
+        let (mut wire, handles) = fixture(mirrored, "Original group text 😀");
+        let conversation = wire.conversation.as_mut().unwrap();
+        conversation.sender_guid = Some(GROUP.into());
+        conversation.participants.push("tel:+15550000002".into());
+        ReceivedArchiveSource::capture(&wire, &handles).unwrap()
+    }
+
+    pub(crate) fn group_parent(alias_position: usize, matched: bool) -> CloudCanonicalChatPayload {
+        let alias = if matched {
+            GROUP
+        } else {
+            "11111111-2222-4333-8444-555555555555"
+        };
+        let identifier = if alias_position == 0 {
+            alias
+        } else {
+            "restored-chat"
+        };
+        let group_id = if alias_position == 1 {
+            alias
+        } else {
+            "opaque-cloud-group"
+        };
+        let original = if alias_position == 2 {
+            alias
+        } else {
+            "old-group-id"
+        };
+        CloudCanonicalChatPayload::new(
+            format!("iMessage;+;{identifier}"),
+            identifier.into(),
+            group_id.into(),
+            original.into(),
+            CloudCanonicalService::IMessage,
+            CloudCanonicalChatStyle::Group,
+            // Deliberately different from the old wire members. Current
+            // members are not proof of historical sender identity.
+            vec!["mailto:current-member@example.invalid".into()],
+            CloudCanonicalField::Absent,
+            CloudCanonicalField::Value("mailto:new-alias@example.invalid".into()),
+            CloudCanonicalField::Value(9),
+            CloudCanonicalField::Absent,
+            CloudCanonicalField::Absent,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn group_projection_binds_exact_parent_alias_and_original_received_endpoint() {
+        for mirrored in [false, true] {
+            for alias_position in 0..3 {
+                let source = group_source(mirrored);
+                let parent = group_parent(alias_position, true);
+                let value = project_received_group_plain_text(&source, &parent).unwrap();
+                assert_eq!(value.chat_id, parent.group_id());
+                assert_eq!(
+                    value.msg_proto_4.as_ref().unwrap().0.group_id.as_deref(),
+                    Some(parent.guid())
+                );
+                assert_eq!(value.destination_caller_id, "owner@example.com");
+                assert_eq!(
+                    value.sender,
+                    if mirrored { "" } else { "remote@example.com" }
+                );
+                assert_eq!(value.flags.contains(MessageFlags::IS_FROM_ME), mirrored);
+                assert_eq!(value.time, 721_692_800_000_000_000);
+                assert_eq!(value.msg_proto.0.text.as_deref(), Some(source.text()));
+                assert_eq!(
+                    compare_received_record(&value, &value),
+                    ReceivedRecordMatchVerdict::NeedsProjectionOrUnsupported
+                );
+                assert!(project_received_plain_text(&source, &parent).is_err());
+                assert!(project_received_archive_plain_text(&source, &parent).is_ok());
+                assert!(project_received_archive_plain_text(
+                    &source,
+                    &group_parent(alias_position, false)
+                )
+                .is_err());
+            }
+        }
+    }
+
+    #[test]
+    fn group_projection_never_guesses_parent_from_members_or_accepts_direct_source() {
+        let group = group_source(false);
+        assert!(project_received_archive_plain_text(
+            &group,
+            &chat(
+                "remote@example.com",
+                CloudCanonicalChatStyle::Direct,
+                "mailto:owner@example.com"
+            )
+        )
+        .is_err());
+        let (wire, handles) = fixture(false, "Direct text");
+        let direct = ReceivedArchiveSource::capture(&wire, &handles).unwrap();
+        assert!(project_received_group_plain_text(&direct, &group_parent(1, true)).is_err());
+        assert!(project_received_archive_plain_text(&direct, &group_parent(1, true)).is_err());
+        // A canonical direct source still follows the unchanged direct path.
+        let parent = chat(
+            "remote@example.com",
+            CloudCanonicalChatStyle::Direct,
+            "mailto:owner@example.com",
+        );
+        assert!(project_received_archive_plain_text(&direct, &parent).is_ok());
     }
     #[test]
     fn invalid_apple_epoch_or_overflow_never_wraps() {

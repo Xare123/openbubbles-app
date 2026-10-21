@@ -11,7 +11,7 @@ import 'cloud_sync_received_archive_source_binding.dart';
 import 'cloud_sync_received_record_observation.dart';
 import 'cloud_operation_identity.dart';
 import 'cloud_sync_models.dart';
-import 'cloud_sync_outbound_chat_binding.dart';
+import 'cloud_sync_historical_parent_binding.dart';
 import 'package:bluebubbles/src/rust/api/api.dart' as api;
 import 'cloudkit_writer_authority.dart';
 import 'cloudkit_writer_ownership.dart';
@@ -165,8 +165,9 @@ final class CloudSyncReceivedArchiveJournal {
         message.messageSummaryInfo.isNotEmpty) {
       throw StateError('cloud_sync_received_archive_admitted_source_changed');
     }
-    if (requireCloudSyncRestoredDirectChat(store: _store, messageScope: scope,
-        message: message) != expected.observation.parentBinding || !stillCurrent()) {
+    requireCloudSyncHistoricalParentUnchanged(store: _store, messageScope: scope,
+      chatId: message.chat.targetId, binding: expected.observation.parentBinding);
+    if (!stillCurrent()) {
       throw StateError('cloud_sync_received_archive_parent_changed');
     }
   }
@@ -452,8 +453,9 @@ final class CloudSyncReceivedArchiveJournal {
       // after learning that it was edited or retracted on another device.
       throw StateError('cloud_sync_received_archive_admitted_source_changed');
     }
-    if (requireCloudSyncRestoredDirectChat(store: _store, messageScope: scope,
-        message: message) != expected.observation.parentBinding || !stillCurrent()) {
+    requireCloudSyncHistoricalParentUnchanged(store: _store, messageScope: scope,
+      chatId: message.chat.targetId, binding: expected.observation.parentBinding);
+    if (!stillCurrent()) {
       throw StateError('cloud_sync_received_archive_parent_changed');
     }
   }
@@ -559,8 +561,8 @@ final class CloudSyncReceivedArchiveJournal {
         _hasOutgoingOverlap(intent, message.guid!)) {
       throw StateError('cloud_sync_received_archive_admitted_source_changed');
     }
-    requireCloudSyncAdoptedChatDependency(store: _store, messageScope: operation.scope,
-      binding: source.observation.parentBinding, expectedChatId: source.localChatId);
+    requireCloudSyncHistoricalParentUnchanged(store: _store, messageScope: operation.scope,
+      binding: source.observation.parentBinding, chatId: source.localChatId);
   }
 
   static String _admittedOperationBinding(CloudOutboxOperation operation,

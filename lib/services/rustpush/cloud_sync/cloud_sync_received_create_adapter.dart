@@ -9,7 +9,7 @@ import 'cloud_protected_page_lease_lifecycle.dart';
 import 'cloud_sync_dev_gate.dart';
 import 'cloud_sync_manual_shadow_sampler.dart';
 import 'cloud_sync_models.dart';
-import 'cloud_sync_outbound_chat_binding.dart';
+import 'cloud_sync_historical_parent_binding.dart';
 import 'cloud_sync_received_archive_journal.dart';
 import 'cloud_sync_received_archive_source_binding.dart';
 import 'cloud_sync_received_record_observation.dart';
@@ -65,7 +65,9 @@ final class CloudSyncReceivedCreateAdapter {
     payloadLength: source.payloadLength,
   );
 
-  CloudSyncRestoredDirectChatProof _parent(
+  // This shared selector supplies only the ordinary restored direct/group
+  // parent proof. Historical origin is not inferred or used by this lane.
+  CloudSyncHistoricalParentProof _parent(
     CloudSyncScope scope,
     CloudSyncReceivedArchiveAdmissionSource source,
   ) {
@@ -73,10 +75,11 @@ final class CloudSyncReceivedCreateAdapter {
     if (message != null && message.chat.targetId != source.localChatId) {
       throw StateError('cloud_sync_received_archive_parent_changed');
     }
-    final parent = requireCloudSyncRestoredDirectChatProofForId(
+    final parent = requireCloudSyncHistoricalParentProof(
       store: store,
       messageScope: scope,
       chatId: source.localChatId,
+      expectedBinding: source.observation.parentBinding,
     );
     if (parent.binding != source.observation.parentBinding) {
       throw StateError('cloud_sync_received_archive_parent_changed');

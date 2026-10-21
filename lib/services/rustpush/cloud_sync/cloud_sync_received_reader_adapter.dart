@@ -5,7 +5,7 @@ import 'package:bluebubbles/src/rust/lib.dart' as native;
 import 'cloud_protected_page_lease_lifecycle.dart';
 import 'cloud_sync_dev_gate.dart';
 import 'cloud_sync_models.dart';
-import 'cloud_sync_outbound_chat_binding.dart';
+import 'cloud_sync_historical_parent_binding.dart';
 import 'cloud_sync_production_sampler_adapter.dart';
 import 'cloud_sync_protector.dart';
 import 'cloud_sync_received_archive_journal.dart';
@@ -90,11 +90,15 @@ Future<bool> handoffCloudSyncReceivedFound({
         intentId: intentId,
         currentAuth: auth,
       );
-      final parent = requireCloudSyncRestoredDirectChatProofForId(
+      final parent = requireCloudSyncHistoricalParentProof(
         store: objectBox,
         messageScope: scope,
         chatId: source.localChatId,
+        expectedBinding: source.observation.parentBinding,
       );
+      if (parent.binding != source.observation.parentBinding) {
+        throw StateError('cloud_sync_received_archive_parent_changed');
+      }
       final checkpoint = await durable.readCheckpoint(scope);
       if (checkpoint.generation != source.observation.generation) {
         throw StateError('cloud_sync_received_archive_admission_changed');
@@ -117,10 +121,11 @@ Future<bool> handoffCloudSyncReceivedFound({
             currentCheckpoint.generation != checkpoint.generation) {
           throw StateError('cloud_sync_received_archive_identity_changed');
         }
-        final currentParent = requireCloudSyncRestoredDirectChatProofForId(
+        final currentParent = requireCloudSyncHistoricalParentProof(
           store: objectBox,
           messageScope: scope,
           chatId: source.localChatId,
+          expectedBinding: parent.binding,
         );
         if (currentParent.binding != parent.binding ||
             currentParent.generation != parent.generation ||

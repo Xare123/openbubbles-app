@@ -58,6 +58,10 @@
 //! - Both sides are already-decoded structs, so protobuf wire-level unknown
 //!   fields dropped at decode time sit outside this comparison. Exact-byte
 //!   binding stays the parent-owned readback job.
+//! - The public comparator below remains direct-only. A separate crate-private
+//!   received-group entry point requires an authenticated parent/source at its
+//!   caller and preserves the original nonempty receiving endpoint. It reuses
+//!   the same content/status/time checks, not historical endpoint relaxation.
 //! - Dictionary order is immaterial: attributed bodies are compared through
 //!   the existing bounded decoder, never byte-wise.
 
@@ -236,6 +240,27 @@ pub(crate) fn compare_historical_group_record(
         return ReceivedRecordMatchVerdict::NeedsProjectionOrUnsupported;
     }
     compare_record(expected, found, !sent, true)
+}
+
+/// Received group mode: exact outer group ID plus exact nested canonical
+/// iMessage;+; route, with nonempty ORIGINAL destination endpoint for both
+/// incoming and mirrored directions. Never applies historical
+/// unknown-endpoint relaxation. Caller separately proves the authenticated
+/// parent and the captured source; this helper only compares the projected
+/// CloudMessage pair. Rejects a direct outer route masquerading as group.
+/// Rich content, status and time semantics stay identical to the direct
+/// comparator because this reuses compare_record.
+pub(crate) fn compare_received_group_record(
+    expected: &CloudMessage,
+    found: &CloudMessage,
+) -> ReceivedRecordMatchVerdict {
+    if expected.destination_caller_id.is_empty() {
+        return ReceivedRecordMatchVerdict::NeedsProjectionOrUnsupported;
+    }
+    if expected.chat_id.starts_with("iMessage;-;") {
+        return ReceivedRecordMatchVerdict::NeedsProjectionOrUnsupported;
+    }
+    compare_record(expected, found, false, true)
 }
 
 fn compare_record(
@@ -891,5 +916,147 @@ mod tests {
             assert!(verdict.precludes_duplicate_create());
             assert!(!verdict.authorizes_remote_write());
         }
+    }
+    fn received_group_plain(text: &str, mirrored: bool) -> CloudMessage {
+        CloudMessage {
+            r#type: 1,
+            chat_id: "opaque-group-9d2c".to_owned(),
+            sender: if mirrored {
+                String::new()
+            } else {
+                "tel:+15555550100".to_owned()
+            },
+            destination_caller_id: "tel:+15555550200".to_owned(),
+            time: 123_000_000,
+            msg_proto: GZipWrapper(MessageProto {
+                text: Some(text.to_owned()),
+                attributed_body: Some(plain_body(text)),
+                ..Default::default()
+            }),
+            guid: "expected-group-guid".to_owned(),
+            service: "iMessage".to_owned(),
+            flags: MessageFlags::IS_FINISHED
+                | MessageFlags::IS_SENT
+                | MessageFlags::WAS_DATA_DETECTED
+                | if mirrored {
+                    MessageFlags::IS_FROM_ME
+                } else {
+                    MessageFlags::empty()
+                },
+            msg_proto_3: Some(GZipWrapper(MessageProto3 {
+                unk2: Some(0),
+                unk3: Some(0),
+                ..Default::default()
+            })),
+            msg_proto_4: Some(GZipWrapper(MessageProto4 {
+                service: Some("iMessage".into()),
+                group_id: Some("iMessage;+;group-9d2c-canonical".into()),
+                schedule_type: Some(0),
+                schedule_state: Some(0),
+                sent_or_received_off_grid: Some(0),
+                ..Default::default()
+            })),
+            ..Default::default()
+        }
+    }
+
+    fn group_verdict_of(
+        expected: &CloudMessage,
+        found: &CloudMessage,
+    ) -> ReceivedRecordMatchVerdict {
+        compare_received_group_record(expected, found)
+    }
+
+    #[test]
+    fn received_group_incoming_matches() {
+        let expected = received_group_plain("hello group", false);
+        assert_eq!(
+            group_verdict_of(&expected, &expected.clone()),
+            ReceivedRecordMatchVerdict::EquivalentSupportedPlainText
+        );
+    }
+
+    #[test]
+    fn received_group_mirrored_matches_with_status_only_difference() {
+        let expected = received_group_plain("hello group", true);
+        let mut found = expected.clone();
+        found.flags |= MessageFlags::IS_READ;
+        found.msg_proto.0.date_read = Some(779_000_100);
+        assert_eq!(
+            group_verdict_of(&expected, &found),
+            ReceivedRecordMatchVerdict::EquivalentSupportedPlainText
+        );
+    }
+
+    #[test]
+    fn received_group_core_identity_changes_conflict() {
+        use ReceivedRecordMatchVerdict as Verdict;
+        let expected = received_group_plain("hello group", false);
+        let mut sender = expected.clone();
+        sender.sender = "tel:+15555550999".to_owned();
+        assert_eq!(
+            group_verdict_of(&expected, &sender),
+            Verdict::ConflictingCoreIdentity
+        );
+        let mut endpoint = expected.clone();
+        endpoint.destination_caller_id = "tel:+15555550300".to_owned();
+        assert_eq!(
+            group_verdict_of(&expected, &endpoint),
+            Verdict::ConflictingCoreIdentity
+        );
+        let mut outer = expected.clone();
+        outer.chat_id = "opaque-group-other".to_owned();
+        assert_eq!(
+            group_verdict_of(&expected, &outer),
+            Verdict::ConflictingCoreIdentity
+        );
+        let mut nested = expected.clone();
+        nested.msg_proto_4 = Some(GZipWrapper(MessageProto4 {
+            service: Some("iMessage".into()),
+            group_id: Some("iMessage;+;group-other-canonical".into()),
+            schedule_type: Some(0),
+            schedule_state: Some(0),
+            sent_or_received_off_grid: Some(0),
+            ..Default::default()
+        }));
+        assert_eq!(
+            group_verdict_of(&expected, &nested),
+            Verdict::ConflictingCoreIdentity
+        );
+    }
+
+    #[test]
+    fn received_group_rejects_direct_and_empty_endpoint() {
+        use ReceivedRecordMatchVerdict as Verdict;
+        let direct = direct_plain("hello");
+        assert_eq!(
+            group_verdict_of(&direct, &direct.clone()),
+            Verdict::NeedsProjectionOrUnsupported
+        );
+        for mirrored in [false, true] {
+            let group = received_group_plain("hello group", mirrored);
+            assert_eq!(
+                verdict_of(&group, &group.clone()),
+                Verdict::NeedsProjectionOrUnsupported
+            );
+        }
+        let mut masquerading = received_group_plain("hello group", false);
+        masquerading.chat_id = "iMessage;-;+15555550100".to_owned();
+        assert_eq!(
+            group_verdict_of(&masquerading, &masquerading.clone()),
+            Verdict::NeedsProjectionOrUnsupported
+        );
+        let mut empty_incoming = received_group_plain("hello group", false);
+        empty_incoming.destination_caller_id.clear();
+        assert_eq!(
+            group_verdict_of(&empty_incoming, &empty_incoming.clone()),
+            Verdict::NeedsProjectionOrUnsupported
+        );
+        let mut empty_mirrored = received_group_plain("hello group", true);
+        empty_mirrored.destination_caller_id.clear();
+        assert_eq!(
+            group_verdict_of(&empty_mirrored, &empty_mirrored.clone()),
+            Verdict::NeedsProjectionOrUnsupported
+        );
     }
 }

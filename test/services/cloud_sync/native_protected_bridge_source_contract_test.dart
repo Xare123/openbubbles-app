@@ -501,6 +501,10 @@ void main() {
     expect(groupBranch, greaterThanOrEqualTo(0));
     expect(directInspection, greaterThan(groupBranch));
     expect(materialize.substring(groupBranch, directInspection), contains('continue;'));
+    final groupAdmission = materialize.substring(groupBranch, directInspection);
+    expect(groupAdmission, contains('requireCloudSyncHistoricalParentProof('));
+    expect(groupAdmission, contains('chatId: receivedChat.id!'));
+    expect(groupAdmission, contains('catch (_)'));
     expect(materialize, contains('CloudSyncDevGate.receivedArchiveDiscoveryEnabled'));
     expect(materialize, isNot(contains('onlyWithoutObservation')));
     expect(materialize, contains('maximumIntentId: _cloudSyncV2ReceivedRoundCeiling'));
@@ -524,7 +528,8 @@ void main() {
     for(final proof in ['!CloudSyncDevGate.receivedArchiveCaptureEnabled',
         '!CloudSyncDevGate.receivedArchiveInspectionEnabled',
         '!CloudKitWriterOwnership.v2MutationsEnabled',
-        'readMaterializedForInspection(', 'requireCloudSyncRestoredDirectChatProof(',
+        'readMaterializedForInspection(', 'requireCloudSyncHistoricalParentProof(',
+        'expectedBinding: parent.binding',
         'CloudSyncWriteChatIdentitySession(', 'nativeWriterPauseToken: token',
         'cloudSyncPrepareReceivedArchiveInspection(',
         'api.cloudSyncStageReceivedArchiveInspection(',

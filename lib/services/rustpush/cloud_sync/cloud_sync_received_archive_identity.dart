@@ -538,9 +538,9 @@ final class CloudSyncReceivedArchiveIdentity {
   static bool _samePersistedChat(Chat a, Chat b) =>
       a.id != null && a.id! > 0 && a.id == b.id && a.guid == b.guid;
 
-  /// Routing only: a group may use exact discovery, never the direct-parent
-  /// inspection/create path. False is not direct-parent or upload authority;
-  /// native source projection and the ordinary parent proofs still decide.
+  /// Routing only: a group needs an exact group parent or GUID discovery,
+  /// never direct-parent proof. False is not upload authority; native source
+  /// projection and the ordinary parent proofs still decide.
   static bool requiresGroupDiscovery(Chat chat) =>
       chat.handles.length > 1 ||
       chat.style == 43 ||

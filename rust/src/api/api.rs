@@ -892,7 +892,7 @@ pub async fn cloud_sync_prepare_received_archive_inspection(
     let Some(CloudCanonicalPayload::Chat(chat))=decoded.payload() else {
         return Err(anyhow!("cloud_sync_received_archive_parent_not_ready"));
     };
-    let expected = crate::cloud_sync_received_projection::project_received_plain_text(&received,chat)
+    let expected = crate::cloud_sync_received_projection::project_received_archive_plain_text(&received,chat)
         .map_err(|_|anyhow!("cloud_sync_received_archive_parent_changed"))?;
     let container=cloud_messages_client.get_cached_container_for_read_authentication(&permit).await
         .map_err(|_|anyhow!("cloud_sync_received_archive_identity_unavailable"))?;
@@ -926,7 +926,12 @@ pub async fn cloud_sync_prepare_received_archive_inspection(
                         msg_proto:&view.msg_proto,msg_proto_2:view.msg_proto_2.as_deref(),
                         msg_proto_3:view.msg_proto_3.as_deref(),msg_proto_4:view.msg_proto_4.as_deref(),
                     };
-                    match crate::cloud_sync_received_raw_match::compare_received_raw(&expected,&view.message,&raw_protos) {
+                    let comparison = if received.group_id().is_some() {
+                        crate::cloud_sync_received_raw_match::compare_received_group_raw(&expected,&view.message,&raw_protos)
+                    } else {
+                        crate::cloud_sync_received_raw_match::compare_received_raw(&expected,&view.message,&raw_protos)
+                    };
+                    match comparison {
                         Ok(Verdict::EquivalentSupportedPlainText)=>CloudSyncReceivedRecordDisposition::Equivalent,
                         Ok(Verdict::ConflictingCoreIdentity)=>CloudSyncReceivedRecordDisposition::ConflictingIdentity,
                         _=>CloudSyncReceivedRecordDisposition::NeedsProjection,
@@ -1516,7 +1521,7 @@ pub async fn cloud_sync_stage_received_archive_create(
     Ok(cloud_sync_bridge_stage(stage))
 }
 
-/// Reopen source + current exact direct Chat for prepare/reconciliation. This
+/// Reopen source + current exact Chat for prepare/reconciliation. This
 /// does not establish remote absence, create files or change remote state.
 #[allow(clippy::too_many_arguments)]
 pub async fn cloud_sync_open_received_archive_create_proof(
@@ -1600,7 +1605,7 @@ fn cloud_sync_validate_received_create_proof(
     let source = crate::cloud_sync_received_source_stage::open_received_archive_source(
         PathBuf::from(storage), auth.account_fingerprint.clone(), &proof.source)
         .map_err(map_cloud_sync_outbound_failure)?;
-    crate::cloud_sync_received_projection::project_received_plain_text(&source, &proof.route)
+    crate::cloud_sync_received_projection::project_received_archive_plain_text(&source, &proof.route)
         .map_err(map_cloud_sync_outbound_failure)?;
     Ok(source)
 }
