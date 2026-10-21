@@ -66,6 +66,23 @@ final class CloudSyncAutomaticArchivePreference {
   /// Sent-only grants never inherit received-message consent.
   bool get includesReceived => _enabledVersion == 2;
 
+  /// Local source retention only, independent of a foreground upload worker.
+  /// The caller supplies actual native identity, durable ownership and the
+  /// reloaded preference. This does not authorize any CloudKit operation.
+  bool permitsReceivedCapture({
+    required String accountFingerprint,
+    required String protectedStoreIdentity,
+    required int ownershipEpoch,
+    required Object? currentStoredValue,
+  }) =>
+      includesReceived &&
+      storedValue == currentStoredValue &&
+      identity.matchesBinding(
+        accountFingerprint: accountFingerprint,
+        protectedStoreIdentity: protectedStoreIdentity,
+        ownershipEpoch: ownershipEpoch,
+      );
+
   int? get _enabledVersion {
     if (identity.ownershipEpoch <= 0 || storedValue is! String) return null;
     try {

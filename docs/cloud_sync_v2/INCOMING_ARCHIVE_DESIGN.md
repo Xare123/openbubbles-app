@@ -11,7 +11,7 @@ timestamp: 2026-10-21
 
 ## Current offline integration, October21
 
-The candidate on319ec27d5 adds a separate, explicit received-text scope to the
+Source14876fecb on319ec27d5 adds a separate, explicit received-text scope to the
 existing Profile automatic-archive grant. V1 sent-only consent remains unchanged;
 v2 includes queued and future supported received/mirrored plain text. A new
 Profile flag plus all four received flags are default false. No flags are
@@ -28,7 +28,23 @@ The native mutation boundary rechecks the current grant synchronously.
 Affected674tests, final readback230tests (overlapping) and six enabled-gate tests
 passed offline; 19path analysis clean. Disposable real ObjectBox fixtures use
 synthetic native collaborators, not Apple or Android evidence. The native
-seal-order repair below still needs exact-source compilation. Rich/media,
+seal-order repair passed sole strict native39593669378/job119200605175:
+951appRust/449rustpush/16provider(1ignored/12filtered)/40protector passed,
+binding reproducibility, compilation and postjobs passed,18m37s. No new API,
+generated bindings, schema, lockfile or submodule pins changed.
+
+A subsequent Dart-only capture correction separates local source retention
+from foreground upload-worker availability. A fresh background engine reloads
+the saved v2 grant after actual native identity and durable owner capture, then
+checks exact account/store/automatic-archive epoch and grant token before atomic
+Message/seed retention and after asynchronous identity checks. Missing/revoked
+scope keeps ordinary persistence; no upload worker or network write is started.
+Inspection/upload workers keep their foreground grant gates. Source RED/GREEN
+and six-file165affected tests passed, including real disposable ObjectBox;
+four-path analysis has zero errors and the exact same8baseline diagnostics
+(1warning/7info). Review accepted; not a live cross-engine timing claim.
+
+Rich/media,
 received mutations, truly unavailable pre-seal keys/account proof, live lifecycle
 and public rollout remain open. Canonical evidence: received-profile-consent-20261021.
 

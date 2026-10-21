@@ -69,6 +69,56 @@ final class _Harness {
 
 void main() {
   test(
+    'received capture grant survives worker absence but not binding or scope changes',
+    () {
+      final identity = _identity();
+      final stored = _receivedGrantFor(2);
+      bool permits({
+        CloudSyncAutomaticArchiveIdentity? actual,
+        Object? currentStoredValue,
+        Object? capturedValue,
+      }) {
+        final binding = actual ?? identity;
+        // Reconstructing a saved grant does not require a runtime callback.
+        final consent = CloudSyncAutomaticArchivePreference(
+          identity: identity,
+          storedValue: capturedValue ?? stored,
+        );
+        return consent.permitsReceivedCapture(
+          accountFingerprint: binding.accountFingerprint,
+          protectedStoreIdentity: binding.protectedStoreIdentity,
+          ownershipEpoch: binding.ownershipEpoch,
+          currentStoredValue: currentStoredValue ?? stored,
+        );
+      }
+
+      expect(permits(), isTrue);
+      expect(permits(actual: _identity(account: 'B')), isFalse);
+      expect(permits(actual: _identity(protectedStore: 'T')), isFalse);
+      expect(permits(actual: _identity(epoch: 3)), isFalse);
+      expect(permits(actual: _identity(epoch: 0)), isFalse);
+      for (final value in <Object>[
+        _grantFor(2),
+        jsonEncode([1, 'off']),
+        _receivedGrantFor(2, grant: 'a' * 32),
+        _receivedGrantFor(3),
+        'invalid',
+        false,
+      ]) {
+        expect(permits(currentStoredValue: value), isFalse);
+      }
+      expect(
+        permits(capturedValue: _grantFor(2), currentStoredValue: _grantFor(2)),
+        isFalse,
+      );
+      expect(
+        permits(capturedValue: 'invalid', currentStoredValue: 'invalid'),
+        isFalse,
+      );
+    },
+  );
+
+  test(
     'native binding requires the exact prepared account store and epoch',
     () {
       final identity = _identity();

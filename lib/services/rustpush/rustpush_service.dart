@@ -6798,7 +6798,7 @@ class RustPushService extends GetxService {
       IncomingMessagePersistence? receivedPersistence;
       if (CloudSyncDevGate.receivedArchiveCaptureEnabled &&
           CloudKitWriterOwnership.v2MutationsEnabled &&
-          _cloudSyncV2CanaryRuntimeAllowed && _cloudSyncV2ReceivedRuntimeAllowed &&
+          _cloudSyncV2CanaryRuntimeAllowed && _cloudSyncV2ReceivedCaptureAvailable &&
           !ss.settings.cloudSyncingEnabled.value &&
           myMsg.message is api.Message_Message && myMsg.receivedOnHandle != null &&
           receiveState != null) {
@@ -8539,6 +8539,11 @@ class RustPushService extends GetxService {
       (cloudSyncV2ReceivedArchiveAvailable &&
           _cloudSyncV2AutomaticReceivedArchiveCurrent?.call() == true);
 
+  // Routing availability only. Capture checks a reloaded, native-bound saved
+  // grant itself, so a cold background engine need not start an upload worker.
+  bool get _cloudSyncV2ReceivedCaptureAvailable =>
+      _cloudSyncV2DeveloperRuntimeAllowed || cloudSyncV2ReceivedArchiveAvailable;
+
   CloudSyncAutomaticArchivePreferences _cloudSyncV2AutomaticArchivePreferences() {
     final expectedState = state;
     final client = expectedState?.icloudServices?.cloudMessagesClient;
@@ -9149,7 +9154,7 @@ class RustPushService extends GetxService {
       Message Function() persistMessage) async {
     if (!CloudSyncDevGate.receivedArchiveCaptureEnabled ||
         !CloudKitWriterOwnership.v2MutationsEnabled ||
-        !_cloudSyncV2CanaryRuntimeAllowed || !_cloudSyncV2ReceivedRuntimeAllowed ||
+        !_cloudSyncV2CanaryRuntimeAllowed || !_cloudSyncV2ReceivedCaptureAvailable ||
         loggingOut || ss.settings.cloudSyncingEnabled.value || statePath.isEmpty ||
         wire.receivedOnHandle == null) {
       return persistMessage();
@@ -9160,18 +9165,12 @@ class RustPushService extends GetxService {
     final objectBox = Database.store;
     final storagePath = statePath;
     final developerCapture = _cloudSyncV2DeveloperRuntimeAllowed;
-    final profileGrant = _cloudSyncV2AutomaticReceivedArchiveCurrent;
-    final profileIdentity = _cloudSyncV2AutomaticArchiveIdentity;
-    bool stillCurrent() => !loggingOut && !_cloudSyncV2OutboundQuiescing &&
+    bool identityCurrent() => !loggingOut && !_cloudSyncV2OutboundQuiescing &&
         identical(capturedState, state) && identical(client, state?.icloudServices?.cloudMessagesClient) &&
         !objectBox.isClosed() && identical(objectBox, Database.store) &&
-        storagePath == statePath && !ss.settings.cloudSyncingEnabled.value &&
-        (developerCapture ? _cloudSyncV2DeveloperRuntimeAllowed :
-          identical(profileGrant, _cloudSyncV2AutomaticReceivedArchiveCurrent) &&
-          identical(profileIdentity, _cloudSyncV2AutomaticArchiveIdentity) &&
-          cloudSyncV2ReceivedArchiveAvailable && profileGrant?.call() == true);
+        storagePath == statePath && !ss.settings.cloudSyncingEnabled.value;
     final localHandles = await api.getHandles(state: capturedState.client);
-    if (!stillCurrent()) throw StateError('cloud_sync_received_archive_identity_changed');
+    if (!identityCurrent()) throw StateError('cloud_sync_received_archive_identity_changed');
     final live = CloudSyncReceivedArchiveLiveContext(
       observedViaLiveReceive: true, observedLocalHandles: localHandles,
       receivedOnHandle: wire.receivedOnHandle!,
@@ -9183,10 +9182,10 @@ class RustPushService extends GetxService {
       Logger.info('Cloud Sync V2 received source skipped code=${shape.reason}');
       return persistMessage();
     }
-    if (!stillCurrent()) throw StateError('cloud_sync_received_archive_identity_changed');
+    if (!identityCurrent()) throw StateError('cloud_sync_received_archive_identity_changed');
     final metadata = await api.cloudSyncCaptureReceivedIdentity(
         cloudMessagesClient: client, storageDirectory: storagePath);
-    if (!stillCurrent()) throw StateError('cloud_sync_received_archive_identity_changed');
+    if (!identityCurrent()) throw StateError('cloud_sync_received_archive_identity_changed');
     final captured = CloudSyncNativeAuthSnapshot.fromNative(
       nativeSessionId: metadata.nativeSessionId, accountFingerprint: metadata.accountFingerprint,
       protectedStoreIdentity: metadata.protectedStoreIdentity, cloudMessagesClient: client,
@@ -9194,17 +9193,40 @@ class RustPushService extends GetxService {
     final authority = ObjectBoxCloudKitWriterAuthority(store: objectBox);
     final owner = authority.read(CloudKitWriterScope(accountFingerprint: captured.accountFingerprint));
     if (owner == null || owner.owner != CloudKitWriterOwner.v2) return persistMessage();
-    if (!developerCapture && (profileIdentity == null || !profileIdentity.matchesBinding(
+    final captureIdentity = CloudSyncAutomaticArchiveIdentity(
         accountFingerprint: captured.accountFingerprint,
         protectedStoreIdentity: captured.protectedStoreIdentity,
-        ownershipEpoch: owner.automaticArchiveEpoch))) {
-      throw StateError('cloud_sync_received_archive_identity_changed');
+        ownershipEpoch: owner.automaticArchiveEpoch);
+    if (!developerCapture) {
+      await ss.prefs.reload();
+      if (!identityCurrent()) throw StateError('cloud_sync_received_archive_identity_changed');
     }
+    final consent = developerCapture ? null : CloudSyncAutomaticArchivePreference(
+        identity: captureIdentity, storedValue: ss.prefs.get(captureIdentity.preferenceKey));
+    bool stillCurrent() {
+      if (!identityCurrent()) return false;
+      if (developerCapture) return _cloudSyncV2DeveloperRuntimeAllowed;
+      if (!cloudSyncV2ReceivedArchiveAvailable || consent == null) return false;
+      final currentOwner = authority.read(CloudKitWriterScope(
+          accountFingerprint: captured.accountFingerprint));
+      return currentOwner != null && currentOwner.owner == CloudKitWriterOwner.v2 &&
+          consent.permitsReceivedCapture(
+            accountFingerprint: captured.accountFingerprint,
+            protectedStoreIdentity: captured.protectedStoreIdentity,
+            ownershipEpoch: currentOwner.automaticArchiveEpoch,
+            currentStoredValue: ss.prefs.get(consent.identity.preferenceKey));
+    }
+    // No worker exists in a fresh background engine. Preserve only a capture
+    // covered by the saved grant; the existing foreground worker owns uploads.
+    if (!stillCurrent()) return persistMessage();
     final journal = CloudSyncReceivedArchiveJournal(
       store: objectBox, authority: authority, authoritySnapshot: owner,
     );
     if (journal.hasOutgoingOrigin(wire.id)) return persistMessage();
     Future<void> validateCurrent() async {
+      if (!developerCapture) {
+        await ss.prefs.reload();
+      }
       if (!stillCurrent()) throw StateError('cloud_sync_received_archive_identity_changed');
       final now = await api.cloudSyncCaptureReceivedIdentity(
           cloudMessagesClient: client, storageDirectory: storagePath);

@@ -482,7 +482,7 @@ void main() {
     for (final fence in [
       '!CloudSyncDevGate.receivedArchiveCaptureEnabled',
       '!CloudKitWriterOwnership.v2MutationsEnabled',
-      '!_cloudSyncV2CanaryRuntimeAllowed', '!_cloudSyncV2ReceivedRuntimeAllowed',
+      '!_cloudSyncV2CanaryRuntimeAllowed', '!_cloudSyncV2ReceivedCaptureAvailable',
       'ss.settings.cloudSyncingEnabled.value', 'wire.receivedOnHandle == null',
       'owner.owner != CloudKitWriterOwner.v2', 'journal.hasOutgoingOrigin(wire.id)',
       'CloudSyncReceivedArchiveStaging.persistSealed(', 'api.cloudSyncSealReceivedArchiveSeed(',
@@ -577,7 +577,7 @@ void main() {
         '// Local intent capture only.');
     expect(received, contains('identical(profileGrant, _cloudSyncV2AutomaticReceivedArchiveCurrent)'));
     expect(received, contains('profileGrant?.call() == true'));
-    expect(RegExp(r'profileIdentity\.matchesBinding\(').allMatches(received).length, 2);
+    expect(RegExp(r'profileIdentity\.matchesBinding\(').allMatches(received).length, 1);
     expect(received, contains('ownershipEpoch: owner.automaticArchiveEpoch'));
     // The ordinary reader is internally invoked under the same one-flight
     // owner; public diagnostic authorization remains unchanged.
@@ -610,6 +610,32 @@ void main() {
     expect(open, contains('operation.status == CloudOutboxStatus.confirmed'));
     expect(open, contains('if (!readbackOnly) _requireReceivedConsent()'));
     expect(open, contains('current.status != operation.status'));
+  });
+
+  test('received capture checks durable consent without a foreground worker', () {
+    final service = File('lib/services/rustpush/rustpush_service.dart').readAsStringSync();
+    final routing = _section(service, 'IncomingMessagePersistence? receivedPersistence;',
+        '"rustpush_receive incoming_queue_enqueue');
+    expect(routing, contains('_cloudSyncV2ReceivedCaptureAvailable'));
+    expect(routing, isNot(contains('_cloudSyncV2ReceivedRuntimeAllowed')));
+    final capture = _section(service, 'Future<Message> _captureCloudSyncV2ReceivedMessage(',
+        '// Local intent capture only.');
+    expect(capture, contains('!_cloudSyncV2ReceivedCaptureAvailable'));
+    expect(capture, isNot(contains('_cloudSyncV2AutomaticReceivedArchiveCurrent')));
+    expect(capture, isNot(contains('_cloudSyncV2AutomaticArchiveIdentity')));
+    expect(capture, isNot(contains('ls.isUiThread')));
+    expect(capture, contains('await ss.prefs.reload()'));
+    expect(capture, contains('consent.permitsReceivedCapture('));
+    expect(capture, contains('currentOwner.automaticArchiveEpoch'));
+    expect(capture, contains('currentStoredValue: ss.prefs.get(consent.identity.preferenceKey)'));
+    _expectBefore(capture, 'await api.cloudSyncCaptureReceivedIdentity(',
+        'final captureIdentity = CloudSyncAutomaticArchiveIdentity(');
+    _expectBefore(capture, 'if (!stillCurrent()) return persistMessage();',
+        'CloudSyncReceivedArchiveStaging.persistSealed(');
+    final worker = _section(service, 'void _queueCloudSyncV2ReceivedSources(',
+        'Future<({bool more, bool deferred})> _materializeCloudSyncV2ReceivedSources()');
+    expect(worker, contains('!_cloudSyncV2ReceivedRuntimeAllowed'));
+    expect(worker, contains('!ls.isUiThread'));
   });
 
   test('received inspection adapter cannot turn an observation into a save', () {

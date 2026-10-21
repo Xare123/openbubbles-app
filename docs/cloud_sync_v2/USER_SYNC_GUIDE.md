@@ -68,6 +68,9 @@ acknowledged or resent.
 The new Profile flag and four received flags all default off. This candidate has
 offline preference/widget/database/queue checks, not current Android or Apple
 acceptance. Installation and build availability never grant archival permission.
+Local source capture reads the saved choice without needing the foreground
+upload worker. Eligible captured work waits for that existing worker; background
+upload timing is not promised by this change.
 
 ## If it stops or warns
 
