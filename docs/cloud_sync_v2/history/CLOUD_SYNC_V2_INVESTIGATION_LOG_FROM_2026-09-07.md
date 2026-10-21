@@ -7950,3 +7950,57 @@ candidate, not a duplicate native-only run. Standing16-core standard primary
 lane/75-minute lifetime/signing/cleanup retained. Source and dispatch will be
 recorded in received-canary-20261021. No phone/account/send/upload/merge/cleanup.
 Alpha693 unknown-deletion decision still unanswered; all prior data preserved.
+
+## October21: integrated run and deletion-preserving recovery review
+
+Human selected PRESERVE DELETIONS; HOLD AMBIGUOUS MESSAGES. The prior unanswered
+choice is superseded, not an authorization to revive or archive ambiguous rows.
+ONE run39644321492 owns frozen source909bcfb3a15bdefe802824a304863a14d4bd6c69 /
+workflow6238cdc70. Creator119375784135 succeeded; worker119376678235 is in selected
+parallel suites after exact checkout, strict generated drift and bridge checks
+passed. Watch19394 verified live. No redispatch or source-branch push.
+
+Heisenberg found the private merge inventory omitted the newly added received
+mutation table; the existing completeness guard correctly refused a merge.
+Added that one table and five synthetic completeness/preservation/rollback
+cases without changing eligibility. Parent reviewed source and independently
+ran the same relevant file:31passed, session72239 terminal0; log retained in
+received-canary-20261021/merge-protected-parent-review.log. Supported close and
+wait:not_found verified; helpers remain untracked/private and no real data read
+or merge occurred. Full app source and frozen HEAD unchanged.
+
+Prepared artifact verifier requires exact successful run/source/flags/signature/
+native identities and cleanup. It initially assumed no .env asset; comparison
+with the exact source and previous signed APK shows the unchanged36-byte public
+template contains two EMPTY values. It now requires exact template bytes and
+zero values, not omission. Python compilation passed. No build guard or secret
+policy changed. Current APK/artifact/runtime success remains unproven.
+C:26,281,361,408B free; no cleanup, phone, account, send, upload or merge action.
+
+## October21: full-run failure triaged and exact diagnostic vocabulary repaired
+
+39644321492 terminal FAILURE, worker11937667823520m38s. Exact source909/workflow6238;
+988appRust/450rustpush/40protector and enabled7flag tests passed. Dart5446passed,
+2failed,5skipped.8 fixed safe-reporting codes were missing from the allowlist:
+one received attachment-proof code and seven received mutation update/adoption/
+reflection/terminal codes. Actual emitters were reviewed. No wildcard, retry
+permission, dispatch, schema, native, bindings or default flag changed.
+Local RED69989 reproduced34pass/2fail. Eight-string production repair plus one
+assertion that reviewed received diagnostics are not mutation retry authority:
+GREEN12892:36pass; affected six-file41550:362pass. Analysis20970 terminal0/no issues.
+
+Hash-verified failed outcomes12368351852 and logs12368356796 retained in
+received-canary-20261021. Actual worker log SHA f632853000281d94c92c5a390aaa381d58a4a3534d0d7d2f50cc8f4c73095e45.
+APK, Android JVM, producer identity and signing did NOT run. Cleanup119387305122
+success, watch19394 terminal1. All three independent exact-name inventories
+returned empty with exit0; filter-key warnings retained in RESOURCE_CLEANUP.json.
+Initial in-memory triage hit Windows cp1252 output encoding after verifying the
+ZIPs; corrected UTF8, retained verified archives. No CI retry caused by that.
+
+Model30 counts-only copied-store readiness14984 terminal0 passed using existing
+qualified064917 snapshots: all30 entity snapshots and original hashes preserved,
+1918missing GUIDs,15 proposed attachment rows,693 unknown tombstones. No actual
+merge/upload/device write. User's preserve-deletions/hold-ambiguity policy remains.
+No Pixel detected; no account operation. C:26,269,327,360B free.
+Next one corrected-source full run is warranted for this real failure; do not
+repeat the old source or relax the existing full-mode writer guard.

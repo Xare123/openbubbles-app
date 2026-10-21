@@ -16,6 +16,7 @@ abstract final class CloudSyncV2ReceivedArchiveSafeFailureCodes {
     'protected_store_local_exclusion_unavailable',
     'protected_store_local_scope_closed',
     'protected_store_local_release_failed',
+    'cloud_sync_received_archive_attachment_proof_invalid',
     'cloud_sync_received_archive_authority_store_mismatch',
     'cloud_sync_received_archive_body',
     'cloud_sync_received_archive_counterparts',
@@ -95,6 +96,13 @@ abstract final class CloudSyncV2ReceivedArchiveSafeFailureCodes {
     'cloud_sync_received_mutation_target_missing',
     'cloud_sync_received_mutation_target_author_changed',
     'cloud_sync_received_mutation_predecessor_changed',
+    'cloud_sync_received_mutation_adoption_changed',
+    'cloud_sync_received_mutation_adoption_missing',
+    'cloud_sync_received_mutation_adoption_operation_invalid',
+    'cloud_sync_received_mutation_adoption_store_mismatch',
+    'cloud_sync_received_mutation_reflection_changed',
+    'cloud_sync_received_mutation_terminal_changed',
+    'cloud_sync_received_mutation_update_not_ready',
   };
 }
 

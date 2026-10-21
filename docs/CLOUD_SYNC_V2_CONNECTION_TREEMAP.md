@@ -11,7 +11,19 @@ timestamp: 2026-10-21
 
 ## Integrated candidate packaging, October21
 
-One controlled received-enabled Canary is being frozen for a consolidated
+Run39644321492 is TERMINAL FAILURE for source909bcfb3a15bdefe802824a304863a14d4bd6c69 /
+workflow6238cdc70f624852c17a75b76d2e156dcebd5c70. Native988/450/40 and flag7 passed;
+Dart5446passed/2failed/5skipped. Both failures exposed eight unlisted fixed
+received diagnostics, not an Apple login failure. APK/JVM/signing were skipped.
+Cleanup119387305122 succeeded; exact VM/disk/runner independently absent.
+Watch19394 terminal1. Eight-code reporting-only repair passed36focused and362
+affected tests; analysis20970 terminal0/no issues. Freeze the repair before ONE corrected
+full build, never redispatch old909. Received archive explicitly
+compiled available, not automatic account consent. Do not dispatch another run
+or replace the frozen source branch while this one is qualifying. Case owns
+terminal suite/signing/cleanup evidence; no APK result is established yet.
+
+One corrected controlled received-enabled Canary will be frozen for a consolidated
 Android window. Newworkflow6238cdc70 defaults received_archive OFF and restricts
 opt-in to full native-relay Canary with writer/automatic availability. All five
 received flags are verified against actual compile values; user consent remains
@@ -22,6 +34,17 @@ not another unchanged native-only run. No phone/account/upload/merge action.
 Source/run/artifact and monitoring handles are recorded in canonical
 `received-canary-20261021`; do not dispatch a duplicate. Existing support limits
 and Alpha693-tombstone hold below remain. Relay publication is already done.
+
+Current Alpha disposition is settled: PRESERVE DELETIONS; HOLD AMBIGUOUS
+MESSAGES, selected October21. Older unanswered-choice notes are superseded.
+The private merge inventory includes all30 model tables. Parent independently
+passed31 synthetic preservation/rollback cases (session72239); helper reviewed,
+accepted and closed/wait:not_found. No actual data merge or deletion override.
+The model30 actual copied-store readiness passed (14984), preserving all30 model
+tables and original captures.15 attachment rows proposed;693 tombstones still
+hold actual repair. This does not certify a merge or phone-visible restoration.
+The APK collector is prepared, not executed; it will admit only the tracked
+two-key EMPTY environment template, not credential-bearing build assets.
 
 ## Current checkpoint: received-media recovery and consent
 

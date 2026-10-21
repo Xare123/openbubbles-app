@@ -122,6 +122,7 @@ void main() {
     for (final code in CloudSyncV2ReceivedArchiveSafeFailureCodes.all) {
       expect(cloudSyncV2SafeFailureCodeForCandidate(code), code);
       expect(cloudSyncV2SafeFailureCode(StateError(code)), code);
+      expect(cloudSyncV2MutationPredecessorNeedsRetry(StateError(code)), isFalse);
       expect(cloudSyncV2SafeFailureCode(ArgumentError.value('private data', 'private name', code)), code);
       expect(cloudSyncV2SafeFailureCode(StateError('$code private body')), 'cloud_sync_unknown_failure');
       expect(cloudSyncV2SafeFailureCodeForCandidate('${code}_unreviewed'), 'cloud_sync_unknown_failure');
