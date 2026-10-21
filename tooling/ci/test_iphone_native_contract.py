@@ -159,6 +159,71 @@ class NativeContractTests(unittest.TestCase):
         self.assertEqual(len(result), 16)
         self.assertTrue(all(len(line) <= 240 for line in result))
 
+    def test_missing_mac_backend_build_is_bounded_and_uses_only_pinned_source(self):
+        with tempfile.TemporaryDirectory() as directory:
+            work = Path(directory).resolve()
+            engine = work / "ghidra-engine" / S.ENGINE_TOP
+            source = engine / "Ghidra/Features/Decompiler/src/decompile/cpp"
+            source.mkdir(parents=True)
+            (source / "Makefile").write_text("# pinned archive fixture")
+            calls, progress = [], {}
+
+            def owned(command, parent, name, timeout, **kwargs):
+                self.assertEqual(parent, work)
+                calls.append((command, name, timeout))
+                if name == "ghidra-backend-build":
+                    self.assertEqual(command[0], "/usr/bin/make")
+                    self.assertIn("-j2", command)
+                    self.assertIn("ghidra_opt", command)
+                    self.assertIn("ARCH_TYPE=-arch arm64", command)
+                    self.assertIn("CXX=/usr/bin/clang++ -std=c++11", command)
+                    self.assertEqual(timeout, 480)
+                    self.assertIn("-o", command)
+                    self.assertIn("grammar.cc", command)
+                    self.assertIn("xml.cc", command)
+                    (source / "ghidra_opt").write_bytes(b"compiled-tool-fixture")
+                if name == "ghidra-backend-architecture":
+                    return 0, b"arm64\n", b""
+                return 0, b"Mach-O 64-bit executable arm64\n", b""
+
+            with patch.object(S, "require_owned_mac"), patch.object(S.platform, "machine", return_value="arm64"):
+                result = S.prepare_backend(engine, work, owned, progress)
+            target = engine / "Ghidra/Features/Decompiler/os/mac_arm_64/decompile"
+            self.assertEqual(target.read_bytes(), b"compiled-tool-fixture")
+            self.assertEqual(progress["backend_build"]["status"], "built-from-pinned-release-source")
+            self.assertEqual(result["host_machine"], "arm64")
+            self.assertEqual(sum(name == "ghidra-backend-build" for _, name, _ in calls), 1)
+            self.assertFalse(any("install_ghidraopt" in command or "gradle" in str(command)
+                                 for command, _, _ in calls))
+            for command, _, _ in calls:
+                self.assertNotEqual(command[0], str(target))
+                self.assertNotEqual(command[0], str(source / "ghidra_opt"))
+
+    def test_failed_backend_build_or_wrong_architecture_does_not_install_or_retry(self):
+        for failure in ("build", "architecture"):
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as directory:
+                work = Path(directory).resolve()
+                engine = work / "ghidra-engine" / S.ENGINE_TOP
+                source = engine / "Ghidra/Features/Decompiler/src/decompile/cpp"
+                source.mkdir(parents=True)
+                (source / "Makefile").write_text("# pinned archive fixture")
+                calls, progress = [], {}
+
+                def owned(command, parent, name, timeout, **kwargs):
+                    calls.append(name)
+                    if name == "ghidra-backend-build":
+                        if failure == "build": return 1, b"", b"ERROR bounded build failure"
+                        (source / "ghidra_opt").write_bytes(b"compiled-tool-fixture")
+                    if name == "ghidra-backend-architecture": return 0, b"x86_64", b""
+                    return 0, b"", b""
+
+                with patch.object(S, "require_owned_mac"), \
+                        patch.object(S.platform, "machine", return_value="arm64"), \
+                        self.assertRaises(RuntimeError):
+                    S.prepare_backend(engine, work, owned, progress)
+                self.assertEqual(calls.count("ghidra-backend-build"), 1)
+                self.assertFalse((engine / "Ghidra/Features/Decompiler/os/mac_arm_64/decompile").exists())
+
     def test_fixture_failure_prevents_native_analysis_using_same_owned_runner(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory).resolve()
@@ -189,7 +254,7 @@ class NativeContractTests(unittest.TestCase):
             progress = {}
             with patch.object(S, "SOURCE_DIR", source), patch.object(S, "require_owned_mac"), \
                     patch.object(S, "require_native"), patch.object(S, "extract_engine", return_value=(engine, 100)), \
-                    patch.object(S, "backend_inventory", return_value={"host_machine": "fixture"}), \
+                    patch.object(S, "prepare_backend", return_value={"host_machine": "fixture"}), \
                     patch.object(S.os, "access", return_value=True), patch.object(S, "read_analysis", return_value={}):
                 with self.assertRaisesRegex(RuntimeError, "fixture-unqualified"):
                     S.inspect_contract(work / "mobileactivationd", work, owned,

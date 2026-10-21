@@ -235,6 +235,70 @@ def public_tool_diagnostic(stdout, stderr):
     return [line[:240] for line in relevant[-16:]]
 
 
+def prepare_backend(engine, work, run_owned, progress):
+    """Build only the missing Mac analysis tool from the verified ZIP sources."""
+    require_owned_mac(work)
+    before = backend_inventory(engine, work, run_owned)
+    progress["backend_inventory_before"] = before
+    machine = platform.machine()
+    settings = {"arm64": ("mac_arm_64", "11.0"), "x86_64": ("mac_x86_64", "10.13")}
+    if machine not in settings:
+        raise RuntimeError("supported-mac-backend-required")
+    arch, minimum_os = settings[machine]
+    target = engine / ("Ghidra/Features/Decompiler/os/" + arch + "/decompile")
+    if target.exists():
+        if not os.access(target, os.X_OK):
+            raise RuntimeError("native-backend-not-executable")
+        return before
+    source = engine / "Ghidra/Features/Decompiler/src/decompile/cpp"
+    makefile = source / "Makefile"
+    output = source / "ghidra_opt"
+    no_extensions = work / "ghidra-no-extensions"
+    if (makefile.is_symlink() or not makefile.is_file()
+            or engine.resolve() not in makefile.resolve().parents
+            or output.exists() or output.is_symlink() or no_extensions.exists()):
+        raise RuntimeError("fresh-pinned-backend-source-required")
+    if shutil.disk_usage(work).free < 1024**3:
+        raise RuntimeError("native-backend-build-disk-unavailable")
+    build = {"status": "compiling", "target": "ghidra_opt", "max_jobs": 2,
+             "source_makefile_sha256": digest(makefile), "engine_sha256": ENGINE_SHA256}
+    progress["backend_build"] = build
+    # Generated parsers are included upstream. ZIP extraction timestamps must
+    # not trigger regeneration with the host's unrelated bison version. The
+    # Makefile defaults to x86_64 on Darwin, so pin the observed host explicitly.
+    command = ["/usr/bin/make", "-C", str(source), "-j2", "-o", "grammar.cc", "-o", "xml.cc",
+               "ghidra_opt", "CXX=/usr/bin/clang++ -std=c++11", "ARCH_TYPE=-arch " + machine,
+               "ADDITIONAL_FLAGS=-mmacosx-version-min=" + minimum_os, "OSDIR=" + arch,
+               "EXTENSION_POINT=" + str(no_extensions)]
+    started = time.monotonic()
+    code, stdout, stderr = run_owned(command, work, "ghidra-backend-build", 480, check=False)
+    build.update({"exit_code": code, "seconds": round(time.monotonic() - started, 3)})
+    if code != 0:
+        build["status"] = "build-failed"
+        progress["public_tool_diagnostic"] = public_tool_diagnostic(stdout, stderr)
+        raise RuntimeError("native-backend-build-failed")
+    if (output.is_symlink() or not output.is_file()
+            or not 0 < output.stat().st_size <= 128 * 1024**2):
+        raise RuntimeError("bounded-built-backend-required")
+    code, architecture, _ = run_owned(["/usr/bin/lipo", "-archs", str(output)], work,
+                                      "ghidra-backend-architecture", 15, check=False)
+    build["architecture"] = architecture.decode(errors="replace").strip()[:100]
+    if code != 0 or build["architecture"] != machine:
+        raise RuntimeError("built-backend-architecture-mismatch")
+    target.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    if engine.resolve() not in target.resolve().parents:
+        raise RuntimeError("owned-backend-install-required")
+    # Do not use install_ghidraopt: its upstream GHIDRA_BIN default is outside
+    # this owned engine. Create only the one previously absent executable.
+    with output.open("rb") as stream, target.open("xb") as destination:
+        shutil.copyfileobj(stream, destination, length=1024 * 1024)
+    target.chmod(0o700)
+    if digest(target) != digest(output):
+        raise RuntimeError("built-backend-copy-mismatch")
+    build.update({"status": "built-from-pinned-release-source", "sha256": digest(target)})
+    return backend_inventory(engine, work, run_owned)
+
+
 def headless_command(launcher, project, binary, output, script_dir, java_home, private_home):
     return ["/usr/bin/env", "JAVA_HOME=" + str(java_home),
             "JAVA_TOOL_OPTIONS=-Duser.home=" + str(private_home),
@@ -271,7 +335,7 @@ def inspect_contract(native, work, run_owned, qualify_fixture, progress):
         raise RuntimeError("pinned-engine-download-failed")
     engine, expanded = extract_engine(archive, work / "ghidra-engine")
     progress["engine_expanded_bytes"] = expanded
-    progress["backend_inventory"] = backend_inventory(engine, work, run_owned)
+    progress["backend_inventory"] = prepare_backend(engine, work, run_owned, progress)
     launcher = engine / "support/analyzeHeadless"
     if not launcher.is_file() or not os.access(launcher, os.X_OK):
         raise RuntimeError("headless-launcher-unavailable")
