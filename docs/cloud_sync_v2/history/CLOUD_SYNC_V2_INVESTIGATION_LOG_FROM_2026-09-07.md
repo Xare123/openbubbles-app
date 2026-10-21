@@ -7932,3 +7932,21 @@ Alpha693tombstone disposition unanswered; snapshots/queues and completed204-file
 backfill preserved. This is not full received-archive continuity or production
 acceptance. Next one coherent candidate/consolidated Android window, not another
 series of unrelated relay tests. GoalACTIVE/incomplete.
+
+## October21: controlled received-enabled Canary build preparation
+
+Actual GCE workflow161f359 did not expose the five received flags, so an unchanged
+build would leave received Profile/capture unavailable. Primary added one optional
+received_archive=false input with full/native-relay-source/Canary/writer+automatic
+guards, exact flag/build parity and conditional artifact suffix. Existing VM,
+lifetime, cleanup and signing controls unchanged. Six actual-shell/source checks
+passed and actionlint clean. Published normalFFworkflow6238cdc70f624852c17a75b76d2e156dcebd5c70.
+
+Heisenberg's sole flag-test file reviewed/accepted, then closed/wait:not_found.
+Primary ran default-off, sent-only and all-received compilation modes:7tests each
+passed/session88977 terminal0, no account reads. Analysis42743 terminal0/noissues.
+One integrated full Canary/APK/JVM run is warranted for the changed native API
+candidate, not a duplicate native-only run. Standing16-core standard primary
+lane/75-minute lifetime/signing/cleanup retained. Source and dispatch will be
+recorded in received-canary-20261021. No phone/account/send/upload/merge/cleanup.
+Alpha693 unknown-deletion decision still unanswered; all prior data preserved.

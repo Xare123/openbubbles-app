@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_automatic_archive_preference.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_dev_gate.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_production_sampler_adapter.dart';
@@ -9,7 +11,13 @@ void main() {
   const expectedAutomatic = bool.fromEnvironment(
     'TEST_EXPECT_AUTOMATIC_UPLOADS',
   );
-  const expectedReceivedProfile = bool.fromEnvironment('TEST_EXPECT_RECEIVED_PROFILE');
+  const expectedReceivedProfile = bool.fromEnvironment(
+    'TEST_EXPECT_RECEIVED_PROFILE',
+  );
+  const expectedReceivedArchive = bool.fromEnvironment(
+    'TEST_EXPECT_RECEIVED_ARCHIVE',
+    defaultValue: expectedReceivedProfile,
+  );
 
   test('writer opt-in matches the explicitly qualified build mode', () {
     expect(CloudSyncDevGate.manualOutboundCanaryEnabled, expectedWriter);
@@ -21,18 +29,120 @@ void main() {
     if (expectedAutomatic) expect(expectedWriter, isTrue);
   });
 
-  test('received Profile capability stays independent of sent-only availability', () {
-    expect(CloudSyncDevGate.receivedArchiveProfileEnabled, expectedReceivedProfile);
-    if (expectedReceivedProfile) {
-      expect(expectedAutomatic, isTrue);
-      expect(expectedWriter, isTrue);
-      expect(CloudSyncDevGate.receivedArchiveCaptureEnabled, isTrue);
-      expect(CloudSyncDevGate.receivedArchiveInspectionEnabled, isTrue);
-      expect(CloudSyncDevGate.receivedArchiveUploadsEnabled, isTrue);
-      expect(CloudSyncDevGate.receivedArchiveDiscoveryEnabled, isTrue);
-      expect(CloudSyncDevGate.manualSemanticPullEnabled, isTrue);
-    }
-  });
+  test(
+    'all five received flags match the explicitly qualified bundle, including off',
+    () {
+      for (final flag in <String, bool>{
+        'capture': CloudSyncDevGate.receivedArchiveCaptureEnabled,
+        'inspection': CloudSyncDevGate.receivedArchiveInspectionEnabled,
+        'uploads': CloudSyncDevGate.receivedArchiveUploadsEnabled,
+        'discovery': CloudSyncDevGate.receivedArchiveDiscoveryEnabled,
+        'Profile': CloudSyncDevGate.receivedArchiveProfileEnabled,
+      }.entries) {
+        expect(flag.value, expectedReceivedArchive, reason: flag.key);
+      }
+      if (expectedReceivedArchive) {
+        expect(expectedAutomatic, isTrue);
+        expect(expectedWriter, isTrue);
+        expect(CloudSyncDevGate.manualSemanticPullEnabled, isTrue);
+      }
+    },
+  );
+
+  test(
+    'compiled received availability never replaces stored scoped consent',
+    () async {
+      final identity = CloudSyncAutomaticArchiveIdentity(
+        accountFingerprint: 'A' * 43,
+        protectedStoreIdentity: 'obcs2.store.${'B' * 43}',
+        ownershipEpoch: 2,
+      );
+      var writes = 0;
+      var prepares = 0;
+      for (final scope
+          in <({Object? stored, bool sent, bool text, bool media})>[
+            (stored: null, sent: false, text: false, media: false),
+            (stored: true, sent: false, text: false, media: false),
+            (
+              stored: jsonEncode([
+                1,
+                'queued-and-future-local-sends',
+                2,
+                'f' * 32,
+              ]),
+              sent: true,
+              text: false,
+              media: false,
+            ),
+            (
+              stored: jsonEncode([
+                2,
+                'queued-and-future-local-sends-and-receives',
+                2,
+                'f' * 32,
+              ]),
+              sent: true,
+              text: true,
+              media: false,
+            ),
+            (
+              stored: jsonEncode([
+                3,
+                'queued-and-future-local-sends-and-received-text-and-media',
+                2,
+                'f' * 32,
+              ]),
+              sent: true,
+              text: true,
+              media: true,
+            ),
+          ]) {
+        Object? stored = scope.stored;
+        final preferences = CloudSyncAutomaticArchivePreferences(
+          captureIdentity: () async => identity,
+          currentOwnershipEpoch: () => identity.ownershipEpoch,
+          stillCurrent: () => true,
+          reload: () async {},
+          read: (key) => key == identity.preferenceKey ? stored : null,
+          write: (_, _) async {
+            writes++;
+            return true;
+          },
+          prepareWriter: () async {
+            prepares++;
+          },
+        );
+        final consent = await preferences.load();
+        expect(preferences.isGranted(consent), scope.sent);
+        expect(preferences.isReceivedGranted(consent), scope.text);
+        expect(preferences.isReceivedMediaGranted(consent), scope.media);
+        expect(
+          consent.permitsReceivedCapture(
+            accountFingerprint: identity.accountFingerprint,
+            protectedStoreIdentity: identity.protectedStoreIdentity,
+            ownershipEpoch: identity.ownershipEpoch,
+            currentStoredValue: stored,
+          ),
+          scope.text,
+        );
+        expect(
+          consent.permitsReceivedMediaCapture(
+            accountFingerprint: identity.accountFingerprint,
+            protectedStoreIdentity: identity.protectedStoreIdentity,
+            ownershipEpoch: identity.ownershipEpoch,
+            currentStoredValue: stored,
+          ),
+          scope.media,
+        );
+        stored = jsonEncode([1, 'off']);
+        expect(preferences.isGranted(consent), isFalse);
+        expect(preferences.isReceivedGranted(consent), isFalse);
+        expect(preferences.isReceivedMediaGranted(consent), isFalse);
+      }
+      expect(writes, 0);
+      expect(prepares, 0);
+    },
+  );
 
   // This file is also executed by the established Canary flag-qualification
   // step with writes compiled on. Assert the precise failure, not merely a
@@ -75,7 +185,7 @@ void main() {
     );
   }
 
-  test('runtime package fence accepts only Android Canary', () {
+  test('runtime package fence accepts only Android Canary', () async {
     expect(
       CloudSyncDevGate.isCanaryRuntime(
         isAndroid: true,
@@ -83,22 +193,59 @@ void main() {
       ),
       isTrue,
     );
-    for (final package in [
-      'com.bluebubbles.messaging.alpha',
-      'com.bluebubbles.messaging.beta',
-      'com.bluebubbles.messaging',
-    ]) {
-      expect(
-        CloudSyncDevGate.isCanaryRuntime(isAndroid: true, packageName: package),
-        isFalse,
-      );
-    }
-    expect(
-      CloudSyncDevGate.isCanaryRuntime(
+    final identity = CloudSyncAutomaticArchiveIdentity(
+      accountFingerprint: 'A' * 43,
+      protectedStoreIdentity: 'obcs2.store.${'B' * 43}',
+      ownershipEpoch: 2,
+    );
+    final consent = CloudSyncAutomaticArchivePreference(
+      identity: identity,
+      storedValue: jsonEncode([
+        3,
+        'queued-and-future-local-sends-and-received-text-and-media',
+        2,
+        'f' * 32,
+      ]),
+    );
+    expect(consent.includesReceivedMedia, isTrue);
+    for (final runtime in <({bool isAndroid, String packageName})>[
+      (isAndroid: true, packageName: 'com.bluebubbles.messaging.alpha'),
+      (isAndroid: true, packageName: 'com.bluebubbles.messaging.beta'),
+      (isAndroid: true, packageName: 'com.bluebubbles.messaging'),
+      (isAndroid: true, packageName: ''),
+      (
         isAndroid: false,
         packageName: CloudSyncDevGate.androidCanaryPackageName,
       ),
-      isFalse,
-    );
+    ]) {
+      bool runtimeAllowed() => CloudSyncDevGate.isCanaryRuntime(
+        isAndroid: runtime.isAndroid,
+        packageName: runtime.packageName,
+      );
+      expect(runtimeAllowed(), isFalse, reason: '$runtime');
+      var accountReads = 0;
+      final adapter = CloudSyncProductionLocalSendAdapter(
+        readActiveClient: () {
+          accountReads++;
+          return null;
+        },
+        privateStorageDirectory: 'unused-wrong-runtime-rollout-path',
+        stillCurrent: runtimeAllowed,
+        automaticArchiveIdentity: identity,
+        receivedArchiveAllowed: () => consent.includesReceived,
+        receivedMediaArchiveAllowed: () => consent.includesReceivedMedia,
+      );
+      await expectLater(
+        adapter.runOnce(),
+        throwsA(
+          isA<StateError>().having(
+            (error) => error.message,
+            'admission code',
+            'cloud_sync_local_send_consumer_disabled',
+          ),
+        ),
+      );
+      expect(accountReads, 0, reason: '$runtime');
+    }
   });
 }

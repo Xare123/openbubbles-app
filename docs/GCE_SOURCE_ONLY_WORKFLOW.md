@@ -1,5 +1,24 @@
 # Direct source-only GCE runs
 
+## Controlled integrated Canary packaging
+
+Workflow6238cdc70f624852c17a75b76d2e156dcebd5c70 adds optional
+`received_archive=false`. True is accepted only for the native-relay trusted
+source branch, Canary/full mode and both writer availability flags. It passes
+all five received defines to the flag qualification and APK build. Runtime
+scope/consent is unchanged. Producer/signer artifact names gain ` received-true`
+only when opted in. Default-off names and behavior remain unchanged.
+
+One integrated package is warranted after the received-source/API changes;
+installed624 and signedd259 are incompatible with current native APIs. Use the
+standing approved16-core standard primary lane and unchanged75-minute lifetime,
+signing and exact cleanup. Full mode remains mandatory for writer-enabled
+packaging. Do not substitute a source-only result for an APK or rerun an unchanged
+native-only suite. Local guard/argument-parity6checks and all three flag modes
+(7tests each) passed; test-file analysis42743 is clean. Exact source, dispatch,
+run/artifact IDs and actual suite outcomes belong to canonical case
+`received-canary-20261021`. Building does not authorize uploads or installation.
+
 ## Dart-only follow-up: no new native qualification
 
 Received-media guard recovery, positive queue-revision admission and explicit

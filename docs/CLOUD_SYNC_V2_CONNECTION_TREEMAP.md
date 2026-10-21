@@ -9,6 +9,20 @@ timestamp: 2026-10-21
 
 # Cloud Sync V2 current connection treemap
 
+## Integrated candidate packaging, October21
+
+One controlled received-enabled Canary is being frozen for a consolidated
+Android window. Newworkflow6238cdc70 defaults received_archive OFF and restricts
+opt-in to full native-relay Canary with writer/automatic availability. All five
+received flags are verified against actual compile values; user consent remains
+separate. Workflow guard/buildparity6checks passed; default-off, sent-only and
+received bundles each7tests passed; test analysis42743 clean. No new native logic,
+bindings, schema, locks or pins. One full integration/APK/JVM run is warranted,
+not another unchanged native-only run. No phone/account/upload/merge action.
+Source/run/artifact and monitoring handles are recorded in canonical
+`received-canary-20261021`; do not dispatch a duplicate. Existing support limits
+and Alpha693-tombstone hold below remain. Relay publication is already done.
+
 ## Current checkpoint: received-media recovery and consent
 
 Code`a778e90f5b2c37714d853fc72e26f1634b2d0b29` on `c127fea2f`: actual guard/executor/ObjectBox restart recovery
