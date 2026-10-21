@@ -199,6 +199,23 @@ def read_analysis(path):
     return value
 
 
+def require_owner_result(value):
+    rows = value.get("candidates", [])
+    expected = {"0x1000056b4", "0x10005c4e4"}
+    if (value.get("analysis_scope") != "csr-key-owner"
+            or value.get("analysis_timeout_occurred") != "false"
+            or value.get("decompiler_opened") is not True or len(rows) != 2
+            or {row.get("entry") for row in rows} != expected
+            or value.get("decompile_attempts") != 2 or value.get("decompiled_count") != 2
+            or any(row.get("external") is not False or row.get("thunk") is not False
+                   or row.get("body_addresses", 0) <= 0
+                   or not (row.get("pseudocode") or {}).get("text") for row in rows)):
+        raise RuntimeError("observed-owner-analysis-unqualified")
+    return {"status": "observed-owner-callees-recovered", "entries": sorted(expected),
+            "pseudocode_truncations": sum(bool(row["pseudocode"].get("truncated")) for row in rows),
+            "runtime_or_accepted_host_csr_proved": False}
+
+
 def backend_inventory(engine, work, run_owned):
     """Inspect only pinned engine files. Never execute a backend or target."""
     if (engine.is_symlink() or not engine.is_dir()
@@ -299,12 +316,16 @@ def prepare_backend(engine, work, run_owned, progress):
     return backend_inventory(engine, work, run_owned)
 
 
-def headless_command(launcher, project, binary, output, script_dir, java_home, private_home):
-    return ["/usr/bin/env", "JAVA_HOME=" + str(java_home),
+def headless_command(launcher, project, binary, output, script_dir, java_home, private_home, scope=None):
+    if scope not in (None, "csr-key-owner"):
+        raise ValueError("fixed-native-followup-scope-required")
+    command = ["/usr/bin/env", "JAVA_HOME=" + str(java_home),
             "JAVA_TOOL_OPTIONS=-Duser.home=" + str(private_home),
             str(launcher), str(project), output.stem, "-import", str(binary),
-            "-scriptPath", str(script_dir), "-postScript", "OBNativeActivationAnalysis.java", str(output),
-            "-max-cpu", "2", "-analysisTimeoutPerFile", "180", "-deleteProject"]
+            "-scriptPath", str(script_dir), "-postScript", "OBNativeActivationAnalysis.java", str(output)]
+    if scope is not None:
+        command.append(scope)
+    return command + ["-max-cpu", "2", "-analysisTimeoutPerFile", "180", "-deleteProject"]
 
 
 def inspect_contract(native, work, run_owned, qualify_fixture, progress):
@@ -348,9 +369,12 @@ def inspect_contract(native, work, run_owned, qualify_fixture, progress):
     progress["fixture_input_sha256"] = digest(fixture)
     for kind, binary in (("fixture", fixture), ("native", native)):
         progress["status"] = kind + "-analysis"
+        scope = "csr-key-owner" if kind == "native" else None
+        if scope is not None:
+            progress["native_scope"] = scope
         output = work / ("contract-" + kind + ".json")
         code, stdout, stderr = run_owned(headless_command(
-            launcher, project, binary, output, scripts, java_home, private_home),
+            launcher, project, binary, output, scripts, java_home, private_home, scope=scope),
             work, "contract-" + kind, 300, check=False)
         progress["public_tool_diagnostic"] = public_tool_diagnostic(stdout, stderr)
         if code != 0 or not output.is_file():
@@ -361,6 +385,7 @@ def inspect_contract(native, work, run_owned, qualify_fixture, progress):
             progress["fixture_qualification"] = qualify_fixture(result)
         else:
             progress["native_result"] = result
+            progress["owner_qualification"] = require_owner_result(result)
     require_native(native, work)
     progress["status"] = "static-contract-analysis-completed"
 

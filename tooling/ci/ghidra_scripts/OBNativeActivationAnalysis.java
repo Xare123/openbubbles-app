@@ -4,6 +4,7 @@
 // binary bytes, and proves no runtime, caller-access or CSR behaviour.
 //
 // Argument 1 (required): absolute output JSON path inside owned work.
+// Argument 2 (optional): csr-key-owner, only the two observed exact-native callees.
 // @category OpenBubbles.Activation
 // @runtime Java
 
@@ -127,8 +128,14 @@ public class OBNativeActivationAnalysis extends HeadlessScript {
     @Override
     protected void run() throws Exception {
         String[] args = getScriptArgs();
-        if (args == null || args.length != 1 || args[0].isEmpty()) {
-            throw new IllegalArgumentException("exactly-one-output-json-required");
+        if (args == null || args.length < 1 || args.length > 2 || args[0].isEmpty()
+            || (args.length == 2 && !"csr-key-owner".equals(args[1]))) {
+            throw new IllegalArgumentException("output-json-and-fixed-optional-scope-required");
+        }
+        boolean ownerFollowup = args.length == 2;
+        if (ownerFollowup && (!"mobileactivationd".equals(currentProgram.getName())
+            || currentProgram.getImageBase().getOffset() != 0x100000000L)) {
+            throw new IllegalArgumentException("observed-native-followup-program-required");
         }
         File output = new File(args[0]);
         if (!output.isAbsolute()) {
@@ -137,12 +144,16 @@ public class OBNativeActivationAnalysis extends HeadlessScript {
 
         Map<String, SeedResult> seedResults = new LinkedHashMap<>();
         Map<Long, Candidate> candidates = new LinkedHashMap<>();
-        for (Seed seed : SEEDS) {
-            SeedResult result = new SeedResult();
-            result.seed = seed;
-            resolveSeed(seed, result, candidates);
-            seedResults.put(seed.text, result);
-            if (monitor != null && monitor.isCancelled()) break;
+        if (ownerFollowup) {
+            collectObservedOwnerTargets(seedResults, candidates);
+        } else {
+            for (Seed seed : SEEDS) {
+                SeedResult result = new SeedResult();
+                result.seed = seed;
+                resolveSeed(seed, result, candidates);
+                seedResults.put(seed.text, result);
+                if (monitor != null && monitor.isCancelled()) break;
+            }
         }
 
         List<Candidate> ordered = new ArrayList<>(candidates.values());
@@ -171,6 +182,7 @@ public class OBNativeActivationAnalysis extends HeadlessScript {
         json.append("{\n");
         field(json, 1, "schema", "1", true);
         field(json, 1, "tool", q("ob-native-activation-headless"), true);
+        field(json, 1, "analysis_scope", q(ownerFollowup ? "csr-key-owner" : "seed-producers"), true);
         json.append(" \"program\": {");
         json.append("\"name\": ").append(q(String.valueOf(currentProgram.getName())));
         json.append(", \"image_base\": ").append(q(hex(currentProgram.getImageBase())));
@@ -267,6 +279,28 @@ public class OBNativeActivationAnalysis extends HeadlessScript {
 
         try (OutputStreamWriter writer = new OutputStreamWriter(new FileOutputStream(output), StandardCharsets.UTF_8)) {
             writer.write(json.toString());
+        }
+    }
+
+    private void collectObservedOwnerTargets(Map<String, SeedResult> results,
+                                            Map<Long, Candidate> candidates) {
+        // Both exact entries were recovered as real calls from the qualified
+        // producers in run39519575637, not inferred from Objective-C declarations.
+        // The parent still verifies the same immutable native SHA before import.
+        long[] entries = {0x1000056b4L, 0x10005c4e4L};
+        String[] labels = {"observed-native-csr-producer", "observed-native-fairplay-signer"};
+        for (int i = 0; i < entries.length; i++) {
+            Function function = currentProgram.getFunctionManager().getFunctionAt(addr(entries[i]));
+            if (function == null || function.isExternal() || function.isThunk()
+                || function.getBody() == null || function.getBody().getNumAddresses() <= 0) {
+                throw new IllegalStateException("observed-owner-function-body-required");
+            }
+            Seed seed = new Seed(labels[i], "prior-code-backed-callee", 1000, false);
+            SeedResult result = new SeedResult();
+            result.seed = seed;
+            credit(candidateFor(candidates, function), result, seed,
+                   "run39519575637-callee->" + hex(entries[i]));
+            results.put(seed.text, result);
         }
     }
 

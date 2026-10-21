@@ -27,6 +27,33 @@ class NativeContractTests(unittest.TestCase):
         for flag in ("-run", "-process", "-connect", "-commit", "-overwrite"):
             self.assertNotIn(flag, args)
 
+    def test_followup_command_admits_only_fixed_observed_owner_scope(self):
+        common = (Path("engine/support/analyzeHeadless"), Path("project"), Path("input"),
+                  Path("report.json"), Path("scripts"), Path("jdk"), Path("private-home"))
+        args = S.headless_command(*common, scope="csr-key-owner")
+        start = args.index("-postScript")
+        self.assertEqual(args[start + 1:start + 4],
+                         ["OBNativeActivationAnalysis.java", "report.json", "csr-key-owner"])
+        self.assertEqual(args.count("csr-key-owner"), 1)
+        with self.assertRaises(ValueError):
+            S.headless_command(*common, scope="arbitrary-address")
+
+    def test_owner_result_cannot_relabel_prior_seed_inspection_or_missing_code(self):
+        value = {"analysis_scope": "csr-key-owner", "analysis_timeout_occurred": "false",
+                 "decompiler_opened": True, "decompile_attempts": 2, "decompiled_count": 2,
+                 "candidates": [{"entry": entry, "external": False, "thunk": False,
+                                 "body_addresses": 4, "pseudocode": {"text": "return 1;"}}
+                                for entry in ("0x1000056b4", "0x10005c4e4")]}
+        self.assertEqual(S.require_owner_result(value)["status"], "observed-owner-callees-recovered")
+        for mutation in ("scope", "entry", "code", "timeout"):
+            changed = copy.deepcopy(value)
+            if mutation == "scope": changed["analysis_scope"] = "seed-producers"
+            if mutation == "entry": changed["candidates"][0]["entry"] = "0x10000718c"
+            if mutation == "code": changed["candidates"][0]["pseudocode"] = None
+            if mutation == "timeout": changed["analysis_timeout_occurred"] = "true"
+            with self.subTest(mutation=mutation), self.assertRaises(RuntimeError):
+                S.require_owner_result(changed)
+
     def test_mac_guard_requires_real_host_exact_opt_in_and_owned_work(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory).resolve()

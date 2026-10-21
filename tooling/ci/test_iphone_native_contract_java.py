@@ -123,6 +123,17 @@ class JavaCorrectionContracts(unittest.TestCase):
         for field in ("decompiler_opened", "decompiler_message", "decompile_error"):
             self.assertIn(field, self.source)
 
+    def test_owner_followup_is_only_two_real_observed_native_callees(self):
+        body = segment(self.source, "private void collectObservedOwnerTargets",
+                       "private void resolveSeed")
+        self.assertIn("0x1000056b4L", body)
+        self.assertIn("0x10005c4e4L", body)
+        self.assertIn("function.isExternal() || function.isThunk()", body)
+        self.assertIn('"mobileactivationd".equals(currentProgram.getName())', self.source)
+        self.assertIn('"csr-key-owner".equals(args[1])', self.source)
+        self.assertIn('"analysis_scope"', self.source)
+        self.assertNotIn("findAsciiString", body)
+
 
 if __name__ == "__main__":
     unittest.main()
