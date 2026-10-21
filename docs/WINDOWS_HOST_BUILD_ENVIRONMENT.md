@@ -4,10 +4,36 @@ title: OpenBubbles Windows ARM64 Host Build Environment
 description: Verified toolchain layout and the non-obvious constraints for building the Rust bridge and running the test suites for Android, Windows ARM64, and Windows x64 from one Windows-on-ARM host.
 resource: openbubbles-app
 tags: [windows, arm64, x64, android, rust, objectbox, openssl, toolchain, testing]
-timestamp: 2026-09-17
+timestamp: 2026-10-21
 ---
 
 # OpenBubbles Windows ARM64 host build environment
+
+## October21 received-mutation replay source lane
+
+Frozen native source4fb3aab3a06cce3fc9745ef65ae8f7ce33e3b336 adds typed local
+seed recovery. Sole generation/qualification39605682333 owns the regenerated
+bridge artifact12349130155. Twelve imported files match independently verified
+ZIP24d66a4b62e0ae046b8d306d74e3ef6bcd35c7d3f4fe5a90b69bbafdd102f644,
+451302bytes; five generated paths change. Dart/Rust content hash is-616264062.
+Do not hot reload this API against installed624 or signed-but-uninstalledd259:
+their native library predates it. No APK or installation is part of this slice.
+
+A new API intentionally requires generation mode: manual allow_generated_drift
+produces the artifact, so that run's committed-drift step is SKIPPED, not passed.
+Verify the exact source, ZIP digest, allowed paths and all imported file hashes;
+retain native compile/suite results separately. Never claim a skipped drift gate
+or Linux unit suite is Android/Apple proof. Default strict workflow is unchanged.
+
+Local Dart/ObjectBox tests require the established ObjectBox ARM64 PATH prefix
+and --no-pub --concurrency=2. Wait for matching generated bindings before tests
+that import the service. Use targeted dart analyze for source paths; Dart and
+Flutter diagnostic format differs, so normalize only formatter/line differences
+when comparing the eight existing service diagnostics. Preserve full prose/code.
+Current evidence and exact commands: build-evidence/received-mutation-replay-20261021.
+All5received flags remain off. Remote received-update admission is not complete.
+
+
 
 ## Current diagnostic host, September 17
 

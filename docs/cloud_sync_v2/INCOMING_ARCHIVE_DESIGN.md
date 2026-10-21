@@ -9,6 +9,35 @@ timestamp: 2026-10-21
 
 # Decision
 
+## Current offline received-mutation replay, October21
+
+Sourceba099ccaf42752cda7e733eb39a3b03a4d39ccd6 adds typed, same-account/store
+seed reopening and local restart replay through the existing incoming queue and
+received-source worker. No fake live-receive claim, outgoing receipt or second
+scheduler is created. Missing/unsupported targets remain encrypted; bounded rounds
+advance past them. Atomic journal reflection preserves newer data and duplicates.
+
+Predecessor adapter110tests and replay/identity/runtime/contracts79tests passed.
+New paths have no production analysis findings; service retains the prior8
+baseline diagnostics, not whole-app clean. Twelve new ObjectBox replay cases
+use synthetic native collaborators and are not Apple or Android execution proof.
+
+Sole native39605682333/job119241148567 SUCCESS17m22s for4fb3aab3a:
+964appRust/449rustpush/16provider(1ignored/12filtered)/40protector, nine new
+regressions and11required success steps verified. The committed-drift gate was
+intentionally SKIPPED for new-API generation, not passed. All12artifact12349130155
+files imported byte-exact after independent ZIP verification. Dart/Rust hash
+-616264062; no current-source APK. Do not pair these bindings with old libraries.
+
+Native original-author/parent proof and a distinct received conditional-update
+envelope are tested foundations, NOT a remote update producer. Existing outgoing
+APIs still require genuine IDS receipts. Remote admission, single-submit and
+readback integration remain next, alongside richer/pre-seal receive and final
+live rollout gates. All5received flags stay off. No Pixel/account/Apple/send/
+upload/merge action. Previous dated sections below describe earlier baselines.
+
+
+
 ## Active received edit/unsend slice, October21
 
 Native source8cf3a05a461aa04cc94d23981dfb8fcc2e4b1c0d adds a private immutable

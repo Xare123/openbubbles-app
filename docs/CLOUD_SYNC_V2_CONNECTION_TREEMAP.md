@@ -9,6 +9,29 @@ timestamp: 2026-09-26
 
 # Cloud Sync V2 current connection treemap
 
+## October21 current source checkpoint
+
+Codeba099ccaf42752cda7e733eb39a3b03a4d39ccd6 adds encrypted received-event
+restart replay through the existing incoming queue and received-source runtime.
+Missing targets remain retained; bounded pages avoid starvation. No outgoing IDS
+receipt is fabricated. Predecessor110tests and affected79tests passed offline.
+Native39605682333/job119241148567 SUCCESS17m22s:964appRust/449rustpush/
+16provider(1ignored/12filtered)/40protector;9new regressions and11success steps
+verified. New-API generation intentionally SKIPPED the committed-drift gate;
+12artifact12349130155 files match independently verified ZIP24d66a4b byte-exact.
+Native treea5e3b811/generatedDart559d1993, codegenhash-616264062. Do not hot reload
+against old installed624/signedd259 native libraries. No current-source APK.
+No schema/locks/pins/workflow or flag change; all5received flags remain off.
+
+Native original-author/parent proof and distinct received conditional-update
+staging are tested foundations only. Remote update admission/submission/readback
+still need integration through the existing executor. No second sync engine.
+See INCOMING_ARCHIVE_DESIGN.md and current canonical replay case/NEXT_SLICE.
+Relay published atXare123/NativeValidationRelay; no extra Pixel gate added for it.
+No phone/account/Apple/send/upload/merge action. Alpha deletion disposition still
+unanswered; preserve all snapshots, queues and newer data. No active child or CI.
+Full goal ACTIVE/incomplete. Older dated checkpoints below are historical.
+
 This document is the short operational source of truth. It contains current
 architecture, safety rules, qualification state, and the next falsification
 test. Dated investigations, obsolete candidates, run-by-run notes, patents,
