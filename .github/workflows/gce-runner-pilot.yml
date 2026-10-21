@@ -101,6 +101,11 @@ on:
         required: true
         default: false
         type: boolean
+      received_archive:
+        description: Qualify received archival in one controlled full Canary; runtime consent still required
+        required: false
+        default: false
+        type: boolean
       native_contract_analysis:
         description: Opt-in temporary offline decompiler for the Mac-only iPhone static lane
         required: false
@@ -145,6 +150,7 @@ env:
   VALIDATION_MODE: ${{ inputs.validation_mode || 'full' }}
   OUTBOUND_WRITER: ${{ inputs.outbound_writer || false }}
   AUTOMATIC_UPLOADS: ${{ inputs.automatic_uploads || false }}
+  RECEIVED_ARCHIVE: ${{ inputs.received_archive || false }}
   RUNNER_LANE: ${{ inputs.runner_lane || 'primary' }}
   SOURCE_REF: ${{ inputs.source_ref || github.sha }}
   TRUSTED_SOURCE_BRANCH: ${{ inputs.source_branch || 'agent/cloudkit-v2-update-seam' }}
@@ -205,6 +211,13 @@ jobs:
           fi
           if [[ "$AUTOMATIC_UPLOADS" == 'true' && "$OUTBOUND_WRITER" != 'true' ]]; then
             echo 'automatic_uploads requires outbound_writer=true (full Canary qualification).' >&2
+            exit 1
+          fi
+          if [[ "$RECEIVED_ARCHIVE" == 'true' &&
+                ( "$BUILD_FLAVOR" != 'canary' || "$VALIDATION_MODE" != 'full' ||
+                  "$OUTBOUND_WRITER" != 'true' || "$AUTOMATIC_UPLOADS" != 'true' ||
+                  "$TRUSTED_SOURCE_BRANCH" != 'agent/native-relay-client-20261020' ) ]]; then
+            echo 'received_archive requires full native-relay Canary with both writer availability flags.' >&2
             exit 1
           fi
           if [[ "$VALIDATION_MODE" == 'production-transport-only' || "$VALIDATION_MODE" == 'production-android-build-only' ]]; then
@@ -754,13 +767,28 @@ jobs:
         if: ${{ env.VALIDATION_MODE == 'full' && env.AUTOMATIC_UPLOADS == 'true' }}
         shell: bash
         run: |
-          flutter test --no-pub \
-            --dart-define=OPENBUBBLES_CLOUD_SYNC_V2_OUTBOUND_CANARY=true \
-            --dart-define=OPENBUBBLES_CLOUDKIT_WRITER_OWNER=v2 \
-            --dart-define=OPENBUBBLES_CLOUD_SYNC_V2_LOCAL_SEND_RUNTIME=true \
-            --dart-define=TEST_EXPECT_CLOUDKIT_WRITER=true \
-            --dart-define=TEST_EXPECT_AUTOMATIC_UPLOADS=true \
-            test/services/cloud_sync/cloud_sync_upload_rollout_gate_test.dart
+          set -euo pipefail
+          flag_args=(
+            test --no-pub
+            --dart-define=OPENBUBBLES_CLOUD_SYNC_V2_OUTBOUND_CANARY=true
+            --dart-define=OPENBUBBLES_CLOUDKIT_WRITER_OWNER=v2
+            --dart-define=OPENBUBBLES_CLOUD_SYNC_V2_LOCAL_SEND_RUNTIME=true
+            --dart-define=TEST_EXPECT_CLOUDKIT_WRITER=true
+            --dart-define=TEST_EXPECT_AUTOMATIC_UPLOADS=true
+          )
+          if [[ "$RECEIVED_ARCHIVE" == 'true' ]]; then
+            flag_args+=(
+              --dart-define=OPENBUBBLES_CLOUD_SYNC_V2_SEMANTIC_PULL=true
+              --dart-define=OPENBUBBLES_CLOUD_SYNC_V2_RECEIVED_CAPTURE=true
+              --dart-define=OPENBUBBLES_CLOUD_SYNC_V2_RECEIVED_INSPECTION=true
+              --dart-define=OPENBUBBLES_CLOUD_SYNC_V2_RECEIVED_UPLOADS=true
+              --dart-define=OPENBUBBLES_CLOUD_SYNC_V2_RECEIVED_DISCOVERY=true
+              --dart-define=OPENBUBBLES_CLOUD_SYNC_V2_RECEIVED_PROFILE=true
+              --dart-define=TEST_EXPECT_RECEIVED_ARCHIVE=true
+              --dart-define=TEST_EXPECT_RECEIVED_PROFILE=true
+            )
+          fi
+          flutter "${flag_args[@]}" test/services/cloud_sync/cloud_sync_upload_rollout_gate_test.dart
 
       # Collect independent suite failures in one run, but never package a
       # failed qualification. Missing outputs and skipped required suites fail.
@@ -900,6 +928,15 @@ jobs:
           if [[ "$AUTOMATIC_UPLOADS" == 'true' ]]; then
             build_args+=(--dart-define=OPENBUBBLES_CLOUD_SYNC_V2_LOCAL_SEND_RUNTIME=true)
           fi
+          if [[ "$RECEIVED_ARCHIVE" == 'true' ]]; then
+            build_args+=(
+              --dart-define=OPENBUBBLES_CLOUD_SYNC_V2_RECEIVED_CAPTURE=true
+              --dart-define=OPENBUBBLES_CLOUD_SYNC_V2_RECEIVED_INSPECTION=true
+              --dart-define=OPENBUBBLES_CLOUD_SYNC_V2_RECEIVED_UPLOADS=true
+              --dart-define=OPENBUBBLES_CLOUD_SYNC_V2_RECEIVED_DISCOVERY=true
+              --dart-define=OPENBUBBLES_CLOUD_SYNC_V2_RECEIVED_PROFILE=true
+            )
+          fi
           # Flutter's verbose path supplies Gradle --full-stacktrace, but
           # streaming it exceeded the useful Actions log envelope and hid the
           # actual tail. Capture it once, emit a heartbeat, then print only a
@@ -932,6 +969,7 @@ jobs:
             echo "- Machine: \`${MACHINE_TYPE}\`"
             echo "- Outbound writer: \`${OUTBOUND_WRITER}\`"
             echo "- Automatic uploads: \`${AUTOMATIC_UPLOADS}\`"
+            echo "- Received archive availability: \`${RECEIVED_ARCHIVE}\` (runtime consent still required)"
             echo "- Android background read: \`${android_background_read}\`"
             echo "- Flutter build time: \`${elapsed}s\`"
             echo "- Build exit status: \`${build_status}\`"
@@ -976,7 +1014,7 @@ jobs:
         if: ${{ env.VALIDATION_MODE != 'bindings-only' && env.VALIDATION_MODE != 'rustpush-only' && env.VALIDATION_MODE != 'app-rust-only' && env.VALIDATION_MODE != 'dart-only' && env.VALIDATION_MODE != 'cloudkit-qualification' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: GCE producer ${{ inputs.flavor || 'beta' }} APK ${{ env.SOURCE_REF }} writer-${{ inputs.outbound_writer || false }} automatic-${{ inputs.automatic_uploads || false }}
+          name: GCE producer ${{ inputs.flavor || 'beta' }} APK ${{ env.SOURCE_REF }} writer-${{ inputs.outbound_writer || false }} automatic-${{ inputs.automatic_uploads || false }}${{ inputs.received_archive && ' received-true' || '' }}
           path: build/app/outputs/flutter-apk/app-${{ inputs.flavor || 'beta' }}-debug.apk
           if-no-files-found: error
 
@@ -1988,7 +2026,7 @@ jobs:
       - name: Download GCE producer APK
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: GCE producer canary APK ${{ env.SOURCE_REF }} writer-${{ inputs.outbound_writer || false }} automatic-${{ inputs.automatic_uploads || false }}
+          name: GCE producer canary APK ${{ env.SOURCE_REF }} writer-${{ inputs.outbound_writer || false }} automatic-${{ inputs.automatic_uploads || false }}${{ inputs.received_archive && ' received-true' || '' }}
           path: producer
 
       - name: Sign and verify Canary
@@ -2062,7 +2100,7 @@ jobs:
       - name: Upload signed Canary APK
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: GCE CloudKit V2 Canary APK ${{ env.SOURCE_REF }} writer-${{ inputs.outbound_writer || false }} automatic-${{ inputs.automatic_uploads || false }}
+          name: GCE CloudKit V2 Canary APK ${{ env.SOURCE_REF }} writer-${{ inputs.outbound_writer || false }} automatic-${{ inputs.automatic_uploads || false }}${{ inputs.received_archive && ' received-true' || '' }}
           path: producer/app-canary-debug.apk
           if-no-files-found: error
 
