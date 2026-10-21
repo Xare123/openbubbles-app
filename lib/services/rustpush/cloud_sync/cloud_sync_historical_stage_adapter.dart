@@ -31,12 +31,17 @@ final class CloudSyncHistoricalStageAdapter {
       accountFingerprint: identity.accountFingerprint,
       protectedStoreIdentity: identity.protectedStoreIdentity,
     );
+    final client = state.icloudServices?.cloudMessagesClient;
+    if (client == null) {
+      throw StateError('cloud_sync_historical_import_identity_changed');
+    }
     return CloudSyncHistoricalStageAdapter(
       staging: staging,
       stageNative: (request, bytes) async =>
           CloudSyncHistoricalProtectedSourceBinding.fromNative(
             await api.cloudSyncStageHistoricalArchiveSource(
-              state: state,
+              cloudMessagesClient: client,
+              storageDirectory: state.confDir,
               expectedAuth: expectedAuth,
               snapshotSha256: request.snapshotSha256,
               expectedSourceSha256: request.sourceSha256,

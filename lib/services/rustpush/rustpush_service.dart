@@ -8265,7 +8265,8 @@ class RustPushService extends GetxService {
         if (expectedState == null || !stillCurrent()) return null;
         // Cached composition identity also works after native process restore.
         // It owns only a local scheduling preference, never current cloud auth.
-        final auth = await api.cloudSyncCaptureReceivedIdentity(state: expectedState)
+        final auth = await api.cloudSyncCaptureReceivedIdentity(
+            cloudMessagesClient: client!, storageDirectory: storage)
             .timeout(const Duration(seconds: 10));
         return CloudSyncBackgroundReadIdentity(
           scopeHash: CloudSyncAndroidBackgroundPolicy.scopeHash(
@@ -8405,7 +8406,8 @@ class RustPushService extends GetxService {
         validate();
         if (!saved.explicitlyEnabled ||
             !saved.identity.sameIdentity(preference.identity)) return false;
-        final auth = await api.cloudSyncCaptureReceivedIdentity(state: expectedState!);
+        final auth = await api.cloudSyncCaptureReceivedIdentity(
+          cloudMessagesClient: client!, storageDirectory: statePath);
         validate();
         final nonce = api.cloudSyncBeginMessagesChangeNotifications(
           cloudMessagesClient: client!,
@@ -8415,7 +8417,8 @@ class RustPushService extends GetxService {
           // Native owns the30s cancellation deadline and releases its lifecycle
           // and writer permits before this Future completes. No Dart timeout.
           final accepted = await api.cloudSyncConfigureMessagesChangeNotifications(
-            state: expectedState, registrationNonce: nonce, expectedAuth: auth,
+            cloudMessagesClient: client, conn: expectedState!.conn,
+            storageDirectory: statePath, registrationNonce: nonce, expectedAuth: auth,
           );
           validate();
           final reloaded = await preferences.load();
@@ -8869,7 +8872,8 @@ class RustPushService extends GetxService {
         identical(objectBox, Database.store) && !objectBox.isClosed() && statePath == storagePath &&
         !ss.settings.cloudSyncingEnabled.value;
     if (!stillCurrent()) throw StateError('cloud_sync_received_archive_identity_changed');
-    final metadata = await api.cloudSyncCaptureReceivedIdentity(state: capturedState);
+    final metadata = await api.cloudSyncCaptureReceivedIdentity(
+        cloudMessagesClient: client, storageDirectory: storagePath);
     if (!stillCurrent()) throw StateError('cloud_sync_received_archive_identity_changed');
     final captured = CloudSyncNativeAuthSnapshot.fromNative(nativeSessionId: metadata.nativeSessionId,
         accountFingerprint: metadata.accountFingerprint, protectedStoreIdentity: metadata.protectedStoreIdentity,
@@ -8886,7 +8890,8 @@ class RustPushService extends GetxService {
         storageDirectory: storagePath, protectedStoreIdentity: captured.protectedStoreIdentity);
     Future<void> validate() async {
       if (!stillCurrent()) throw StateError('cloud_sync_received_archive_identity_changed');
-      final now = await api.cloudSyncCaptureReceivedIdentity(state: capturedState);
+      final now = await api.cloudSyncCaptureReceivedIdentity(
+          cloudMessagesClient: client, storageDirectory: storagePath);
       if (!stillCurrent() || now.accountFingerprint != metadata.accountFingerprint ||
           now.protectedStoreIdentity != metadata.protectedStoreIdentity || now.nativeSessionId != metadata.nativeSessionId) {
         throw StateError('cloud_sync_received_archive_identity_changed');
@@ -8901,7 +8906,8 @@ class RustPushService extends GetxService {
               capturedIdentity: captured, validateCurrentIdentity: validate, stillCurrent: stillCurrent)
               .materialize(intentId: intent.id, stageSeedNative: (seed) async =>
                 CloudSyncReceivedArchiveSourceBinding.fromNative(await api.cloudSyncStageReceivedArchiveSeed(
-                  state: capturedState, expectedAuth: metadata,
+                  cloudMessagesClient: client, storageDirectory: storagePath,
+                  expectedAuth: metadata,
                   seed: api.CloudSyncNativeReceivedArchiveSeed(accountFingerprint: seed.accountFingerprint,
                     protectedStoreIdentity: seed.protectedStoreIdentity, messageGuidHash: seed.messageGuidHash,
                     sourceSha256: seed.sourceSha256, ciphertext: seed.sealedSource!))));
@@ -9069,7 +9075,8 @@ class RustPushService extends GetxService {
       return persistMessage();
     }
     if (!stillCurrent()) throw StateError('cloud_sync_received_archive_identity_changed');
-    final metadata = await api.cloudSyncCaptureReceivedIdentity(state: capturedState);
+    final metadata = await api.cloudSyncCaptureReceivedIdentity(
+        cloudMessagesClient: client, storageDirectory: storagePath);
     if (!stillCurrent()) throw StateError('cloud_sync_received_archive_identity_changed');
     final captured = CloudSyncNativeAuthSnapshot.fromNative(
       nativeSessionId: metadata.nativeSessionId, accountFingerprint: metadata.accountFingerprint,
@@ -9084,7 +9091,8 @@ class RustPushService extends GetxService {
     if (journal.hasOutgoingOrigin(wire.id)) return persistMessage();
     Future<void> validateCurrent() async {
       if (!stillCurrent()) throw StateError('cloud_sync_received_archive_identity_changed');
-      final now = await api.cloudSyncCaptureReceivedIdentity(state: capturedState);
+      final now = await api.cloudSyncCaptureReceivedIdentity(
+          cloudMessagesClient: client, storageDirectory: storagePath);
       if (!stillCurrent() || now.accountFingerprint != captured.accountFingerprint ||
           now.nativeSessionId != captured.nativeSessionId ||
           now.protectedStoreIdentity != captured.protectedStoreIdentity) {
@@ -9103,7 +9111,8 @@ class RustPushService extends GetxService {
         },
         sealNative: () async {
           final seed = await api.cloudSyncSealReceivedArchiveSeed(
-              state: capturedState, expectedAuth: metadata, message: wire);
+              cloudMessagesClient: client, imClient: capturedState.client,
+              storageDirectory: storagePath, expectedAuth: metadata, message: wire);
           return CloudSyncReceivedArchiveSourceBinding.sealed(
               accountFingerprint: seed.accountFingerprint, protectedStoreIdentity: seed.protectedStoreIdentity,
               messageGuidHash: seed.messageGuidHash, sourceSha256: seed.sourceSha256, ciphertext: seed.ciphertext);

@@ -839,8 +839,11 @@ class SetupViewController extends StatefulController {
         return;
       }
 
+      // Keep the caller's login generation through watcher creation. Starting
+      // a fresh attempt here abandons successful direct/password verification
+      // after provisioning and leaves the setup page holding moved handles.
+      if (!await ensureWatcher(attempt: attempt)) return;
       var imclient = await api.makeImclient(path: pushService.statePath, conn: connection!, users: newUsers!, identity: identity!);
-      await ensureWatcher();
       var watcher = api.importWatcher(queue: connReceiver!, client: imclient);
 
       var clientSession = api.makeClientSession(circle: circleSession);

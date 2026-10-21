@@ -440,8 +440,8 @@ fn cloud_sync_require_received_auth(
 }
 
 #[frb(ignore)]
-async fn cloud_sync_received_registered_handles(state: &SharedPushState) -> anyhow::Result<Vec<String>> {
-    let users = state.client.identity.users.read().await;
+async fn cloud_sync_received_registered_handles(im_client: &Arc<IMClient>) -> anyhow::Result<Vec<String>> {
+    let users = im_client.identity.users.read().await;
     if users.is_empty() { return Err(anyhow!("cloud_sync_received_archive_identity_unavailable")); }
     let mut handles = Vec::new();
     for user in users.iter() {
@@ -460,12 +460,13 @@ async fn cloud_sync_received_registered_handles(state: &SharedPushState) -> anyh
 /// It proves only which persisted account/store owns local data, not current
 /// CloudKit authentication or permission to perform an external operation.
 pub async fn cloud_sync_capture_received_identity(
-    state: &SharedPushState,
+    cloud_messages_client: &Arc<CloudMessagesClient<DefaultAnisetteProvider>>,
+    storage_directory: String,
 ) -> anyhow::Result<CloudSyncNativeAuthMetadata> {
-    let client = state.icloud_services.as_ref()
-        .and_then(|s| s.cloud_messages_client.as_ref())
-        .ok_or_else(|| anyhow!("cloud_sync_received_archive_identity_unavailable"))?;
-    cloud_sync_capture_cached_identity(client, state.conf_dir.clone()).await
+    // SharedPushState is a non-opaque bridge struct. Encoding it moves its
+    // opaque fields even when Rust takes &SharedPushState. Borrow the actual
+    // client instead so repeated local capture cannot invalidate the UI/service.
+    cloud_sync_capture_cached_identity(cloud_messages_client, storage_directory).await
 }
 
 #[frb(ignore)]
@@ -519,15 +520,16 @@ fn cloud_sync_require_historical_auth(
 /// of the immutable snapshot/account; canonical bytes and hashes alone are not
 /// ownership proof. Reopening for remote work still needs independent live auth.
 pub async fn cloud_sync_stage_historical_archive_source(
-    state: &SharedPushState,
+    cloud_messages_client: &Arc<CloudMessagesClient<DefaultAnisetteProvider>>,
+    storage_directory: String,
     expected_auth: CloudSyncNativeAuthMetadata,
     snapshot_sha256: String,
     expected_source_sha256: String,
     source_bytes: Vec<u8>,
 ) -> anyhow::Result<CloudSyncNativeHistoricalArchiveSourceBinding> {
     cloud_sync_stage_historical_archive_source_bound(
-        &state.conf_dir, expected_auth, snapshot_sha256, expected_source_sha256,
-        source_bytes, || cloud_sync_capture_received_identity(state),
+        &storage_directory, expected_auth, snapshot_sha256, expected_source_sha256,
+        source_bytes, || cloud_sync_capture_cached_identity(cloud_messages_client, storage_directory.clone()),
     ).await
 }
 
@@ -647,40 +649,42 @@ mod cloud_sync_historical_capture_tests {
     }
 }
 
-/// Protects an observed receive using one configured SharedPushState. Uses
+/// Protects an observed receive using borrowed clients from one configured state. Uses
 /// cached account validation and registered handles only: no dependency warm,
 /// keychain sync, IDS directory query, re-registration, send or CloudKit save.
 /// The caller must retain its live receive provenance and revalidate state at
 /// journal adoption; shape-valid MessageInst metadata is not authentication.
 pub async fn cloud_sync_stage_received_archive_source(
-    state: &SharedPushState,
+    cloud_messages_client: &Arc<CloudMessagesClient<DefaultAnisetteProvider>>,
+    im_client: &Arc<IMClient>,
+    storage_directory: String,
     expected_auth: CloudSyncNativeAuthMetadata,
     message: MessageInst,
 ) -> anyhow::Result<CloudSyncNativeReceivedArchiveSourceBinding> {
-    let before = cloud_sync_capture_received_identity(state).await
+    let before = cloud_sync_capture_cached_identity(cloud_messages_client, storage_directory.clone()).await
         .map_err(|_| anyhow!("cloud_sync_received_archive_identity_unavailable"))?;
     cloud_sync_require_received_auth(&expected_auth, &before)?;
-    let handles = cloud_sync_received_registered_handles(state).await?;
-    let current = cloud_sync_capture_received_identity(state).await
+    let handles = cloud_sync_received_registered_handles(im_client).await?;
+    let current = cloud_sync_capture_cached_identity(cloud_messages_client, storage_directory.clone()).await
         .map_err(|_| anyhow!("cloud_sync_received_archive_identity_unavailable"))?;
     cloud_sync_require_received_auth(&expected_auth, &current)?;
     let staged = crate::cloud_sync_received_source_stage::stage_received_archive_source(
-        PathBuf::from(&state.conf_dir), current.account_fingerprint.clone(), &message, &handles,
+        PathBuf::from(&storage_directory), current.account_fingerprint.clone(), &message, &handles,
     ).map_err(|_| anyhow!("cloud_sync_received_archive_source_stage_failed"))?;
     // No caller has this descriptor yet. On post-stage drift its unadopted
     // lease may be rolled back, unlike a source already owned by the journal.
     let validate_after = async {
-        let after = cloud_sync_capture_received_identity(state).await
+        let after = cloud_sync_capture_cached_identity(cloud_messages_client, storage_directory.clone()).await
             .map_err(|_| anyhow!("cloud_sync_received_archive_identity_unavailable"))?;
         cloud_sync_require_received_auth(&expected_auth, &after)?;
-        if cloud_sync_received_registered_handles(state).await? != handles {
+        if cloud_sync_received_registered_handles(im_client).await? != handles {
             return Err(anyhow!("cloud_sync_received_archive_identity_changed"));
         }
         Ok::<(), anyhow::Error>(())
     }.await;
     if let Err(error) = validate_after {
         let _ = crate::cloud_sync_native_fetch::cloud_sync_rollback_protected_page_lease(
-            PathBuf::from(&state.conf_dir), &staged.lease_reference,
+            PathBuf::from(&storage_directory), &staged.lease_reference,
         );
         return Err(error);
     }
@@ -707,20 +711,22 @@ pub struct CloudSyncNativeReceivedArchiveSeed {
 }
 
 pub async fn cloud_sync_seal_received_archive_seed(
-    state: &SharedPushState,
+    cloud_messages_client: &Arc<CloudMessagesClient<DefaultAnisetteProvider>>,
+    im_client: &Arc<IMClient>,
+    storage_directory: String,
     expected_auth: CloudSyncNativeAuthMetadata,
     message: MessageInst,
 ) -> anyhow::Result<CloudSyncNativeReceivedArchiveSeed> {
-    let before = cloud_sync_capture_received_identity(state).await?;
+    let before = cloud_sync_capture_cached_identity(cloud_messages_client, storage_directory.clone()).await?;
     cloud_sync_require_received_auth(&expected_auth, &before)?;
-    let handles = cloud_sync_received_registered_handles(state).await?;
+    let handles = cloud_sync_received_registered_handles(im_client).await?;
     let sealed = crate::cloud_sync_received_source_stage::seal_received_archive_seed(
-        PathBuf::from(&state.conf_dir), before.account_fingerprint.clone(),
+        PathBuf::from(&storage_directory), before.account_fingerprint.clone(),
         &before.protected_store_identity, &message, &handles,
     ).map_err(|_| anyhow!("cloud_sync_received_archive_source_seal_failed"))?;
-    let after = cloud_sync_capture_received_identity(state).await?;
+    let after = cloud_sync_capture_cached_identity(cloud_messages_client, storage_directory.clone()).await?;
     cloud_sync_require_received_auth(&expected_auth, &after)?;
-    if cloud_sync_received_registered_handles(state).await? != handles {
+    if cloud_sync_received_registered_handles(im_client).await? != handles {
         return Err(anyhow!("cloud_sync_received_archive_identity_changed"));
     }
     Ok(CloudSyncNativeReceivedArchiveSeed {
@@ -735,11 +741,12 @@ pub async fn cloud_sync_seal_received_archive_seed(
 /// Opens ONLY a previously sealed same-account/store source. No live receive
 /// claim or current chat/body is used to reconstruct the original message.
 pub async fn cloud_sync_stage_received_archive_seed(
-    state: &SharedPushState,
+    cloud_messages_client: &Arc<CloudMessagesClient<DefaultAnisetteProvider>>,
+    storage_directory: String,
     expected_auth: CloudSyncNativeAuthMetadata,
     seed: CloudSyncNativeReceivedArchiveSeed,
 ) -> anyhow::Result<CloudSyncNativeReceivedArchiveSourceBinding> {
-    let before = cloud_sync_capture_received_identity(state).await?;
+    let before = cloud_sync_capture_cached_identity(cloud_messages_client, storage_directory.clone()).await?;
     cloud_sync_require_received_auth(&expected_auth, &before)?;
     if seed.account_fingerprint != before.account_fingerprint ||
         seed.protected_store_identity != before.protected_store_identity {
@@ -750,14 +757,14 @@ pub async fn cloud_sync_stage_received_archive_seed(
         ciphertext: seed.ciphertext,
     };
     let staged = crate::cloud_sync_received_source_stage::stage_received_archive_seed(
-        PathBuf::from(&state.conf_dir), before.account_fingerprint.clone(),
+        PathBuf::from(&storage_directory), before.account_fingerprint.clone(),
         &before.protected_store_identity, &source,
     ).map_err(|_| anyhow!("cloud_sync_received_archive_source_stage_failed"))?;
-    let after = cloud_sync_capture_received_identity(state).await;
+    let after = cloud_sync_capture_cached_identity(cloud_messages_client, storage_directory.clone()).await;
     let validation = after.and_then(|after| cloud_sync_require_received_auth(&expected_auth, &after));
     if let Err(error) = validation {
         let _ = crate::cloud_sync_native_fetch::cloud_sync_rollback_protected_page_lease(
-            PathBuf::from(&state.conf_dir), &staged.lease_reference);
+            PathBuf::from(&storage_directory), &staged.lease_reference);
         return Err(error);
     }
     Ok(CloudSyncNativeReceivedArchiveSourceBinding {
@@ -3727,33 +3734,33 @@ pub fn cloud_sync_messages_change_notifications_current(
 /// The Dart caller must own identity-maintenance admission and saved read opt-in.
 /// Keep native logout/reset excluded until bounded setup actually terminates.
 pub async fn cloud_sync_configure_messages_change_notifications(
-    state: &SharedPushState,
+    cloud_messages_client: &Arc<CloudMessagesClient<DefaultAnisetteProvider>>,
+    conn: &APSConnection,
+    storage_directory: String,
     registration_nonce: String,
     expected_auth: CloudSyncNativeAuthMetadata,
 ) -> anyhow::Result<bool> {
     #[cfg(not(any(target_os = "android", target_os = "windows", test)))]
     {
-        let _ = (state, registration_nonce, expected_auth);
+        let _ = (cloud_messages_client, conn, storage_directory, registration_nonce, expected_auth);
         return Err(anyhow!("cloud_sync_change_notification_platform_unsupported"));
     }
     #[cfg(any(target_os = "android", target_os = "windows", test))]
     {
-    let client = state.icloud_services.as_ref()
-        .and_then(|services| services.cloud_messages_client.as_ref())
-        .ok_or_else(|| anyhow!("cloud_sync_change_notification_identity_unavailable"))?;
+    let client = cloud_messages_client;
     let result = tokio::time::timeout(Duration::from_secs(30), async {
-        let gate = cloudkit_read_authentication_lifecycle_gate(std::path::Path::new(&state.conf_dir))?;
+        let gate = cloudkit_read_authentication_lifecycle_gate(std::path::Path::new(&storage_directory))?;
         let _lifecycle = gate.lock().await;
-        let current = cloud_sync_capture_cached_identity(client, state.conf_dir.clone()).await?;
+        let current = cloud_sync_capture_cached_identity(client, storage_directory.clone()).await?;
         if current.native_session_id != expected_auth.native_session_id
             || current.account_fingerprint != expected_auth.account_fingerprint
             || current.protected_store_identity != expected_auth.protected_store_identity {
             return Err(anyhow!("cloud_sync_change_notification_identity_changed"));
         }
         let accepted = with_cloudkit_writer_operation(
-            client.configure_change_notifications(&state.conn, &registration_nonce),
+            client.configure_change_notifications(conn, &registration_nonce),
         ).await.map_err(|_| anyhow!("cloud_sync_change_notification_setup_unavailable"))?;
-        let after = cloud_sync_capture_cached_identity(client, state.conf_dir.clone()).await?;
+        let after = cloud_sync_capture_cached_identity(client, storage_directory.clone()).await?;
         if after.native_session_id != expected_auth.native_session_id
             || after.account_fingerprint != expected_auth.account_fingerprint
             || after.protected_store_identity != expected_auth.protected_store_identity {

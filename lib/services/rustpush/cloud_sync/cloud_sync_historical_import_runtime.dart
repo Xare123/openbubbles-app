@@ -60,10 +60,12 @@ Future<CloudSyncHistoricalImportPlan> prepareCloudSyncHistoricalImportPlan({
     stillCurrent: stillCurrent,
     settleReader: settleReader,
     source: source,
-    captureIdentity: () => api.cloudSyncCaptureReceivedIdentity(state: state),
+    captureIdentity: () => api.cloudSyncCaptureReceivedIdentity(
+      cloudMessagesClient: client, storageDirectory: storageDirectory),
     stageNative: (auth, request, bytes) =>
         api.cloudSyncStageHistoricalArchiveSource(
-          state: state,
+          cloudMessagesClient: client,
+          storageDirectory: storageDirectory,
           expectedAuth: auth,
           snapshotSha256: request.snapshotSha256,
           expectedSourceSha256: request.sourceSha256,

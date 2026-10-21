@@ -62,22 +62,23 @@ abstract class CustomState<T extends CustomStateful, R, S extends StatefulContro
     // complete the completer when we know the page animation has finished
     WidgetsBinding.instance.addPostFrameCallback((timeStamp) {
       if (!mounted) return;
-      if (ModalRoute.of(context)?.animation != null) {
-        if (ModalRoute.of(context)?.animation?.status != AnimationStatus.completed) {
-          late final AnimationStatusListener listener;
-          listener = (AnimationStatus status) {
-            if (status == AnimationStatus.completed) {
-              animCompleted.complete();
-              ModalRoute.of(context)?.animation?.removeStatusListener(listener);
-            }
-          };
-          ModalRoute.of(context)?.animation?.addStatusListener(listener);
-        } else {
+      final routeAnimation = ModalRoute.of(context)?.animation;
+      if (routeAnimation == null || routeAnimation.status == AnimationStatus.completed) {
+        if (!animCompleted.isCompleted) {
           animCompleted.complete();
         }
-      } else {
-        animCompleted.complete();
+        return;
       }
+      late final AnimationStatusListener listener;
+      listener = (AnimationStatus status) {
+        if (status == AnimationStatus.completed) {
+          routeAnimation.removeStatusListener(listener);
+          if (!animCompleted.isCompleted) {
+            animCompleted.complete();
+          }
+        }
+      };
+      routeAnimation.addStatusListener(listener);
     });
   }
 
@@ -161,22 +162,24 @@ abstract class OptimizedState<T extends StatefulWidget> extends State<T> with Th
     super.initState();
 
     WidgetsBinding.instance.addPostFrameCallback((timeStamp) {
-      if (mounted && ModalRoute.of(context)?.animation != null) {
-        if (ModalRoute.of(context)?.animation?.status != AnimationStatus.completed) {
-          late final AnimationStatusListener listener;
-          listener = (AnimationStatus status) {
-            if (status == AnimationStatus.completed) {
-              animCompleted.complete();
-              ModalRoute.of(context)?.animation?.removeStatusListener(listener);
-            }
-          };
-          ModalRoute.of(context)?.animation?.addStatusListener(listener);
-        } else {
+      if (!mounted) return;
+      final routeAnimation = ModalRoute.of(context)?.animation;
+      if (routeAnimation == null || routeAnimation.status == AnimationStatus.completed) {
+        if (!animCompleted.isCompleted) {
           animCompleted.complete();
         }
-      } else {
-        animCompleted.complete();
+        return;
       }
+      late final AnimationStatusListener listener;
+      listener = (AnimationStatus status) {
+        if (status == AnimationStatus.completed) {
+          routeAnimation.removeStatusListener(listener);
+          if (!animCompleted.isCompleted) {
+            animCompleted.complete();
+          }
+        }
+      };
+      routeAnimation.addStatusListener(listener);
     });
   }
 

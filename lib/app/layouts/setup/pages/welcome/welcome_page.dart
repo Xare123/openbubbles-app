@@ -43,8 +43,10 @@ class _WelcomePageState extends OptimizedState<WelcomePage> with TickerProviderS
         .animate(CurvedAnimation(parent: _subtitleController, curve: Curves.easeInOut));
 
     SchedulerBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted) return;
       _titleController.forward();
       await Future.delayed(const Duration(milliseconds: 500));
+      if (!mounted) return;
       _subtitleController.forward();
     });
   }
