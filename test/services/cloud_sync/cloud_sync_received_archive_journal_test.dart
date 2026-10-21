@@ -266,6 +266,129 @@ void main() {
   }
 
   test(
+    'V3 received media retains only the encrypted source binding across reopen',
+    () async {
+      const guid = 'received-media-journal';
+      const text = 'caption ';
+      final fresh = _fresh(guid, text, chat);
+      final attachment = Attachment(
+        guid: '${guid}_1',
+        uti: 'public.jpeg',
+        mimeType: 'image/jpeg',
+        transferName: 'photo.jpg',
+        totalBytes: 1234,
+        isOutgoing: false,
+        hasLivePhoto: false,
+      );
+      fresh.hasAttachments = true;
+      fresh.attachments = [attachment];
+      fresh.attributedBody = [
+        AttributedBody(
+          string: text,
+          runs: [
+            Run(range: [0, 7], attributes: Attributes(messagePart: 0)),
+            Run(
+              range: [7, 1],
+              attributes: Attributes(
+                messagePart: 1,
+                attachmentGuid: '${guid}_1',
+              ),
+            ),
+          ],
+        ),
+      ];
+      final wire = _wire(
+        id: guid,
+        text: 'caption',
+        sentAt: _time(2).millisecondsSinceEpoch,
+      );
+      final normal = (wire.message as api.Message_Message).field0;
+      normal.parts.field0.add(
+        api.IndexedMessagePart(
+          idx: 1,
+          part_: api.MessagePart.attachment(
+            api.Attachment(
+              aType: api.AttachmentType.mmcs(
+                api.MMCSFile(
+                  key: Uint8List.fromList(List.filled(32, 7)),
+                  signature: Uint8List.fromList(List.filled(21, 9)),
+                  object: 'object-media',
+                  url: 'https://example.invalid/mmcs/media',
+                  size: 1234,
+                ),
+              ),
+              part_: 0,
+              utiType: 'public.jpeg',
+              mime: 'image/jpeg',
+              name: 'photo.jpg',
+              iris: false,
+            ),
+          ),
+        ),
+      );
+      final capture = CloudSyncReceivedArchiveIdentity.preview(
+        message: fresh,
+        chat: chat,
+        wire: wire,
+        liveContext: _live,
+      );
+      expect(capture, isA<CloudSyncReceivedArchiveEligible>());
+      final identity = (capture as CloudSyncReceivedArchiveEligible).identity;
+      expect(identity.hasMedia, isTrue);
+      // Synthetic native collaborator only, not evidence of native encryption.
+      // The real protector/lease round trip is covered by native V3 tests.
+      final seed = CloudSyncReceivedArchiveSourceBinding.sealed(
+        accountFingerprint: _account,
+        protectedStoreIdentity: _storeId,
+        messageGuidHash: identity.guidHash,
+        sourceSha256: identity.sourceSha256,
+        ciphertext: 'obcs2.test.U3ludGhldGlj',
+      );
+      final id = journal.saveReceivedCapture(
+        wire: wire,
+        liveContext: _live,
+        localChatId: chat.id!,
+        source: seed,
+        capturedAuth: _auth(Object()),
+        stillCurrent: () => true,
+        now: _time(3),
+        persistMessage: () {
+          final localId = store.box<Message>().put(fresh);
+          attachment.message.target = fresh;
+          store.box<Attachment>().put(attachment);
+          fresh.dbAttachments.add(attachment);
+          store.box<Message>().put(fresh);
+          return localId;
+        },
+      );
+      final intent = store.box<CloudSyncReceivedArchiveIntentEntity>().get(id)!;
+      expect(intent.sourceSha256, identity.sourceSha256);
+      expect(intent.protectedSourceBinding, seed.encode());
+      expect(intent.protectedSourceBinding, isNot(contains('object-media')));
+      expect(intent.protectedSourceBinding, isNot(contains('photo.jpg')));
+      expect(store.box<CloudOutboxOperationEntity>().count(), 0);
+      await reopen();
+      final restored = _byGuid(guid)!;
+      expect(restored.hasAttachments, isTrue);
+      expect(restored.dbAttachments.single.guid, '${guid}_1');
+      expect(
+        journal
+            .readProtectedSource(intentId: id, currentAuth: _auth(Object()))
+            .encode(),
+        seed.encode(),
+      );
+      expect(
+        journal
+            .readReadyPage(currentAuth: _auth(Object()))
+            .ready
+            .single
+            .sourceSha256,
+        identity.sourceSha256,
+      );
+    },
+  );
+
+  test(
     'genuinely unpersisted first save adopts and reopens idempotently',
     () async {
       const guid = 'recv-guid-1001';

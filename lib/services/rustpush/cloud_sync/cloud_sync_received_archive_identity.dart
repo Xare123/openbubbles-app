@@ -4,10 +4,12 @@ import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/src/rust/api/api.dart' as api;
 import 'package:crypto/crypto.dart';
 
+import 'cloud_sync_received_media_source.dart';
+
 /// Immutable eligibility for a message observed on the live IDS receive path.
 ///
 /// This primitive answers one question: is this persisted [Message] plus its
-/// bound [Chat] a well-formed plain-text iMessage that arrived via the
+/// bound [Chat] a well-formed plain-text or supported MMCS iMessage arriving via the
 /// supplied live receive observation, and is therefore a candidate for a
 /// future received-archive lane? It grants no upload authority, performs no
 /// network requests or database writes, and never mutates its inputs. Model
@@ -23,7 +25,7 @@ import 'package:crypto/crypto.dart';
 /// be treated as permission to save to CloudKit, and this file contains no
 /// such call.
 ///
-/// Plain text first: media, replies, reactions, and rich payloads are
+/// Replies, reactions, and unsupported media/rich payloads are
 /// reported with explicit ineligibility codes so no caller can mistake them
 /// for covered archive shapes. Plain group sources require exact wire lineage
 /// and participant binding; they can enter discovery, not the direct create
@@ -75,7 +77,7 @@ sealed class CloudSyncReceivedArchiveCapture {
   const CloudSyncReceivedArchiveCapture();
 }
 
-/// Eligible received plain-text candidate with its immutable source binding.
+/// Eligible received candidate with its immutable source binding.
 final class CloudSyncReceivedArchiveEligible
     extends CloudSyncReceivedArchiveCapture {
   const CloudSyncReceivedArchiveEligible(this.identity);
@@ -93,7 +95,7 @@ final class CloudSyncReceivedArchiveIneligible
   final String reason;
 }
 
-/// Immutable source identity for one eligible received plain-text message.
+/// Immutable source identity for one eligible received message.
 ///
 /// [guidHash] and [sourceSha256] use a `cloud-sync-received-archive-*`
 /// namespace deliberately distinct from the `cloud-sync-local-send-*`
@@ -106,8 +108,9 @@ final class CloudSyncReceivedArchiveIdentity {
   const CloudSyncReceivedArchiveIdentity._(
     this.guidHash,
     this.sourceSha256,
-    this.origin,
-  );
+    this.origin, [
+    this.mediaSource,
+  ]);
 
   /// Digest of the row's exact persisted GUID.
   final String guidHash;
@@ -118,6 +121,13 @@ final class CloudSyncReceivedArchiveIdentity {
   /// Whether the row arrived from another party or was mirrored from this
   /// account's other device. Both preserve the row's original `isFromMe`.
   final CloudSyncReceivedArchiveOrigin origin;
+
+  /// V3 body evidence only. The old plain writer must reject [hasMedia]; a
+  /// separate native complete-body/media pipeline must qualify these sources.
+  /// Neither the manifest nor this identity grants remote-write authority.
+  final CloudSyncReceivedMediaSource? mediaSource;
+
+  bool get hasMedia => mediaSource != null;
 
   static const String reasonNotLiveReceive =
       'cloud_sync_received_archive_not_live_receive';
@@ -306,9 +316,20 @@ final class CloudSyncReceivedArchiveIdentity {
       return const CloudSyncReceivedArchiveIneligible(reasonReaction);
     }
 
-    if (message.hasAttachments ||
+    final storedHasMedia =
+        message.hasAttachments ||
         message.attachments.isNotEmpty ||
-        message.dbAttachments.isNotEmpty) {
+        message.dbAttachments.isNotEmpty;
+    final wireHasMedia = normal.parts.field0.any(
+      (part) => part.part_ is api.MessagePart_Attachment,
+    );
+    final mediaSource = wireHasMedia
+        ? CloudSyncReceivedMediaSource.captureWire(wire)
+        : null;
+    if ((wireHasMedia &&
+            (mediaSource == null ||
+                !mediaSource.matchesReceivedMessage(message))) ||
+        (!wireHasMedia && storedHasMedia)) {
       return const CloudSyncReceivedArchiveIneligible(reasonMedia);
     }
 
@@ -455,39 +476,50 @@ final class CloudSyncReceivedArchiveIdentity {
       return const CloudSyncReceivedArchiveIneligible(reasonSender);
     }
 
-    final text = message.text;
-    if (text == null || text.trim().isEmpty) {
-      return const CloudSyncReceivedArchiveIneligible(reasonBody);
-    }
-    if (message.attributedBody.length != 1 ||
-        message.attributedBody.single.string != text) {
-      return const CloudSyncReceivedArchiveIneligible(reasonBody);
-    }
-    if (!_isPlainBody(message.attributedBody.single, text)) {
-      return const CloudSyncReceivedArchiveIneligible(reasonBody);
-    }
+    // V1/V2 body validation and digest bytes remain unchanged. V3 derives
+    // its text AND full ordered manifest from the original wire, never a
+    // caption-only UI approximation; row correspondence was checked above.
+    final text = mediaSource?.text ?? message.text;
+    if (mediaSource == null) {
+      if (text == null || text.trim().isEmpty) {
+        return const CloudSyncReceivedArchiveIneligible(reasonBody);
+      }
+      if (message.attributedBody.length != 1 ||
+          message.attributedBody.single.string != text) {
+        return const CloudSyncReceivedArchiveIneligible(reasonBody);
+      }
+      if (!_isPlainBody(message.attributedBody.single, text)) {
+        return const CloudSyncReceivedArchiveIneligible(reasonBody);
+      }
 
-    final wireText = StringBuffer();
-    for (final indexed in normal.parts.field0) {
-      if (indexed.ext != null || (indexed.idx != null && indexed.idx != 0)) {
+      final wireText = StringBuffer();
+      for (final indexed in normal.parts.field0) {
+        if (indexed.ext != null || (indexed.idx != null && indexed.idx != 0)) {
+          return const CloudSyncReceivedArchiveIneligible(
+            reasonWireBodyMismatch,
+          );
+        }
+        final part = indexed.part_;
+        if (part is! api.MessagePart_Text ||
+            part.field1 is! api.TextFormat_Flags) {
+          return const CloudSyncReceivedArchiveIneligible(
+            reasonWireBodyMismatch,
+          );
+        }
+        final flags = (part.field1 as api.TextFormat_Flags).field0;
+        if (flags.bold ||
+            flags.italic ||
+            flags.underline ||
+            flags.strikethrough) {
+          return const CloudSyncReceivedArchiveIneligible(
+            reasonWireBodyMismatch,
+          );
+        }
+        wireText.write(part.field0);
+      }
+      if (wireText.toString() != text) {
         return const CloudSyncReceivedArchiveIneligible(reasonWireBodyMismatch);
       }
-      final part = indexed.part_;
-      if (part is! api.MessagePart_Text ||
-          part.field1 is! api.TextFormat_Flags) {
-        return const CloudSyncReceivedArchiveIneligible(reasonWireBodyMismatch);
-      }
-      final flags = (part.field1 as api.TextFormat_Flags).field0;
-      if (flags.bold ||
-          flags.italic ||
-          flags.underline ||
-          flags.strikethrough) {
-        return const CloudSyncReceivedArchiveIneligible(reasonWireBodyMismatch);
-      }
-      wireText.write(part.field0);
-    }
-    if (wireText.toString() != text) {
-      return const CloudSyncReceivedArchiveIneligible(reasonWireBodyMismatch);
     }
     // IDSRecvMessage.to_message carries an optional reply-device token for
     // iMessage too. It is routing metadata, not the addressed local handle
@@ -512,7 +544,9 @@ final class CloudSyncReceivedArchiveIdentity {
       ..sort();
     final guidHash = _digest(['cloud-sync-received-archive-guid-v1', guid]);
     final sourceSha256 = _digest([
-      isGroup
+      mediaSource != null
+          ? 'cloud-sync-received-archive-source-v3'
+          : isGroup
           ? 'cloud-sync-received-archive-source-v2'
           : 'cloud-sync-received-archive-source-v1',
       guid,
@@ -526,12 +560,18 @@ final class CloudSyncReceivedArchiveIdentity {
       wireParticipants,
       conversation.cvName ?? '',
       conversation.afterGuid ?? '',
+      if (mediaSource != null) mediaSource.mediaManifest,
     ]);
     if (expectedSourceSha256 != null && expectedSourceSha256 != sourceSha256) {
       return const CloudSyncReceivedArchiveIneligible(reasonSourceChanged);
     }
     return CloudSyncReceivedArchiveEligible(
-      CloudSyncReceivedArchiveIdentity._(guidHash, sourceSha256, origin),
+      CloudSyncReceivedArchiveIdentity._(
+        guidHash,
+        sourceSha256,
+        origin,
+        mediaSource,
+      ),
     );
   }
 

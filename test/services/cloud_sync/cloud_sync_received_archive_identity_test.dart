@@ -210,6 +210,8 @@ void main() {
           ),
         );
         expect(identity.sourceSha256, vector.$2);
+        expect(identity.hasMedia, isFalse);
+        expect(identity.mediaSource, isNull);
       }
     });
     test(
@@ -588,6 +590,8 @@ void main() {
         'cd7c99cec32925c682dd556e85b3f86856765d9dadc8c3b5796f8f5f4deccf57',
       );
       expect(identity.sourceSha256, vector.$3);
+      expect(identity.hasMedia, isFalse);
+      expect(identity.mediaSource, isNull);
     }
   });
 
