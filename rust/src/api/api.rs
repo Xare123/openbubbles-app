@@ -12607,7 +12607,7 @@ impl SharedPushState {
         let users = restore_users(path.clone())?;
         let config = &hardware.os_config;
         let identity = IDSNGMIdentity::restore(hardware.identity.as_ref(), "openbubbles").ok()?;
-        let (conn, _) = match setup_push(config, &identity, Some(hardware.push.clone()), path.clone()).await {
+        let (conn, _) = match setup_push(config, &identity, Some(&hardware.push), path.clone()).await {
             Ok(connection) => connection,
             Err(_) => {
                 error!("Activation identity could not be preserved; stored profile was retained");
@@ -13319,15 +13319,17 @@ pub async fn refresh_phone_registration_push(
 pub async fn setup_push(
     config: &JoinedOSConfig,
     identity: &IDSNGMIdentity,
-    state: Option<APSState>,
+    state: Option<&APSState>,
     state_path: String,
 ) -> anyhow::Result<(APSConnection, Option<PushError>)> {
     let expected = phone_registration_push_refresh::SavedHardwareExpectation::capture(
         &PathBuf::from(&state_path))?;
-    if let Some(push) = state.as_ref() {
+    if let Some(push) = state {
         relay_setup_reuse::validate_restore_snapshot(expected.bytes(), config, push)?;
     }
-    setup_push_inner(config, identity, state, state_path, Some(expected), None).await
+    // A retry keeps its caller-owned opaque snapshot. Clone only the native
+    // snapshot, never move the Dart wrapper while encoding setup arguments.
+    setup_push_inner(config, identity, state.cloned(), state_path, Some(expected), None).await
 }
 
 /// Retain the exact ready connection state for setup retries. The opaque
