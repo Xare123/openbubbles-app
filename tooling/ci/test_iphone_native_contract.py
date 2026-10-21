@@ -98,7 +98,8 @@ class NativeContractTests(unittest.TestCase):
             base = self.analysis()
             path.write_text(json.dumps(base), encoding="utf-8")
             self.assertEqual(S.read_analysis(path)["decompiled_count"], 1)
-            for mutation in ("chars", "count", "references", "code-size", "schema", "attempts"):
+            for mutation in ("chars", "count", "references", "code-size", "schema", "attempts",
+                             "diagnostic-size", "diagnostic-type", "open-type", "candidate-error"):
                 value = copy.deepcopy(base)
                 if mutation == "chars": value["candidates"][0]["pseudocode"]["chars"] = 8
                 if mutation == "count": value["decompiled_count"] = True
@@ -106,12 +107,57 @@ class NativeContractTests(unittest.TestCase):
                 if mutation == "code-size": value["candidates"][0]["pseudocode"]["text"] = "x" * 20001
                 if mutation == "schema": value["schema"] = True
                 if mutation == "attempts": value["decompile_attempts"] = 9
+                if mutation == "diagnostic-size": value["decompiler_message"] = "x" * 1025
+                if mutation == "diagnostic-type": value["decompiler_message"] = []
+                if mutation == "open-type": value["decompiler_opened"] = 1
+                if mutation == "candidate-error": value["candidates"][0]["decompile_error"] = "x" * 1025
                 path.write_text(json.dumps(value), encoding="utf-8")
                 with self.subTest(mutation=mutation), self.assertRaises(RuntimeError):
                     S.read_analysis(path)
             path.write_text('{"schema":1,"schema":1}', encoding="utf-8")
             with self.assertRaises(ValueError):
                 S.read_analysis(path)
+
+    def test_backend_inventory_is_owned_bounded_and_never_runs_backend(self):
+        with tempfile.TemporaryDirectory() as directory:
+            work = Path(directory).resolve()
+            engine = work / "ghidra-engine" / S.ENGINE_TOP
+            backend = engine / "Ghidra/Features/Decompiler/os/mac_arm_64/decompile"
+            backend.parent.mkdir(parents=True)
+            backend.write_bytes(b"static-fixture-not-executable")
+            calls = []
+
+            def owned(command, parent, name, timeout, **kwargs):
+                self.assertEqual(parent, work)
+                self.assertEqual(command, ["/usr/bin/file", "-b", str(backend)])
+                self.assertEqual(timeout, 15)
+                self.assertFalse(kwargs.get("check", True))
+                calls.append(command)
+                return 0, b"Mach-O 64-bit executable arm64\n", b""
+
+            with patch.object(S.platform, "machine", return_value="arm64"):
+                result = S.backend_inventory(engine, work, owned)
+            self.assertEqual(result["host_machine"], "arm64")
+            self.assertEqual(len(result["candidates"]), 2)
+            available = [entry for entry in result["candidates"] if entry["exists"]]
+            self.assertEqual(len(available), 1)
+            self.assertEqual(available[0]["sha256"], S.digest(backend))
+            self.assertEqual(available[0]["bytes"], backend.stat().st_size)
+            self.assertEqual(available[0]["file_type"], "Mach-O 64-bit executable arm64")
+            self.assertIs(type(available[0]["executable"]), bool)
+            self.assertEqual(len(calls), 1)
+            with self.assertRaisesRegex(RuntimeError, "owned-engine-root-required"):
+                S.backend_inventory(work.parent, work, owned)
+            self.assertEqual(len(calls), 1)
+
+    def test_tool_diagnostic_retains_startup_error_even_before_success_tail(self):
+        output = ("INFO loading\n" * 30 + "ERROR Decompiler Not Found: missing backend\n"
+                  + "INFO script finished\n" * 30).encode()
+        result = S.public_tool_diagnostic(output, b"")
+        self.assertEqual(result, ["ERROR Decompiler Not Found: missing backend"])
+        result = S.public_tool_diagnostic(("ERROR " + "x" * 2000 + "\n").encode() * 30, b"")
+        self.assertEqual(len(result), 16)
+        self.assertTrue(all(len(line) <= 240 for line in result))
 
     def test_fixture_failure_prevents_native_analysis_using_same_owned_runner(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -140,14 +186,18 @@ class NativeContractTests(unittest.TestCase):
                     (work / "contract-fixture.json").write_text("{}")
                 return 0, b"{}", b""
 
+            progress = {}
             with patch.object(S, "SOURCE_DIR", source), patch.object(S, "require_owned_mac"), \
                     patch.object(S, "require_native"), patch.object(S, "extract_engine", return_value=(engine, 100)), \
+                    patch.object(S, "backend_inventory", return_value={"host_machine": "fixture"}), \
                     patch.object(S.os, "access", return_value=True), patch.object(S, "read_analysis", return_value={}):
                 with self.assertRaisesRegex(RuntimeError, "fixture-unqualified"):
                     S.inspect_contract(work / "mobileactivationd", work, owned,
-                                       lambda _: (_ for _ in ()).throw(RuntimeError("fixture-unqualified")), {})
+                                       lambda _: (_ for _ in ()).throw(RuntimeError("fixture-unqualified")), progress)
             self.assertIn("contract-fixture", calls)
             self.assertNotIn("contract-native", calls)
+            self.assertIn("backend_inventory", progress)
+            self.assertIn("public_tool_diagnostic", progress)
 
 
 if __name__ == "__main__":

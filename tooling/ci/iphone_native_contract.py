@@ -159,6 +159,10 @@ def reject_duplicate_json(pairs):
     return result
 
 
+def bounded_diagnostic(value):
+    return value is None or (type(value) is str and len(value.encode("utf-16-le")) // 2 <= 1024)
+
+
 def read_analysis(path):
     if path.is_symlink() or not path.is_file() or not 0 < path.stat().st_size <= MAX_OUTPUT_BYTES:
         raise RuntimeError("bounded-headless-result-required")
@@ -171,10 +175,14 @@ def read_analysis(path):
             or type(candidates) is not list or len(candidates) > 64
             or value.get("analysis_timeout_occurred") not in ("false", "true", "unknown")):
         raise RuntimeError("headless-result-schema-invalid")
+    if (not bounded_diagnostic(value.get("decompiler_message"))
+            or ("decompiler_opened" in value and type(value["decompiler_opened"]) is not bool)):
+        raise RuntimeError("headless-diagnostic-bounds-invalid")
     count = 0
     for candidate in candidates:
         if (len(candidate.get("references", [])) > 8 or len(candidate.get("calls") or []) > 64
-                or len(candidate.get("name", "")) > 500):
+                or len(candidate.get("name", "")) > 500
+                or not bounded_diagnostic(candidate.get("decompile_error"))):
             raise RuntimeError("headless-result-bounds-invalid")
         code = candidate.get("pseudocode")
         if code is not None:
@@ -189,6 +197,42 @@ def read_analysis(path):
     if type(attempts) is not int or not count <= attempts <= 8:
         raise RuntimeError("headless-decompilation-attempts-invalid")
     return value
+
+
+def backend_inventory(engine, work, run_owned):
+    """Inspect only pinned engine files. Never execute a backend or target."""
+    if (engine.is_symlink() or not engine.is_dir()
+            or work.resolve() not in engine.resolve().parents):
+        raise RuntimeError("owned-engine-root-required")
+    result = {"host_machine": platform.machine(), "candidates": []}
+    for arch in ("mac_arm_64", "mac_x86_64"):
+        relative = "Ghidra/Features/Decompiler/os/" + arch + "/decompile"
+        path = engine / relative
+        entry = {"path": relative, "exists": path.exists()}
+        result["candidates"].append(entry)
+        if not path.exists():
+            continue
+        info = path.lstat()
+        if (path.is_symlink() or not stat.S_ISREG(info.st_mode)
+                or engine.resolve() not in path.resolve().parents
+                or not 0 < info.st_size <= 128 * 1024**2):
+            raise RuntimeError("bounded-owned-backend-required")
+        entry.update({"bytes": info.st_size, "sha256": digest(path),
+                      "mode": oct(stat.S_IMODE(info.st_mode)),
+                      "executable": os.access(path, os.X_OK)})
+        code, output, _ = run_owned(["/usr/bin/file", "-b", str(path)], work,
+                                    "ghidra-backend-" + arch, 15, check=False)
+        entry.update({"file_exit": code, "file_type": output.decode(errors="replace").strip()[:240]})
+    return result
+
+
+def public_tool_diagnostic(stdout, stderr):
+    """Keep a small failure-relevant excerpt, not entire engine logs."""
+    lines = (stdout + b"\n" + stderr).decode(errors="replace").splitlines()
+    critical = [line for line in lines if re.search(
+        r"\b(?:ERROR|Exception|dyld)\b|Permission denied|Could not find|Unable to start", line, re.I)]
+    relevant = critical or [line for line in lines if "decompil" in line.lower()] or lines[-8:]
+    return [line[:240] for line in relevant[-16:]]
 
 
 def headless_command(launcher, project, binary, output, script_dir, java_home, private_home):
@@ -227,6 +271,7 @@ def inspect_contract(native, work, run_owned, qualify_fixture, progress):
         raise RuntimeError("pinned-engine-download-failed")
     engine, expanded = extract_engine(archive, work / "ghidra-engine")
     progress["engine_expanded_bytes"] = expanded
+    progress["backend_inventory"] = backend_inventory(engine, work, run_owned)
     launcher = engine / "support/analyzeHeadless"
     if not launcher.is_file() or not os.access(launcher, os.X_OK):
         raise RuntimeError("headless-launcher-unavailable")
@@ -243,11 +288,8 @@ def inspect_contract(native, work, run_owned, qualify_fixture, progress):
         code, stdout, stderr = run_owned(headless_command(
             launcher, project, binary, output, scripts, java_home, private_home),
             work, "contract-" + kind, 300, check=False)
+        progress["public_tool_diagnostic"] = public_tool_diagnostic(stdout, stderr)
         if code != 0 or not output.is_file():
-            # These logs can contain public engine/compiler facts only. Never
-            # retain the binary, firmware, project database or entire logs.
-            lines = (stdout + stderr).decode(errors="replace").splitlines()[-16:]
-            progress["public_tool_diagnostic"] = [line[:200] for line in lines]
             raise RuntimeError("headless-" + kind + "-failed")
         result = read_analysis(output)
         if kind == "fixture":

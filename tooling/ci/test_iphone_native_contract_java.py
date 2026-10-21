@@ -113,6 +113,16 @@ class JavaCorrectionContracts(unittest.TestCase):
         self.assertIn("extends HeadlessScript", self.source)
         self.assertIn("analysisTimeoutOccurred()", self.source)
 
+    def test_decompiler_startup_and_candidate_errors_are_bounded_and_exported(self):
+        body = segment(self.source, "private int decompileSelected",
+                       "private List<Long> findAsciiString")
+        self.assertIn("boundedDiagnostic(decompiler.getLastMessage())", body)
+        self.assertIn("boundedDiagnostic(results.getErrorMessage())", body)
+        self.assertIn("decompilerOpened = true;", body)
+        self.assertIn("MAX_DIAGNOSTIC_CHARS = 1024", self.source)
+        for field in ("decompiler_opened", "decompiler_message", "decompile_error"):
+            self.assertIn(field, self.source)
+
 
 if __name__ == "__main__":
     unittest.main()

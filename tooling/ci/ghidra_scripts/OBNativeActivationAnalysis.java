@@ -51,6 +51,7 @@ public class OBNativeActivationAnalysis extends HeadlessScript {
     private static final int MAX_DECOMPILE_ATTEMPTS = 8;
     private static final int DECOMPILE_TIMEOUT_SECONDS = 30;
     private static final int MAX_PSEUDOCODE_CHARS = 20000;
+    private static final int MAX_DIAGNOSTIC_CHARS = 1024;
     private static final int CFSTRING_STRING_POINTER_OFFSET = 16;
     private static final int CFSTRING_LENGTH_OFFSET = 24;
     private static final int MAX_CFSTRING_BASES_EXPORTED = 16;
@@ -115,10 +116,13 @@ public class OBNativeActivationAnalysis extends HeadlessScript {
         String pseudocode;
         boolean pseudocodeTruncated;
         String decompileExclusion;
+        String decompileError;
     }
 
     private final List<String> truncations = new ArrayList<>();
     private int decompileAttempts;
+    private boolean decompilerOpened;
+    private String decompilerMessage;
 
     @Override
     protected void run() throws Exception {
@@ -232,6 +236,7 @@ public class OBNativeActivationAnalysis extends HeadlessScript {
             json.append(", \"calls_truncated\": ").append(candidate.callsTruncated);
             json.append(", \"decompile_exclusion\": ")
                 .append(candidate.decompileExclusion == null ? "null" : q(candidate.decompileExclusion));
+            json.append(", \"decompile_error\": ").append(q(candidate.decompileError));
             json.append(", \"pseudocode\": ");
             if (candidate.pseudocode == null) json.append("null");
             else {
@@ -244,6 +249,8 @@ public class OBNativeActivationAnalysis extends HeadlessScript {
         json.append("],\n");
         field(json, 1, "candidate_count_total", Integer.toString(candidateTotal), true);
         field(json, 1, "candidates_truncated", Boolean.toString(candidatesTruncated), true);
+        field(json, 1, "decompiler_opened", Boolean.toString(decompilerOpened), true);
+        field(json, 1, "decompiler_message", q(decompilerMessage), true);
         field(json, 1, "decompile_attempts", Integer.toString(decompileAttempts), true);
         field(json, 1, "decompiled_count", Integer.toString(decompiled), true);
         json.append(" \"truncations\": [");
@@ -474,9 +481,12 @@ public class OBNativeActivationAnalysis extends HeadlessScript {
         DecompInterface decompiler = new DecompInterface();
         try {
             if (!decompiler.openProgram(currentProgram)) {
+                decompilerMessage = boundedDiagnostic(decompiler.getLastMessage());
                 truncations.add("decompiler-unavailable");
                 return 0;
             }
+            decompilerOpened = true;
+            decompilerMessage = boundedDiagnostic(decompiler.getLastMessage());
             for (Candidate candidate : exported) {
                 if (decompileAttempts >= MAX_DECOMPILE_ATTEMPTS) break;
                 if (candidate.decompileExclusion != null || candidate.external || candidate.thunk) continue;
@@ -484,7 +494,12 @@ public class OBNativeActivationAnalysis extends HeadlessScript {
                 if (function == null) continue;
                 decompileAttempts++;
                 DecompileResults results = decompiler.decompileFunction(function, DECOMPILE_TIMEOUT_SECONDS, monitor);
-                if (results == null || results.getDecompiledFunction() == null) continue;
+                if (results == null || results.getDecompiledFunction() == null) {
+                    candidate.decompileError = results == null
+                        ? boundedDiagnostic(decompiler.getLastMessage())
+                        : boundedDiagnostic(results.getErrorMessage());
+                    continue;
+                }
                 String c = results.getDecompiledFunction().getC();
                 if (c == null || c.isEmpty()) continue;
                 candidate.pseudocodeTruncated = c.length() > MAX_PSEUDOCODE_CHARS;
@@ -496,6 +511,12 @@ public class OBNativeActivationAnalysis extends HeadlessScript {
             decompiler.dispose();
         }
         return done;
+    }
+
+    private static String boundedDiagnostic(String value) {
+        if (value == null) return null;
+        return value.length() > MAX_DIAGNOSTIC_CHARS
+            ? value.substring(0, MAX_DIAGNOSTIC_CHARS) : value;
     }
 
     private List<Long> findAsciiString(String seed) {
