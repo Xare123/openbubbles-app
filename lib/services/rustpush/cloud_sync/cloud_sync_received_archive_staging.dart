@@ -59,8 +59,8 @@ final class CloudSyncReceivedArchiveStaging {
     if (existing == null && !source.isSeed) {
       throw StateError('cloud_sync_received_archive_protected_source_invalid');
     }
-    // Native sealing already checked the captured account/store/handles on
-    // both sides of encryption. Retain that validated source before another
+    // Native sealing checked the captured account/store/handles before
+    // synchronous encryption. Retain that validated source before another
     // await can fail or the process can stop. The transaction still checks
     // current Dart profile/epoch ownership and exact persisted wire content.
     // This is local retention, never inspection or remote write admission.

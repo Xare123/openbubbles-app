@@ -6,6 +6,7 @@ import 'package:crypto/crypto.dart';
 
 import 'cloud_sync_production_preflight.dart';
 import 'cloud_sync_local_send_journal.dart';
+import 'cloud_sync_received_archive_journal.dart';
 import 'cloud_sync_outbound_chat_origin.dart';
 import 'cloud_sync_models.dart';
 import 'cloudkit_operation_interlock.dart';
@@ -20,10 +21,14 @@ final class ObjectBoxCloudSyncPreflightReader {
     DateTime Function()? now,
     Set<String>? ignoredScopeKeys,
     CloudSyncLocalSendJournal? localSendJournal,
+    CloudSyncReceivedArchiveJournal? pausedReceivedArchiveJournal,
   }) : _store = store,
        // Keep this optional injection named without exposing the private field.
        // ignore: prefer_initializing_formals
        _localSendJournal = localSendJournal,
+       // Keep the optional caller-scoped injection public and the field private.
+       // ignore: prefer_initializing_formals
+       _pausedReceivedArchiveJournal = pausedReceivedArchiveJournal,
        _leases = store.box<CloudSyncLeaseEntity>(),
        _outbox = store.box<CloudOutboxOperationEntity>(),
        _checkpoints = store.box<CloudSyncCheckpointEntity>(),
@@ -37,6 +42,7 @@ final class ObjectBoxCloudSyncPreflightReader {
 
   final Store _store;
   final CloudSyncLocalSendJournal? _localSendJournal;
+  final CloudSyncReceivedArchiveJournal? _pausedReceivedArchiveJournal;
   final Box<CloudSyncLeaseEntity> _leases;
   final Box<CloudOutboxOperationEntity> _outbox;
   final Box<CloudSyncCheckpointEntity> _checkpoints;
@@ -80,6 +86,11 @@ final class ObjectBoxCloudSyncPreflightReader {
           if (journal != null &&
               journal.isBoundToStore(_store) &&
               journal.isRetainedPreproofPendingCreate(row)) {
+            heldRows.add(row.id);
+          }
+          final received = _pausedReceivedArchiveJournal;
+          if (received != null && received.isBoundToStore(_store) &&
+              received.isUnsubmittedReceivedCreate(row)) {
             heldRows.add(row.id);
           }
         }

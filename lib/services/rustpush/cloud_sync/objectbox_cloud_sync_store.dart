@@ -70,10 +70,14 @@ class ObjectBoxCloudSyncStore
     this._readHistoricalChatOrigin,
     CloudSyncSemanticDiagnosticRecorder? recordExistingHistoryDiagnostic,
     void Function()? validateOutboxDispatch,
+    bool Function()? pauseUnsubmittedReceivedCreates,
   }) : _store = store,
        // Keep the optional fence parameter public without exposing the field.
        // ignore: prefer_initializing_formals
        _validateOutboxDispatch = validateOutboxDispatch,
+       // Keep the optional caller-scoped injection public and the field private.
+       // ignore: prefer_initializing_formals
+       _pauseUnsubmittedReceivedCreates = pauseUnsubmittedReceivedCreates,
        _localSendJournal = localSendJournal,
        _receivedArchiveJournal = receivedArchiveJournal,
        _localMutationJournal = localMutationJournal,
@@ -176,6 +180,7 @@ class ObjectBoxCloudSyncStore
   // Optional exact-selection fence, evaluated synchronously in the same
   // transaction that leases a row or persists its submission identity.
   final void Function()? _validateOutboxDispatch;
+  final bool Function()? _pauseUnsubmittedReceivedCreates;
 
   @override
   Future<CloudSyncCheckpoint> readCheckpoint(CloudSyncScope scope) async {
@@ -2754,6 +2759,18 @@ class ObjectBoxCloudSyncStore
             (_localSendJournal?.isRetainedPreproofPendingCreate(row) ?? false);
       });
 
+  bool isPausedUnsubmittedReceivedCreate(CloudOutboxOperation expected) =>
+      _store.runInTransaction(TxMode.read, () {
+        final row = _findOutboxByOperationIdLocked(expected.operationId);
+        return row != null && row.scopeKey == _scopeKey(expected.scope) &&
+            _outboxFromEntity(expected.scope, row).sameDurableSnapshotAs(expected) &&
+            _isPausedUnsubmittedReceivedCreateLocked(row);
+      });
+
+  bool _isPausedUnsubmittedReceivedCreateLocked(CloudOutboxOperationEntity row) =>
+      _pauseUnsubmittedReceivedCreates?.call() == true &&
+      (_receivedArchiveJournal?.isUnsubmittedReceivedCreate(row) ?? false);
+
   /// Candidate capture only, never adoption or permission to create remotely.
   CloudSyncOutboundChatOrigin captureOutboundChatObservationOrigin(
     CloudSyncScope scope,
@@ -3596,6 +3613,7 @@ class ObjectBoxCloudSyncStore
       final leased = <CloudOutboxOperation>[];
       for (final entity in candidates) {
         if (leased.length == limit) break;
+        if (_isPausedUnsubmittedReceivedCreateLocked(entity)) continue;
         final blocker = blockingByLogicalKey[entity.logicalEntityKeyHash];
         if (blocker != null && _compareMutationOrder(blocker, entity) < 0) {
           continue;

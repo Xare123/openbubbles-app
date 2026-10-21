@@ -26,6 +26,8 @@ void main() {
     bool retainConfirmedReceiptsForReplay = false,
     CloudSyncReceivedArchiveProofReader? receivedReader,
     CloudSyncHistoricalArchiveProofReader? historicalReader,
+    void Function()? validateMutationAdmission,
+    Future<void> Function()? beforeMutationAuthCapture,
   }) => NativeProtectedCloudSyncTransport(
     cloudMessagesClient: activeClient,
     storageDirectory: 'private-storage',
@@ -35,6 +37,7 @@ void main() {
     retainConfirmedReceiptsForReplay: retainConfirmedReceiptsForReplay,
     readReceivedArchiveProof: receivedReader,
     readHistoricalArchiveProof: historicalReader,
+    validateMutationAdmission: validateMutationAdmission,
     writerMutationGuard: CloudKitWriterMutationGuard.forTest(
       store: writerStore,
       readActiveClient: () => activeClient,
@@ -42,6 +45,7 @@ void main() {
       nativeAuthBinding: _MutationAuthBinding(
         accountFingerprint: scope.accountFingerprint,
         protectedStoreIdentity: _storeIdentity,
+        beforeCapture: beforeMutationAuthCapture,
       ),
       reconciliationBinding: bindings,
       readReceivedArchiveProof: receivedReader == null ? null
@@ -2472,6 +2476,50 @@ void main() {
       });
     },
   );
+
+  for (final revokeDuringAuth in [false, true]) {
+    test('revoked archive consent cannot consume a prepared create; duringAuth=$revokeDuringAuth', () async {
+      var granted = true;
+      final operation = _writeOperation(scope);
+      final protectedOperation = _protectedWriteOperation(operation);
+      final identity = _submissionIdentity(operation.operationId);
+      transport = buildTransport(
+        validateMutationAdmission: () {
+          if (!granted) throw StateError('cloud_sync_automatic_archive_identity_changed');
+        },
+        beforeMutationAuthCapture: () async {
+          if (revokeDuringAuth) granted = false;
+        },
+      );
+      bindings.reconcileResult = frb_api.CloudSyncOutboundReconcileResult(
+        disposition: frb_api.CloudSyncOutboundReconcileDisposition.notApplied,
+        protectedProofReference: operation.encryptedPayloadReference,
+      );
+      bindings.prepareResult = frb_api.CloudSyncPreparedMessageCreateResult(
+        handle: _FakePreparedHandle(),
+        handleBindingSha256: _preparedHandleBindingSha256,
+      );
+      final fence = File('${writerDirectory.path}${Platform.pathSeparator}'
+          '.openbubbles-cloudkit-writer-mutation-v1.fence');
+      await runV2(() async {
+        final prepared = await transport.prepareSubmission(scope,
+          submissionIdentity: identity, operations: [protectedOperation]);
+        if (!revokeDuringAuth) granted = false;
+        await expectLater(transport.consumePreparedSubmission(scope,
+          preparedSubmission: prepared, persistedIdentity: identity,
+          protectedOperations: [protectedOperation], operations: [operation]),
+          throwsA(isA<StateError>().having((error) => error.message,
+            'admission', 'cloud_sync_automatic_archive_identity_changed')));
+        expect(bindings.consumeCalls, 0);
+        expect(fence.existsSync(), isFalse);
+        expect(writerAuthority().read(writerScope())!.state,
+            CloudKitWriterAuthorityState.stable);
+        expect(() => prepared.claimForConsumption(scope,
+          persistedIdentity: identity, protectedOperations: [protectedOperation]),
+          returnsNormally);
+      });
+    });
+  }
 
   test(
     'confirmed mutation passes one digest-only capability and releases its fence',

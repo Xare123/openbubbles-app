@@ -27,11 +27,12 @@ CloudOutboxOperation op(
   CloudOutboxStatus status, {
   bool lease = false,
   String? id,
+  CloudOutboxAction action = CloudOutboxAction.save,
 }) => CloudOutboxOperation(
   scope: scope,
   operationId: id ?? 'synthetic-${scope.zone}',
   logicalEntityKeyHash: 'synthetic',
-  action: CloudOutboxAction.save,
+  action: action,
   payloadVersion: scope == message ? 2 : 1,
   mutationRevision: 0,
   checkpointGeneration: 1,
@@ -58,6 +59,7 @@ class Fixture {
   bool wrongScopeOnReread = false;
   int reads = 0;
   Future<bool> Function(CloudOutboxOperation)? isHeld;
+  Future<bool> Function(CloudOutboxOperation)? isPausedReceived;
   final ackedIds = <String>[];
   final retainOnFlush = <String>{};
   void event(String value) {
@@ -72,6 +74,12 @@ class Fixture {
         : (o) async {
             event('held:${o.scope.zone}:${o.operationId}');
             return isHeld!(o);
+          },
+    isPausedUnsubmittedReceivedCreate: isPausedReceived == null
+        ? null
+        : (o) async {
+            event('paused-received:${o.scope.zone}:${o.operationId}');
+            return isPausedReceived!(o);
           },
     validateAccount: () async {
       events.add('auth');
@@ -398,6 +406,220 @@ void main() {
       expect(f.ackedIds, isEmpty, reason: '$status ack');
     }
   });
+  test(
+    'verified paused received create stays retained without flush or ack',
+    () async {
+      final f = Fixture()..scopes = [message];
+      final received = op(
+        message,
+        CloudOutboxStatus.pending,
+        lease: true,
+        id: 'paused-received',
+      );
+      f.queues[message] = [received];
+      // A false preproof classification still allows the separate received class.
+      f.isHeld = (_) async => false;
+      f.isPausedReceived = (o) async => identical(o, received);
+      expect(await f.run(), isTrue);
+      expect(f.queues[message], [same(received)]);
+      expect(f.queues[message]!.single.status, CloudOutboxStatus.pending);
+      expect(f.queues[message]!.single.protectedLeaseReference, isNotNull);
+      expect(f.work.any((e) => e.startsWith('flush:')), isFalse);
+      expect(f.work.any((e) => e.startsWith('ack:')), isFalse);
+      expect(f.work.any((e) => e.startsWith('reconcile:')), isFalse);
+      expect(
+        f.work.where(
+          (e) => e == 'paused-received:${message.zone}:paused-received',
+        ),
+        hasLength(2),
+      );
+      for (var i = 0; i < f.events.length; i++) {
+        if (f.events[i] != 'auth') expect(f.events[i + 1], 'auth');
+      }
+    },
+  );
+  test(
+    'paused received stays queued while ordinary pending still flushes',
+    () async {
+      final f = Fixture()..scopes = [message];
+      final received = op(
+        message,
+        CloudOutboxStatus.pending,
+        lease: true,
+        id: 'paused-received',
+      );
+      f.queues[message] = [received, op(message, CloudOutboxStatus.pending)];
+      // The caller's flush must independently skip the verified received row.
+      f.retainOnFlush.add(received.operationId);
+      f.isPausedReceived = (o) async => identical(o, received);
+      expect(await f.run(), isTrue);
+      expect(f.work.where((e) => e == 'flush:${message.zone}'), hasLength(1));
+      expect(f.ackedIds, ['synthetic-${message.zone}']);
+      expect(f.queues[message], contains(same(received)));
+      expect(received.status, CloudOutboxStatus.pending);
+      expect(received.protectedLeaseReference, isNotNull);
+      expect(f.ackedIds, isNot(contains(received.operationId)));
+      for (var i = 0; i < f.events.length; i++) {
+        if (f.events[i] != 'auth') expect(f.events[i + 1], 'auth');
+      }
+    },
+  );
+  for (final classified in <bool?>[null, false]) {
+    test(
+      'absent or false received classification $classified cannot hold',
+      () async {
+        final f = Fixture()
+          ..scopes = [message]
+          ..flushSettles = false;
+        final received = op(message, CloudOutboxStatus.pending);
+        f.queues[message] = [received];
+        if (classified != null) f.isPausedReceived = (_) async => classified;
+        expect(await f.run(), isFalse);
+        expect(f.work, contains('flush:${message.zone}'));
+        expect(f.queues[message], [same(received)]);
+        expect(f.ackedIds, isEmpty);
+      },
+    );
+  }
+  final cleanReceived = op(
+    message,
+    CloudOutboxStatus.pending,
+    lease: true,
+    id: 'paused-received',
+  );
+  final invalidReceived = <String, CloudOutboxOperation>{
+    'chat zone': op(chat, CloudOutboxStatus.pending),
+    'attachment zone': op(attachment, CloudOutboxStatus.pending),
+    'delete action': op(
+      message,
+      CloudOutboxStatus.pending,
+      action: CloudOutboxAction.delete,
+    ),
+    'leased status': cleanReceived.copyWith(status: CloudOutboxStatus.leased),
+    'paused status': cleanReceived.copyWith(status: CloudOutboxStatus.paused),
+    'quarantined status': cleanReceived.copyWith(
+      status: CloudOutboxStatus.quarantined,
+    ),
+    'attempt count': cleanReceived.copyWith(attemptCount: 1),
+    'Apple submission UUIDs': cleanReceived.copyWith(
+      appleRequestUuid: '11111111-1111-4111-8111-111111111111',
+      appleOperationUuid: '22222222-2222-4222-8222-222222222222',
+    ),
+    'lease ID': cleanReceived.copyWith(leaseId: 'queue-lease'),
+    'lease expiry': cleanReceived.copyWith(leaseExpiresAt: DateTime.utc(2026)),
+    'confirmation timestamp': cleanReceived.copyWith(
+      confirmedAt: DateTime.utc(2026),
+    ),
+    'last failure': cleanReceived.copyWith(
+      lastFailure: CloudFailureCategory.unknown,
+    ),
+    'next eligible timestamp': cleanReceived.copyWith(
+      nextEligibleAt: DateTime.utc(2026),
+    ),
+    'dependencies': cleanReceived.copyWith(dependencyOperationIds: {'parent'}),
+  };
+  for (final entry in invalidReceived.entries) {
+    test('received held callback cannot exempt ${entry.key}', () async {
+      final f = Fixture()
+        ..scopes = [entry.value.scope]
+        ..flushSettles = false;
+      f.queues[entry.value.scope] = [entry.value];
+      var consulted = false;
+      f.isPausedReceived = (_) async {
+        consulted = true;
+        return true;
+      };
+      expect(await f.run(), isFalse);
+      expect(consulted, isFalse);
+      expect(f.queues[entry.value.scope], [same(entry.value)]);
+      expect(f.ackedIds, isEmpty);
+    });
+  }
+  test('confirmed received row is acknowledged instead of held', () async {
+    final f = Fixture()..scopes = [message];
+    f.queues[message] = [
+      cleanReceived.copyWith(status: CloudOutboxStatus.confirmed),
+    ];
+    var consulted = false;
+    f.isPausedReceived = (_) async {
+      consulted = true;
+      return true;
+    };
+    expect(await f.run(), isTrue);
+    expect(consulted, isFalse);
+    expect(f.work.any((e) => e.startsWith('flush:')), isFalse);
+    expect(f.ackedIds, [cleanReceived.operationId]);
+  });
+  test(
+    'unknown outcome blocks every flush even with true received callback',
+    () async {
+      final f = Fixture();
+      f.queues[chat] = [op(chat, CloudOutboxStatus.pending)];
+      f.queues[message] = [
+        op(message, CloudOutboxStatus.unknownOutcome),
+        cleanReceived,
+      ];
+      f.isHeld = (_) async => true;
+      f.isPausedReceived = (_) async => true;
+      expect(await f.run(), isFalse);
+      expect(f.work, [
+        'recover:${chat.zone}',
+        'recover:${message.zone}',
+        'read:${chat.zone}',
+        'read:${message.zone}',
+        'reconcile:${message.zone}',
+      ]);
+      expect(f.ackedIds, isEmpty);
+      expect(f.queues[message]!.first.status, CloudOutboxStatus.unknownOutcome);
+    },
+  );
+  test('received held callback failure propagates without flush or ack', () async {
+    final f = Fixture()..scopes = [message];
+    f.queues[message] = [cleanReceived];
+    f.isPausedReceived = (_) async =>
+        throw StateError('synthetic classifier failure');
+    await expectLater(
+      f.run(),
+      throwsA(
+        isA<StateError>().having(
+          (error) => error.message,
+          'message',
+          'synthetic classifier failure',
+        ),
+      ),
+    );
+    expect(f.queues[message], [same(cleanReceived)]);
+    expect(f.work.any((e) => e.startsWith('flush:')), isFalse);
+    expect(f.ackedIds, isEmpty);
+  });
+  test(
+    'account drift during received classification stops subsequent work',
+    () async {
+      final f = Fixture()
+        ..scopes = [message]
+        ..driftAfter = 'paused-received:${message.zone}:paused-received';
+      f.queues[message] = [cleanReceived];
+      f.isPausedReceived = (_) async => true;
+      await expectLater(f.run(), throwsStateError);
+      expect(f.work.last, 'paused-received:${message.zone}:paused-received');
+      expect(f.work.any((e) => e.startsWith('flush:')), isFalse);
+      expect(f.ackedIds, isEmpty);
+    },
+  );
+  test(
+    'received classification is checked again before returning settled',
+    () async {
+      final f = Fixture()..scopes = [message];
+      f.queues[message] = [cleanReceived];
+      var checks = 0;
+      f.isPausedReceived = (_) async => ++checks == 1;
+      expect(await f.run(), isFalse);
+      expect(checks, 2);
+      expect(f.queues[message], [same(cleanReceived)]);
+      expect(f.work.any((e) => e.startsWith('flush:')), isFalse);
+      expect(f.ackedIds, isEmpty);
+    },
+  );
   final invalid = <List<CloudSyncScope>>[
     [],
     [chat, chat],

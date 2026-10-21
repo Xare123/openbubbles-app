@@ -6798,7 +6798,7 @@ class RustPushService extends GetxService {
       IncomingMessagePersistence? receivedPersistence;
       if (CloudSyncDevGate.receivedArchiveCaptureEnabled &&
           CloudKitWriterOwnership.v2MutationsEnabled &&
-          _cloudSyncV2CanaryRuntimeAllowed && _cloudSyncV2DeveloperRuntimeAllowed &&
+          _cloudSyncV2CanaryRuntimeAllowed && _cloudSyncV2ReceivedRuntimeAllowed &&
           !ss.settings.cloudSyncingEnabled.value &&
           myMsg.message is api.Message_Message && myMsg.receivedOnHandle != null &&
           receiveState != null) {
@@ -8220,6 +8220,7 @@ class RustPushService extends GetxService {
   CloudSyncProductionOutboundCanaryAdapter? _cloudSyncV2OutboundAdapter;
   CloudSyncLocalSendRuntime? _cloudSyncV2LocalSendRuntime;
   bool Function()? _cloudSyncV2AutomaticArchiveRuntimeCurrent;
+  bool Function()? _cloudSyncV2AutomaticReceivedArchiveCurrent;
   CloudSyncAutomaticArchiveIdentity? _cloudSyncV2AutomaticArchiveIdentity;
   Future<void>? _cloudSyncV2AutomaticArchiveAdmission;
   Future<CloudSyncAutomaticArchivePreference>? _cloudSyncV2AutomaticArchiveSetting;
@@ -8524,6 +8525,20 @@ class RustPushService extends GetxService {
       _cloudSyncV2LocalSendRuntime != null &&
       _cloudSyncV2AutomaticArchiveRuntimeCurrent?.call() == true;
 
+  bool get cloudSyncV2ReceivedArchiveAvailable =>
+      cloudSyncV2AutomaticArchiveVisible &&
+      CloudSyncDevGate.receivedArchiveProfileEnabled &&
+      CloudSyncDevGate.receivedArchiveCaptureEnabled &&
+      CloudSyncDevGate.receivedArchiveInspectionEnabled &&
+      CloudSyncDevGate.receivedArchiveUploadsEnabled &&
+      CloudSyncDevGate.receivedArchiveDiscoveryEnabled &&
+      CloudSyncDevGate.manualSemanticPullEnabled;
+
+  bool get _cloudSyncV2ReceivedRuntimeAllowed =>
+      _cloudSyncV2DeveloperRuntimeAllowed ||
+      (cloudSyncV2ReceivedArchiveAvailable &&
+          _cloudSyncV2AutomaticReceivedArchiveCurrent?.call() == true);
+
   CloudSyncAutomaticArchivePreferences _cloudSyncV2AutomaticArchivePreferences() {
     final expectedState = state;
     final client = expectedState?.icloudServices?.cloudMessagesClient;
@@ -8601,14 +8616,19 @@ class RustPushService extends GetxService {
     CloudSyncAutomaticArchivePreference expected,
     bool enabled, {
     required bool acknowledgeQueuedUploads,
+    bool includeReceived = false,
   }) async {
     if (!cloudSyncV2AutomaticArchiveVisible || !ls.isUiThread || mcs.background ||
         ls.currentState != AppLifecycleState.resumed ||
         _cloudSyncV2AutomaticArchiveSetting != null) {
       throw StateError('cloud_sync_automatic_archive_unavailable');
     }
+    if (enabled && includeReceived && !cloudSyncV2ReceivedArchiveAvailable) {
+      throw StateError('cloud_sync_received_archive_profile_unavailable');
+    }
     final operation = _cloudSyncV2AutomaticArchivePreferences().setEnabled(
       expected, enabled, acknowledgeQueuedUploads: acknowledgeQueuedUploads,
+      includeReceived: includeReceived,
     );
     _cloudSyncV2AutomaticArchiveSetting = operation;
     try {
@@ -8638,6 +8658,7 @@ class RustPushService extends GetxService {
     if (identical(_cloudSyncV2LocalSendRuntime, runtime)) {
       _cloudSyncV2LocalSendRuntime = null;
       _cloudSyncV2AutomaticArchiveRuntimeCurrent = null;
+      _cloudSyncV2AutomaticReceivedArchiveCurrent = null;
       _cloudSyncV2AutomaticArchiveIdentity = null;
     }
   }
@@ -8717,11 +8738,15 @@ class RustPushService extends GetxService {
         }
       }
       _cloudSyncV2AutomaticArchiveRuntimeCurrent = stillCurrent;
+      _cloudSyncV2AutomaticReceivedArchiveCurrent = () => stillCurrent() &&
+          cloudSyncV2ReceivedArchiveAvailable && preferences.isReceivedGranted(consent);
       _cloudSyncV2AutomaticArchiveIdentity = consent.identity;
       final adapter = CloudSyncProductionLocalSendAdapter(
         readActiveClient: () => state?.icloudServices?.cloudMessagesClient,
         privateStorageDirectory: expectedStorage, stillCurrent: stillCurrent,
         automaticArchiveIdentity: consent.identity,
+        receivedArchiveAllowed: () => stillCurrent() &&
+            cloudSyncV2ReceivedArchiveAvailable && preferences.isReceivedGranted(consent),
         shouldYield: () => _cloudSyncV2AttachmentGate.hasWaitingWork,
       );
       _cloudSyncV2LocalSendRuntime = CloudSyncLocalSendRuntime(
@@ -8816,6 +8841,9 @@ class RustPushService extends GetxService {
       );
     }
     _cloudSyncV2LocalSendRuntime!.request(trigger);
+    // Startup/enable may load the scoped grant after the initial receive wake.
+    // Reuse the existing bounded receive runtime, not a second archive engine.
+    _queueCloudSyncV2ReceivedSources(trigger);
   }
 
   /// Local-only receive capture at the real persistence seam. Never queues a
@@ -8869,7 +8897,7 @@ class RustPushService extends GetxService {
 
   void _queueCloudSyncV2ReceivedSources(CloudSyncTrigger trigger) {
     if (!CloudSyncDevGate.receivedArchiveCaptureEnabled || !CloudKitWriterOwnership.v2MutationsEnabled ||
-        !_cloudSyncV2CanaryRuntimeAllowed || !_cloudSyncV2DeveloperRuntimeAllowed ||
+        !_cloudSyncV2CanaryRuntimeAllowed || !_cloudSyncV2ReceivedRuntimeAllowed ||
         !ls.isUiThread || loggingOut || _cloudSyncV2OutboundQuiescing ||
         ss.settings.cloudSyncingEnabled.value || statePath.isEmpty ||
         state?.icloudServices?.cloudMessagesClient == null) {
@@ -8886,6 +8914,10 @@ class RustPushService extends GetxService {
   }
 
   Future<({bool more, bool deferred})> _materializeCloudSyncV2ReceivedSources() async {
+    if (!_cloudSyncV2ReceivedRuntimeAllowed) return (more: false, deferred: false);
+    final developerPass = _cloudSyncV2DeveloperRuntimeAllowed;
+    final profileGrant = _cloudSyncV2AutomaticReceivedArchiveCurrent;
+    final profileIdentity = _cloudSyncV2AutomaticArchiveIdentity;
     final capturedState = state;
     final client = capturedState?.icloudServices?.cloudMessagesClient;
     if (capturedState == null || client == null) return (more: false, deferred: true);
@@ -8894,7 +8926,11 @@ class RustPushService extends GetxService {
     bool stillCurrent() => !loggingOut && !_cloudSyncV2OutboundQuiescing &&
         identical(capturedState, state) && identical(client, state?.icloudServices?.cloudMessagesClient) &&
         identical(objectBox, Database.store) && !objectBox.isClosed() && statePath == storagePath &&
-        !ss.settings.cloudSyncingEnabled.value;
+        !ss.settings.cloudSyncingEnabled.value &&
+        (developerPass ? _cloudSyncV2DeveloperRuntimeAllowed :
+          identical(profileGrant, _cloudSyncV2AutomaticReceivedArchiveCurrent) &&
+          identical(profileIdentity, _cloudSyncV2AutomaticArchiveIdentity) &&
+          cloudSyncV2ReceivedArchiveAvailable && profileGrant?.call() == true);
     if (!stillCurrent()) throw StateError('cloud_sync_received_archive_identity_changed');
     final metadata = await api.cloudSyncCaptureReceivedIdentity(
         cloudMessagesClient: client, storageDirectory: storagePath);
@@ -8905,6 +8941,12 @@ class RustPushService extends GetxService {
     final authority = ObjectBoxCloudKitWriterAuthority(store: objectBox);
     final owner = authority.read(CloudKitWriterScope(accountFingerprint: captured.accountFingerprint));
     if (owner == null || owner.owner != CloudKitWriterOwner.v2) return (more: false, deferred: true);
+    if (!developerPass && (profileIdentity == null || !profileIdentity.matchesBinding(
+        accountFingerprint: captured.accountFingerprint,
+        protectedStoreIdentity: captured.protectedStoreIdentity,
+        ownershipEpoch: owner.automaticArchiveEpoch))) {
+      throw StateError('cloud_sync_received_archive_identity_changed');
+    }
     final journal = CloudSyncReceivedArchiveJournal(store: objectBox, authority: authority, authoritySnapshot: owner);
     _cloudSyncV2ReceivedRoundCeiling ??= journal.captureReadHighWatermark();
     final page = journal.readReadyPage(limit: 20, currentAuth: captured,
@@ -9058,9 +9100,19 @@ class RustPushService extends GetxService {
               // The handoff released native pause, store lease and coordinator.
               // Normal decode/projection owns edits and retractions. Do not
               // recursively wake this runtime or the outbound worker here.
-              await runCloudSyncV2ManualSemanticPullConfirmed(
-                maximumPasses: 1, resumeAutomaticUploads: false,
-                sweepRetainedAtHead: false);
+              // A Profile-scoped receive pass is already authorized. Keep the
+              // public developer diagnostic wrapper strict; this internal read
+              // uses the ordinary reader with the same single in-flight owner.
+              final read = _runCloudSyncV2ManualSemanticPull(
+                maximumPasses: 1, sweepRetainedAtHead: false);
+              _cloudSyncV2SemanticPullInFlight = read;
+              try {
+                await read;
+              } finally {
+                if (identical(_cloudSyncV2SemanticPullInFlight, read)) {
+                  _cloudSyncV2SemanticPullInFlight = null;
+                }
+              }
               await validate();
               final pending = await readerStore.readCheckpoint(readerCheckpoint.scope);
               await validate();
@@ -9097,7 +9149,7 @@ class RustPushService extends GetxService {
       Message Function() persistMessage) async {
     if (!CloudSyncDevGate.receivedArchiveCaptureEnabled ||
         !CloudKitWriterOwnership.v2MutationsEnabled ||
-        !_cloudSyncV2CanaryRuntimeAllowed || !_cloudSyncV2DeveloperRuntimeAllowed ||
+        !_cloudSyncV2CanaryRuntimeAllowed || !_cloudSyncV2ReceivedRuntimeAllowed ||
         loggingOut || ss.settings.cloudSyncingEnabled.value || statePath.isEmpty ||
         wire.receivedOnHandle == null) {
       return persistMessage();
@@ -9107,10 +9159,17 @@ class RustPushService extends GetxService {
     if (capturedState == null || client == null) return persistMessage();
     final objectBox = Database.store;
     final storagePath = statePath;
+    final developerCapture = _cloudSyncV2DeveloperRuntimeAllowed;
+    final profileGrant = _cloudSyncV2AutomaticReceivedArchiveCurrent;
+    final profileIdentity = _cloudSyncV2AutomaticArchiveIdentity;
     bool stillCurrent() => !loggingOut && !_cloudSyncV2OutboundQuiescing &&
         identical(capturedState, state) && identical(client, state?.icloudServices?.cloudMessagesClient) &&
         !objectBox.isClosed() && identical(objectBox, Database.store) &&
-        storagePath == statePath && !ss.settings.cloudSyncingEnabled.value;
+        storagePath == statePath && !ss.settings.cloudSyncingEnabled.value &&
+        (developerCapture ? _cloudSyncV2DeveloperRuntimeAllowed :
+          identical(profileGrant, _cloudSyncV2AutomaticReceivedArchiveCurrent) &&
+          identical(profileIdentity, _cloudSyncV2AutomaticArchiveIdentity) &&
+          cloudSyncV2ReceivedArchiveAvailable && profileGrant?.call() == true);
     final localHandles = await api.getHandles(state: capturedState.client);
     if (!stillCurrent()) throw StateError('cloud_sync_received_archive_identity_changed');
     final live = CloudSyncReceivedArchiveLiveContext(
@@ -9135,6 +9194,12 @@ class RustPushService extends GetxService {
     final authority = ObjectBoxCloudKitWriterAuthority(store: objectBox);
     final owner = authority.read(CloudKitWriterScope(accountFingerprint: captured.accountFingerprint));
     if (owner == null || owner.owner != CloudKitWriterOwner.v2) return persistMessage();
+    if (!developerCapture && (profileIdentity == null || !profileIdentity.matchesBinding(
+        accountFingerprint: captured.accountFingerprint,
+        protectedStoreIdentity: captured.protectedStoreIdentity,
+        ownershipEpoch: owner.automaticArchiveEpoch))) {
+      throw StateError('cloud_sync_received_archive_identity_changed');
+    }
     final journal = CloudSyncReceivedArchiveJournal(
       store: objectBox, authority: authority, authoritySnapshot: owner,
     );
@@ -12496,6 +12561,7 @@ class RustPushService extends GetxService {
         await localSendRuntime.dispose().timeout(_cloudSyncV2OutboundQuiescenceTimeout);
         _cloudSyncV2LocalSendRuntime = null;
         _cloudSyncV2AutomaticArchiveRuntimeCurrent = null;
+        _cloudSyncV2AutomaticReceivedArchiveCurrent = null;
         _cloudSyncV2AutomaticArchiveIdentity = null;
       }
       final nativeReceiptReplay = _cloudSyncV2NativeReceiptReplayInFlight;
@@ -12712,6 +12778,7 @@ class RustPushService extends GetxService {
       _cloudSyncV2LocalSendRuntime = null;
       _cloudSyncV2AutomaticArchiveRuntimeCurrent = null;
       _cloudSyncV2AutomaticArchiveIdentity = null;
+      _cloudSyncV2AutomaticReceivedArchiveCurrent = null;
       await _runCloudKitDestructiveReset(() async {
         if (!identical(state, closingState)) return;
         state = null;

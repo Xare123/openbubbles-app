@@ -25,6 +25,7 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_operation_inte
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_writer_authority.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_writer_ownership.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/objectbox_cloud_sync_store.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/objectbox_cloud_sync_preflight.dart';
 import 'package:bluebubbles/src/rust/api/api.dart' as api;
 import 'package:flutter_test/flutter_test.dart';
 
@@ -1465,6 +1466,135 @@ void main() {
         stillCurrent: stillCurrent ?? () => true,
       );
     }
+
+    ObjectBoxCloudSyncStore bindPaused(bool Function() pause) => ObjectBoxCloudSyncStore(
+      store: store, protector: _ReceivedTestProtector(),
+      receivedArchiveJournal: journal, pauseUnsubmittedReceivedCreates: pause,
+      clock: () => _time(4));
+
+    test('sent-only grant pauses exact unsubmitted received create without erasing it', () async {
+      await seedOrigin();
+      final operation = admit();
+      final rows = store.box<CloudOutboxOperationEntity>();
+      final original = rows.getAll().single;
+      final retainedBinding = intent().admittedBinding;
+      final sourceBytes = intent().protectedSourceBinding;
+      bool paused = true;
+      final sentOnly = bindPaused(() => paused);
+      expect(journal.isUnsubmittedReceivedCreate(original), isTrue);
+      expect(sentOnly.isPausedUnsubmittedReceivedCreate(operation), isTrue);
+      expect((await durable.readOutboxEntries(scope)).single
+          .sameDurableSnapshotAs(operation), isTrue);
+      expect(ObjectBoxCloudSyncPreflightReader(store: store, now: () => _time(5))
+          .read().settledOutboxFingerprint, isNull,
+          reason: 'ordinary/global readers do not acquire this exemption');
+      final scoped = ObjectBoxCloudSyncPreflightReader(store: store,
+        now: () => _time(5), pausedReceivedArchiveJournal: journal).read();
+      expect(scoped.outboxCount, 1);
+      expect(scoped.settledOutboxFingerprint, isNotNull);
+      expect(await sentOnly.leaseEligibleOutbox(scope, now: _time(5),
+        limit: 1, leaseId: 'sent-only-pass', leaseDuration: const Duration(minutes: 1),
+        allowedActions: const {CloudOutboxAction.save}), isEmpty);
+      expect(intent().admittedBinding, retainedBinding);
+      expect(intent().protectedSourceBinding, sourceBytes);
+      expect(rows.getAll().single.state, CloudOutboxStatus.pending.index);
+      final ordinary = CloudOutboxOperation(scope: scope,
+        operationId: 'synthetic-unrelated-create', logicalEntityKeyHash: _a43('K'),
+        action: CloudOutboxAction.save, payloadVersion: cloudSyncOutboundPayloadVersion,
+        mutationRevision: operation.mutationRevision + 1,
+        checkpointGeneration: operation.checkpointGeneration, dependencyOperationIds: const {},
+        createdAt: _time(4), encryptedPayloadReference: 'obcs2.ref.${_a43('U')}',
+        payloadSha256: _h64('e'), serverRecordIdHash: _a43('Y'));
+      await sentOnly.enqueueOutbox(ordinary);
+      final unrelatedLease = await sentOnly.leaseEligibleOutbox(scope, now: _time(5),
+        limit: 1, leaseId: 'unrelated-pass', leaseDuration: const Duration(minutes: 1),
+        allowedActions: const {CloudOutboxAction.save});
+      expect(unrelatedLease.single.operationId, ordinary.operationId,
+          reason: 'the queue skips the held receive and still leases unrelated work');
+      await sentOnly.applyOutboxTransitions(scope, leaseId: 'unrelated-pass',
+        transitions: [CloudOutboxTransition.confirmed(ordinary.operationId)], now: _time(5));
+      expect(rows.get(original.id)!.state, CloudOutboxStatus.pending.index);
+      await reopen();
+      final reopened = bindPaused(() => paused);
+      expect(reopened.isPausedUnsubmittedReceivedCreate(operation), isTrue);
+      paused = false;
+      expect(reopened.isPausedUnsubmittedReceivedCreate(operation), isFalse);
+      final leased = await reopened.leaseEligibleOutbox(scope, now: _time(6),
+        limit: 1, leaseId: 'received-enabled-pass', leaseDuration: const Duration(minutes: 1),
+        allowedActions: const {CloudOutboxAction.save});
+      expect(leased.single.operationId, operation.operationId);
+      expect(intent().admittedBinding, retainedBinding);
+      expect(intent().protectedSourceBinding, sourceBytes);
+    });
+
+    test('paused receive classification requires pristine queue and exact durable provenance', () async {
+      await seedOrigin();
+      admit();
+      final rows = store.box<CloudOutboxOperationEntity>();
+      final sourceRow = rows.getAll().single;
+      final originalOperation = (await durable.readOutboxEntries(scope)).single;
+      expect(journal.isUnsubmittedReceivedCreate(sourceRow), isTrue);
+      for (final mutate in <void Function(CloudOutboxOperationEntity)>[
+        (row) => row.state = CloudOutboxStatus.unknownOutcome.index,
+        (row) => row.state = CloudOutboxStatus.leased.index,
+        (row) => row.state = CloudOutboxStatus.confirmed.index,
+        (row) => row.state = CloudOutboxStatus.paused.index,
+        (row) => row.attemptCount = 1,
+        (row) => row.appleRequestUuid = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+        (row) => row.appleOperationUuid = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+        (row) => row.leaseIdHash = _h64('a'),
+        (row) => row.leaseExpiresAtMs = 1,
+        (row) => row.confirmedAtMs = 1,
+        (row) => row.lastErrorCategory = CloudFailureCategory.network.name,
+        (row) => row.nextEligibleAtMs = 1,
+        (row) => row.dependencyOperationIdsJson = '["other"]',
+        (row) => row.encryptedPayloadRef = 'obcs2.ref.${_a43('Q')}',
+        (row) => row.checkpointGeneration += 1,
+        (row) => row.accountFingerprint = _a43('B'),
+      ]) {
+        final changed = rows.get(sourceRow.id)!;
+        mutate(changed);
+        expect(journal.isUnsubmittedReceivedCreate(changed), isFalse);
+      }
+      expect((await durable.readOutboxEntries(scope)).single
+          .sameDurableSnapshotAs(originalOperation), isTrue);
+      final mapBox = store.box<CloudRecordMapEntity>();
+      final map = mapBox.getAll().singleWhere((row) => row.zone == scope.zone);
+      final originalHash = map.serverRecordIdHash;
+      map.serverRecordIdHash = _a43('Z');
+      mapBox.put(map);
+      expect(journal.isUnsubmittedReceivedCreate(sourceRow), isFalse);
+      map.serverRecordIdHash = originalHash;
+      mapBox.put(map);
+      final origin = intent();
+      final originalBinding = origin.admittedBinding;
+      origin.admittedBinding = 'changed';
+      store.box<CloudSyncReceivedArchiveIntentEntity>().put(origin);
+      expect(journal.isUnsubmittedReceivedCreate(sourceRow), isFalse);
+      origin.admittedBinding = originalBinding;
+      store.box<CloudSyncReceivedArchiveIntentEntity>().put(origin);
+      expect(journal.isUnsubmittedReceivedCreate(sourceRow), isTrue);
+    });
+
+    test('submitted unknown receive remains blocking after scope downgrade', () async {
+      await seedOrigin();
+      final operation = admit();
+      final lease = await durable.leaseEligibleOutbox(scope, now: _time(5),
+        limit: 1, leaseId: 'entered-receive', leaseDuration: const Duration(minutes: 1),
+        allowedActions: const {CloudOutboxAction.save});
+      expect(lease.single.operationId, operation.operationId);
+      final entered = (await durable.markOutboxSubmissionStarted(scope,
+        leaseId: 'entered-receive', submissionIdentity: testSubmissionIdentity([operation.operationId]),
+        now: _time(6))).single;
+      expect(entered.status, CloudOutboxStatus.unknownOutcome);
+      final sentOnly = bindPaused(() => true);
+      expect(sentOnly.isPausedUnsubmittedReceivedCreate(entered.copyWith(clearLeaseId: true)), isFalse);
+      expect(journal.isUnsubmittedReceivedCreate(store.box<CloudOutboxOperationEntity>().getAll().single), isFalse);
+      expect(ObjectBoxCloudSyncPreflightReader(store: store, now: () => _time(7),
+        pausedReceivedArchiveJournal: journal).read().settledOutboxFingerprint, isNull);
+      expect(journal.readAdoptedSource(transactionStore: store, operation: entered)!
+        .source.encode(), originalSource.encode());
+    });
 
     const groupId = '77777777-8888-4999-aaaa-bbbbbbbbbbbb';
     Future<void> seedGroupParent() async {

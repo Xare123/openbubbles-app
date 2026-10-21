@@ -774,6 +774,7 @@ final class NativeProtectedCloudSyncTransport
     this.readReceivedArchiveProof,
     this.readHistoricalArchiveProof,
     this.readHistoricalChatSource,
+    this.validateMutationAdmission,
   }) : _storageDirectory = storageDirectory,
        _protectedStoreIdentity = protectedStoreIdentity,
        _nativeWriterPauseToken = nativeWriterPauseToken,
@@ -825,6 +826,11 @@ final class NativeProtectedCloudSyncTransport
   /// protected-store exclusion, and only with the exact submission scope.
   /// Null means no historical origin: native inputs stay source-free.
   final CloudSyncHistoricalChatSourceReader? readHistoricalChatSource;
+
+  /// Final synchronous caller fence after every fallible native/auth await.
+  /// Optional for explicitly selected diagnostic compositions; automatic
+  /// compositions use it to observe revoked scoped consent before submission.
+  final void Function()? validateMutationAdmission;
   final Set<Future<void>> _activeNativeOperations = {};
   Future<void>? _nativeQuiescence;
   bool _nativeAdmissionClosed = false;
@@ -1105,6 +1111,7 @@ final class NativeProtectedCloudSyncTransport
 
   void _requireMutationAdmission() {
     _requireV2WriterInterlock();
+    validateMutationAdmission?.call();
     if (_mutationAdmissionPoisoned) {
       throw CloudSyncFailure(
         category: CloudFailureCategory.unknown,

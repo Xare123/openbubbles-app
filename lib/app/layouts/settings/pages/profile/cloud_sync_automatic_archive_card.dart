@@ -5,12 +5,14 @@ import 'package:flutter/material.dart';
 
 /// Explicit opt-in for automatic archival of sent messages. Opening Profile
 /// never enables anything: every enable passes a scrollable confirmation
-/// with an unchecked acknowledgment of pending uploads first.
+/// with an unchecked acknowledgment of pending uploads first. Available
+/// received-message support requires a separate, explicit scope selection.
 class CloudSyncAutomaticArchiveCard extends StatefulWidget {
   const CloudSyncAutomaticArchiveCard({
     super.key,
     required this.onLoad,
     required this.onChanged,
+    this.receivedArchiveAvailable = false,
   });
 
   final Future<CloudSyncAutomaticArchivePreference> Function() onLoad;
@@ -18,8 +20,11 @@ class CloudSyncAutomaticArchiveCard extends StatefulWidget {
     CloudSyncAutomaticArchivePreference,
     bool, {
     required bool acknowledgeQueuedUploads,
+    bool includeReceived,
   })
   onChanged;
+
+  final bool receivedArchiveAvailable;
 
   @override
   State<CloudSyncAutomaticArchiveCard> createState() =>
@@ -28,6 +33,11 @@ class CloudSyncAutomaticArchiveCard extends StatefulWidget {
 
 class _CloudSyncAutomaticArchiveCardState
     extends State<CloudSyncAutomaticArchiveCard> {
+  static const _receivedCoverageNote =
+      'Attachments, replies, reactions, edits, and other message changes are not '
+      'newly covered by this opt-in. Existing iCloud restores can still include '
+      'media already archived by Apple.';
+
   CloudSyncAutomaticArchivePreference? _preference;
   bool _busy = true;
   bool _confirming = false;
@@ -63,9 +73,14 @@ class _CloudSyncAutomaticArchiveCardState
   Future<void> _change(
     bool enabled, {
     required bool acknowledgeQueuedUploads,
+    bool includeReceived = false,
   }) async {
     final preference = _preference;
-    if (_busy || preference == null) return;
+    if (_busy ||
+        preference == null ||
+        (includeReceived && !widget.receivedArchiveAvailable)) {
+      return;
+    }
     setState(() {
       _busy = true;
       _error = null;
@@ -75,6 +90,7 @@ class _CloudSyncAutomaticArchiveCardState
         preference,
         enabled,
         acknowledgeQueuedUploads: acknowledgeQueuedUploads,
+        includeReceived: includeReceived,
       );
       if (mounted) setState(() => _preference = saved);
     } catch (_) {
@@ -90,17 +106,28 @@ class _CloudSyncAutomaticArchiveCardState
     }
   }
 
-  Future<void> _confirmEnable() async {
-    if (_busy || _confirming || _preference == null) return;
+  Future<void> _confirmEnable({bool changeScope = false}) async {
+    if (_busy ||
+        _confirming ||
+        _preference == null ||
+        (changeScope && !widget.receivedArchiveAvailable)) {
+      return;
+    }
     setState(() => _confirming = true);
     var acknowledged = false;
+    var includeReceived =
+        widget.receivedArchiveAvailable && _preference!.includesReceived;
     bool? accepted;
     try {
       accepted = await showDialog<bool>(
         context: context,
         builder: (context) => StatefulBuilder(
           builder: (context, setDialogState) => AlertDialog(
-            title: const Text('Enable automatic archival?'),
+            title: Text(
+              changeScope
+                  ? 'Change archival scope?'
+                  : 'Enable automatic archival?',
+            ),
             scrollable: true,
             content: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -114,7 +141,27 @@ class _CloudSyncAutomaticArchiveCardState
                   'separate history action. Uncertain uploads still require the '
                   'existing confirmation checks.',
                 ),
+                if (widget.receivedArchiveAvailable) ...[
+                  CheckboxListTile(
+                    key: const ValueKey('automaticArchiveIncludeReceived'),
+                    value: includeReceived,
+                    controlAffinity: ListTileControlAffinity.leading,
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('Include supported received text'),
+                    subtitle: const Text(
+                      'Also archive queued and future supported received text in '
+                      'direct and group chats, including supported mirrored plain '
+                      'text and queued uploads found during recovery.',
+                    ),
+                    onChanged: (value) => setDialogState(() {
+                      includeReceived = value ?? false;
+                      acknowledged = false;
+                    }),
+                  ),
+                  const Text(_receivedCoverageNote),
+                ],
                 CheckboxListTile(
+                  key: const ValueKey('automaticArchiveQueuedAcknowledgment'),
                   value: acknowledged,
                   controlAffinity: ListTileControlAffinity.leading,
                   contentPadding: EdgeInsets.zero,
@@ -135,7 +182,11 @@ class _CloudSyncAutomaticArchiveCardState
                 onPressed: acknowledged
                     ? () => Navigator.pop(context, true)
                     : null,
-                child: const Text('Enable automatic archival'),
+                child: Text(
+                  changeScope
+                      ? 'Save archival scope'
+                      : 'Enable automatic archival',
+                ),
               ),
             ],
           ),
@@ -145,7 +196,11 @@ class _CloudSyncAutomaticArchiveCardState
       if (mounted) setState(() => _confirming = false);
     }
     if (accepted == true && mounted) {
-      await _change(true, acknowledgeQueuedUploads: true);
+      await _change(
+        true,
+        acknowledgeQueuedUploads: true,
+        includeReceived: includeReceived,
+      );
     }
   }
 
@@ -158,6 +213,10 @@ class _CloudSyncAutomaticArchiveCardState
     unawaited(_change(false, acknowledgeQueuedUploads: false));
   }
 
+  bool get _receivedEnabled =>
+      widget.receivedArchiveAvailable &&
+      (_preference?.includesReceived ?? false);
+
   @override
   Widget build(BuildContext context) => Padding(
     padding: const EdgeInsets.all(16),
@@ -168,12 +227,16 @@ class _CloudSyncAutomaticArchiveCardState
           children: [
             Expanded(
               child: Text(
-                'Archive sent messages to iCloud',
+                _receivedEnabled
+                    ? 'Archive sent messages and supported received text to iCloud'
+                    : 'Archive sent messages to iCloud',
                 style: Theme.of(context).textTheme.titleMedium,
               ),
             ),
             Semantics(
-              label: 'Archive sent messages to iCloud',
+              label: _receivedEnabled
+                  ? 'Archive sent messages and supported received text to iCloud'
+                  : 'Archive sent messages to iCloud',
               child: Switch.adaptive(
                 value: _preference?.enabled ?? false,
                 onChanged: _busy || _confirming || _preference == null
@@ -184,9 +247,36 @@ class _CloudSyncAutomaticArchiveCardState
           ],
         ),
         Text(
-          'Archive messages you send to iCloud automatically after sending is confirmed.',
+          _receivedEnabled
+              ? 'Archive sent messages after sending is confirmed, plus supported '
+                    'received text, including mirrored plain text, in direct and '
+                    'group chats to iCloud automatically.'
+              : 'Archive messages you send to iCloud automatically after sending is confirmed.',
           style: Theme.of(context).textTheme.bodyMedium,
         ),
+        if (_receivedEnabled) ...[
+          const SizedBox(height: 8),
+          Text(
+            _receivedCoverageNote,
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+        ],
+        if (widget.receivedArchiveAvailable && (_preference?.enabled ?? false))
+          TextButton(
+            onPressed: _busy || _confirming
+                ? null
+                : () => unawaited(_confirmEnable(changeScope: true)),
+            child: const Text('Change archival scope'),
+          ),
+        if (!widget.receivedArchiveAvailable &&
+            (_preference?.includesReceived ?? false)) ...[
+          const SizedBox(height: 8),
+          Text(
+            'Supported received and mirrored text archival is unavailable in this build. '
+            'Your saved archival scope is kept.',
+            style: Theme.of(context).textTheme.bodyMedium,
+          ),
+        ],
         const SizedBox(height: 8),
         Text(
           'Turning this off stops new automatic archival. A batch already running may finish.',

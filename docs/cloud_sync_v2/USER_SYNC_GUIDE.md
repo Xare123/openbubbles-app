@@ -4,7 +4,7 @@ title: Cloud Sync V2 normal user sync guide (candidate rollout)
 description: Candidate Profile-based iCloud Message Sync path and developer/public boundary for the CloudKit V2 qualification build.
 resource: openbubbles-app
 tags: [openbubbles, cloudkit, cloud-sync-v2, user-guide, release-boundary]
-timestamp: 2026-09-15
+timestamp: 2026-10-21
 ---
 
 # Cloud Sync V2 normal user sync guide (candidate rollout)
@@ -48,6 +48,27 @@ timestamp: 2026-09-15
   media work separately, plus per-session completed and failed download
   attempts.
 
+## Optional received-text archival (offline candidate)
+
+When a qualified build exposes it, the existing Profile automatic-archive
+confirmation offers `Include supported received text`. It starts unchecked.
+Existing sent-only consent never enables it automatically. Review the scope and
+acknowledge queued and future uploads before confirming. `Change archival scope`
+lets you choose again without toggling sync or deleting history; cancel changes
+nothing. This extends the existing archive engine, not a second continuous sync.
+
+Supported scope is plain text received directly, in resolved groups or mirrored
+from another device. Received attachments, replies, reactions and received edits
+are not newly covered. Reading already-archived media is a separate capability.
+Removing received scope preserves untouched received jobs for a later explicit
+choice while ordinary sent jobs can continue. Already-submitted or uncertain
+uploads still need their existing confirmation checks; nothing is silently
+acknowledged or resent.
+
+The new Profile flag and four received flags all default off. This candidate has
+offline preference/widget/database/queue checks, not current Android or Apple
+acceptance. Installation and build availability never grant archival permission.
+
 ## If it stops or warns
 
 - Offline or saved relay unavailable: check the connection or pairing code,
@@ -74,10 +95,10 @@ foreground history and encryption setup. Automatic uploads and background
 reads still have their separate qualification gates; removing their temporary
 Developer Mode dependency is a remaining public-rollout task.
 
-The current V2 automatic-upload path covers eligible messages sent by this
-installation. It does not yet archive new incoming messages or messages mirrored
-from another device. Live iMessage delivery can still work; their appearance in
-iCloud depends on an existing cloud copy or another client uploading them.
+The packaged V2 automatic-upload path covers eligible messages sent by this
+installation. The optional received-text source candidate above is not yet
+packaged or live-qualified. Live iMessage delivery can still work without it;
+iCloud history then depends on an existing cloud copy or another client upload.
 
 ## Developer Settings vs Canary ADB automation
 
@@ -121,5 +142,6 @@ personal content.
   `CanaryAdbControlGate.compiledIn` default to false in ordinary builds;
   release workflow adds no V2 dart-defines to the public path.
 - Main manifest keeps `android:debuggable="false"`.
-- Parent runs Flutter tests in the dependency-ready main checkout after
-  integration; this worktree runs only diff checks, no builds.
+- The primary owner runs targeted Flutter checks in the dependency-ready
+  checkout, then qualifies the exact frozen native candidate. Passing source
+  tests does not replace on-device acceptance.

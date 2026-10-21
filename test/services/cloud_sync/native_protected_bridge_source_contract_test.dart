@@ -482,7 +482,7 @@ void main() {
     for (final fence in [
       '!CloudSyncDevGate.receivedArchiveCaptureEnabled',
       '!CloudKitWriterOwnership.v2MutationsEnabled',
-      '!_cloudSyncV2CanaryRuntimeAllowed', '!_cloudSyncV2DeveloperRuntimeAllowed',
+      '!_cloudSyncV2CanaryRuntimeAllowed', '!_cloudSyncV2ReceivedRuntimeAllowed',
       'ss.settings.cloudSyncingEnabled.value', 'wire.receivedOnHandle == null',
       'owner.owner != CloudKitWriterOwner.v2', 'journal.hasOutgoingOrigin(wire.id)',
       'CloudSyncReceivedArchiveStaging.persistSealed(', 'api.cloudSyncSealReceivedArchiveSeed(',
@@ -516,11 +516,100 @@ void main() {
     final gate = File('lib/services/rustpush/cloud_sync/cloud_sync_dev_gate.dart').readAsStringSync();
     expect(gate, matches(RegExp(
         r"receivedArchiveCaptureEnabled = bool.fromEnvironment\(\s*'OPENBUBBLES_CLOUD_SYNC_V2_RECEIVED_CAPTURE',\s*defaultValue: false")));
+    expect(gate, matches(RegExp(
+        r"receivedArchiveProfileEnabled = bool.fromEnvironment\(\s*'OPENBUBBLES_CLOUD_SYNC_V2_RECEIVED_PROFILE',\s*defaultValue: false")));
     final reset = _section(service, 'Future reset(bool hw, bool logout, bool setup)',
         '_cloudSyncV2OutboundQuiescing = false;');
     expect(reset.indexOf('_drainCloudSyncV2ReceivedCaptures()'), greaterThan(0));
     expect(reset.indexOf('_drainCloudSyncV2ReceivedCaptures()'),
         lessThan(reset.indexOf('_runCloudKitDestructiveReset(')));
+  });
+
+  test('received native seed validates before sealing and cannot lose it at a later await', () {
+    final native = File('rust/src/api/api.rs').readAsStringSync();
+    final seal = _section(native, 'pub async fn cloud_sync_seal_received_archive_seed(',
+        'pub async fn cloud_sync_stage_received_archive_seed(');
+    final encryption = seal.indexOf(
+        'crate::cloud_sync_received_source_stage::seal_received_archive_seed(');
+    expect(encryption, greaterThan(0));
+    // Keep both actual native account checks and both registered-handle reads.
+    // Caller expected_auth alone never proves which account owns this source.
+    expect(RegExp(r'cloud_sync_capture_cached_identity\(').allMatches(seal).length,
+        2);
+    expect(RegExp(r'cloud_sync_received_registered_handles\(').allMatches(seal).length,
+        2);
+    expect(seal,
+        contains('cloud_sync_require_received_auth(&expected_auth, &before)?'));
+    expect(seal,
+        contains('cloud_sync_require_received_auth(&expected_auth, &after)?'));
+    expect(seal.indexOf('!= handles'), lessThan(encryption));
+    expect(seal.lastIndexOf('.await'), lessThan(encryption),
+        reason: 'a valid encrypted seed must reach Dart ownership without another fallible native await');
+    expect(seal, contains('account_fingerprint: after.account_fingerprint'));
+    expect(seal, contains('protected_store_identity: after.protected_store_identity'));
+    expect(seal, isNot(contains('cloud_sync_capture_auth_snapshot(')));
+    expect(seal, isNot(contains('pushOperations(')));
+    final cached = _section(native, 'async fn cloud_sync_capture_cached_identity(',
+        'pub struct CloudSyncNativeHistoricalArchiveSourceBinding');
+    expect(cached, contains('validated_persisted_native_account_identifiers().await'));
+  });
+
+  test('Profile received scope reaches existing workers without developer-mode consent inheritance', () {
+    final service = File('lib/services/rustpush/rustpush_service.dart').readAsStringSync();
+    final profile = _section(service, 'bool get cloudSyncV2ReceivedArchiveAvailable',
+        'CloudSyncAutomaticArchivePreferences _cloudSyncV2AutomaticArchivePreferences()');
+    for (final gate in ['cloudSyncV2AutomaticArchiveVisible',
+      'CloudSyncDevGate.receivedArchiveProfileEnabled',
+      'CloudSyncDevGate.receivedArchiveCaptureEnabled',
+      'CloudSyncDevGate.receivedArchiveInspectionEnabled',
+      'CloudSyncDevGate.receivedArchiveUploadsEnabled',
+      'CloudSyncDevGate.receivedArchiveDiscoveryEnabled',
+      'CloudSyncDevGate.manualSemanticPullEnabled']) {
+      expect(profile, contains(gate));
+    }
+    expect(profile, contains('_cloudSyncV2AutomaticReceivedArchiveCurrent?.call() == true'));
+    final worker = _section(service, 'void _startCloudSyncV2AutomaticArchive(',
+        '/// Local-only receive capture');
+    expect(worker, contains('preferences.isReceivedGranted(consent)'));
+    expect(worker, contains('receivedArchiveAllowed: () => stillCurrent()'));
+    expect(worker, contains('_queueCloudSyncV2ReceivedSources(trigger)'));
+    final received = _section(service, 'Future<({bool more, bool deferred})> _materializeCloudSyncV2ReceivedSources()',
+        '// Local intent capture only.');
+    expect(received, contains('identical(profileGrant, _cloudSyncV2AutomaticReceivedArchiveCurrent)'));
+    expect(received, contains('profileGrant?.call() == true'));
+    expect(RegExp(r'profileIdentity\.matchesBinding\(').allMatches(received).length, 2);
+    expect(received, contains('ownershipEpoch: owner.automaticArchiveEpoch'));
+    // The ordinary reader is internally invoked under the same one-flight
+    // owner; public diagnostic authorization remains unchanged.
+    expect(received, contains('final read = _runCloudSyncV2ManualSemanticPull('));
+    expect(received, contains('_cloudSyncV2SemanticPullInFlight = read'));
+    expect(received, isNot(contains('runCloudSyncV2ManualSemanticPullConfirmed(')));
+    final diagnostic = _section(service, 'runCloudSyncV2ManualSemanticPullConfirmed({',
+        '/// Debug-VM entry point');
+    expect(diagnostic, contains('!_cloudSyncV2DeveloperRuntimeAllowed'));
+
+    final adapter = File('lib/services/rustpush/cloud_sync/cloud_sync_production_sampler_adapter.dart').readAsStringSync();
+    final automatic = _section(adapter, 'final class CloudSyncProductionLocalSendAdapter',
+        '/// Windows fast-loop qualification');
+    expect(automatic, contains('receivedArchiveAllowed: () => selection == null && historical == null'));
+    expect(automatic, contains('_receivedArchiveAllowed?.call() == true'));
+    expect(automatic, contains('validateMutationAdmission: () => fence.requireCurrentBinding(auth)'));
+    expect(automatic, contains('pauseUnsubmittedReceivedCreates: () => selection == null && historical == null'));
+    expect(automatic, contains('durable.isPausedUnsubmittedReceivedCreate(operation)'));
+    expect(automatic, contains('pausedReceivedArchiveJournal: selection == null && historical == null'));
+    final creates = File('lib/services/rustpush/cloud_sync/cloud_sync_received_create_adapter.dart').readAsStringSync();
+    expect(creates, contains('required this.receivedArchiveAllowed'));
+    expect(creates, contains('await _validateReceived()'));
+    expect(creates, contains('stillCurrent: _receivedStillCurrent'));
+    final open = _section(creates, 'Future<api.CloudSyncReceivedArchiveCreateProof?> openProof(',
+        'Future<CloudOutboxOperation> admit(');
+    expect(open.indexOf('if (operation == null) return null;'),
+        lessThan(open.indexOf('await validateProofAccess()')),
+        reason: 'sent-only operations must not be denied by the optional received proof reader');
+    expect(open, contains('operation.status == CloudOutboxStatus.unknownOutcome'));
+    expect(open, contains('operation.status == CloudOutboxStatus.confirmed'));
+    expect(open, contains('if (!readbackOnly) _requireReceivedConsent()'));
+    expect(open, contains('current.status != operation.status'));
   });
 
   test('received inspection adapter cannot turn an observation into a save', () {
@@ -580,10 +669,16 @@ void main() {
     expect(uploadWorker, contains('_queueCloudSyncV2ReceivedSources(CloudSyncTrigger.localOutbox)'));
     for (final proof in ['journal.readFoundCandidates(', 'handoffCloudSyncReceivedFound(',
       'readerCheckpoint.hasUnmarkedPendingInbox', 'readerCheckpoint.pendingBatchId != null',
-      'resumeAutomaticUploads: false',
+      'final read = _runCloudSyncV2ManualSemanticPull(',
+      '_cloudSyncV2SemanticPullInFlight = read',
       'journal.markReaderAttemptConsidered(', 'sweepRetainedAtHead: false', 'foundRemaining']) {
       expect(worker, contains(proof));
     }
+    final reader = _section(worker, 'if (readerPending) {',
+        'foundRemaining = journal.readFoundCandidates(');
+    expect(reader, isNot(contains('_queueCloudSyncV2LocalSends(')));
+    expect(reader, isNot(contains('_queueCloudSyncV2ReceivedSources(')));
+    expect(reader, contains('if (identical(_cloudSyncV2SemanticPullInFlight, read))'));
     final native = File('rust/src/api/api.rs').readAsStringSync();
     final handoff = _section(native, 'pub async fn cloud_sync_stage_received_found_projection(',
       '/// Ephemeral native source');

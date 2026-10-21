@@ -731,17 +731,20 @@ final class CloudSyncProductionLocalSendAdapter {
     required String privateStorageDirectory,
     required bool Function() stillCurrent,
     CloudSyncAutomaticArchiveIdentity? automaticArchiveIdentity,
+    bool Function()? receivedArchiveAllowed,
     bool Function()? shouldYield,
   }) : _readActiveClient = readActiveClient,
        _privateStorageDirectory = privateStorageDirectory,
        _stillCurrent = stillCurrent,
        _automaticArchiveIdentity = automaticArchiveIdentity,
+       _receivedArchiveAllowed = receivedArchiveAllowed,
        _shouldYield = shouldYield;
 
   final ActiveCloudMessagesClientReader _readActiveClient;
   final String _privateStorageDirectory;
   final bool Function() _stillCurrent;
   final CloudSyncAutomaticArchiveIdentity? _automaticArchiveIdentity;
+  final bool Function()? _receivedArchiveAllowed;
   final bool Function()? _shouldYield;
   Future<CloudSyncLocalSendConsumerResult>? _running;
   CloudSyncNativeAuthSnapshot? _boundAuth;
@@ -954,6 +957,8 @@ final class CloudSyncProductionLocalSendAdapter {
       protector: protector,
       localSendJournal: journal,
       receivedArchiveJournal: receivedJournal,
+      pauseUnsubmittedReceivedCreates: () => selection == null && historical == null &&
+          _receivedArchiveAllowed?.call() != true,
       attachmentUploadJournal: uploads,
       historicalAttachmentJournal: historicalJournal,
       readChatIdentityEvidence: (operation) => chatEvidence[operation.operationId],
@@ -1042,6 +1047,7 @@ final class CloudSyncProductionLocalSendAdapter {
       readReceivedArchiveProof: (target, operationId) => receivedCreates.openProof(target, operationId),
       readHistoricalArchiveProof: (target, operationId) => historicalCreates.openProof(target, operationId),
       readHistoricalChatSource: (target, operationId) => historicalCreates.openParentSource(target, operationId),
+      validateMutationAdmission: () => fence.requireCurrentBinding(auth),
       readCheckpointGeneration: (scope) async =>
           (await durable.readCheckpoint(scope)).generation,
       retainConfirmedReceiptsForReplay: true,
@@ -1094,6 +1100,8 @@ final class CloudSyncProductionLocalSendAdapter {
       store: objectBox, durable: durable, journal: receivedJournal, transport: transport,
       auth: auth, storageDirectory: _privateStorageDirectory, readSession: identitySession,
       validate: () => fence.run(() {}, accountFingerprint: scope.accountFingerprint),
+      receivedArchiveAllowed: () => selection == null && historical == null &&
+          _receivedArchiveAllowed?.call() == true,
       stillCurrent: () => _stillCurrent() && !objectBox.isClosed() &&
           identical(objectBox, Database.store) && identical(auth.cloudMessagesClient, _readActiveClient()),
     );
@@ -1307,6 +1315,8 @@ final class CloudSyncProductionLocalSendAdapter {
             durable.isRetiredUnsubmittedChatCreate(operation),
         isRetainedPreproofPendingCreate: (operation) async =>
             durable.isRetainedPreproofPendingCreate(operation),
+        isPausedUnsubmittedReceivedCreate: (operation) async =>
+            durable.isPausedUnsubmittedReceivedCreate(operation),
         readOutbox: (target) async {
           final rows = await durable.readOutboxEntries(target);
           if (historical != null) {
@@ -1405,7 +1415,9 @@ final class CloudSyncProductionLocalSendAdapter {
       // Use the same durable quiescence evidence as semantic reads. A bare
       // confirmed status must not hide malformed or unacknowledged receipts.
       final local = ObjectBoxCloudSyncPreflightReader(
-        store: objectBox, localSendJournal: journal).read();
+        store: objectBox, localSendJournal: journal,
+        pausedReceivedArchiveJournal: selection == null && historical == null &&
+            _receivedArchiveAllowed?.call() != true ? receivedJournal : null).read();
       if (!local.objectBoxReady || local.coordinatorLeaseActive ||
           (local.outboxCount != 0 && local.settledOutboxFingerprint == null)) {
         return false;
@@ -1801,7 +1813,9 @@ final class CloudSyncProductionLocalSendAdapter {
       var receivedMore = false;
       var receivedYielded = false;
       final receivedReasons = <String, int>{};
-      if (selection == null && !result.outboxBlocked && !result.yielded &&
+      if (selection == null && historical == null &&
+          _receivedArchiveAllowed?.call() == true &&
+          !result.outboxBlocked && !result.yielded &&
           CloudSyncDevGate.receivedArchiveUploadsEnabled &&
           CloudSyncDevGate.receivedArchiveCaptureEnabled &&
           CloudSyncDevGate.receivedArchiveInspectionEnabled) {

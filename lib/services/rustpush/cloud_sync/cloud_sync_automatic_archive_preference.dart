@@ -59,23 +59,32 @@ final class CloudSyncAutomaticArchivePreference {
   final Object? storedValue;
 
   /// No migration from Developer Mode, a build flag, or another preference.
-  /// The scope deliberately includes queued and future local-send work. A
-  /// future-only switch would require per-source admission AND dispatch proof.
-  bool get enabled {
-    if (identity.ownershipEpoch <= 0 || storedValue is! String) return false;
+  /// Each scope deliberately includes queued and future work. A future-only
+  /// switch would require per-source admission AND dispatch proof.
+  bool get enabled => _enabledVersion != null;
+
+  /// Sent-only grants never inherit received-message consent.
+  bool get includesReceived => _enabledVersion == 2;
+
+  int? get _enabledVersion {
+    if (identity.ownershipEpoch <= 0 || storedValue is! String) return null;
     try {
       final value = jsonDecode(storedValue! as String);
       return value is List &&
-          value.length == 4 &&
-          value[0] == 1 &&
-          value[0] is int &&
-          value[1] == 'queued-and-future-local-sends' &&
-          value[2] is int &&
-          value[2] == identity.ownershipEpoch &&
-          value[3] is String &&
-          RegExp(r'^[a-f0-9]{32}$').hasMatch(value[3]);
+              value.length == 4 &&
+              value[0] is int &&
+              ((value[0] == 1 && value[1] == 'queued-and-future-local-sends') ||
+                  (value[0] == 2 &&
+                      value[1] ==
+                          'queued-and-future-local-sends-and-receives')) &&
+              value[2] is int &&
+              value[2] == identity.ownershipEpoch &&
+              value[3] is String &&
+              RegExp(r'^[a-f0-9]{32}$').hasMatch(value[3])
+          ? value[0] as int
+          : null;
     } catch (_) {
-      return false;
+      return null;
     }
   }
 }
@@ -149,10 +158,14 @@ final class CloudSyncAutomaticArchivePreferences {
     }
   }
 
+  bool isReceivedGranted(CloudSyncAutomaticArchivePreference expected) =>
+      isGranted(expected) && expected.includesReceived;
+
   Future<CloudSyncAutomaticArchivePreference> setEnabled(
     CloudSyncAutomaticArchivePreference expected,
     bool enabled, {
     required bool acknowledgeQueuedUploads,
+    bool includeReceived = false,
   }) async {
     // Reject before any setup or storage write. The UI must ask on every enable.
     if (enabled && !acknowledgeQueuedUploads) {
@@ -172,7 +185,8 @@ final class CloudSyncAutomaticArchivePreferences {
       if (!expected.identity.sameAccountStore(current.identity) ||
           current.identity.ownershipEpoch <= 0 ||
           (expected.identity.ownershipEpoch > 0 &&
-              current.identity.ownershipEpoch != expected.identity.ownershipEpoch) ||
+              current.identity.ownershipEpoch !=
+                  expected.identity.ownershipEpoch) ||
           expected.storedValue != current.storedValue) {
         throw StateError('cloud_sync_automatic_archive_identity_changed');
       }
@@ -183,8 +197,10 @@ final class CloudSyncAutomaticArchivePreferences {
     }
     final value = enabled
         ? jsonEncode([
-            1,
-            'queued-and-future-local-sends',
+            includeReceived ? 2 : 1,
+            includeReceived
+                ? 'queued-and-future-local-sends-and-receives'
+                : 'queued-and-future-local-sends',
             current.identity.ownershipEpoch,
             grant,
           ])
@@ -198,7 +214,9 @@ final class CloudSyncAutomaticArchivePreferences {
     if (!current.identity.sameIdentity(saved.identity)) {
       throw StateError('cloud_sync_automatic_archive_identity_changed');
     }
-    if (saved.storedValue != value || saved.enabled != enabled) {
+    if (saved.storedValue != value ||
+        saved.enabled != enabled ||
+        saved.includesReceived != (enabled && includeReceived)) {
       throw StateError('cloud_sync_automatic_archive_save_failed');
     }
     return saved;

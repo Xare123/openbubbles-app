@@ -546,6 +546,7 @@ class _ProfilePanelState extends OptimizedState<ProfilePanel> with WidgetsBindin
                       ),
                     if (pushService.cloudSyncV2AutomaticArchiveVisible)
                       CloudSyncAutomaticArchiveCard(
+                        receivedArchiveAvailable: pushService.cloudSyncV2ReceivedArchiveAvailable,
                         onLoad: pushService.readCloudSyncV2AutomaticArchivePreference,
                         onChanged: pushService.setCloudSyncV2AutomaticArchivePreference,
                       ),

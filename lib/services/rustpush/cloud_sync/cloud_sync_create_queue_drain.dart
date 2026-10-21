@@ -15,6 +15,7 @@ Future<bool> drainCloudSyncCreateQueues({
   required Future<void> Function() validateAccount,
   Future<bool> Function(CloudOutboxOperation)? isRetiredUnsubmittedChatCreate,
   Future<bool> Function(CloudOutboxOperation)? isRetainedPreproofPendingCreate,
+  Future<bool> Function(CloudOutboxOperation)? isPausedUnsubmittedReceivedCreate,
 }) async {
   final ordered = List<CloudSyncScope>.unmodifiable(scopes);
   // The parent may be submitted only after each preceding queue has both
@@ -59,11 +60,34 @@ Future<bool> drainCloudSyncCreateQueues({
   }
 
   await validateAccount();
-  Future<bool> isHeld(CloudOutboxOperation operation) async =>
-      operation.status == CloudOutboxStatus.pending &&
-      operation.action == CloudOutboxAction.save &&
-      isRetainedPreproofPendingCreate != null &&
-      await checked(() => isRetainedPreproofPendingCreate(operation));
+  Future<bool> isHeld(CloudOutboxOperation operation) async {
+    if (operation.status != CloudOutboxStatus.pending ||
+        operation.action != CloudOutboxAction.save) {
+      return false;
+    }
+    if (isRetainedPreproofPendingCreate != null &&
+        await checked(() => isRetainedPreproofPendingCreate(operation))) {
+      return true;
+    }
+    // These fields only establish a never-submitted shape. The caller must
+    // additionally prove the exact received journal/source/map and generation.
+    // Its lease skip and global preflight retain their own strict checks.
+    if (isPausedUnsubmittedReceivedCreate == null ||
+        operation.scope.zone != 'messageManateeZone' ||
+        operation.attemptCount != 0 ||
+        operation.appleRequestUuid != null ||
+        operation.appleOperationUuid != null ||
+        operation.leaseId != null ||
+        operation.leaseExpiresAt != null ||
+        operation.confirmedAt != null ||
+        operation.lastFailure != null ||
+        operation.nextEligibleAt != null ||
+        operation.dependencyOperationIds.isNotEmpty) {
+      return false;
+    }
+    return checked(() => isPausedUnsubmittedReceivedCreate(operation));
+  }
+
   // Recovery may expose an interrupted submission. Inspect every queue before
   // any reconciliation, flush, or receipt acknowledgement.
   for (final scope in ordered) {

@@ -4,10 +4,130 @@ title: CloudKit incoming-message archival gap and implementation boundary
 description: Source-backed coverage gap and minimum separate archival path required before claiming complete two-way sync.
 resource: openbubbles-app
 tags: [cloudkit, receive, archive, production-gate]
-timestamp: 2026-09-17
+timestamp: 2026-10-21
 ---
 
 # Decision
+
+## Current offline integration, October21
+
+The candidate on319ec27d5 adds a separate, explicit received-text scope to the
+existing Profile automatic-archive grant. V1 sent-only consent remains unchanged;
+v2 includes queued and future supported received/mirrored plain text. A new
+Profile flag plus all four received flags are default false. No flags are
+selected by this change and no build has deployed it. Direct/group/mirrored
+plain-text source qualification is not rich/media or received-mutation coverage.
+
+The existing runtime, queue and normal reader are reused. Capture and dispatch
+check the same account/store/ownership lineage and fresh scope grant. Scope
+downgrade preserves and pauses only pristine, source/checkpoint/map-proven
+received creates, without blocking ordinary sent jobs. Operations that entered
+submission still require exact readback; that exception grants no new create.
+The native mutation boundary rechecks the current grant synchronously.
+
+Affected674tests, final readback230tests (overlapping) and six enabled-gate tests
+passed offline; 19path analysis clean. Disposable real ObjectBox fixtures use
+synthetic native collaborators, not Apple or Android evidence. The native
+seal-order repair below still needs exact-source compilation. Rich/media,
+received mutations, truly unavailable pre-seal keys/account proof, live lifecycle
+and public rollout remain open. Canonical evidence: received-profile-consent-20261021.
+
+## Current working source, October21: group source qualified
+
+Published319ec27d5 includes7dbd3d2bb's plain received-group parent/create/readback wiring.
+It reuses ordinary restored direct/group parent proof, protected received source,
+fresh native absence check, the existing single-submit queue and normal reader.
+Exact captured wire ID must match authenticated identifier/gid/original-gid;
+outer chat_id=parent.gid and protobuf4route=parent.guid, with original endpoint.
+Public direct comparators and outgoing validators stay direct/source-strict.
+Provisional/unproven groups keep exact discovery, whose NotFound grants no create.
+
+Corrected eight-file196Dart batch passed, including seven new real ObjectBox
+group cases; targeted five-path analysis clean. Initial missing supplied test path
+and stale direct-selector assertion retained and corrected, no product bypass.
+Initial strict39584343466 failed on1generated doccomment drift; native compile/
+tests skipped, postjobs success/watch79769 terminal1. Corrected that exact comment
+from ZIP-SHA-verified artifact12338189145 and checked all12generated files
+byte-exact. No executable binding/signature change; contenthash1705609692.
+Corrected strict39585410495/job119172967938 TERMINAL SUCCESS17m37s for exact319,
+watch23976 terminal0. Actual951appRust/449rustpush/16provider(1ignored/12filtered)/
+40protector passed; all10new group cases observed ok. Strict drift/compile/
+postjobs passed, no active job or owned watch. Source qualified, NOT packaged
+or live accepted. No new API signatures,
+schema, locks, pins or flags. All4received flags stay defaultoff.
+Native private logic changed: oldd259/624libraries cannot execute this feature.
+No new APK/device/account request/send/upload. Evidence in canonical
+build-evidence/received-group-create-20261021. No active helper/local tests.
+
+Local uncommitted repair on319ec27d5 addresses the native seal-order finding:
+both actual native DSID/client-composition checks and both registered-handle
+reads now finish before synchronous encryption, with no later await before
+returning the seed to Dart. Existing3d retention can then own valid ciphertext.
+Source-order RED/GREEN and four-file127Dart passed; two-path Dart analysis no
+issues. Native compilation/runtime for this delta is not yet qualified. No new
+API/binding/schema/pin/flag or rollout change. This source finding was not a new
+live incident, and genuinely unavailable keys/account remain separate.
+
+Pre-seal failures, rich/media receive, received mutation chaining, normal Profile
+rollout and same-source live acceptance remain open. No full production claim.
+
+## Prior source and packaged boundary
+
+Published source `ae3520938` additionally retains exact plain group receive
+sources for the existing GUID discovery/normal-reader path. Group V2 keeps the
+wire UUID and has no direct peer; direct V1 encoding/digests are unchanged. Group
+rows skip direct-parent inspection and cannot enter direct create. All four
+rollout flags remain off. Final175affected Dart tests passed, including group
+source/store reopening and idempotent pending-reader adoption without outbox
+entries. ONE strict native39579656758/job119153826958 passed941appRust,
+449rustpush,16provider(1ignored/12filtered),40protector; all6new native tests,
+strict binding drift, compilation and postjobs passed. Watch21649 ended0.
+This native implementation change needs a matching new library/APK;
+no API/bindings/schema/lock/pin changed, and no package or live proof exists for
+this delta. Native encrypted group reopen/discovery and format tests passed,
+not actual Android/platform-key or Apple acceptance. No active job remains.
+Group creation, media/richer incoming shapes and pre-seal failure
+remain open. The last signed d259 package below does not contain these changes.
+
+Reviewed app source d259a9b29 and the actual compile arguments of signed Canary
+39564344037/APK2405e07c. Received capture, inspection, upload and discovery defines
+are not supplied; all four constants in cloud_sync_dev_gate.dart default false.
+The capture hook and its worker additionally require the developer runtime.
+The writer/automatic-upload availability flags enable the separately consented
+local-send path, not received or mirrored-message archival.
+
+Existing CloudKit reads can still restore received messages already archived
+by another Apple client. This gap concerns archiving local receives that are not
+already in CloudKit; it is not a basic IDS-delivery failure or proof that any
+particular missing message is absent remotely.
+
+
+The direct-text receive hook, platform-encrypted seed, exact inspection and
+normal-reader ingress are implemented components. Source `3d376e4d6` closes a
+specific post-seal loss window: it atomically retains the encrypted seed and
+Message before the next asynchronous identity check. A failed post-check keeps
+that local work and wakes the existing bounded worker, which must independently
+revalidate before any remote operation. Local retention is not upload admission.
+Two new regressions and the affected 142-test batch passed offline. Native APIs,
+generated bindings, schema, rollout flags and six submodule pins are unchanged.
+This Dart-only delta is published but NOT in the signed `d259a9b29` APK.
+
+No new same-source live receive/create/readback proof was obtained. Groups,
+richer incoming content and durable ownership of failures before native sealing
+remain open; ordinary receive fallback preserves the message but is not a
+backup job. Missing native key/account proof cannot be replaced by plaintext or
+asserted Dart metadata. Exact evidence is in the canonical checkout's
+`build-evidence/received-seed-retention-20261021/QUALIFICATION.json`.
+Never fabricate an outgoing receipt, relax identity/parent checks or reinterpret
+historical/local recovery as live-receive provenance to bypass this boundary.
+
+Next receive qualification should follow one supported real receive through its
+protected source, duplicate-aware exact lookup, create-or-reader handoff and
+readback, then its existing recovery path. Do not repeat unrelated passing relay
+login/send or full source suites without a new failure or relevant code change.
+The current exact-source treemap owns release and device state. Older dated
+sections below describe historical component work, not current enablement.
+
 
 Incoming archival is a missing production capability, not a reason to relax the
 outgoing positive-receipt gate. No received message may be represented as a

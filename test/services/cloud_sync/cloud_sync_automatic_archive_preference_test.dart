@@ -18,6 +18,13 @@ CloudSyncAutomaticArchiveIdentity _identity({
 String _grantFor(int epoch) =>
     jsonEncode([1, 'queued-and-future-local-sends', epoch, 'f' * 32]);
 
+String _receivedGrantFor(int epoch, {String? grant}) => jsonEncode([
+  2,
+  'queued-and-future-local-sends-and-receives',
+  epoch,
+  grant ?? 'f' * 32,
+]);
+
 final class _Harness {
   _Harness({int epoch = 2, Object? stored}) : _epoch = epoch {
     if (stored != null) {
@@ -36,7 +43,7 @@ final class _Harness {
   Future<void> Function()? onPrepare;
   Future<CloudSyncAutomaticArchiveIdentity?> Function()? onCapture;
 
-  CloudSyncAutomaticArchivePreferences prefs() =>
+  CloudSyncAutomaticArchivePreferences prefs({String Function()? newGrant}) =>
       CloudSyncAutomaticArchivePreferences(
         captureIdentity: () async =>
             onCapture?.call() ?? _identity(epoch: _epoch),
@@ -56,6 +63,7 @@ final class _Harness {
           prepares++;
           await onPrepare?.call();
         },
+        newGrant: newGrant,
       );
 }
 
@@ -182,7 +190,321 @@ void main() {
     expect(decoded[2], 2);
     expect(decoded[3], isA<String>());
     expect(prefs.isGranted(saved), isTrue);
+    expect(saved.includesReceived, isFalse);
+    expect(prefs.isReceivedGranted(saved), isFalse);
   });
+
+  test('v1 sent-only bytes and default scope remain unchanged', () async {
+    final original = _grantFor(2);
+    final harness = _Harness(stored: original);
+    final prefs = harness.prefs(newGrant: () => 'a' * 32);
+    final expected = await prefs.load();
+    expect(expected.enabled, isTrue);
+    expect(expected.includesReceived, isFalse);
+    expect(prefs.isGranted(expected), isTrue);
+    expect(prefs.isReceivedGranted(expected), isFalse);
+    expect(harness._store[expected.identity.preferenceKey], original);
+    expect(harness.writes, 0);
+    final saved = await prefs.setEnabled(
+      expected,
+      true,
+      acknowledgeQueuedUploads: true,
+    );
+    expect(
+      saved.storedValue,
+      '[1,"queued-and-future-local-sends",2,"${'a' * 32}"]',
+    );
+    expect(saved.includesReceived, isFalse);
+    expect(prefs.isGranted(expected), isFalse);
+    expect(prefs.isReceivedGranted(saved), isFalse);
+  });
+
+  test('received consent requires the exact valid v2 scope', () async {
+    final valid = _Harness(stored: _receivedGrantFor(2));
+    final prefs = valid.prefs();
+    final expected = await prefs.load();
+    expect(expected.enabled, isTrue);
+    expect(expected.includesReceived, isTrue);
+    expect(prefs.isGranted(expected), isTrue);
+    expect(prefs.isReceivedGranted(expected), isTrue);
+    expect(valid.writes, 0);
+    for (final stored in <Object?>[
+      null,
+      true,
+      'not-json',
+      jsonEncode({'version': 2}),
+      jsonEncode([2, 'off']),
+      _grantFor(2),
+      jsonEncode([
+        1,
+        'queued-and-future-local-sends-and-receives',
+        2,
+        'f' * 32,
+      ]),
+      jsonEncode([2, 'queued-and-future-local-sends', 2, 'f' * 32]),
+      jsonEncode([
+        3,
+        'queued-and-future-local-sends-and-receives',
+        2,
+        'f' * 32,
+      ]),
+      jsonEncode([
+        2.0,
+        'queued-and-future-local-sends-and-receives',
+        2,
+        'f' * 32,
+      ]),
+      jsonEncode([
+        2,
+        'queued-and-future-local-sends-and-receives',
+        2.0,
+        'f' * 32,
+      ]),
+      jsonEncode([
+        2,
+        'queued-and-future-local-sends-and-receives',
+        '2',
+        'f' * 32,
+      ]),
+      jsonEncode([2, 'future-local-sends-and-receives', 2, 'f' * 32]),
+      jsonEncode([2, 'queued-and-future-local-sends-and-receives', 2]),
+      jsonEncode([
+        2,
+        'queued-and-future-local-sends-and-receives',
+        2,
+        'f' * 32,
+        true,
+      ]),
+      _receivedGrantFor(9),
+      _receivedGrantFor(2, grant: 'short'),
+      _receivedGrantFor(2, grant: 'F' * 32),
+      _receivedGrantFor(2, grant: 'g' * 32),
+    ]) {
+      final harness = _Harness(stored: stored);
+      final preferences = harness.prefs();
+      final preference = await preferences.load();
+      expect(preference.includesReceived, isFalse, reason: 'stored=$stored');
+      expect(preferences.isReceivedGranted(preference), isFalse);
+      if (stored != _grantFor(2)) {
+        expect(preference.enabled, isFalse, reason: 'stored=$stored');
+        expect(preferences.isGranted(preference), isFalse);
+      }
+    }
+    final zeroEpoch = _Harness(epoch: 0, stored: _receivedGrantFor(0));
+    final zeroPrefs = zeroEpoch.prefs();
+    final zero = await zeroPrefs.load();
+    expect(zero.enabled, isFalse);
+    expect(zero.includesReceived, isFalse);
+    expect(zeroPrefs.isReceivedGranted(zero), isFalse);
+  });
+
+  test('every enabled save needs acknowledgment before any I/O', () async {
+    for (final stored in <Object?>[null, _grantFor(2), _receivedGrantFor(2)]) {
+      for (final includeReceived in [false, true]) {
+        final harness = _Harness(stored: stored);
+        final prefs = harness.prefs();
+        final expected = await prefs.load();
+        await expectLater(
+          prefs.setEnabled(
+            expected,
+            true,
+            acknowledgeQueuedUploads: false,
+            includeReceived: includeReceived,
+          ),
+          throwsA(
+            isA<StateError>().having(
+              (error) => error.message,
+              'message',
+              'cloud_sync_automatic_archive_confirmation_required',
+            ),
+          ),
+        );
+        expect(harness.reloads, 1);
+        expect(harness.prepares, 0);
+        expect(harness.writes, 0);
+      }
+    }
+  });
+
+  test(
+    'explicit received opt-in saves v2 with the same epoch and key',
+    () async {
+      final harness = _Harness();
+      final prefs = harness.prefs(newGrant: () => 'a' * 32);
+      final expected = await prefs.load();
+      final saved = await prefs.setEnabled(
+        expected,
+        true,
+        acknowledgeQueuedUploads: true,
+        includeReceived: true,
+      );
+      expect(saved.storedValue, _receivedGrantFor(2, grant: 'a' * 32));
+      expect(saved.identity.preferenceKey, expected.identity.preferenceKey);
+      expect(saved.includesReceived, isTrue);
+      expect(prefs.isReceivedGranted(saved), isTrue);
+      expect(harness.prepares, 1);
+      expect(harness.writes, 1);
+    },
+  );
+
+  test(
+    'scope upgrades and downgrades replace grants without disabling',
+    () async {
+      final harness = _Harness(stored: _grantFor(2));
+      var grants = 0;
+      final prefs = harness.prefs(
+        newGrant: () => (++grants).toRadixString(16).padLeft(32, '0'),
+      );
+      final sentOnly = await prefs.load();
+      final broader = await prefs.setEnabled(
+        sentOnly,
+        true,
+        acknowledgeQueuedUploads: true,
+        includeReceived: true,
+      );
+      expect(broader.enabled, isTrue);
+      expect(broader.includesReceived, isTrue);
+      expect(prefs.isGranted(sentOnly), isFalse);
+      expect(prefs.isReceivedGranted(broader), isTrue);
+      final narrowed = await prefs.setEnabled(
+        broader,
+        true,
+        acknowledgeQueuedUploads: true,
+      );
+      expect(narrowed.enabled, isTrue);
+      expect(narrowed.includesReceived, isFalse);
+      expect(prefs.isGranted(broader), isFalse);
+      expect(prefs.isReceivedGranted(broader), isFalse);
+      expect(prefs.isGranted(narrowed), isTrue);
+      expect(prefs.isReceivedGranted(narrowed), isFalse);
+      final values = [sentOnly, broader, narrowed]
+          .map(
+            (preference) =>
+                jsonDecode(preference.storedValue! as String) as List,
+          )
+          .toList();
+      expect(values.map((value) => value[0]), [1, 2, 1]);
+      expect(values.map((value) => value[3]).toSet(), hasLength(3));
+      expect(harness.writes, 2);
+    },
+  );
+
+  test(
+    'received grants reject revocation epoch token and currency changes',
+    () async {
+      for (final mutate in <void Function(_Harness)>[
+        (harness) =>
+            harness._store[_identity().preferenceKey] = jsonEncode([1, 'off']),
+        (harness) => harness._epoch = 9,
+        (harness) => harness._store[_identity().preferenceKey] =
+            _receivedGrantFor(2, grant: 'a' * 32),
+        (harness) => harness.current = false,
+      ]) {
+        final harness = _Harness(stored: _receivedGrantFor(2));
+        final prefs = harness.prefs();
+        final expected = await prefs.load();
+        expect(prefs.isReceivedGranted(expected), isTrue);
+        mutate(harness);
+        expect(prefs.isGranted(expected), isFalse);
+        expect(prefs.isReceivedGranted(expected), isFalse);
+      }
+    },
+  );
+
+  test(
+    'received saves reject stale or replaced account store epoch and token',
+    () async {
+      for (final duringPrepare in [false, true]) {
+        for (final mutate in <void Function(_Harness)>[
+          (harness) => harness.onCapture = () async => _identity(account: 'B'),
+          (harness) =>
+              harness.onCapture = () async => _identity(protectedStore: 'T'),
+          (harness) => harness._epoch = 9,
+          (harness) => harness._store[_identity().preferenceKey] =
+              _receivedGrantFor(2, grant: 'a' * 32),
+          (harness) => harness._store[_identity().preferenceKey] = jsonEncode([
+            1,
+            'off',
+          ]),
+          (harness) => harness.current = false,
+        ]) {
+          final harness = _Harness(stored: _receivedGrantFor(2));
+          final prefs = harness.prefs();
+          final expected = await prefs.load();
+          if (duringPrepare) {
+            harness.onPrepare = () async {
+              mutate(harness);
+            };
+          } else {
+            mutate(harness);
+          }
+          await expectLater(
+            prefs.setEnabled(
+              expected,
+              true,
+              acknowledgeQueuedUploads: true,
+              includeReceived: true,
+            ),
+            throwsA(
+              isA<StateError>().having(
+                (error) => error.message,
+                'message',
+                'cloud_sync_automatic_archive_identity_changed',
+              ),
+            ),
+          );
+          expect(harness.writes, 0);
+        }
+      }
+    },
+  );
+
+  test(
+    'disabling a received grant keeps the v1 off format and revokes it',
+    () async {
+      final harness = _Harness(stored: _receivedGrantFor(2));
+      final prefs = harness.prefs();
+      final expected = await prefs.load();
+      final saved = await prefs.setEnabled(
+        expected,
+        false,
+        acknowledgeQueuedUploads: false,
+        includeReceived: true,
+      );
+      expect(saved.storedValue, '[1,"off"]');
+      expect(saved.enabled, isFalse);
+      expect(saved.includesReceived, isFalse);
+      expect(prefs.isReceivedGranted(expected), isFalse);
+      expect(prefs.isGranted(expected), isFalse);
+      expect(harness.prepares, 0);
+      expect(harness.writes, 1);
+    },
+  );
+
+  test(
+    'received opt-in rejects malformed fresh tokens before writing',
+    () async {
+      final harness = _Harness();
+      final prefs = harness.prefs(newGrant: () => 'not-a-grant');
+      final expected = await prefs.load();
+      await expectLater(
+        prefs.setEnabled(
+          expected,
+          true,
+          acknowledgeQueuedUploads: true,
+          includeReceived: true,
+        ),
+        throwsA(
+          isA<StateError>().having(
+            (error) => error.message,
+            'message',
+            'cloud_sync_automatic_archive_grant_invalid',
+          ),
+        ),
+      );
+      expect(harness.writes, 0);
+    },
+  );
 
   test('zero epoch provisions initial owner only once', () async {
     final harness = _Harness(epoch: 0);

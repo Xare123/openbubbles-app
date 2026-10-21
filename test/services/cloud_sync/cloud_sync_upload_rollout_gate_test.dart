@@ -9,6 +9,7 @@ void main() {
   const expectedAutomatic = bool.fromEnvironment(
     'TEST_EXPECT_AUTOMATIC_UPLOADS',
   );
+  const expectedReceivedProfile = bool.fromEnvironment('TEST_EXPECT_RECEIVED_PROFILE');
 
   test('writer opt-in matches the explicitly qualified build mode', () {
     expect(CloudSyncDevGate.manualOutboundCanaryEnabled, expectedWriter);
@@ -18,6 +19,19 @@ void main() {
   test('automatic uploads remain a separate explicit opt-in', () {
     expect(CloudSyncDevGate.localSendRuntimeEnabled, expectedAutomatic);
     if (expectedAutomatic) expect(expectedWriter, isTrue);
+  });
+
+  test('received Profile capability stays independent of sent-only availability', () {
+    expect(CloudSyncDevGate.receivedArchiveProfileEnabled, expectedReceivedProfile);
+    if (expectedReceivedProfile) {
+      expect(expectedAutomatic, isTrue);
+      expect(expectedWriter, isTrue);
+      expect(CloudSyncDevGate.receivedArchiveCaptureEnabled, isTrue);
+      expect(CloudSyncDevGate.receivedArchiveInspectionEnabled, isTrue);
+      expect(CloudSyncDevGate.receivedArchiveUploadsEnabled, isTrue);
+      expect(CloudSyncDevGate.receivedArchiveDiscoveryEnabled, isTrue);
+      expect(CloudSyncDevGate.manualSemanticPullEnabled, isTrue);
+    }
   });
 
   // This file is also executed by the established Canary flag-qualification

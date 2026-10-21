@@ -722,15 +722,18 @@ pub async fn cloud_sync_seal_received_archive_seed(
     let before = cloud_sync_capture_cached_identity(cloud_messages_client, storage_directory.clone()).await?;
     cloud_sync_require_received_auth(&expected_auth, &before)?;
     let handles = cloud_sync_received_registered_handles(im_client).await?;
-    let sealed = crate::cloud_sync_received_source_stage::seal_received_archive_seed(
-        PathBuf::from(&storage_directory), before.account_fingerprint.clone(),
-        &before.protected_store_identity, &message, &handles,
-    ).map_err(|_| anyhow!("cloud_sync_received_archive_source_seal_failed"))?;
     let after = cloud_sync_capture_cached_identity(cloud_messages_client, storage_directory.clone()).await?;
     cloud_sync_require_received_auth(&expected_auth, &after)?;
     if cloud_sync_received_registered_handles(im_client).await? != handles {
         return Err(anyhow!("cloud_sync_received_archive_identity_changed"));
     }
+    // Finish fallible async identity reads before sealing. Once encrypted, the
+    // seed must reach Dart's atomic Message+retry retention without another await.
+    // This local retention is not authority to perform a CloudKit operation.
+    let sealed = crate::cloud_sync_received_source_stage::seal_received_archive_seed(
+        PathBuf::from(&storage_directory), after.account_fingerprint.clone(),
+        &after.protected_store_identity, &message, &handles,
+    ).map_err(|_| anyhow!("cloud_sync_received_archive_source_seal_failed"))?;
     Ok(CloudSyncNativeReceivedArchiveSeed {
         account_fingerprint: after.account_fingerprint,
         protected_store_identity: after.protected_store_identity,

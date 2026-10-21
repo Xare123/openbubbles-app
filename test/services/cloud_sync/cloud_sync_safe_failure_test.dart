@@ -13,6 +13,8 @@ import 'package:flutter_test/flutter_test.dart';
 void main() {
   test('local admission and lease diagnostics are exact, not retry permission', () {
     const codes = <String>{
+      'cloud_sync_received_archive_confirmation_required',
+      'cloud_sync_received_archive_profile_unavailable',
       'cloud_sync_local_send_local_exclusion_unavailable',
       'cloud_sync_local_mutation_local_exclusion_unavailable',
       'cloud_sync_local_source_quiescing',

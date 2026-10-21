@@ -62,6 +62,8 @@ abstract final class CloudSyncV2ReceivedArchiveSafeFailureCodes {
     'cloud_sync_received_archive_admitted_source_changed',
     'cloud_sync_received_archive_journal_required',
     'cloud_sync_received_archive_uploads_disabled',
+    'cloud_sync_received_archive_confirmation_required',
+    'cloud_sync_received_archive_profile_unavailable',
     'cloud_sync_received_archive_found_projection_not_ready',
     'cloud_sync_received_archive_reader_busy',
     'received_found_reader_input_invalid',

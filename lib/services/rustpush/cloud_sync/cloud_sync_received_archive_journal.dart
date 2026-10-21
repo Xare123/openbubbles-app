@@ -11,6 +11,7 @@ import 'cloud_sync_received_archive_source_binding.dart';
 import 'cloud_sync_received_record_observation.dart';
 import 'cloud_operation_identity.dart';
 import 'cloud_sync_models.dart';
+import 'cloud_sync_persistent_keys.dart';
 import 'cloud_sync_historical_parent_binding.dart';
 import 'package:bluebubbles/src/rust/api/api.dart' as api;
 import 'cloudkit_writer_authority.dart';
@@ -72,6 +73,72 @@ final class CloudSyncReceivedArchiveJournal {
   final CloudKitWriterAuthoritySnapshot _binding;
 
   bool isBoundToStore(Store store) => identical(store, _store);
+
+  /// Local pause proof only. A pristine received create may wait for renewed
+  /// scope consent without preventing unrelated sent work. Never exempts an
+  /// entered/uncertain submission, a changed generation, or unbound ciphertext.
+  bool isUnsubmittedReceivedCreate(CloudOutboxOperationEntity row) =>
+      _store.runInTransaction(TxMode.read, () {
+        if (row.state != CloudOutboxStatus.pending.index ||
+            row.action != CloudOutboxAction.save.index ||
+            row.zone != 'messageManateeZone' || row.localChatOrigin != null ||
+            row.accountFingerprint != _binding.scope.accountFingerprint ||
+            row.attemptCount != 0 || row.appleRequestUuid != null ||
+            row.appleOperationUuid != null || row.confirmedAtMs != 0 ||
+            row.leaseIdHash != null || row.leaseExpiresAtMs != 0 ||
+            row.nextEligibleAtMs != 0 || row.lastErrorCategory != null ||
+            row.dependencyOperationIdsJson != '[]' ||
+            row.createdAtMs <= 0 || row.updatedAtMs < row.createdAtMs ||
+            row.checkpointGeneration <= 0 || row.mutationRevision < 0 ||
+            !RegExp(r'^obcs2\.lease\.[0-9a-f]{32}$')
+                .hasMatch(row.protectedLeaseReference ?? '') ||
+            !RegExp(r'^obcs2\.ref\.[A-Za-z0-9_-]{43}$')
+                .hasMatch(row.encryptedPayloadRef ?? '') ||
+            !RegExp(r'^[0-9a-f]{64}$').hasMatch(row.payloadSha256 ?? '') ||
+            !RegExp(r'^[A-Za-z0-9_-]{43}$').hasMatch(row.serverRecordIdHash ?? '')) {
+          return false;
+        }
+        try {
+          final scope = CloudSyncScope(accountFingerprint: row.accountFingerprint,
+            container: 'com.apple.messages.cloud', database: 'private',
+            zone: row.zone, persistenceLane: CloudSyncPersistenceLane.semantic);
+          if (row.scopeKey != cloudSyncPersistentScopeKey(scope)) return false;
+          final operation = CloudOutboxOperation(scope: scope,
+            operationId: row.operationId, logicalEntityKeyHash: row.logicalEntityKeyHash,
+            action: CloudOutboxAction.save, payloadVersion: row.payloadVersion,
+            mutationRevision: row.mutationRevision,
+            checkpointGeneration: row.checkpointGeneration,
+            dependencyOperationIds: const {},
+            createdAt: DateTime.fromMillisecondsSinceEpoch(row.createdAtMs, isUtc: true),
+            encryptedPayloadReference: row.encryptedPayloadRef,
+            payloadSha256: row.payloadSha256, serverRecordIdHash: row.serverRecordIdHash,
+            protectedLeaseReference: row.protectedLeaseReference);
+          final source = readAdoptedSource(transactionStore: _store, operation: operation);
+          if (source == null) return false;
+          final checkpoint = _readUnique(_store.box<CloudSyncCheckpointEntity>()
+              .query(CloudSyncCheckpointEntity_.checkpointKey.equals(row.scopeKey)));
+          final mapping = _readUnique(_store.box<CloudRecordMapEntity>().query(
+            CloudRecordMapEntity_.scopeKey.equals(row.scopeKey).and(
+              CloudRecordMapEntity_.logicalEntityKeyHash.equals(row.logicalEntityKeyHash))));
+          return checkpoint != null && mapping != null &&
+              checkpoint.accountFingerprint == row.accountFingerprint &&
+              checkpoint.container == scope.container && checkpoint.database == scope.database &&
+              checkpoint.zone == scope.zone && checkpoint.streamKind == scope.streamKind.name &&
+              checkpoint.persistenceLane == scope.persistenceLane.name &&
+              checkpoint.schemaVersion == scope.schemaVersion &&
+              checkpoint.generation == row.checkpointGeneration &&
+              mapping.accountFingerprint == row.accountFingerprint && mapping.zone == row.zone &&
+              mapping.generation == row.checkpointGeneration &&
+              mapping.serverRecordIdHash == row.serverRecordIdHash &&
+              mapping.encryptedServerRecordId == row.encryptedPayloadRef;
+        } on StateError {
+          return false;
+        } on ArgumentError {
+          return false;
+        } on CloudKitWriterAuthorityFailure {
+          return false;
+        }
+      });
 
   List<int> readFoundCandidates({
     required CloudSyncNativeAuthSnapshot currentAuth, int limit = 5,

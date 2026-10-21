@@ -62,6 +62,12 @@ abstract final class CloudSyncDevGate {
     'OPENBUBBLES_CLOUD_SYNC_V2_RECEIVED_DISCOVERY', defaultValue: false,
   );
 
+  /// Normal Profile opt-in for received/mirrored archival. This is availability,
+  /// not consent: sent-only grants cannot authorize the received worker.
+  static const bool receivedArchiveProfileEnabled = bool.fromEnvironment(
+    'OPENBUBBLES_CLOUD_SYNC_V2_RECEIVED_PROFILE', defaultValue: false,
+  );
+
   /// Independent read-only Android lifecycle gate. This never enables the
   /// outbound writer or ordinary-send consumer and is fenced to Canary again
   /// at runtime on both sides of the method channel.

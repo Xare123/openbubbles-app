@@ -32,6 +32,7 @@ final class CloudSyncReceivedCreateAdapter {
     required this.readSession,
     required this.validate,
     required this.stillCurrent,
+    required this.receivedArchiveAllowed,
   });
   final Store store;
   final ObjectBoxCloudSyncStore durable;
@@ -42,6 +43,21 @@ final class CloudSyncReceivedCreateAdapter {
   final CloudSyncWriteChatIdentitySession readSession;
   final Future<void> Function() validate;
   final bool Function() stillCurrent;
+  final bool Function() receivedArchiveAllowed;
+
+  void _requireReceivedConsent() {
+    if (!receivedArchiveAllowed() || !stillCurrent()) {
+      throw StateError('cloud_sync_received_archive_confirmation_required');
+    }
+  }
+
+  Future<void> _validateReceived() async {
+    _requireReceivedConsent();
+    await validate();
+    _requireReceivedConsent();
+  }
+
+  bool _receivedStillCurrent() => receivedArchiveAllowed() && stillCurrent();
 
   native.ArcCloudMessagesClientDefaultAnisetteProvider get _client =>
       auth.cloudMessagesClient
@@ -98,13 +114,29 @@ final class CloudSyncReceivedCreateAdapter {
     await validate();
     final operation = durable.readReceivedArchiveOperation(scope, operationId);
     if (operation == null) return null;
+    // Revoking future received uploads cannot discard an entered operation's
+    // exact readback/reconciliation. These statuses carry no fresh-create
+    // authority; pending/leased creates still require the scoped grant.
+    final readbackOnly = operation.status == CloudOutboxStatus.unknownOutcome ||
+        operation.status == CloudOutboxStatus.confirmed;
+    void requireProofAccess() {
+      if (!stillCurrent()) throw StateError('cloud_sync_received_archive_identity_changed');
+      if (!readbackOnly) _requireReceivedConsent();
+    }
+    Future<void> validateProofAccess() async {
+      requireProofAccess();
+      await validate();
+      requireProofAccess();
+    }
+    await validateProofAccess();
     final source = journal.readAdoptedSource(
       transactionStore: store,
       operation: operation,
     )!;
     final parent = _parent(scope, source);
-    final proof = await readSession.run(
-      (token) => api.cloudSyncOpenReceivedArchiveCreateProof(
+    final proof = await readSession.run((token) {
+      requireProofAccess();
+      return api.cloudSyncOpenReceivedArchiveCreateProof(
         cloudMessagesClient: _client,
         nativeWriterPauseToken: token,
         storageDirectory: storageDirectory,
@@ -114,13 +146,14 @@ final class CloudSyncReceivedCreateAdapter {
         chatLogicalEntityKeyHash: parent.logicalEntityKeyHash,
         chatSource: parent.source,
         parentBindingSha256: _parentDigest(parent.binding),
-      ),
-    );
-    await validate();
+      );
+    });
+    await validateProofAccess();
     final current = durable.readReceivedArchiveOperation(scope, operationId);
     if (current == null ||
         current.operationId != operation.operationId ||
         current.scope != operation.scope ||
+        current.status != operation.status ||
         _parent(scope, source).source != parent.source ||
         !journal
             .readAdoptedSource(transactionStore: store, operation: current)!
@@ -133,29 +166,31 @@ final class CloudSyncReceivedCreateAdapter {
   }
 
   Future<CloudOutboxOperation> admit(CloudSyncScope scope, int intentId) async {
+    _requireReceivedConsent();
     if (!CloudSyncDevGate.receivedArchiveUploadsEnabled ||
         !CloudSyncDevGate.receivedArchiveCaptureEnabled ||
         !CloudSyncDevGate.receivedArchiveInspectionEnabled) {
       throw StateError('cloud_sync_received_archive_uploads_disabled');
     }
     CloudKitOperationInterlock.requireActive(CloudKitOperationKind.v2ReadWrite);
-    await validate();
+    await _validateReceived();
     await CloudProtectedPageLeaseLifecycle(
       store: durable,
       transport: transport,
     ).ensureRecoveredBeforeWrite();
-    await validate();
+    await _validateReceived();
     final source = journal.readForCreateAdmission(
       intentId: intentId,
       currentAuth: auth,
     );
     final parent = _parent(scope, source);
     final checkpoint = await durable.readCheckpoint(scope);
-    await validate();
+    await _validateReceived();
     if (checkpoint.generation != source.observation.generation) {
       throw StateError('cloud_sync_received_archive_admission_changed');
     }
     return readSession.run((token) async {
+      _requireReceivedConsent();
       final prepared = await api.cloudSyncPrepareReceivedArchiveInspection(
         cloudMessagesClient: _client,
         nativeWriterPauseToken: token,
@@ -170,13 +205,13 @@ final class CloudSyncReceivedCreateAdapter {
       try {
         return await transport.runProtectedStoreExclusive(
           () => transport.runLocalProtectedStoreExclusive(() async {
-            await validate();
+            await _validateReceived();
             journal.validateCreateAdmission(
               transactionStore: store,
               scope: scope,
               expected: source,
               currentAuth: auth,
-              stillCurrent: stillCurrent,
+              stillCurrent: _receivedStillCurrent,
             );
             if (_parent(scope, source).source != parent.source) {
               throw StateError('cloud_sync_received_archive_parent_changed');
@@ -200,7 +235,7 @@ final class CloudSyncReceivedCreateAdapter {
                     parentBinding: parent.binding,
                     now: DateTime.now(),
                   );
-                  await validate();
+                  await _validateReceived();
                   void validateParent() {
                     if (_parent(scope, source).source != parent.source) {
                       throw StateError(
@@ -213,7 +248,7 @@ final class CloudSyncReceivedCreateAdapter {
                     expected: source,
                     found: found,
                     currentAuth: auth,
-                    stillCurrent: stillCurrent,
+                    stillCurrent: _receivedStillCurrent,
                     validateParent: validateParent,
                   );
                   foundOwned = true;
@@ -221,13 +256,13 @@ final class CloudSyncReceivedCreateAdapter {
                     found.rawLeaseReference!,
                     {found.rawReference!},
                   );
-                  await validate();
+                  await _validateReceived();
                   journal.markRecordObservationCommitted(
                     intentId: source.intentId,
                     source: source.source,
                     observation: found,
                     currentAuth: auth,
-                    stillCurrent: stillCurrent,
+                    stillCurrent: _receivedStillCurrent,
                     validateParent: validateParent,
                   );
                 } catch (_) {
@@ -249,7 +284,7 @@ final class CloudSyncReceivedCreateAdapter {
             );
             var owned = false;
             try {
-              await validate();
+              await _validateReceived();
               if (stage.logicalEntityKeyHash !=
                       source.observation.logicalEntityKeyHash ||
                   stage.serverRecordIdHash !=
@@ -287,13 +322,13 @@ final class CloudSyncReceivedCreateAdapter {
                 journal: journal,
                 source: source,
                 currentAuth: auth,
-                stillCurrent: stillCurrent,
+                stillCurrent: _receivedStillCurrent,
               );
               owned = true;
               await transport.commitProtectedPageLease(stage.leaseReference, {
                 stage.protectedPayloadReference,
               });
-              await validate();
+              await _validateReceived();
               return operation;
             } catch (_) {
               if (!owned) {
