@@ -144,6 +144,7 @@ impl CloudSyncProtectionContext {
                     | "idsAttachmentSource"
                     | "idsMutationSource"
                     | "idsReceivedArchiveSource"
+                    | "idsReceivedMutationSource"
                     | "historicalArchiveSource"
                     | "historicalSnapshot"
                     | "idsSendReceipt"
@@ -954,6 +955,7 @@ mod tests {
             "idsAttachmentSource",
             "idsMutationSource",
             "idsReceivedArchiveSource",
+            "idsReceivedMutationSource",
             "historicalArchiveSource",
             "historicalSnapshot",
             "idsSendReceipt",

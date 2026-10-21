@@ -292,6 +292,8 @@ mod cloud_sync_historical_source_stage;
 mod cloud_sync_archive_discovery_source;
 mod cloud_sync_received_source;
 mod cloud_sync_received_source_stage;
+mod cloud_sync_received_mutation_source;
+mod cloud_sync_received_mutation_stage;
 mod cloud_sync_received_record_match;
 mod cloud_sync_received_projection;
 mod cloud_sync_received_raw_match;
