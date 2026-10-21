@@ -2925,14 +2925,42 @@ fn wire__crate__api__api__cloud_sync_capture_received_identity_impl(
             };
             let mut deserializer =
                 flutter_rust_bridge::for_generated::SseDeserializer::new(message);
-            let api_state = <crate::api::api::SharedPushState>::sse_decode(&mut deserializer);
+            let api_cloud_messages_client = <RustOpaqueMoi<
+                flutter_rust_bridge::for_generated::RustAutoOpaqueInner<
+                    Arc<CloudMessagesClient<DefaultAnisetteProvider>>,
+                >,
+            >>::sse_decode(&mut deserializer);
+            let api_storage_directory = <String>::sse_decode(&mut deserializer);
             deserializer.end();
             move |context| async move {
                 transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
                     (move || async move {
-                        let output_ok =
-                            crate::api::api::cloud_sync_capture_received_identity(&api_state)
-                                .await?;
+                        let mut api_cloud_messages_client_guard = None;
+                        let decode_indices_ =
+                            flutter_rust_bridge::for_generated::lockable_compute_decode_order(
+                                vec![flutter_rust_bridge::for_generated::LockableOrderInfo::new(
+                                    &api_cloud_messages_client,
+                                    0,
+                                    false,
+                                )],
+                            );
+                        for i in decode_indices_ {
+                            match i {
+                                0 => {
+                                    api_cloud_messages_client_guard = Some(
+                                        api_cloud_messages_client.lockable_decode_async_ref().await,
+                                    )
+                                }
+                                _ => unreachable!(),
+                            }
+                        }
+                        let api_cloud_messages_client_guard =
+                            api_cloud_messages_client_guard.unwrap();
+                        let output_ok = crate::api::api::cloud_sync_capture_received_identity(
+                            &*api_cloud_messages_client_guard,
+                            api_storage_directory,
+                        )
+                        .await?;
                         Ok(output_ok)
                     })()
                     .await,
@@ -3037,7 +3065,15 @@ fn wire__crate__api__api__cloud_sync_configure_messages_change_notifications_imp
             };
             let mut deserializer =
                 flutter_rust_bridge::for_generated::SseDeserializer::new(message);
-            let api_state = <crate::api::api::SharedPushState>::sse_decode(&mut deserializer);
+            let api_cloud_messages_client = <RustOpaqueMoi<
+                flutter_rust_bridge::for_generated::RustAutoOpaqueInner<
+                    Arc<CloudMessagesClient<DefaultAnisetteProvider>>,
+                >,
+            >>::sse_decode(&mut deserializer);
+            let api_conn = <RustOpaqueMoi<
+                flutter_rust_bridge::for_generated::RustAutoOpaqueInner<APSConnection>,
+            >>::sse_decode(&mut deserializer);
+            let api_storage_directory = <String>::sse_decode(&mut deserializer);
             let api_registration_nonce = <String>::sse_decode(&mut deserializer);
             let api_expected_auth =
                 <crate::api::api::CloudSyncNativeAuthMetadata>::sse_decode(&mut deserializer);
@@ -3045,9 +3081,43 @@ fn wire__crate__api__api__cloud_sync_configure_messages_change_notifications_imp
             move |context| async move {
                 transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
                     (move || async move {
+                        let mut api_cloud_messages_client_guard = None;
+                        let mut api_conn_guard = None;
+                        let decode_indices_ =
+                            flutter_rust_bridge::for_generated::lockable_compute_decode_order(
+                                vec![
+                                    flutter_rust_bridge::for_generated::LockableOrderInfo::new(
+                                        &api_cloud_messages_client,
+                                        0,
+                                        false,
+                                    ),
+                                    flutter_rust_bridge::for_generated::LockableOrderInfo::new(
+                                        &api_conn, 1, false,
+                                    ),
+                                ],
+                            );
+                        for i in decode_indices_ {
+                            match i {
+                                0 => {
+                                    api_cloud_messages_client_guard = Some(
+                                        api_cloud_messages_client.lockable_decode_async_ref().await,
+                                    )
+                                }
+                                1 => {
+                                    api_conn_guard =
+                                        Some(api_conn.lockable_decode_async_ref().await)
+                                }
+                                _ => unreachable!(),
+                            }
+                        }
+                        let api_cloud_messages_client_guard =
+                            api_cloud_messages_client_guard.unwrap();
+                        let api_conn_guard = api_conn_guard.unwrap();
                         let output_ok =
                             crate::api::api::cloud_sync_configure_messages_change_notifications(
-                                &api_state,
+                                &*api_cloud_messages_client_guard,
+                                &*api_conn_guard,
+                                api_storage_directory,
                                 api_registration_nonce,
                                 api_expected_auth,
                             )
@@ -6436,7 +6506,15 @@ fn wire__crate__api__api__cloud_sync_seal_received_archive_seed_impl(
             };
             let mut deserializer =
                 flutter_rust_bridge::for_generated::SseDeserializer::new(message);
-            let api_state = <crate::api::api::SharedPushState>::sse_decode(&mut deserializer);
+            let api_cloud_messages_client = <RustOpaqueMoi<
+                flutter_rust_bridge::for_generated::RustAutoOpaqueInner<
+                    Arc<CloudMessagesClient<DefaultAnisetteProvider>>,
+                >,
+            >>::sse_decode(&mut deserializer);
+            let api_im_client = <RustOpaqueMoi<
+                flutter_rust_bridge::for_generated::RustAutoOpaqueInner<Arc<IMClient>>,
+            >>::sse_decode(&mut deserializer);
+            let api_storage_directory = <String>::sse_decode(&mut deserializer);
             let api_expected_auth =
                 <crate::api::api::CloudSyncNativeAuthMetadata>::sse_decode(&mut deserializer);
             let api_message = <crate::api::api::MessageInst>::sse_decode(&mut deserializer);
@@ -6444,8 +6522,44 @@ fn wire__crate__api__api__cloud_sync_seal_received_archive_seed_impl(
             move |context| async move {
                 transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
                     (move || async move {
+                        let mut api_cloud_messages_client_guard = None;
+                        let mut api_im_client_guard = None;
+                        let decode_indices_ =
+                            flutter_rust_bridge::for_generated::lockable_compute_decode_order(
+                                vec![
+                                    flutter_rust_bridge::for_generated::LockableOrderInfo::new(
+                                        &api_cloud_messages_client,
+                                        0,
+                                        false,
+                                    ),
+                                    flutter_rust_bridge::for_generated::LockableOrderInfo::new(
+                                        &api_im_client,
+                                        1,
+                                        false,
+                                    ),
+                                ],
+                            );
+                        for i in decode_indices_ {
+                            match i {
+                                0 => {
+                                    api_cloud_messages_client_guard = Some(
+                                        api_cloud_messages_client.lockable_decode_async_ref().await,
+                                    )
+                                }
+                                1 => {
+                                    api_im_client_guard =
+                                        Some(api_im_client.lockable_decode_async_ref().await)
+                                }
+                                _ => unreachable!(),
+                            }
+                        }
+                        let api_cloud_messages_client_guard =
+                            api_cloud_messages_client_guard.unwrap();
+                        let api_im_client_guard = api_im_client_guard.unwrap();
                         let output_ok = crate::api::api::cloud_sync_seal_received_archive_seed(
-                            &api_state,
+                            &*api_cloud_messages_client_guard,
+                            &*api_im_client_guard,
+                            api_storage_directory,
                             api_expected_auth,
                             api_message,
                         )
@@ -6767,7 +6881,12 @@ fn wire__crate__api__api__cloud_sync_stage_historical_archive_source_impl(
             };
             let mut deserializer =
                 flutter_rust_bridge::for_generated::SseDeserializer::new(message);
-            let api_state = <crate::api::api::SharedPushState>::sse_decode(&mut deserializer);
+            let api_cloud_messages_client = <RustOpaqueMoi<
+                flutter_rust_bridge::for_generated::RustAutoOpaqueInner<
+                    Arc<CloudMessagesClient<DefaultAnisetteProvider>>,
+                >,
+            >>::sse_decode(&mut deserializer);
+            let api_storage_directory = <String>::sse_decode(&mut deserializer);
             let api_expected_auth =
                 <crate::api::api::CloudSyncNativeAuthMetadata>::sse_decode(&mut deserializer);
             let api_snapshot_sha256 = <String>::sse_decode(&mut deserializer);
@@ -6777,9 +6896,31 @@ fn wire__crate__api__api__cloud_sync_stage_historical_archive_source_impl(
             move |context| async move {
                 transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
                     (move || async move {
+                        let mut api_cloud_messages_client_guard = None;
+                        let decode_indices_ =
+                            flutter_rust_bridge::for_generated::lockable_compute_decode_order(
+                                vec![flutter_rust_bridge::for_generated::LockableOrderInfo::new(
+                                    &api_cloud_messages_client,
+                                    0,
+                                    false,
+                                )],
+                            );
+                        for i in decode_indices_ {
+                            match i {
+                                0 => {
+                                    api_cloud_messages_client_guard = Some(
+                                        api_cloud_messages_client.lockable_decode_async_ref().await,
+                                    )
+                                }
+                                _ => unreachable!(),
+                            }
+                        }
+                        let api_cloud_messages_client_guard =
+                            api_cloud_messages_client_guard.unwrap();
                         let output_ok =
                             crate::api::api::cloud_sync_stage_historical_archive_source(
-                                &api_state,
+                                &*api_cloud_messages_client_guard,
+                                api_storage_directory,
                                 api_expected_auth,
                                 api_snapshot_sha256,
                                 api_expected_source_sha256,
@@ -7539,7 +7680,12 @@ fn wire__crate__api__api__cloud_sync_stage_received_archive_seed_impl(
             };
             let mut deserializer =
                 flutter_rust_bridge::for_generated::SseDeserializer::new(message);
-            let api_state = <crate::api::api::SharedPushState>::sse_decode(&mut deserializer);
+            let api_cloud_messages_client = <RustOpaqueMoi<
+                flutter_rust_bridge::for_generated::RustAutoOpaqueInner<
+                    Arc<CloudMessagesClient<DefaultAnisetteProvider>>,
+                >,
+            >>::sse_decode(&mut deserializer);
+            let api_storage_directory = <String>::sse_decode(&mut deserializer);
             let api_expected_auth =
                 <crate::api::api::CloudSyncNativeAuthMetadata>::sse_decode(&mut deserializer);
             let api_seed = <crate::api::api::CloudSyncNativeReceivedArchiveSeed>::sse_decode(
@@ -7549,8 +7695,30 @@ fn wire__crate__api__api__cloud_sync_stage_received_archive_seed_impl(
             move |context| async move {
                 transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
                     (move || async move {
+                        let mut api_cloud_messages_client_guard = None;
+                        let decode_indices_ =
+                            flutter_rust_bridge::for_generated::lockable_compute_decode_order(
+                                vec![flutter_rust_bridge::for_generated::LockableOrderInfo::new(
+                                    &api_cloud_messages_client,
+                                    0,
+                                    false,
+                                )],
+                            );
+                        for i in decode_indices_ {
+                            match i {
+                                0 => {
+                                    api_cloud_messages_client_guard = Some(
+                                        api_cloud_messages_client.lockable_decode_async_ref().await,
+                                    )
+                                }
+                                _ => unreachable!(),
+                            }
+                        }
+                        let api_cloud_messages_client_guard =
+                            api_cloud_messages_client_guard.unwrap();
                         let output_ok = crate::api::api::cloud_sync_stage_received_archive_seed(
-                            &api_state,
+                            &*api_cloud_messages_client_guard,
+                            api_storage_directory,
                             api_expected_auth,
                             api_seed,
                         )
@@ -7585,7 +7753,15 @@ fn wire__crate__api__api__cloud_sync_stage_received_archive_source_impl(
             };
             let mut deserializer =
                 flutter_rust_bridge::for_generated::SseDeserializer::new(message);
-            let api_state = <crate::api::api::SharedPushState>::sse_decode(&mut deserializer);
+            let api_cloud_messages_client = <RustOpaqueMoi<
+                flutter_rust_bridge::for_generated::RustAutoOpaqueInner<
+                    Arc<CloudMessagesClient<DefaultAnisetteProvider>>,
+                >,
+            >>::sse_decode(&mut deserializer);
+            let api_im_client = <RustOpaqueMoi<
+                flutter_rust_bridge::for_generated::RustAutoOpaqueInner<Arc<IMClient>>,
+            >>::sse_decode(&mut deserializer);
+            let api_storage_directory = <String>::sse_decode(&mut deserializer);
             let api_expected_auth =
                 <crate::api::api::CloudSyncNativeAuthMetadata>::sse_decode(&mut deserializer);
             let api_message = <crate::api::api::MessageInst>::sse_decode(&mut deserializer);
@@ -7593,8 +7769,44 @@ fn wire__crate__api__api__cloud_sync_stage_received_archive_source_impl(
             move |context| async move {
                 transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
                     (move || async move {
+                        let mut api_cloud_messages_client_guard = None;
+                        let mut api_im_client_guard = None;
+                        let decode_indices_ =
+                            flutter_rust_bridge::for_generated::lockable_compute_decode_order(
+                                vec![
+                                    flutter_rust_bridge::for_generated::LockableOrderInfo::new(
+                                        &api_cloud_messages_client,
+                                        0,
+                                        false,
+                                    ),
+                                    flutter_rust_bridge::for_generated::LockableOrderInfo::new(
+                                        &api_im_client,
+                                        1,
+                                        false,
+                                    ),
+                                ],
+                            );
+                        for i in decode_indices_ {
+                            match i {
+                                0 => {
+                                    api_cloud_messages_client_guard = Some(
+                                        api_cloud_messages_client.lockable_decode_async_ref().await,
+                                    )
+                                }
+                                1 => {
+                                    api_im_client_guard =
+                                        Some(api_im_client.lockable_decode_async_ref().await)
+                                }
+                                _ => unreachable!(),
+                            }
+                        }
+                        let api_cloud_messages_client_guard =
+                            api_cloud_messages_client_guard.unwrap();
+                        let api_im_client_guard = api_im_client_guard.unwrap();
                         let output_ok = crate::api::api::cloud_sync_stage_received_archive_source(
-                            &api_state,
+                            &*api_cloud_messages_client_guard,
+                            &*api_im_client_guard,
+                            api_storage_directory,
                             api_expected_auth,
                             api_message,
                         )

@@ -324,7 +324,10 @@ abstract class RustLibApi extends BaseApi {
   });
 
   Future<CloudSyncNativeAuthMetadata>
-  crateApiApiCloudSyncCaptureReceivedIdentity({required SharedPushState state});
+  crateApiApiCloudSyncCaptureReceivedIdentity({
+    required ArcCloudMessagesClientDefaultAnisetteProvider cloudMessagesClient,
+    required String storageDirectory,
+  });
 
   CloudSyncProtectedGarbageCollectionResult
   crateApiApiCloudSyncCollectProtectedGarbage({
@@ -340,7 +343,9 @@ abstract class RustLibApi extends BaseApi {
   });
 
   Future<bool> crateApiApiCloudSyncConfigureMessagesChangeNotifications({
-    required SharedPushState state,
+    required ArcCloudMessagesClientDefaultAnisetteProvider cloudMessagesClient,
+    required ApsConnection conn,
+    required String storageDirectory,
     required String registrationNonce,
     required CloudSyncNativeAuthMetadata expectedAuth,
   });
@@ -807,7 +812,9 @@ abstract class RustLibApi extends BaseApi {
 
   Future<CloudSyncNativeReceivedArchiveSeed>
   crateApiApiCloudSyncSealReceivedArchiveSeed({
-    required SharedPushState state,
+    required ArcCloudMessagesClientDefaultAnisetteProvider cloudMessagesClient,
+    required ArcImClient imClient,
+    required String storageDirectory,
     required CloudSyncNativeAuthMetadata expectedAuth,
     required MessageInst message,
   });
@@ -843,7 +850,8 @@ abstract class RustLibApi extends BaseApi {
 
   Future<CloudSyncNativeHistoricalArchiveSourceBinding>
   crateApiApiCloudSyncStageHistoricalArchiveSource({
-    required SharedPushState state,
+    required ArcCloudMessagesClientDefaultAnisetteProvider cloudMessagesClient,
+    required String storageDirectory,
     required CloudSyncNativeAuthMetadata expectedAuth,
     required String snapshotSha256,
     required String expectedSourceSha256,
@@ -934,14 +942,17 @@ abstract class RustLibApi extends BaseApi {
 
   Future<CloudSyncNativeReceivedArchiveSourceBinding>
   crateApiApiCloudSyncStageReceivedArchiveSeed({
-    required SharedPushState state,
+    required ArcCloudMessagesClientDefaultAnisetteProvider cloudMessagesClient,
+    required String storageDirectory,
     required CloudSyncNativeAuthMetadata expectedAuth,
     required CloudSyncNativeReceivedArchiveSeed seed,
   });
 
   Future<CloudSyncNativeReceivedArchiveSourceBinding>
   crateApiApiCloudSyncStageReceivedArchiveSource({
-    required SharedPushState state,
+    required ArcCloudMessagesClientDefaultAnisetteProvider cloudMessagesClient,
+    required ArcImClient imClient,
+    required String storageDirectory,
     required CloudSyncNativeAuthMetadata expectedAuth,
     required MessageInst message,
   });
@@ -4478,13 +4489,18 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   @override
   Future<CloudSyncNativeAuthMetadata>
   crateApiApiCloudSyncCaptureReceivedIdentity({
-    required SharedPushState state,
+    required ArcCloudMessagesClientDefaultAnisetteProvider cloudMessagesClient,
+    required String storageDirectory,
   }) {
     return handler.executeNormal(
       NormalTask(
         callFfi: (port_) {
           final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_box_autoadd_shared_push_state(state, serializer);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcCloudMessagesClientDefaultAnisetteProvider(
+            cloudMessagesClient,
+            serializer,
+          );
+          sse_encode_String(storageDirectory, serializer);
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
@@ -4497,7 +4513,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           decodeErrorData: sse_decode_AnyhowException,
         ),
         constMeta: kCrateApiApiCloudSyncCaptureReceivedIdentityConstMeta,
-        argValues: [state],
+        argValues: [cloudMessagesClient, storageDirectory],
         apiImpl: this,
       ),
     );
@@ -4506,7 +4522,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   TaskConstMeta get kCrateApiApiCloudSyncCaptureReceivedIdentityConstMeta =>
       const TaskConstMeta(
         debugName: "cloud_sync_capture_received_identity",
-        argNames: ["state"],
+        argNames: ["cloudMessagesClient", "storageDirectory"],
       );
 
   @override
@@ -4589,7 +4605,9 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
   @override
   Future<bool> crateApiApiCloudSyncConfigureMessagesChangeNotifications({
-    required SharedPushState state,
+    required ArcCloudMessagesClientDefaultAnisetteProvider cloudMessagesClient,
+    required ApsConnection conn,
+    required String storageDirectory,
     required String registrationNonce,
     required CloudSyncNativeAuthMetadata expectedAuth,
   }) {
@@ -4597,7 +4615,15 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       NormalTask(
         callFfi: (port_) {
           final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_box_autoadd_shared_push_state(state, serializer);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcCloudMessagesClientDefaultAnisetteProvider(
+            cloudMessagesClient,
+            serializer,
+          );
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAPSConnection(
+            conn,
+            serializer,
+          );
+          sse_encode_String(storageDirectory, serializer);
           sse_encode_String(registrationNonce, serializer);
           sse_encode_box_autoadd_cloud_sync_native_auth_metadata(
             expectedAuth,
@@ -4616,7 +4642,13 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         ),
         constMeta:
             kCrateApiApiCloudSyncConfigureMessagesChangeNotificationsConstMeta,
-        argValues: [state, registrationNonce, expectedAuth],
+        argValues: [
+          cloudMessagesClient,
+          conn,
+          storageDirectory,
+          registrationNonce,
+          expectedAuth,
+        ],
         apiImpl: this,
       ),
     );
@@ -4626,7 +4658,13 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   get kCrateApiApiCloudSyncConfigureMessagesChangeNotificationsConstMeta =>
       const TaskConstMeta(
         debugName: "cloud_sync_configure_messages_change_notifications",
-        argNames: ["state", "registrationNonce", "expectedAuth"],
+        argNames: [
+          "cloudMessagesClient",
+          "conn",
+          "storageDirectory",
+          "registrationNonce",
+          "expectedAuth",
+        ],
       );
 
   @override
@@ -7652,7 +7690,9 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   @override
   Future<CloudSyncNativeReceivedArchiveSeed>
   crateApiApiCloudSyncSealReceivedArchiveSeed({
-    required SharedPushState state,
+    required ArcCloudMessagesClientDefaultAnisetteProvider cloudMessagesClient,
+    required ArcImClient imClient,
+    required String storageDirectory,
     required CloudSyncNativeAuthMetadata expectedAuth,
     required MessageInst message,
   }) {
@@ -7660,7 +7700,15 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       NormalTask(
         callFfi: (port_) {
           final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_box_autoadd_shared_push_state(state, serializer);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcCloudMessagesClientDefaultAnisetteProvider(
+            cloudMessagesClient,
+            serializer,
+          );
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcIMClient(
+            imClient,
+            serializer,
+          );
+          sse_encode_String(storageDirectory, serializer);
           sse_encode_box_autoadd_cloud_sync_native_auth_metadata(
             expectedAuth,
             serializer,
@@ -7678,7 +7726,13 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           decodeErrorData: sse_decode_AnyhowException,
         ),
         constMeta: kCrateApiApiCloudSyncSealReceivedArchiveSeedConstMeta,
-        argValues: [state, expectedAuth, message],
+        argValues: [
+          cloudMessagesClient,
+          imClient,
+          storageDirectory,
+          expectedAuth,
+          message,
+        ],
         apiImpl: this,
       ),
     );
@@ -7687,7 +7741,13 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   TaskConstMeta get kCrateApiApiCloudSyncSealReceivedArchiveSeedConstMeta =>
       const TaskConstMeta(
         debugName: "cloud_sync_seal_received_archive_seed",
-        argNames: ["state", "expectedAuth", "message"],
+        argNames: [
+          "cloudMessagesClient",
+          "imClient",
+          "storageDirectory",
+          "expectedAuth",
+          "message",
+        ],
       );
 
   @override
@@ -7886,7 +7946,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   @override
   Future<CloudSyncNativeHistoricalArchiveSourceBinding>
   crateApiApiCloudSyncStageHistoricalArchiveSource({
-    required SharedPushState state,
+    required ArcCloudMessagesClientDefaultAnisetteProvider cloudMessagesClient,
+    required String storageDirectory,
     required CloudSyncNativeAuthMetadata expectedAuth,
     required String snapshotSha256,
     required String expectedSourceSha256,
@@ -7896,7 +7957,11 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       NormalTask(
         callFfi: (port_) {
           final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_box_autoadd_shared_push_state(state, serializer);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcCloudMessagesClientDefaultAnisetteProvider(
+            cloudMessagesClient,
+            serializer,
+          );
+          sse_encode_String(storageDirectory, serializer);
           sse_encode_box_autoadd_cloud_sync_native_auth_metadata(
             expectedAuth,
             serializer,
@@ -7918,7 +7983,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         ),
         constMeta: kCrateApiApiCloudSyncStageHistoricalArchiveSourceConstMeta,
         argValues: [
-          state,
+          cloudMessagesClient,
+          storageDirectory,
           expectedAuth,
           snapshotSha256,
           expectedSourceSha256,
@@ -7934,7 +8000,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       const TaskConstMeta(
         debugName: "cloud_sync_stage_historical_archive_source",
         argNames: [
-          "state",
+          "cloudMessagesClient",
+          "storageDirectory",
           "expectedAuth",
           "snapshotSha256",
           "expectedSourceSha256",
@@ -8500,7 +8567,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   @override
   Future<CloudSyncNativeReceivedArchiveSourceBinding>
   crateApiApiCloudSyncStageReceivedArchiveSeed({
-    required SharedPushState state,
+    required ArcCloudMessagesClientDefaultAnisetteProvider cloudMessagesClient,
+    required String storageDirectory,
     required CloudSyncNativeAuthMetadata expectedAuth,
     required CloudSyncNativeReceivedArchiveSeed seed,
   }) {
@@ -8508,7 +8576,11 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       NormalTask(
         callFfi: (port_) {
           final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_box_autoadd_shared_push_state(state, serializer);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcCloudMessagesClientDefaultAnisetteProvider(
+            cloudMessagesClient,
+            serializer,
+          );
+          sse_encode_String(storageDirectory, serializer);
           sse_encode_box_autoadd_cloud_sync_native_auth_metadata(
             expectedAuth,
             serializer,
@@ -8530,7 +8602,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           decodeErrorData: sse_decode_AnyhowException,
         ),
         constMeta: kCrateApiApiCloudSyncStageReceivedArchiveSeedConstMeta,
-        argValues: [state, expectedAuth, seed],
+        argValues: [cloudMessagesClient, storageDirectory, expectedAuth, seed],
         apiImpl: this,
       ),
     );
@@ -8539,13 +8611,20 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   TaskConstMeta get kCrateApiApiCloudSyncStageReceivedArchiveSeedConstMeta =>
       const TaskConstMeta(
         debugName: "cloud_sync_stage_received_archive_seed",
-        argNames: ["state", "expectedAuth", "seed"],
+        argNames: [
+          "cloudMessagesClient",
+          "storageDirectory",
+          "expectedAuth",
+          "seed",
+        ],
       );
 
   @override
   Future<CloudSyncNativeReceivedArchiveSourceBinding>
   crateApiApiCloudSyncStageReceivedArchiveSource({
-    required SharedPushState state,
+    required ArcCloudMessagesClientDefaultAnisetteProvider cloudMessagesClient,
+    required ArcImClient imClient,
+    required String storageDirectory,
     required CloudSyncNativeAuthMetadata expectedAuth,
     required MessageInst message,
   }) {
@@ -8553,7 +8632,15 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       NormalTask(
         callFfi: (port_) {
           final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_box_autoadd_shared_push_state(state, serializer);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcCloudMessagesClientDefaultAnisetteProvider(
+            cloudMessagesClient,
+            serializer,
+          );
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcIMClient(
+            imClient,
+            serializer,
+          );
+          sse_encode_String(storageDirectory, serializer);
           sse_encode_box_autoadd_cloud_sync_native_auth_metadata(
             expectedAuth,
             serializer,
@@ -8572,7 +8659,13 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           decodeErrorData: sse_decode_AnyhowException,
         ),
         constMeta: kCrateApiApiCloudSyncStageReceivedArchiveSourceConstMeta,
-        argValues: [state, expectedAuth, message],
+        argValues: [
+          cloudMessagesClient,
+          imClient,
+          storageDirectory,
+          expectedAuth,
+          message,
+        ],
         apiImpl: this,
       ),
     );
@@ -8581,7 +8674,13 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   TaskConstMeta get kCrateApiApiCloudSyncStageReceivedArchiveSourceConstMeta =>
       const TaskConstMeta(
         debugName: "cloud_sync_stage_received_archive_source",
-        argNames: ["state", "expectedAuth", "message"],
+        argNames: [
+          "cloudMessagesClient",
+          "imClient",
+          "storageDirectory",
+          "expectedAuth",
+          "message",
+        ],
       );
 
   @override

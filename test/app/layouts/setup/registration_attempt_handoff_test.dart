@@ -3,9 +3,7 @@ import 'package:bluebubbles/services/rustpush/rustpush_service.dart';
 import 'package:bluebubbles/src/rust/api/api.dart' as api;
 import 'package:bluebubbles/src/rust/frb_generated.dart';
 import 'package:bluebubbles/src/rust/lib.dart';
-import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated_common.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:get/get.dart';
 
 class _Handle extends Fake
     implements
@@ -85,19 +83,18 @@ class _Bridge extends Fake implements RustLibApi {
 }
 
 void main() {
+  final bridge = _Bridge();
+  setUpAll(() {
+    RustLib.initMock(api: bridge);
+    // Assign before the global's lazy initializer can start real app services.
+    pushService = _Service();
+  });
+  tearDownAll(RustLib.dispose);
+  setUp(bridge.calls.clear);
+
   test(
     'registration preserves its attempt and stops on a stale watcher',
     () async {
-      Get.testMode = true;
-      final bridge = _Bridge();
-      RustLib.initMock(api: bridge);
-      final previousService = pushService;
-      pushService = _Service();
-      addTearDown(() async {
-        pushService = previousService;
-        RustLib.dispose();
-        await Get.reset();
-      });
       final controller = _Controller()
         ..config = _Handle()
         ..identity = _Handle()
@@ -113,9 +110,6 @@ void main() {
   );
 
   test('creating a fresh watcher retains the caller login attempt', () async {
-    final bridge = _Bridge();
-    RustLib.initMock(api: bridge);
-    addTearDown(RustLib.dispose);
     final controller = SetupViewController()..connection = _Handle();
     final attempt = controller.beginLoginAttempt();
 

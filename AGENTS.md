@@ -1,5 +1,26 @@
 # OpenBubbles thread handoff rules
 
+## Current native relay candidate, October 20
+
+- The primary owner remains task `01a098ec-c448-73a1-a73f-696d142de228`.
+  Canonical current device/evidence handoff is in the sibling
+  `cloudkit-v2-update-seam-live-bbfa` checkout; its dirty work is not disposable.
+- This candidate includes native relay/account/push support at rustpush
+  `5be3547cf0b5163568d4bb7f3b04e1b963464db2`. Preserve all recursive pins.
+- Runtime fix base `f32a3ac66` replaces six destructive translatable-state
+  bridge inputs with borrowed leaf clients/connection and preserves the login
+  attempt through watcher creation. Hosted run39540884036 generated the coherent
+  12-file binding artifact12319722699. Do not pair it with an old native binary.
+- Actual generated-encoder6, protected/background source-contract28, existing
+  login19 and new watcher-attempt2 tests pass. Welcome lifecycle4 tests now pump
+  the real page, not copied stagger logic. Device verification is separate.
+- Installed Canary remains cf818e902/e124b506 until independently verified
+  in-place update. User reports forced close/reopen showed chats. Do not reset
+  saved keys, login or messages. Alpha and original remain untouched.
+- Use the existing bounded cloud build lane for native packaging. Local compiler
+  incremental cache was removed for disk pressure, not a missing-toolchain issue.
+  No upstream PR or release without user confirmation.
+
 ## Scope
 
 These rules apply to task `01a098ec-c448-73a1-a73f-696d142de228` and its
@@ -87,9 +108,10 @@ delegated agents. They supplement, not replace, inherited project instructions.
 
 Respect the user's selected Muse route and its actual effort support:
 `meta-muse/muse-spark-1.3` is the subscription choice at `max`;
-`meta-model/muse-spark-1.3-contributor` is the API choice at `xhigh`.
-Do not request Contributor at `max` or silently change routes when one is rate
-limited. An explicit user model/effort choice overrides a saved preference.
+`meta-model/muse-spark-1.3-contributor` is the API choice. Use its currently
+declared effort support; the user's current preference is `max`, which is
+exposed in this session. Do not silently change routes when one is rate limited.
+An explicit user model/effort choice overrides a saved preference.
 Keep assignments bounded and review their work before integration. Higher
 effort does not justify extra parallel agents without useful independent work.
 

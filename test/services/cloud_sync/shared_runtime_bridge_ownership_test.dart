@@ -220,8 +220,9 @@ void main() {
         } else {
           arguments[#cloudMessagesClient] = handles[10];
           arguments[#storageDirectory] = state.confDir;
-          if (metadata.argNames.contains('imClient'))
+          if (metadata.argNames.contains('imClient')) {
             arguments[#imClient] = state.client;
+          }
           if (metadata.argNames.contains('conn')) arguments[#conn] = state.conn;
         }
         for (var repeat = 0; repeat < 2; repeat++) {
@@ -237,6 +238,18 @@ void main() {
           );
         }
         expect(metadata.argNames, isNot(contains('state')));
+        final borrowed = <_Handle>[
+          handles[10],
+          if (metadata.argNames.contains('imClient')) handles[5],
+          if (metadata.argNames.contains('conn')) handles[4],
+        ];
+        for (final handle in borrowed) {
+          expect(
+            handle.moveModes,
+            [false, false],
+            reason: 'each generated call must encode a borrowed live handle',
+          );
+        }
         expect(binding.dispatched, 2);
         expect(binding.allocations, isEmpty);
       },

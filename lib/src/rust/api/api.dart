@@ -143,9 +143,11 @@ Future<void> cloudSyncReleaseLocalStoreLease({
 /// It proves only which persisted account/store owns local data, not current
 /// CloudKit authentication or permission to perform an external operation.
 Future<CloudSyncNativeAuthMetadata> cloudSyncCaptureReceivedIdentity({
-  required SharedPushState state,
+  required ArcCloudMessagesClientDefaultAnisetteProvider cloudMessagesClient,
+  required String storageDirectory,
 }) => RustLib.instance.api.crateApiApiCloudSyncCaptureReceivedIdentity(
-  state: state,
+  cloudMessagesClient: cloudMessagesClient,
+  storageDirectory: storageDirectory,
 );
 
 /// Protect one independently qualified historical source in this configured
@@ -158,13 +160,15 @@ Future<CloudSyncNativeAuthMetadata> cloudSyncCaptureReceivedIdentity({
 /// ownership proof. Reopening for remote work still needs independent live auth.
 Future<CloudSyncNativeHistoricalArchiveSourceBinding>
 cloudSyncStageHistoricalArchiveSource({
-  required SharedPushState state,
+  required ArcCloudMessagesClientDefaultAnisetteProvider cloudMessagesClient,
+  required String storageDirectory,
   required CloudSyncNativeAuthMetadata expectedAuth,
   required String snapshotSha256,
   required String expectedSourceSha256,
   required List<int> sourceBytes,
 }) => RustLib.instance.api.crateApiApiCloudSyncStageHistoricalArchiveSource(
-  state: state,
+  cloudMessagesClient: cloudMessagesClient,
+  storageDirectory: storageDirectory,
   expectedAuth: expectedAuth,
   snapshotSha256: snapshotSha256,
   expectedSourceSha256: expectedSourceSha256,
@@ -193,28 +197,36 @@ cloudSyncStageHistoricalArchiveSourceForClient({
       sourceBytes: sourceBytes,
     );
 
-/// Protects an observed receive using one configured SharedPushState. Uses
+/// Protects an observed receive using borrowed clients from one configured state. Uses
 /// cached account validation and registered handles only: no dependency warm,
 /// keychain sync, IDS directory query, re-registration, send or CloudKit save.
 /// The caller must retain its live receive provenance and revalidate state at
 /// journal adoption; shape-valid MessageInst metadata is not authentication.
 Future<CloudSyncNativeReceivedArchiveSourceBinding>
 cloudSyncStageReceivedArchiveSource({
-  required SharedPushState state,
+  required ArcCloudMessagesClientDefaultAnisetteProvider cloudMessagesClient,
+  required ArcImClient imClient,
+  required String storageDirectory,
   required CloudSyncNativeAuthMetadata expectedAuth,
   required MessageInst message,
 }) => RustLib.instance.api.crateApiApiCloudSyncStageReceivedArchiveSource(
-  state: state,
+  cloudMessagesClient: cloudMessagesClient,
+  imClient: imClient,
+  storageDirectory: storageDirectory,
   expectedAuth: expectedAuth,
   message: message,
 );
 
 Future<CloudSyncNativeReceivedArchiveSeed> cloudSyncSealReceivedArchiveSeed({
-  required SharedPushState state,
+  required ArcCloudMessagesClientDefaultAnisetteProvider cloudMessagesClient,
+  required ArcImClient imClient,
+  required String storageDirectory,
   required CloudSyncNativeAuthMetadata expectedAuth,
   required MessageInst message,
 }) => RustLib.instance.api.crateApiApiCloudSyncSealReceivedArchiveSeed(
-  state: state,
+  cloudMessagesClient: cloudMessagesClient,
+  imClient: imClient,
+  storageDirectory: storageDirectory,
   expectedAuth: expectedAuth,
   message: message,
 );
@@ -223,11 +235,13 @@ Future<CloudSyncNativeReceivedArchiveSeed> cloudSyncSealReceivedArchiveSeed({
 /// claim or current chat/body is used to reconstruct the original message.
 Future<CloudSyncNativeReceivedArchiveSourceBinding>
 cloudSyncStageReceivedArchiveSeed({
-  required SharedPushState state,
+  required ArcCloudMessagesClientDefaultAnisetteProvider cloudMessagesClient,
+  required String storageDirectory,
   required CloudSyncNativeAuthMetadata expectedAuth,
   required CloudSyncNativeReceivedArchiveSeed seed,
 }) => RustLib.instance.api.crateApiApiCloudSyncStageReceivedArchiveSeed(
-  state: state,
+  cloudMessagesClient: cloudMessagesClient,
+  storageDirectory: storageDirectory,
   expectedAuth: expectedAuth,
   seed: seed,
 );
@@ -776,12 +790,16 @@ bool cloudSyncMessagesChangeNotificationsCurrent({
 /// The Dart caller must own identity-maintenance admission and saved read opt-in.
 /// Keep native logout/reset excluded until bounded setup actually terminates.
 Future<bool> cloudSyncConfigureMessagesChangeNotifications({
-  required SharedPushState state,
+  required ArcCloudMessagesClientDefaultAnisetteProvider cloudMessagesClient,
+  required ApsConnection conn,
+  required String storageDirectory,
   required String registrationNonce,
   required CloudSyncNativeAuthMetadata expectedAuth,
 }) => RustLib.instance.api
     .crateApiApiCloudSyncConfigureMessagesChangeNotifications(
-      state: state,
+      cloudMessagesClient: cloudMessagesClient,
+      conn: conn,
+      storageDirectory: storageDirectory,
       registrationNonce: registrationNonce,
       expectedAuth: expectedAuth,
     );
