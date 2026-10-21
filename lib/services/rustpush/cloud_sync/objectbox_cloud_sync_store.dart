@@ -17,6 +17,7 @@ import 'cloud_sync_received_archive_source_binding.dart';
 import 'cloud_sync_received_archive_journal.dart';
 import 'cloud_sync_received_record_observation.dart';
 import 'cloud_sync_local_mutation_journal.dart';
+import 'cloud_sync_received_mutation_journal.dart';
 import 'cloud_sync_attachment_upload_journal.dart';
 import 'cloud_sync_outbound_staging.dart';
 import 'cloud_sync_chat_identity_evidence.dart';
@@ -64,6 +65,7 @@ class ObjectBoxCloudSyncStore
     CloudSyncLocalSendJournal? localSendJournal,
     CloudSyncReceivedArchiveJournal? receivedArchiveJournal,
     CloudSyncLocalMutationJournal? localMutationJournal,
+    CloudSyncReceivedMutationJournal? receivedMutationJournal,
     CloudSyncAttachmentUploadJournal? attachmentUploadJournal,
     CloudSyncHistoricalArchiveJournal? historicalAttachmentJournal,
     this._readChatIdentityEvidence,
@@ -81,6 +83,9 @@ class ObjectBoxCloudSyncStore
        _localSendJournal = localSendJournal,
        _receivedArchiveJournal = receivedArchiveJournal,
        _localMutationJournal = localMutationJournal,
+       // Origin-specific journals share the transaction, never receipt proof.
+       // ignore: prefer_initializing_formals
+       _receivedMutationJournal = receivedMutationJournal,
        // Keep the public named parameter stable while the field stays private.
        // ignore: prefer_initializing_formals
        _attachmentUploadJournal = attachmentUploadJournal,
@@ -111,6 +116,10 @@ class ObjectBoxCloudSyncStore
     if (localMutationJournal != null &&
         !localMutationJournal.isBoundToStore(store)) {
       throw StateError('cloud_sync_local_mutation_adoption_store_mismatch');
+    }
+    if (receivedMutationJournal != null &&
+        !receivedMutationJournal.isBoundToStore(store)) {
+      throw StateError('cloud_sync_received_mutation_adoption_store_mismatch');
     }
   }
 
@@ -162,6 +171,7 @@ class ObjectBoxCloudSyncStore
   final CloudSyncLocalSendJournal? _localSendJournal;
   final CloudSyncReceivedArchiveJournal? _receivedArchiveJournal;
   final CloudSyncLocalMutationJournal? _localMutationJournal;
+  final CloudSyncReceivedMutationJournal? _receivedMutationJournal;
   final CloudSyncAttachmentUploadJournal? _attachmentUploadJournal;
   final CloudSyncHistoricalArchiveJournal? _historicalAttachmentJournal;
   final CloudSyncProtector _protector;
@@ -2377,8 +2387,75 @@ class ObjectBoxCloudSyncStore
     required bool Function() stillCurrent,
     CloudSyncNativeReceiptReplayBinding? replayBinding,
   }) {
-    if (!journal.isBoundToStore(_store) ||
-        draft.scope.container != _messagesCloudContainer ||
+    if (!journal.isBoundToStore(_store)) {
+      throw _storageFailure('protected_message_update_admission_invalid');
+    }
+    return _admitProtectedConditionalMessageUpdate(
+      draft: draft,
+      expectedPredecessor: expectedPredecessor,
+      readAdopted: () => journal.adoptedOperationIdInOutboxTransaction(
+        _store,
+        source,
+        currentAuth: currentAuth,
+        stillCurrent: stillCurrent,
+        replayBinding: replayBinding,
+      ),
+      adopt: (operation, predecessor) => journal.adoptInOutboxTransaction(
+        _store,
+        source,
+        operation,
+        predecessor,
+        currentAuth: currentAuth,
+        stillCurrent: stillCurrent,
+        now: draft.createdAt,
+        replayBinding: replayBinding,
+      ),
+    );
+  }
+
+  /// Received events enter the same conditional-update outbox only through
+  /// their own exact encrypted-source journal. No outgoing receipt is created.
+  CloudOutboxOperation admitProtectedReceivedMutationUpdate({
+    required CloudOutboxDraft draft,
+    required CloudRecordMapEntry expectedPredecessor,
+    required CloudSyncReceivedMutationJournal journal,
+    required CloudSyncReceivedMutationAdmissionSource source,
+    required CloudSyncNativeAuthSnapshot currentAuth,
+    required bool Function() stillCurrent,
+  }) {
+    if (!journal.isBoundToStore(_store)) {
+      throw _storageFailure('protected_message_update_admission_invalid');
+    }
+    return _admitProtectedConditionalMessageUpdate(
+      draft: draft,
+      expectedPredecessor: expectedPredecessor,
+      readAdopted: () => journal.adoptedOperationIdInOutboxTransaction(
+        _store,
+        source,
+        currentAuth: currentAuth,
+        stillCurrent: stillCurrent,
+      ),
+      adopt: (operation, predecessor) => journal.adoptInOutboxTransaction(
+        _store,
+        source,
+        operation,
+        predecessor,
+        currentAuth: currentAuth,
+        stillCurrent: stillCurrent,
+        now: draft.createdAt,
+      ),
+    );
+  }
+
+  // Private shared transaction frame. Only the two typed origin wrappers can
+  // supply journal adoption, and it runs inside the same outbox/map transaction.
+  CloudOutboxOperation _admitProtectedConditionalMessageUpdate({
+    required CloudOutboxDraft draft,
+    required CloudRecordMapEntry expectedPredecessor,
+    required String? Function() readAdopted,
+    required void Function(CloudOutboxOperation, CloudRecordMapEntity) adopt,
+  }) {
+    if (draft.scope.container != _messagesCloudContainer ||
         draft.scope.database != _messagesCloudDatabase ||
         draft.scope.zone != 'messageManateeZone' ||
         draft.scope.streamKind != CloudSyncStreamKind.messages ||
@@ -2456,13 +2533,7 @@ class ObjectBoxCloudSyncStore
         );
       }
 
-      final adoptedId = journal.adoptedOperationIdInOutboxTransaction(
-        _store,
-        source,
-        currentAuth: currentAuth,
-        stillCurrent: stillCurrent,
-        replayBinding: replayBinding,
-      );
+      final adoptedId = readAdopted();
       if (adoptedId != null) {
         final existingEntity = _findOutboxByOperationIdLocked(adoptedId);
         if (existingEntity == null ||
@@ -2477,16 +2548,7 @@ class ObjectBoxCloudSyncStore
             safeCode: 'protected_message_update_retry_changed',
           );
         }
-        journal.adoptInOutboxTransaction(
-          _store,
-          source,
-          existing,
-          predecessor,
-          currentAuth: currentAuth,
-          stillCurrent: stillCurrent,
-          now: draft.createdAt,
-          replayBinding: replayBinding,
-        );
+        adopt(existing, predecessor);
         return existing;
       }
 
@@ -2529,16 +2591,7 @@ class ObjectBoxCloudSyncStore
         throw _storageFailure('outbox_operation_scope_collision');
       }
       _outbox.put(_outboxEntity(operation));
-      journal.adoptInOutboxTransaction(
-        _store,
-        source,
-        operation,
-        predecessor,
-        currentAuth: currentAuth,
-        stillCurrent: stillCurrent,
-        now: draft.createdAt,
-        replayBinding: replayBinding,
-      );
+      adopt(operation, predecessor);
       checkpoint
         ..mutationRevisionCounter = revision
         ..updatedAtMs = nowMs;
@@ -3567,6 +3620,7 @@ class ObjectBoxCloudSyncStore
         }
         if (_localSendJournal == null &&
             _localMutationJournal == null &&
+            _receivedMutationJournal == null &&
             _attachmentUploadJournal?.isBoundTo(_store, scope) != true) {
           _requireMessagesCloudAccountProjectionReadyLocked(scope);
         }
@@ -3789,7 +3843,8 @@ class ObjectBoxCloudSyncStore
       _validateOutboxDispatch?.call();
       final checkpoint = _checkpointLocked(scope, nowMs: nowMs);
       _fenceUnsupportedOutboundVersionsLocked(scope, nowMs: nowMs);
-      if (_localSendJournal == null && _localMutationJournal == null) {
+      if (_localSendJournal == null && _localMutationJournal == null &&
+          _receivedMutationJournal == null) {
         _requireMessagesCloudAccountProjectionReadyLocked(scope);
       }
       final entities = <String, CloudOutboxOperationEntity>{};
@@ -6157,10 +6212,6 @@ class ObjectBoxCloudSyncStore
     if (_isMessagesCloudSemanticScope(scope) &&
         scope.zone == 'messageManateeZone' &&
         operation.payloadVersion == cloudSyncMessageUpdatePayloadVersion) {
-      final journal = _localMutationJournal;
-      if (journal == null || !journal.isBoundToStore(_store)) {
-        throw StateError('cloud_sync_local_mutation_journal_required');
-      }
       final checkpoint = _findCheckpointByKeyLocked(_scopeKey(scope));
       final predecessor = checkpoint == null
           ? null
@@ -6176,7 +6227,28 @@ class ObjectBoxCloudSyncStore
           predecessor == null) {
         throw _storageFailure('protected_message_update_predecessor_changed');
       }
-      journal.validateAdoptedOperation(_store, operation, predecessor);
+      final query = _store.box<CloudSyncLocalMutationIntentEntity>().query(
+        CloudSyncLocalMutationIntentEntity_.admittedOperationId.equals(operation.operationId),
+      ).build();
+      final bool local;
+      try {
+        local = query.findUnique() != null;
+      } finally {
+        query.close();
+      }
+      final received = _receivedMutationJournal?.hasAdoptedOperationId(operation.operationId) ?? false;
+      if (local == received) {
+        throw StateError('cloud_sync_message_update_adoption_missing');
+      }
+      if (received) {
+        _receivedMutationJournal!.validateAdoptedOperation(_store, operation, predecessor);
+      } else {
+        final journal = _localMutationJournal;
+        if (journal == null) {
+          throw StateError('cloud_sync_local_mutation_journal_required');
+        }
+        journal.validateAdoptedOperation(_store, operation, predecessor);
+      }
       // A conditional update owns one exact, already-mapped CloudKit record.
       // Unrelated retained history cannot make that record ambiguous, while a
       // retained deletion of this exact record must still block submission.

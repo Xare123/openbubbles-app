@@ -2963,6 +2963,65 @@ Future<List<PrivateDeviceInfo>> getSmsTargets({
   refresh: refresh,
 );
 
+/// Same single-submit transport as outgoing edits, reached only after opening
+/// the distinct native received envelope. Never creates/resends an IDS event.
+Future<CloudSyncPreparedMessageCreateResult>
+cloudSyncPrepareReceivedMessageUpdateSubmission({
+  required ArcCloudMessagesClientDefaultAnisetteProvider cloudMessagesClient,
+  required String storageDirectory,
+  required String expectedAccountFingerprint,
+  required String expectedProtectedStoreIdentity,
+  required String requestUuid,
+  required BigInt requestTimeoutSeconds,
+  required CloudSyncReceivedMessageUpdateSubmissionInput input,
+}) => RustLib.instance.api
+    .crateApiApiCloudSyncPrepareReceivedMessageUpdateSubmission(
+      cloudMessagesClient: cloudMessagesClient,
+      storageDirectory: storageDirectory,
+      expectedAccountFingerprint: expectedAccountFingerprint,
+      expectedProtectedStoreIdentity: expectedProtectedStoreIdentity,
+      requestUuid: requestUuid,
+      requestTimeoutSeconds: requestTimeoutSeconds,
+      input: input,
+    );
+
+/// Reconcile the same immutable received attempt. Unknown results never gain
+/// retry/create authority; only exact native readback can prove the update.
+Future<CloudSyncMessageUpdateReconcileResult>
+cloudSyncReconcileReceivedMessageUpdate({
+  required ArcCloudMessagesClientDefaultAnisetteProvider cloudMessagesClient,
+  required String storageDirectory,
+  required String expectedAccountFingerprint,
+  required String expectedProtectedStoreIdentity,
+  required String requestUuid,
+  required CloudSyncReceivedMessageUpdateSubmissionInput input,
+}) => RustLib.instance.api.crateApiApiCloudSyncReconcileReceivedMessageUpdate(
+  cloudMessagesClient: cloudMessagesClient,
+  storageDirectory: storageDirectory,
+  expectedAccountFingerprint: expectedAccountFingerprint,
+  expectedProtectedStoreIdentity: expectedProtectedStoreIdentity,
+  requestUuid: requestUuid,
+  input: input,
+);
+
+/// Native preparation from the original encrypted receive and authenticated
+/// Chat/Message records. Performs read-only lookups and local staging, no save.
+/// A local row, displayed text or matching GUID alone cannot authorize this.
+Future<CloudSyncPrepareMessageUpdateResult>
+cloudSyncPrepareReceivedMessageUpdate({
+  required ArcCloudMessagesClientDefaultAnisetteProvider cloudMessagesClient,
+  required ArcImClient imClient,
+  required String storageDirectory,
+  required CloudSyncNativeAuthMetadata expectedAuth,
+  required CloudSyncReceivedMessageUpdatePrepareInput input,
+}) => RustLib.instance.api.crateApiApiCloudSyncPrepareReceivedMessageUpdate(
+  cloudMessagesClient: cloudMessagesClient,
+  imClient: imClient,
+  storageDirectory: storageDirectory,
+  expectedAuth: expectedAuth,
+  input: input,
+);
+
 /// Prepares and stages one conditional MessageEncryptedV3 update from
 /// authoritative native and protected inputs.
 ///
@@ -5824,6 +5883,139 @@ class CloudSyncReceivedFoundProjection {
           batchId == other.batchId &&
           leaseReference == other.leaseReference &&
           change == other.change;
+}
+
+/// Received-origin update input. The encrypted immutable event, authenticated
+/// parent and exact Message predecessor remain independent proof boundaries.
+/// No outgoing IDS receipt or caller-supplied replacement text exists here.
+class CloudSyncReceivedMessageUpdatePrepareInput {
+  final String expectedLogicalEntityKeyHash;
+  final String expectedServerRecordIdHash;
+  final String expectedEtagHash;
+  final CloudSyncNativeReceivedArchiveSeed receivedSeed;
+  final String protectedRawRecordReference;
+  final BigInt rawGeneration;
+  final String reflectedSnapshotSha256;
+  final BigInt writerEpoch;
+  final BigInt chatGeneration;
+  final String chatLogicalEntityKeyHash;
+  final CloudSyncChatIdentitySourceInput chatSource;
+
+  const CloudSyncReceivedMessageUpdatePrepareInput({
+    required this.expectedLogicalEntityKeyHash,
+    required this.expectedServerRecordIdHash,
+    required this.expectedEtagHash,
+    required this.receivedSeed,
+    required this.protectedRawRecordReference,
+    required this.rawGeneration,
+    required this.reflectedSnapshotSha256,
+    required this.writerEpoch,
+    required this.chatGeneration,
+    required this.chatLogicalEntityKeyHash,
+    required this.chatSource,
+  });
+
+  @override
+  int get hashCode =>
+      expectedLogicalEntityKeyHash.hashCode ^
+      expectedServerRecordIdHash.hashCode ^
+      expectedEtagHash.hashCode ^
+      receivedSeed.hashCode ^
+      protectedRawRecordReference.hashCode ^
+      rawGeneration.hashCode ^
+      reflectedSnapshotSha256.hashCode ^
+      writerEpoch.hashCode ^
+      chatGeneration.hashCode ^
+      chatLogicalEntityKeyHash.hashCode ^
+      chatSource.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is CloudSyncReceivedMessageUpdatePrepareInput &&
+          runtimeType == other.runtimeType &&
+          expectedLogicalEntityKeyHash == other.expectedLogicalEntityKeyHash &&
+          expectedServerRecordIdHash == other.expectedServerRecordIdHash &&
+          expectedEtagHash == other.expectedEtagHash &&
+          receivedSeed == other.receivedSeed &&
+          protectedRawRecordReference == other.protectedRawRecordReference &&
+          rawGeneration == other.rawGeneration &&
+          reflectedSnapshotSha256 == other.reflectedSnapshotSha256 &&
+          writerEpoch == other.writerEpoch &&
+          chatGeneration == other.chatGeneration &&
+          chatLogicalEntityKeyHash == other.chatLogicalEntityKeyHash &&
+          chatSource == other.chatSource;
+}
+
+class CloudSyncReceivedMessageUpdateSubmissionInput {
+  final String localOperationId;
+  final String logicalEntityKeyHash;
+  final String serverRecordIdHash;
+  final String predecessorEtagHash;
+  final String protectedLeaseReference;
+  final String protectedPayloadReference;
+  final String payloadSha256;
+  final String mutationSourceSha256;
+  final String mutationGuidHash;
+  final String targetGuidHash;
+  final String reflectedSnapshotSha256;
+  final BigInt writerEpoch;
+  final BigInt rawGeneration;
+  final String appleOperationUuid;
+
+  const CloudSyncReceivedMessageUpdateSubmissionInput({
+    required this.localOperationId,
+    required this.logicalEntityKeyHash,
+    required this.serverRecordIdHash,
+    required this.predecessorEtagHash,
+    required this.protectedLeaseReference,
+    required this.protectedPayloadReference,
+    required this.payloadSha256,
+    required this.mutationSourceSha256,
+    required this.mutationGuidHash,
+    required this.targetGuidHash,
+    required this.reflectedSnapshotSha256,
+    required this.writerEpoch,
+    required this.rawGeneration,
+    required this.appleOperationUuid,
+  });
+
+  @override
+  int get hashCode =>
+      localOperationId.hashCode ^
+      logicalEntityKeyHash.hashCode ^
+      serverRecordIdHash.hashCode ^
+      predecessorEtagHash.hashCode ^
+      protectedLeaseReference.hashCode ^
+      protectedPayloadReference.hashCode ^
+      payloadSha256.hashCode ^
+      mutationSourceSha256.hashCode ^
+      mutationGuidHash.hashCode ^
+      targetGuidHash.hashCode ^
+      reflectedSnapshotSha256.hashCode ^
+      writerEpoch.hashCode ^
+      rawGeneration.hashCode ^
+      appleOperationUuid.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is CloudSyncReceivedMessageUpdateSubmissionInput &&
+          runtimeType == other.runtimeType &&
+          localOperationId == other.localOperationId &&
+          logicalEntityKeyHash == other.logicalEntityKeyHash &&
+          serverRecordIdHash == other.serverRecordIdHash &&
+          predecessorEtagHash == other.predecessorEtagHash &&
+          protectedLeaseReference == other.protectedLeaseReference &&
+          protectedPayloadReference == other.protectedPayloadReference &&
+          payloadSha256 == other.payloadSha256 &&
+          mutationSourceSha256 == other.mutationSourceSha256 &&
+          mutationGuidHash == other.mutationGuidHash &&
+          targetGuidHash == other.targetGuidHash &&
+          reflectedSnapshotSha256 == other.reflectedSnapshotSha256 &&
+          writerEpoch == other.writerEpoch &&
+          rawGeneration == other.rawGeneration &&
+          appleOperationUuid == other.appleOperationUuid;
 }
 
 enum CloudSyncReceivedRecordDisposition {

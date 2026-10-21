@@ -6,6 +6,32 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_writer_authori
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  for (final settled in [false, true]) {
+    test(
+      'updates reuse one protected recovery before the create fence: $settled',
+      () async {
+        final order = <String>[];
+        final result = await recoverCloudSyncLocalSendUploadFence(
+          recoverProtectedStore: () async {
+            order.add('recover');
+          },
+          reconcileMessageUpdates: () async {
+            order.add('updates');
+            return settled;
+          },
+          reconcileUpload: () async {
+            order.add('upload');
+            return null;
+          },
+        );
+        expect(result, settled);
+        expect(
+          order,
+          settled ? ['recover', 'updates', 'upload'] : ['recover', 'updates'],
+        );
+      },
+    );
+  }
   for (final failure in [
     StateError('cloud_sync_local_send_identity_changed'),
     StateError('cloud_sync_local_send_owner_changed'),

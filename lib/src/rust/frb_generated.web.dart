@@ -1853,6 +1853,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   dco_decode_box_autoadd_cloud_sync_received_found_projection(dynamic raw);
 
   @protected
+  CloudSyncReceivedMessageUpdatePrepareInput
+  dco_decode_box_autoadd_cloud_sync_received_message_update_prepare_input(
+    dynamic raw,
+  );
+
+  @protected
+  CloudSyncReceivedMessageUpdateSubmissionInput
+  dco_decode_box_autoadd_cloud_sync_received_message_update_submission_input(
+    dynamic raw,
+  );
+
+  @protected
   CloudSyncStagedChatIdentityCandidate
   dco_decode_box_autoadd_cloud_sync_staged_chat_identity_candidate(dynamic raw);
 
@@ -2531,6 +2543,14 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   CloudSyncReceivedFoundProjection
   dco_decode_cloud_sync_received_found_projection(dynamic raw);
+
+  @protected
+  CloudSyncReceivedMessageUpdatePrepareInput
+  dco_decode_cloud_sync_received_message_update_prepare_input(dynamic raw);
+
+  @protected
+  CloudSyncReceivedMessageUpdateSubmissionInput
+  dco_decode_cloud_sync_received_message_update_submission_input(dynamic raw);
 
   @protected
   CloudSyncReceivedRecordDisposition
@@ -5891,6 +5911,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  CloudSyncReceivedMessageUpdatePrepareInput
+  sse_decode_box_autoadd_cloud_sync_received_message_update_prepare_input(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  CloudSyncReceivedMessageUpdateSubmissionInput
+  sse_decode_box_autoadd_cloud_sync_received_message_update_submission_input(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   CloudSyncStagedChatIdentityCandidate
   sse_decode_box_autoadd_cloud_sync_staged_chat_identity_candidate(
     SseDeserializer deserializer,
@@ -6767,6 +6799,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   CloudSyncReceivedFoundProjection
   sse_decode_cloud_sync_received_found_projection(SseDeserializer deserializer);
+
+  @protected
+  CloudSyncReceivedMessageUpdatePrepareInput
+  sse_decode_cloud_sync_received_message_update_prepare_input(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  CloudSyncReceivedMessageUpdateSubmissionInput
+  sse_decode_cloud_sync_received_message_update_submission_input(
+    SseDeserializer deserializer,
+  );
 
   @protected
   CloudSyncReceivedRecordDisposition
@@ -10697,6 +10741,19 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_box_autoadd_cloud_sync_received_message_update_prepare_input(
+    CloudSyncReceivedMessageUpdatePrepareInput self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void
+  sse_encode_box_autoadd_cloud_sync_received_message_update_submission_input(
+    CloudSyncReceivedMessageUpdateSubmissionInput self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_box_autoadd_cloud_sync_staged_chat_identity_candidate(
     CloudSyncStagedChatIdentityCandidate self,
     SseSerializer serializer,
@@ -11737,6 +11794,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_cloud_sync_received_found_projection(
     CloudSyncReceivedFoundProjection self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_cloud_sync_received_message_update_prepare_input(
+    CloudSyncReceivedMessageUpdatePrepareInput self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_cloud_sync_received_message_update_submission_input(
+    CloudSyncReceivedMessageUpdateSubmissionInput self,
     SseSerializer serializer,
   );
 

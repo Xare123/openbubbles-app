@@ -13,8 +13,14 @@ final class CloudSyncLocalSendRecoveredEpoch implements Exception {
 Future<bool> recoverCloudSyncLocalSendUploadFence({
   required Future<void> Function() recoverProtectedStore,
   required Future<bool?> Function() reconcileUpload,
+  Future<bool> Function()? reconcileMessageUpdates,
 }) async {
   await recoverProtectedStore();
+  // Same protected-store recovery and warmed reader, before another writer's
+  // fence. False schedules the existing queue; it cannot grant a fresh save.
+  if (reconcileMessageUpdates != null && !await reconcileMessageUpdates()) {
+    return false;
+  }
   final result = await reconcileUpload();
   if (result == true) throw const CloudSyncLocalSendRecoveredEpoch();
   return result == null;

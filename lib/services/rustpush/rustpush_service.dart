@@ -8760,6 +8760,7 @@ class RustPushService extends GetxService {
       _cloudSyncV2AutomaticArchiveIdentity = consent.identity;
       final adapter = CloudSyncProductionLocalSendAdapter(
         readActiveClient: () => state?.icloudServices?.cloudMessagesClient,
+        readActiveImClient: () => state?.client,
         privateStorageDirectory: expectedStorage, stillCurrent: stillCurrent,
         automaticArchiveIdentity: consent.identity,
         receivedArchiveAllowed: () => stillCurrent() &&
@@ -8970,7 +8971,7 @@ class RustPushService extends GetxService {
         eventDispatcher.emit('message-updated-${saved.guid}');
       }));
       await completion.future;
-      _queueCloudSyncV2ReceivedSources(CloudSyncTrigger.localOutbox);
+      _queueCloudSyncV2LocalSends(CloudSyncTrigger.localOutbox);
       return true;
     } catch (error) {
       if (!identityCurrent()) rethrow;
@@ -9313,6 +9314,12 @@ class RustPushService extends GetxService {
         _cloudSyncV2ReceivedRoundCeiling = null;
       }
       if (materialized > 0) Logger.info('Cloud Sync V2 received source pass localReady=$materialized');
+      if (mutationReplay.applied > 0 && CloudSyncDevGate.receivedArchiveUploadsEnabled &&
+          _cloudSyncV2AutomaticReceivedArchiveCurrent?.call() == true) {
+        // Wake the same automatic queue after local replay, not a second
+        // updater. Scheduling alone grants no received dispatch permission.
+        _cloudSyncV2LocalSendRuntime?.request(CloudSyncTrigger.localOutbox);
+      }
       return (more: !page.exhausted || !mutationReplay.exhausted ||
           ((hasNewCaptures || foundRemaining || hasNewMutations) && !deferred && !mutationDeferred),
           deferred: deferred || mutationDeferred || hasNewCaptures || hasNewMutations || foundRemaining);
@@ -10092,6 +10099,8 @@ class RustPushService extends GetxService {
           store: objectBox,
           protector: RustCloudSyncProtector(storageDirectory: storagePath),
           localMutationJournal: mutationJournal,
+          receivedMutationJournal: CloudSyncReceivedMutationJournal(
+            store: objectBox, authority: authority, owner: owner),
         );
         final interlock = CloudKitOperationInterlock(
           privateStorageDirectory: storagePath, fenceStore: cloudStore,
@@ -10135,6 +10144,16 @@ class RustPushService extends GetxService {
           protectedStoreIdentity: auth.protectedStoreIdentity,
           bindings: bindings,
           writerMutationGuard: mutationGuard,
+          receivedMutationClient: expectedState?.client,
+          validateReceivedMutationAdmission: () {
+            if (!confirmationBindingCurrent() ||
+                _cloudSyncV2AutomaticReceivedArchiveCurrent?.call() != true ||
+                !CloudSyncDevGate.receivedArchiveCaptureEnabled ||
+                !CloudSyncDevGate.receivedArchiveInspectionEnabled ||
+                !CloudSyncDevGate.receivedArchiveUploadsEnabled) {
+              throw StateError('cloud_sync_received_archive_confirmation_required');
+            }
+          },
           readCheckpointGeneration: (scope) async =>
               (await cloudStore.readCheckpoint(scope)).generation,
           retainConfirmedReceiptsForReplay: true,
@@ -10337,7 +10356,10 @@ class RustPushService extends GetxService {
               objectBoxStore: objectBox,
               cloudStore: cloudStore,
               journal: mutationJournal,
+              receivedJournal: CloudSyncReceivedMutationJournal(
+                store: objectBox, authority: authority, owner: owner),
               transport: transport,
+              receivedTransport: transport,
               preparedSubmissionReleaser: transport,
               leaseTransport: transport,
               replayBinding: replayBinding,

@@ -26,6 +26,10 @@ import 'cloud_sync_local_send_recovery.dart';
 import 'cloud_sync_local_send_journal.dart';
 import 'cloud_sync_received_archive_journal.dart';
 import 'cloud_sync_received_create_adapter.dart';
+import 'cloud_sync_received_mutation_archive_adapter.dart';
+import 'cloud_sync_received_mutation_journal.dart';
+import 'cloud_sync_local_mutation_journal.dart';
+import 'cloud_sync_message_update_executor.dart';
 import 'cloud_sync_historical_create_adapter.dart';
 import 'cloud_sync_historical_create_selection.dart';
 import 'cloud_sync_historical_archive_journal.dart';
@@ -732,12 +736,14 @@ final class CloudSyncProductionLocalSendAdapter {
     required bool Function() stillCurrent,
     CloudSyncAutomaticArchiveIdentity? automaticArchiveIdentity,
     bool Function()? receivedArchiveAllowed,
+    Object? Function()? readActiveImClient,
     bool Function()? shouldYield,
   }) : _readActiveClient = readActiveClient,
        _privateStorageDirectory = privateStorageDirectory,
        _stillCurrent = stillCurrent,
        _automaticArchiveIdentity = automaticArchiveIdentity,
        _receivedArchiveAllowed = receivedArchiveAllowed,
+       _readActiveImClient = readActiveImClient,
        _shouldYield = shouldYield;
 
   final ActiveCloudMessagesClientReader _readActiveClient;
@@ -745,6 +751,7 @@ final class CloudSyncProductionLocalSendAdapter {
   final bool Function() _stillCurrent;
   final CloudSyncAutomaticArchiveIdentity? _automaticArchiveIdentity;
   final bool Function()? _receivedArchiveAllowed;
+  final Object? Function()? _readActiveImClient;
   final bool Function()? _shouldYield;
   Future<CloudSyncLocalSendConsumerResult>? _running;
   CloudSyncNativeAuthSnapshot? _boundAuth;
@@ -946,6 +953,17 @@ final class CloudSyncProductionLocalSendAdapter {
     final existingHistoryDiagnostics = CloudSyncSemanticDiagnosticCollector();
     final receivedJournal = CloudSyncReceivedArchiveJournal(
       store: objectBox, authority: authority, authoritySnapshot: owner);
+    final mutationJournal = CloudSyncLocalMutationJournal(
+      store: objectBox, authority: authority, authoritySnapshot: owner);
+    final receivedMutationJournal = CloudSyncReceivedMutationJournal(
+      store: objectBox, authority: authority, owner: owner);
+    final imClient = _readActiveImClient?.call();
+    bool receivedMutationDispatchAllowed() => selection == null && historical == null &&
+        _receivedArchiveAllowed?.call() == true &&
+        CloudSyncDevGate.receivedArchiveUploadsEnabled &&
+        CloudSyncDevGate.receivedArchiveCaptureEnabled &&
+        CloudSyncDevGate.receivedArchiveInspectionEnabled &&
+        imClient != null && identical(imClient, _readActiveImClient?.call());
     // Ephemeral per pass. Admission changes the read-set revision; refresh
     // against the ORIGINAL staged operation before lease, including restart.
     final chatEvidence = <String, CloudSyncChatIdentityEvidence>{};
@@ -957,6 +975,8 @@ final class CloudSyncProductionLocalSendAdapter {
       protector: protector,
       localSendJournal: journal,
       receivedArchiveJournal: receivedJournal,
+      localMutationJournal: mutationJournal,
+      receivedMutationJournal: receivedMutationJournal,
       pauseUnsubmittedReceivedCreates: () => selection == null && historical == null &&
           _receivedArchiveAllowed?.call() != true,
       attachmentUploadJournal: uploads,
@@ -1009,6 +1029,7 @@ final class CloudSyncProductionLocalSendAdapter {
     late final Future<frb_api.CloudSyncAttachmentParentGroupProof?> Function(
         CloudSyncScope, String) readParentGroupProof;
     late final CloudSyncReceivedCreateAdapter receivedCreates;
+    late final CloudSyncReceivedMutationArchiveAdapter receivedUpdates;
     late final CloudSyncHistoricalCreateAdapter historicalCreates;
     frb_api.CloudSyncNativeSendReceiptContext? readParentContext(
       CloudSyncScope target, String operationId,
@@ -1041,6 +1062,13 @@ final class CloudSyncProductionLocalSendAdapter {
       storageDirectory: _privateStorageDirectory,
       protectedStoreIdentity: auth.protectedStoreIdentity,
       bindings: bindings, writerMutationGuard: guard,
+      receivedMutationClient: imClient,
+      validateReceivedMutationAdmission: () {
+        fence.requireCurrentBinding(auth);
+        if (!receivedMutationDispatchAllowed()) {
+          throw StateError('cloud_sync_received_archive_confirmation_required');
+        }
+      },
       readAttachmentParentContext: readParentContext,
       readAttachmentParentGroupProof: (target, operationId) =>
           readParentGroupProof(target, operationId),
@@ -1112,6 +1140,33 @@ final class CloudSyncProductionLocalSendAdapter {
       validate: () => fence.run(() {}, accountFingerprint: scope.accountFingerprint),
       stillCurrent: () => _stillCurrent() && !objectBox.isClosed() &&
           identical(objectBox, Database.store) && identical(auth.cloudMessagesClient, _readActiveClient()),
+    );
+    // The callback is reached only after the typed source proves the complete
+    // current local reflection. It cannot turn a Message flag into IDS proof.
+    List<Object>? readMutationParent(Message parent) => journal.readConfirmedParentDependency(
+        objectBox, scope, parent, reflectedMutationValidated: true);
+    final replayBinding = CloudSyncNativeReceiptReplayBinding(
+      expectedAuth: auth, expectedState: auth.cloudMessagesClient,
+      expectedStore: objectBox, expectedClient: auth.cloudMessagesClient,
+      expectedStoragePath: _privateStorageDirectory,
+      readState: _readActiveClient, readStore: () => Database.store,
+      readClient: _readActiveClient, readStoragePath: () => _privateStorageDirectory,
+      // The service's pass fence pins its actual Rust state and storage path.
+      runtimeCurrent: _stillCurrent,
+    );
+    receivedUpdates = CloudSyncReceivedMutationArchiveAdapter(
+      store: objectBox, durable: durable, journal: receivedMutationJournal,
+      executor: CloudSyncMessageUpdateExecutor(objectBoxStore: objectBox,
+        cloudStore: durable, journal: mutationJournal, receivedJournal: receivedMutationJournal,
+        transport: transport, receivedTransport: transport,
+        preparedSubmissionReleaser: transport, leaseTransport: transport,
+        replayBinding: replayBinding, readConfirmedLocalParent: readMutationParent),
+      auth: auth, warmReadDependencies: () => identitySession.run<void>((_) async {}),
+      validate: () => fence.run(() {}, accountFingerprint: scope.accountFingerprint),
+      stillCurrent: () => _stillCurrent() && !objectBox.isClosed() &&
+          identical(objectBox, Database.store) && identical(auth.cloudMessagesClient, _readActiveClient()),
+      receivedArchiveAllowed: receivedMutationDispatchAllowed,
+      readConfirmedLocalParent: readMutationParent, shouldYield: _shouldYield,
     );
     Future<(frb_api.CloudSyncAttachmentParentGroupProof, String)?> openParentGroup(
       CloudSyncRestoredGroupChatProof? Function() capture,
@@ -1299,6 +1354,8 @@ final class CloudSyncProductionLocalSendAdapter {
       }
       if (!await recoverCloudSyncLocalSendUploadFence(
         recoverProtectedStore: recoverProtectedStore,
+        reconcileMessageUpdates: selection == null && historical == null
+            ? () => receivedUpdates.drainExisting(scope) : null,
         reconcileUpload: () => transport.runProtectedStoreExclusive(() =>
             guard.reconcilePendingAttachmentUpload(
               expectedClient: auth.cloudMessagesClient,
@@ -1827,8 +1884,16 @@ final class CloudSyncProductionLocalSendAdapter {
             receivedYielded = true;
             return;
           }
+          final updates = await receivedUpdates.admitPending(scope);
+          receivedAdmitted += updates.admitted;
+          receivedDeferred += updates.deferred;
+          receivedMore = updates.candidateLimitReached;
+          receivedYielded = updates.yielded;
+          receivedReasons.addAll(updates.deferredReasons);
+          if (updates.outboxBlocked) { receivedBlocked = true; return; }
+          if (updates.yielded) return;
           final candidates = receivedJournal.readCreateCandidates(currentAuth: auth, limit: 5);
-          receivedMore = candidates.length == 5;
+          receivedMore = receivedMore || candidates.length == 5;
           for (final candidate in candidates) {
             if (_shouldYield?.call() ?? false) {
               receivedYielded = true;

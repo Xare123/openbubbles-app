@@ -12,6 +12,7 @@ import 'cloud_sync_local_send_journal.dart'
     show CloudSyncNativeReceiptReplayBinding;
 import 'cloud_sync_manual_shadow_sampler.dart';
 import 'cloud_sync_models.dart';
+import 'cloud_sync_mutation_lineage.dart';
 import 'cloud_sync_outbound_message_dependency.dart';
 import 'cloud_sync_persistent_keys.dart';
 import 'cloudkit_writer_authority.dart';
@@ -952,26 +953,24 @@ final class CloudSyncLocalMutationJournal {
   }
 
   /// An earlier accepted edit remains valid after a later accepted mutation.
-  /// Prove the entire local lineage, but release cloud updates one at a time.
+  /// Prove the complete local/mirrored lineage, but release updates one at a time.
   /// No later row may skip a predecessor whose exact readback is still pending.
   String _requireReflectedTarget(
     CloudSyncLocalMutationIntentEntity row,
     Message target,
   ) {
-    final chain = _readReflectedMutationChain(
+    return requireCloudSyncMutationForwardLineage(
       store: _store,
       target: target,
       accountFingerprint: row.accountFingerprint,
+      protectedStoreIdentity: CloudSyncLocalMutationSourceBinding.decode(
+        row.protectedSourceBinding).protectedStoreIdentity,
       maximumWriterEpoch: _authority.read(_owner.scope)!.epoch,
-      allowDetachedConfirmedHistory: true,
+      automaticArchiveEpoch: _owner.automaticArchiveEpoch,
+      receivedOrigin: false,
+      intentId: row.id,
       reject: () => _fail('reflection_changed'),
     );
-    final index = chain.indexWhere((candidate) => candidate.id == row.id);
-    if (index < 0) _fail('reflection_changed');
-    if (chain.take(index).any((previous) => previous.state != 5)) {
-      _fail('predecessor_not_ready');
-    }
-    return chain.last.reflectedSnapshotSha256!;
   }
 
   void _requireUpdateOperation(
@@ -1604,26 +1603,8 @@ List<CloudSyncLocalMutationIntentEntity> _readReflectedMutationChain({
 }
 
 String _snapshot(Message target) {
-  final chat = target.chat.target;
-  if (chat == null) _fail('target_changed');
-  return _digest([
-    'cloud-sync-mutation-target-v1',
-    target.id,
-    target.guid,
-    target.chat.targetId,
-    target.isFromMe,
-    target.dateCreated?.millisecondsSinceEpoch,
-    target.dateEdited?.millisecondsSinceEpoch,
-    target.dateDeleted?.millisecondsSinceEpoch,
-    target.text,
-    target.subject,
-    target.attributedBody.map((part) => part.toMap()).toList(),
-    target.messageSummaryInfo.map((info) => info.toJson()).toList(),
-    target.dbAttachments
-        .map((attachment) => [attachment.id, attachment.guid])
-        .toList(),
-    ..._routingData(target),
-  ]);
+  if (target.chat.target == null) _fail('target_changed');
+  return cloudSyncMutationTargetSnapshot(target);
 }
 
 List<Object?> _routingData(Message target) {

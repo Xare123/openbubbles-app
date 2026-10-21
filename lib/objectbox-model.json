@@ -3064,7 +3064,7 @@
     },
     {
       "id": "38:5532331514038610908",
-      "lastPropertyId": "21:8922497060611147397",
+      "lastPropertyId": "22:5770485166670778583",
       "name": "CloudSyncReceivedMutationIntentEntity",
       "properties": [
         {
@@ -3181,6 +3181,11 @@
         {
           "id": "21:8922497060611147397",
           "name": "updatedAtMs",
+          "type": 6
+        },
+        {
+          "id": "22:5770485166670778583",
+          "name": "admittedWriterEpoch",
           "type": 6
         }
       ],

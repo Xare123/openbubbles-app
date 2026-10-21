@@ -3553,7 +3553,7 @@ final _entities = <obx_int.ModelEntity>[
   obx_int.ModelEntity(
     id: const obx_int.IdUid(38, 5532331514038610908),
     name: 'CloudSyncReceivedMutationIntentEntity',
-    lastPropertyId: const obx_int.IdUid(21, 8922497060611147397),
+    lastPropertyId: const obx_int.IdUid(22, 5770485166670778583),
     flags: 0,
     properties: <obx_int.ModelProperty>[
       obx_int.ModelProperty(
@@ -3684,6 +3684,12 @@ final _entities = <obx_int.ModelEntity>[
       obx_int.ModelProperty(
         id: const obx_int.IdUid(21, 8922497060611147397),
         name: 'updatedAtMs',
+        type: 6,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(22, 5770485166670778583),
+        name: 'admittedWriterEpoch',
         type: 6,
         flags: 0,
       ),
@@ -8529,7 +8535,7 @@ obx_int.ModelDefinition getObjectBoxModel() {
                     object.admittedBindingSha256 == null
                     ? null
                     : fbb.writeString(object.admittedBindingSha256!);
-                fbb.startTable(22);
+                fbb.startTable(23);
                 fbb.addInt64(0, object.id);
                 fbb.addOffset(1, intentKeyOffset);
                 fbb.addOffset(2, accountFingerprintOffset);
@@ -8551,6 +8557,7 @@ obx_int.ModelDefinition getObjectBoxModel() {
                 fbb.addOffset(18, admittedBindingSha256Offset);
                 fbb.addInt64(19, object.createdAtMs);
                 fbb.addInt64(20, object.updatedAtMs);
+                fbb.addInt64(21, object.admittedWriterEpoch);
                 fbb.finish(fbb.endTable());
                 return object.id;
               },
@@ -8653,6 +8660,12 @@ obx_int.ModelDefinition getObjectBoxModel() {
               44,
               0,
             );
+            final admittedWriterEpochParam = const fb.Int64Reader().vTableGet(
+              buffer,
+              rootOffset,
+              46,
+              0,
+            );
             final object = CloudSyncReceivedMutationIntentEntity(
               id: idParam,
               intentKey: intentKeyParam,
@@ -8675,6 +8688,7 @@ obx_int.ModelDefinition getObjectBoxModel() {
               admittedBindingSha256: admittedBindingSha256Param,
               createdAtMs: createdAtMsParam,
               updatedAtMs: updatedAtMsParam,
+              admittedWriterEpoch: admittedWriterEpochParam,
             );
 
             return object;
@@ -11741,5 +11755,11 @@ class CloudSyncReceivedMutationIntentEntity_ {
   static final updatedAtMs =
       obx.QueryIntegerProperty<CloudSyncReceivedMutationIntentEntity>(
         _entities[29].properties[20],
+      );
+
+  /// See [CloudSyncReceivedMutationIntentEntity.admittedWriterEpoch].
+  static final admittedWriterEpoch =
+      obx.QueryIntegerProperty<CloudSyncReceivedMutationIntentEntity>(
+        _entities[29].properties[21],
       );
 }

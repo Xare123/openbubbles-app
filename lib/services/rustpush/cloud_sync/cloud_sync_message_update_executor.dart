@@ -7,6 +7,9 @@ import 'cloud_sync_local_send_journal.dart'
     show CloudSyncNativeReceiptReplayBinding;
 import 'cloud_sync_manual_shadow_sampler.dart';
 import 'cloud_sync_message_update_transport.dart';
+import 'cloud_sync_received_message_update_transport.dart';
+import 'cloud_sync_received_mutation_journal.dart';
+import 'cloud_sync_historical_parent_binding.dart';
 import 'cloud_sync_models.dart';
 import 'cloud_sync_outbound_message_dependency.dart';
 import 'cloud_sync_record_maps.dart';
@@ -57,6 +60,8 @@ final class CloudSyncMessageUpdateExecutor {
     required CloudSyncMessageUpdateTransport transport,
     required CloudSyncPreparedSubmissionReleaser preparedSubmissionReleaser,
     required CloudProtectedPageLeaseTransport leaseTransport,
+    CloudSyncReceivedMutationJournal? receivedJournal,
+    CloudSyncReceivedMessageUpdateTransport? receivedTransport,
     CloudSyncNativeReceiptReplayBinding? replayBinding,
     CloudSyncConfirmedLocalParentReader? readConfirmedLocalParent,
     DateTime Function()? clock,
@@ -66,6 +71,11 @@ final class CloudSyncMessageUpdateExecutor {
        // ignore: prefer_initializing_formals
        _cloudStore = cloudStore,
        _journal = journal,
+       // Keep public composition names separate from private fields.
+       // ignore: prefer_initializing_formals
+       _receivedJournal = receivedJournal,
+       // ignore: prefer_initializing_formals
+       _receivedTransport = receivedTransport,
        // ignore: prefer_initializing_formals
        _transport = transport,
        // ignore: prefer_initializing_formals
@@ -81,11 +91,17 @@ final class CloudSyncMessageUpdateExecutor {
     if (!journal.isBoundToStore(objectBoxStore)) {
       throw ArgumentError('cloud_sync_message_update_store_mismatch');
     }
+    if (receivedJournal != null &&
+        !receivedJournal.isBoundToStore(objectBoxStore)) {
+      throw ArgumentError('cloud_sync_message_update_store_mismatch');
+    }
   }
 
   final Store _objectBoxStore;
   final ObjectBoxCloudSyncStore _cloudStore;
   final CloudSyncLocalMutationJournal _journal;
+  final CloudSyncReceivedMutationJournal? _receivedJournal;
+  final CloudSyncReceivedMessageUpdateTransport? _receivedTransport;
   final CloudSyncMessageUpdateTransport _transport;
   final CloudSyncPreparedSubmissionReleaser _preparedSubmissionReleaser;
   final CloudProtectedPageLeaseTransport _leaseTransport;
@@ -115,7 +131,82 @@ final class CloudSyncMessageUpdateExecutor {
     if (!source.sameReflectedMutationAs(refreshedSource)) {
       throw StateError('cloud_sync_message_update_source_changed');
     }
-    final adoptedOperationId = refreshedSource.adoptedOperationId;
+    return _admitReflectedStage(
+      scope,
+      predecessor: predecessor,
+      adoptedOperationId: refreshedSource.adoptedOperationId,
+      stageUpdate: () => _transport.stageMessageUpdate(
+        scope,
+        source: refreshedSource,
+        predecessor: predecessor,
+        currentAuth: currentAuth,
+        receipt: receipt,
+      ),
+      adopt: (draft) => _cloudStore.admitProtectedLocalMutationUpdate(
+        draft: draft,
+        expectedPredecessor: predecessor.recordMapping,
+        journal: _journal,
+        source: refreshedSource,
+        currentAuth: currentAuth,
+        stillCurrent: stillCurrent,
+        replayBinding: _replayBinding,
+      ),
+    );
+  }
+
+  /// Received source joins this same executor and lease handoff. Its separate
+  /// journal/native transport has no outgoing IDS receipt field or send path.
+  Future<CloudOutboxOperation> admitReflectedReceivedUpdate(
+    CloudSyncScope scope, {
+    required CloudSyncReceivedMutationAdmissionSource source,
+    required CloudSyncMessageMutationPredecessor predecessor,
+    required CloudSyncHistoricalParentProof parent,
+    required CloudSyncNativeAuthSnapshot currentAuth,
+    required bool Function() stillCurrent,
+  }) async {
+    final journal = _receivedJournal;
+    final transport = _receivedTransport;
+    if (journal == null || transport == null) {
+      throw StateError('cloud_sync_received_mutation_transport_unavailable');
+    }
+    final refreshed = journal.readReflectedForUpdate(
+      intentId: source.intentId,
+      currentAuth: currentAuth,
+      stillCurrent: stillCurrent,
+    );
+    if (!source.sameReflectedMutationAs(refreshed)) {
+      throw StateError('cloud_sync_message_update_source_changed');
+    }
+    return _admitReflectedStage(
+      scope,
+      predecessor: predecessor,
+      adoptedOperationId: refreshed.adoptedOperationId,
+      stageUpdate: () => transport.stageReceivedMessageUpdate(
+        scope,
+        source: refreshed,
+        predecessor: predecessor,
+        parent: parent,
+        currentAuth: currentAuth,
+      ),
+      adopt: (draft) => _cloudStore.admitProtectedReceivedMutationUpdate(
+        draft: draft,
+        expectedPredecessor: predecessor.recordMapping,
+        journal: journal,
+        source: refreshed,
+        currentAuth: currentAuth,
+        stillCurrent: stillCurrent,
+      ),
+    );
+  }
+
+  Future<CloudOutboxOperation> _admitReflectedStage(
+    CloudSyncScope scope, {
+    required CloudSyncMessageMutationPredecessor predecessor,
+    required String? adoptedOperationId,
+    required Future<CloudSyncProtectedMessageUpdateStage> Function()
+    stageUpdate,
+    required CloudOutboxOperation Function(CloudOutboxDraft) adopt,
+  }) async {
     if (adoptedOperationId != null) {
       final existing = await _readExactOperation(scope, adoptedOperationId);
       _validateAdoptedOperation(existing, predecessor);
@@ -123,18 +214,12 @@ final class CloudSyncMessageUpdateExecutor {
     }
 
     return _leaseTransport.runProtectedStoreExclusive(() async {
-      final stage = await _transport.stageMessageUpdate(
-        scope,
-        source: refreshedSource,
-        predecessor: predecessor,
-        currentAuth: currentAuth,
-        receipt: receipt,
-      );
+      final stage = await stageUpdate();
       var retainedStage = false;
       try {
         final now = _utcNow();
-        final operation = _cloudStore.admitProtectedLocalMutationUpdate(
-          draft: CloudOutboxDraft(
+        final operation = adopt(
+          CloudOutboxDraft(
             scope: scope,
             logicalEntityKeyHash: stage.logicalEntityKeyHash,
             action: CloudOutboxAction.save,
@@ -146,12 +231,6 @@ final class CloudSyncMessageUpdateExecutor {
             serverRecordIdHash: stage.serverRecordIdHash,
             protectedLeaseReference: stage.leaseReference,
           ),
-          expectedPredecessor: predecessor.recordMapping,
-          journal: _journal,
-          source: refreshedSource,
-          currentAuth: currentAuth,
-          stillCurrent: stillCurrent,
-          replayBinding: _replayBinding,
         );
         retainedStage =
             operation.encryptedPayloadReference == stage.protectedReference &&
@@ -196,6 +275,7 @@ final class CloudSyncMessageUpdateExecutor {
     required bool Function() stillCurrent,
   }) async {
     final recovered = await _recoverCommittedReadbacks(scope);
+    await _retireReceivedReadbacks(scope, currentAuth, stillCurrent);
     final unknownLeaseId = _leaseId('update-reconcile');
     final unknown = await _cloudStore.leaseUnknownOutcomes(
       scope,
@@ -260,13 +340,12 @@ final class CloudSyncMessageUpdateExecutor {
     CloudSyncPreparedSubmission? prepared;
     CloudOutboxOperation? submitted;
     try {
-      prepared = await _transport.prepareMessageUpdateSubmission(
+      prepared = await _prepareTypedSubmission(
         scope,
         submissionIdentity: submissionIdentity,
         operation: operation,
         protectedOperation: protectedOperation,
-        source: context.source,
-        predecessor: context.predecessor,
+        context: context,
       );
       final started = await _cloudStore.markOutboxSubmissionStarted(
         scope,
@@ -326,11 +405,10 @@ final class CloudSyncMessageUpdateExecutor {
       currentAuth: currentAuth,
       stillCurrent: stillCurrent,
     );
-    final result = await _transport.reconcileMessageUpdate(
+    final result = await _reconcileTypedUpdate(
       scope,
       operation: operation,
-      source: context.source,
-      predecessor: context.predecessor,
+      context: context,
     );
     final now = _utcNow();
     switch (result.disposition) {
@@ -342,6 +420,7 @@ final class CloudSyncMessageUpdateExecutor {
           now: now,
         );
         await _finalizeCommittedReadback(scope, snapshot);
+        await _retireReceivedReadbacks(scope, currentAuth, stillCurrent);
         break;
       case CloudSyncMessageUpdateReconciliationDisposition.notApplied:
         await _transport.completeMessageUpdateReconciliation(
@@ -430,16 +509,157 @@ final class CloudSyncMessageUpdateExecutor {
     );
   });
 
-  ({
-    CloudSyncLocalMutationAdmissionSource source,
-    CloudSyncMessageMutationPredecessor predecessor,
-  })
-  _readAdoptedContext(
+  // Complete a crash-interrupted local marker only after the shared executor
+  // has finalized exact readback and relinquished the native stage lease.
+  // This does not restage, submit, acknowledge IDS or infer success from UI.
+  Future<void> _retireReceivedReadbacks(
+    CloudSyncScope scope,
+    CloudSyncNativeAuthSnapshot auth,
+    bool Function() stillCurrent,
+  ) async {
+    final journal = _receivedJournal;
+    if (journal == null) return;
+    final query =
+        _objectBoxStore
+            .box<CloudSyncReceivedMutationIntentEntity>()
+            .query(
+              CloudSyncReceivedMutationIntentEntity_.accountFingerprint
+                  .equals(scope.accountFingerprint)
+                  .and(CloudSyncReceivedMutationIntentEntity_.state.equals(2)),
+            )
+            .build()
+          ..limit = 16;
+    late final List<CloudSyncReceivedMutationIntentEntity> rows;
+    try {
+      rows = query.find();
+    } finally {
+      query.close();
+    }
+    if (rows.isEmpty) return;
+    final operations = await _cloudStore.readOutboxEntries(scope);
+    for (final row in rows) {
+      final matches = operations
+          .where((op) => op.operationId == row.admittedOperationId)
+          .toList();
+      if (matches.length != 1) {
+        throw StateError('cloud_sync_message_update_adoption_missing');
+      }
+      final operation = matches.single;
+      if (operation.status != CloudOutboxStatus.confirmed ||
+          operation.protectedLeaseReference != null) {
+        continue;
+      }
+      if (!_isReceivedOperation(operation.operationId)) {
+        throw StateError('cloud_sync_message_update_adoption_missing');
+      }
+      journal.markExactReadbackConfirmed(
+        intentId: row.id,
+        operation: operation,
+        currentAuth: auth,
+        stillCurrent: stillCurrent,
+        now: _utcNow(),
+      );
+    }
+  }
+
+  Future<CloudSyncPreparedSubmission> _prepareTypedSubmission(
+    CloudSyncScope scope, {
+    required CloudOutboxSubmissionIdentity submissionIdentity,
+    required CloudOutboxOperation operation,
+    required CloudSyncProtectedWriteOperation protectedOperation,
+    required _AdoptedMessageUpdateContext context,
+  }) => switch (context) {
+    _OutgoingMessageUpdateContext(:final source, :final predecessor) =>
+      _transport.prepareMessageUpdateSubmission(
+        scope,
+        submissionIdentity: submissionIdentity,
+        operation: operation,
+        protectedOperation: protectedOperation,
+        source: source,
+        predecessor: predecessor,
+      ),
+    _ReceivedMessageUpdateContext(:final source, :final predecessor) =>
+      _requireReceivedTransport().prepareReceivedMessageUpdateSubmission(
+        scope,
+        submissionIdentity: submissionIdentity,
+        operation: operation,
+        protectedOperation: protectedOperation,
+        source: source,
+        predecessor: predecessor,
+      ),
+  };
+
+  Future<CloudSyncMessageUpdateReconciliation> _reconcileTypedUpdate(
+    CloudSyncScope scope, {
+    required CloudOutboxOperation operation,
+    required _AdoptedMessageUpdateContext context,
+  }) => switch (context) {
+    _OutgoingMessageUpdateContext(:final source, :final predecessor) =>
+      _transport.reconcileMessageUpdate(
+        scope,
+        operation: operation,
+        source: source,
+        predecessor: predecessor,
+      ),
+    _ReceivedMessageUpdateContext(:final source, :final predecessor) =>
+      _requireReceivedTransport().reconcileReceivedMessageUpdate(
+        scope,
+        operation: operation,
+        source: source,
+        predecessor: predecessor,
+      ),
+  };
+
+  CloudSyncReceivedMessageUpdateTransport _requireReceivedTransport() =>
+      _receivedTransport ??
+      (throw StateError('cloud_sync_received_mutation_transport_unavailable'));
+
+  // An operation must belong to exactly one origin journal. The generic outbox
+  // is shared; an operation ID is never itself proof of the source's origin.
+  bool _isReceivedOperation(String operationId) {
+    final query = _objectBoxStore
+        .box<CloudSyncLocalMutationIntentEntity>()
+        .query(
+          CloudSyncLocalMutationIntentEntity_.admittedOperationId.equals(
+            operationId,
+          ),
+        )
+        .build();
+    final bool local;
+    try {
+      local = query.findUnique() != null;
+    } finally {
+      query.close();
+    }
+    final received =
+        _receivedJournal?.hasAdoptedOperationId(operationId) ?? false;
+    if (local == received) {
+      throw StateError('cloud_sync_message_update_adoption_missing');
+    }
+    return received;
+  }
+
+  _AdoptedMessageUpdateContext _readAdoptedContext(
     CloudSyncScope scope,
     CloudOutboxOperation operation, {
     required CloudSyncNativeAuthSnapshot currentAuth,
     required bool Function() stillCurrent,
   }) {
+    if (_isReceivedOperation(operation.operationId)) {
+      _requireReceivedTransport();
+      final source = _receivedJournal!.readAdoptedForUpdate(
+        operationId: operation.operationId,
+        currentAuth: currentAuth,
+        stillCurrent: stillCurrent,
+      );
+      final predecessor = source.requirePredecessor(
+        store: _objectBoxStore,
+        messageScope: scope,
+        readConfirmedLocalParent: _readConfirmedLocalParent,
+      );
+      _validateAdoptedOperation(operation, predecessor);
+      return _ReceivedMessageUpdateContext(source, predecessor);
+    }
     final source = _journal.readAdoptedForUpdate(
       operationId: operation.operationId,
       currentAuth: currentAuth,
@@ -452,7 +672,7 @@ final class CloudSyncMessageUpdateExecutor {
       readConfirmedLocalParent: _readConfirmedLocalParent,
     );
     _validateAdoptedOperation(operation, predecessor);
-    return (source: source, predecessor: predecessor);
+    return _OutgoingMessageUpdateContext(source, predecessor);
   }
 
   void _validateAdoptedOperation(
@@ -469,7 +689,15 @@ final class CloudSyncMessageUpdateExecutor {
     if (mapping == null) {
       throw StateError('cloud_sync_message_update_predecessor_missing');
     }
-    _journal.validateAdoptedOperation(_objectBoxStore, operation, mapping);
+    if (_isReceivedOperation(operation.operationId)) {
+      _receivedJournal!.validateAdoptedOperation(
+        _objectBoxStore,
+        operation,
+        mapping,
+      );
+    } else {
+      _journal.validateAdoptedOperation(_objectBoxStore, operation, mapping);
+    }
   }
 
   Future<CloudOutboxOperation> _readExactOperation(
@@ -519,4 +747,19 @@ final class CloudSyncMessageUpdateExecutor {
   }
 
   String _leaseId(String prefix) => '$prefix:${_uuidFactory()}';
+}
+
+sealed class _AdoptedMessageUpdateContext {
+  const _AdoptedMessageUpdateContext(this.predecessor);
+  final CloudSyncMessageMutationPredecessor predecessor;
+}
+
+final class _OutgoingMessageUpdateContext extends _AdoptedMessageUpdateContext {
+  const _OutgoingMessageUpdateContext(this.source, super.predecessor);
+  final CloudSyncLocalMutationAdmissionSource source;
+}
+
+final class _ReceivedMessageUpdateContext extends _AdoptedMessageUpdateContext {
+  const _ReceivedMessageUpdateContext(this.source, super.predecessor);
+  final CloudSyncReceivedMutationAdmissionSource source;
 }

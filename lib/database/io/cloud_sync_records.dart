@@ -197,14 +197,17 @@ class CloudSyncReceivedMutationIntentEntity {
   int localChatId;
   String? beforeSnapshotSha256;
   String? reflectedSnapshotSha256;
-  /// 0 retained without target/reflection, 1 target reflection committed.
-  /// Neither state is a remote update or an outgoing positive IDS receipt.
+  /// 0 retained, 1 reflected, 2 adopted into the conditional outbox,
+  /// 3 exact remote readback finalized. Never an outgoing IDS receipt.
   @Index()
   int state;
   String? admittedOperationId;
   String? admittedBindingSha256;
   int createdAtMs;
   int updatedAtMs;
+  /// Exact native-stage epoch, pinned atomically with adoption. The automatic
+  /// consent epoch above cannot substitute for this after writer reconciliation.
+  int admittedWriterEpoch;
 
   CloudSyncReceivedMutationIntentEntity({
     this.id = 0,
@@ -228,6 +231,7 @@ class CloudSyncReceivedMutationIntentEntity {
     this.admittedBindingSha256,
     required this.createdAtMs,
     required this.updatedAtMs,
+    this.admittedWriterEpoch = 0,
   });
 }
 
