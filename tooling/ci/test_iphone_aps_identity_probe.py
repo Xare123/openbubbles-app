@@ -15,13 +15,14 @@ class APSIdentityProbeGuards(unittest.TestCase):
         cls.build = (APP / "build.sh").read_text(encoding="utf-8")
         cls.workflow = (ROOT / ".github/workflows/gce-runner-pilot.yml").read_text(encoding="utf-8")
 
-    def test_separate_bundle_and_minimal_entitlements(self):
+    def test_separate_bundle_and_only_observed_aps_read_group(self):
         info = plistlib.loads((APP / "Info.plist").read_bytes())
         entitlements = plistlib.loads((APP / "entitlements.plist").read_bytes())
         bundle = "dev.openbubbles.diagnostics.apsidentity"
         self.assertEqual(info["CFBundleIdentifier"], bundle)
-        self.assertEqual(info["CFBundleVersion"], "1")
-        self.assertEqual(entitlements, {"application-identifier": bundle, "keychain-access-groups": [bundle]})
+        self.assertEqual(info["CFBundleVersion"], "2")
+        self.assertEqual(entitlements, {"application-identifier": bundle,
+            "keychain-access-groups": [bundle, "com.apple.apsd"]})
         self.assertNotIn("UIBackgroundModes", info)
 
     def test_only_declared_identity_factory_after_exact_runtime_abi_check(self):
