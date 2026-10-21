@@ -14,6 +14,10 @@ void main() {
       );
       final current = getObjectBoxModel();
       final beforeMap = current.model.toMap();
+      (beforeMap['entities'] as List).removeWhere(
+        (e) => e['name'] == 'CloudSyncReceivedMutationIntentEntity',
+      );
+      beforeMap['lastEntityId'] = '37:1644657105908350051';
       final entity =
           (beforeMap['entities'] as List).singleWhere(
                 (e) => e['name'] == 'CloudSyncHistoricalArchiveIntentEntity',
@@ -27,7 +31,7 @@ void main() {
       beforeMap['lastIndexId'] = '107:8086057055477981296';
       final before = obx.ModelDefinition(
         obx.ModelInfo.fromMap(beforeMap),
-        current.bindings,
+        Map.of(current.bindings)..remove(CloudSyncReceivedMutationIntentEntity),
       );
       Store? store;
       try {
@@ -70,13 +74,18 @@ void main() {
     final directory = await Directory.systemTemp.createTemp('ob-history-outbox-upgrade-');
     final current = getObjectBoxModel();
     final beforeMap = current.model.toMap();
+    (beforeMap['entities'] as List).removeWhere(
+      (e) => e['name'] == 'CloudSyncReceivedMutationIntentEntity',
+    );
+    beforeMap['lastEntityId'] = '37:1644657105908350051';
     final entity = (beforeMap['entities'] as List).singleWhere(
       (e) => e['name'] == 'CloudSyncHistoricalArchiveIntentEntity') as Map;
     (entity['properties'] as List).removeWhere(
       (p) => const ['admittedOperationId', 'admittedBinding'].contains(p['name']));
     entity['lastPropertyId'] = '8:7844681394164518328';
     beforeMap['lastIndexId'] = '107:8086057055477981296';
-    final before = obx.ModelDefinition(obx.ModelInfo.fromMap(beforeMap), current.bindings);
+    final before = obx.ModelDefinition(obx.ModelInfo.fromMap(beforeMap),
+      Map.of(current.bindings)..remove(CloudSyncReceivedMutationIntentEntity));
     Store? store;
     try {
       store = Store(before, directory: directory.path);
@@ -112,7 +121,9 @@ void main() {
       final current = getObjectBoxModel();
       final beforeMap = current.model.toMap();
       (beforeMap['entities'] as List).removeWhere(
-        (e) => e['name'] == 'CloudSyncHistoricalArchiveIntentEntity',
+        (e) =>
+            e['name'] == 'CloudSyncHistoricalArchiveIntentEntity' ||
+            e['name'] == 'CloudSyncReceivedMutationIntentEntity',
       );
       // The exact model counters of aab9, the candidate preceding this addition.
       beforeMap['lastEntityId'] = '36:4861163290100543941';
@@ -120,7 +131,8 @@ void main() {
       final before = obx.ModelDefinition(
         obx.ModelInfo.fromMap(beforeMap),
         Map.of(current.bindings)
-          ..remove(CloudSyncHistoricalArchiveIntentEntity),
+          ..remove(CloudSyncHistoricalArchiveIntentEntity)
+          ..remove(CloudSyncReceivedMutationIntentEntity),
       );
       Store? store;
       try {

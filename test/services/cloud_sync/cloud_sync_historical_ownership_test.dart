@@ -170,6 +170,8 @@ void main() {
       for (final row
           in store.box<CloudSyncLocalMutationIntentEntity>().getAll())
         'mut:${row.id}:${row.intentKey}:${row.accountFingerprint}:${row.state}:${row.targetGuidHash}:${row.protectedSourceBinding}',
+      for (final row in store.box<CloudSyncReceivedMutationIntentEntity>().getAll())
+        'rmut:${row.id}:${row.intentKey}:${row.accountFingerprint}:${row.state}:${row.targetGuidHash}:${row.protectedSourceBinding}',
     ];
     rows.sort();
     return rows;
@@ -348,6 +350,23 @@ void main() {
       resolveUnchanged(request(guid: alsoOwned)),
       CloudSyncHistoricalDedupeVerdict.retainConflict,
     );
+  });
+
+  test('retained received mutation conflicts even before original target exists', () {
+    final guid = _uuid(32);
+    final row = CloudSyncReceivedMutationIntentEntity(
+      intentKey: 'synthetic-received-mutation', accountFingerprint: _account,
+      ownershipEpoch: 1, mutationGuidHash: _h('a'), targetGuidHash: receivedHash(guid),
+      targetPart: 0, origin: 0, kind: 1, sentTimestampMs: 1700000010000,
+      sourceSha256: _h('b'), protectedSourceBinding: 'synthetic-private-seed',
+      createdAtMs: 1, updatedAtMs: 1,
+    );
+    store.box<CloudSyncReceivedMutationIntentEntity>().put(row);
+    expect(resolveUnchanged(request(guid: guid)), CloudSyncHistoricalDedupeVerdict.retainConflict);
+    expect(store.box<Message>().count(), 0);
+    row.accountFingerprint = 'B' * 43;
+    store.box<CloudSyncReceivedMutationIntentEntity>().put(row);
+    expect(resolveUnchanged(request(guid: guid)), CloudSyncHistoricalDedupeVerdict.retainConflict);
   });
 
   test(

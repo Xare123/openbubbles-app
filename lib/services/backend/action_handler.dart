@@ -718,7 +718,6 @@ class ActionHandler extends GetxService {
   /// query event. Prefer the active bubble controller so its message parts are
   /// rebuilt immediately. Fall back to the conversation service for messages
   /// that are loaded but currently off screen.
-  @visibleForTesting
   void refreshActiveMessage(Chat chat, Message message, {String? oldGuid}) {
     final activeController = getActiveMwc(oldGuid ?? message.guid!);
     if (activeController != null) {

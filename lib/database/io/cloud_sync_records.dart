@@ -171,6 +171,66 @@ class CloudSyncReceivedArchiveIntentEntity {
   });
 }
 
+/// Durable received edit/unsend events. Separate from originals and outgoing
+/// mutations. Only hashes, typed metadata and native-encrypted source are
+/// persisted. Missing targets retain zero local IDs for later resolution.
+@Entity()
+class CloudSyncReceivedMutationIntentEntity {
+  int id;
+  @Index(type: IndexType.hash64)
+  @Unique()
+  String intentKey;
+  @Index(type: IndexType.hash64)
+  String accountFingerprint;
+  int ownershipEpoch;
+  @Index(type: IndexType.hash64)
+  String mutationGuidHash;
+  @Index(type: IndexType.hash64)
+  String targetGuidHash;
+  int targetPart;
+  int origin;
+  int kind;
+  int sentTimestampMs;
+  String sourceSha256;
+  String protectedSourceBinding;
+  int localMessageId;
+  int localChatId;
+  String? beforeSnapshotSha256;
+  String? reflectedSnapshotSha256;
+  /// 0 retained without target/reflection, 1 target reflection committed.
+  /// Neither state is a remote update or an outgoing positive IDS receipt.
+  @Index()
+  int state;
+  String? admittedOperationId;
+  String? admittedBindingSha256;
+  int createdAtMs;
+  int updatedAtMs;
+
+  CloudSyncReceivedMutationIntentEntity({
+    this.id = 0,
+    required this.intentKey,
+    required this.accountFingerprint,
+    required this.ownershipEpoch,
+    required this.mutationGuidHash,
+    required this.targetGuidHash,
+    required this.targetPart,
+    required this.origin,
+    required this.kind,
+    required this.sentTimestampMs,
+    required this.sourceSha256,
+    required this.protectedSourceBinding,
+    this.localMessageId = 0,
+    this.localChatId = 0,
+    this.beforeSnapshotSha256,
+    this.reflectedSnapshotSha256,
+    this.state = 0,
+    this.admittedOperationId,
+    this.admittedBindingSha256,
+    required this.createdAtMs,
+    required this.updatedAtMs,
+  });
+}
+
 /// Local-origin send intent, separate from both restored history and the
 /// protected remote-mutation outbox. No body, handle or raw GUID is stored here.
 @Entity()

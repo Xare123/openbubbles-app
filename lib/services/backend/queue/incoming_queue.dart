@@ -13,6 +13,10 @@ class IncomingQueue extends Queue {
 
   @override
   Future<void> handleQueueItem(QueueItem queueItem) async {
+    if (queueItem is IncomingReceivedMutationItem) {
+      await queueItem.process();
+      return;
+    }
     assert(queueItem is IncomingItem);
     final item = queueItem as IncomingItem;
 

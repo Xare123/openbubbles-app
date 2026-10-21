@@ -1874,7 +1874,7 @@ void main() {
 
     for (final change in [
       'account', 'protected store', 'source', 'generation', 'parent',
-      'outgoing row', 'outgoing GUID', 'record identity', 'edit', 'unsend',
+      'outgoing row', 'outgoing GUID', 'record identity', 'edit', 'unsend', 'retained mutation',
     ]) {
       test('rejects changed $change without consuming source or revision', () async {
         await seedOrigin();
@@ -1916,6 +1916,18 @@ void main() {
           case 'record identity':
             value = draft(recordHash: _a43('X'));
             failure = _fails('cloud_sync_received_archive_admission_changed');
+          case 'retained mutation':
+            store.box<CloudSyncReceivedMutationIntentEntity>().put(
+              CloudSyncReceivedMutationIntentEntity(
+                intentKey: 'synthetic-retained-mutation', accountFingerprint: _account,
+                ownershipEpoch: 1, mutationGuidHash: _h64('b'),
+                targetGuidHash: originalSource.messageGuidHash, targetPart: 0,
+                origin: 0, kind: 0, sentTimestampMs: 1700000010000,
+                sourceSha256: _h64('c'), protectedSourceBinding: 'synthetic-retained-binding',
+                createdAtMs: 1, updatedAtMs: 1,
+              ),
+            );
+            failure = _fails('cloud_sync_received_archive_admitted_source_changed');
           case 'edit':
           case 'unsend':
             final message = _byGuid(guid)!;
@@ -1942,6 +1954,27 @@ void main() {
         expect((await durable.readCheckpoint(scope)).mutationRevisionCounter, revision);
       });
     }
+
+    test('retained event prevents stale dispatch but preserves exact readback source', () async {
+      await seedOrigin();
+      final source = admissionSource();
+      final operation = admit(source: source);
+      store.box<CloudSyncReceivedMutationIntentEntity>().put(
+        CloudSyncReceivedMutationIntentEntity(
+          intentKey: 'synthetic-retained-mutation', accountFingerprint: _account,
+          ownershipEpoch: 1, mutationGuidHash: _h64('b'),
+          targetGuidHash: originalSource.messageGuidHash, targetPart: 0,
+          origin: 0, kind: 1, sentTimestampMs: 1700000010000,
+          sourceSha256: _h64('c'), protectedSourceBinding: 'synthetic-retained-binding',
+          createdAtMs: 1, updatedAtMs: 1,
+        ),
+      );
+      expect(() => journal.requireAdoptedDispatch(transactionStore: store, operation: operation),
+          throwsA(_fails('cloud_sync_received_archive_admitted_source_changed')));
+      expect(journal.readAdoptedSource(transactionStore: store, operation: operation)!.source.encode(),
+          originalSource.encode());
+      expect((await durable.readOutboxEntries(scope)).single.operationId, operation.operationId);
+    });
 
     test('fresh Found retires cached Absent and survives lost raw commit across reopen',
         () async {

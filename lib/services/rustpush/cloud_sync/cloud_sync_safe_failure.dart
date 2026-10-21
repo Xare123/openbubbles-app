@@ -83,6 +83,18 @@ abstract final class CloudSyncV2ReceivedArchiveSafeFailureCodes {
     'cloud_sync_received_archive_unpersisted',
     'cloud_sync_received_archive_verification_failed',
     'cloud_sync_received_archive_wire_body_mismatch',
+    'cloud_sync_received_mutation_owner_changed',
+    'cloud_sync_received_mutation_source_changed',
+    'cloud_sync_received_mutation_source_invalid',
+    'cloud_sync_received_mutation_source_seal_failed',
+    'cloud_sync_received_mutation_identity_changed',
+    'cloud_sync_received_mutation_intent_changed',
+    'cloud_sync_received_mutation_time_invalid',
+    'cloud_sync_received_mutation_limit_invalid',
+    'cloud_sync_received_mutation_target_changed',
+    'cloud_sync_received_mutation_target_missing',
+    'cloud_sync_received_mutation_target_author_changed',
+    'cloud_sync_received_mutation_predecessor_changed',
   };
 }
 

@@ -11,6 +11,23 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_writer_authori
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('received mutation failures are exact diagnostics, never retry permission', () {
+    final journal = File('lib/services/rustpush/cloud_sync/cloud_sync_received_mutation_journal.dart').readAsStringSync();
+    final suffixes = RegExp(r"_fail\('([a-z_]+)'\)").allMatches(journal).map((m) => m[1]!).toSet();
+    final codes = <String>{
+      for (final suffix in suffixes) 'cloud_sync_received_mutation_$suffix',
+      'cloud_sync_received_mutation_source_invalid',
+      'cloud_sync_received_mutation_source_seal_failed',
+    };
+    expect(codes.length, greaterThanOrEqualTo(12));
+    for (final code in codes) {
+      expect(cloudSyncV2SafeFailureCode(StateError(code)), code);
+      expect(cloudSyncV2MutationPredecessorNeedsRetry(StateError(code)), isFalse);
+      expect(cloudSyncV2SafeFailureCode(StateError('$code private body')), 'cloud_sync_unknown_failure');
+      expect(cloudSyncV2SafeFailureCodeForCandidate('${code}_unreviewed'), 'cloud_sync_unknown_failure');
+    }
+  });
+
   test('local admission and lease diagnostics are exact, not retry permission', () {
     const codes = <String>{
       'cloud_sync_received_archive_confirmation_required',

@@ -157,6 +157,14 @@ final class CloudSyncHistoricalLocalGuard {
       }
     }
 
+    // A protected event is a newer-origin veto even before its missing target
+    // can be reflected. Keep unknown-outcome readback separate from dispatch.
+    if (exists(store.box<CloudSyncReceivedMutationIntentEntity>().query(
+      CloudSyncReceivedMutationIntentEntity_.targetGuidHash.equals(receivedGuidHash),
+    ))) {
+      throw StateError('cloud_sync_historical_local_source_changed');
+    }
+
     // Account indexes bound these lookups; GUID fields in the existing journals
     // are not all individually indexed. Do not describe these as index-only.
     if (exists(

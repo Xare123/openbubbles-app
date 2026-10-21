@@ -66,6 +66,14 @@ final class ObjectBoxHistoricalOwnership extends HistoricalOwnershipRegistry {
       if (mutations.isNotEmpty) {
         return CloudSyncHistoricalDedupeVerdict.retainConflict;
       }
+      final receivedMutations = _matches(
+        store.box<CloudSyncReceivedMutationIntentEntity>().query(
+          CloudSyncReceivedMutationIntentEntity_.targetGuidHash.equals(receivedHash),
+        ),
+      );
+      if (receivedMutations.isNotEmpty) {
+        return CloudSyncHistoricalDedupeVerdict.retainConflict;
+      }
       final sends = _matches(
         store.box<CloudSyncLocalSendIntentEntity>().query(
           CloudSyncLocalSendIntentEntity_.messageGuidHash.equals(sendHash),

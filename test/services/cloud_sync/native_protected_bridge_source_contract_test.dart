@@ -545,6 +545,9 @@ void main() {
     expect(seal.indexOf('!= handles'), lessThan(encryption));
     expect(seal.lastIndexOf('.await'), lessThan(encryption),
         reason: 'a valid encrypted seed must reach Dart ownership without another fallible native await');
+    final eventEncryption = seal.indexOf('crate::cloud_sync_received_mutation_stage::seal_received_mutation_seed(');
+    expect(eventEncryption, greaterThan(0));
+    expect(seal.lastIndexOf('.await'), lessThan(eventEncryption));
     expect(seal, contains('account_fingerprint: after.account_fingerprint'));
     expect(seal, contains('protected_store_identity: after.protected_store_identity'));
     expect(seal, isNot(contains('cloud_sync_capture_auth_snapshot(')));
@@ -552,6 +555,28 @@ void main() {
     final cached = _section(native, 'async fn cloud_sync_capture_cached_identity(',
         'pub struct CloudSyncNativeHistoricalArchiveSourceBinding');
     expect(cached, contains('validated_persisted_native_account_identifiers().await'));
+  });
+
+  test('received mutation retention joins existing queue and lifecycle before reflection', () {
+    final source = File('lib/services/rustpush/rustpush_service.dart').readAsStringSync();
+    final hook = source.indexOf('_queueCloudSyncV2ReceivedMutation(myMsg, receiveStillCurrent)');
+    final reflection = source.indexOf('var reflected = await pushService.reflectMessageDyn(myMsg);', hook);
+    expect(hook, greaterThan(0));
+    expect(reflection, greaterThan(hook));
+    expect(source.substring(hook - 100, hook), contains('ls.retainEngineUntil'));
+    expect(source.substring(hook - 100, hook), contains('_trackCloudSyncV2ReceivedWork'));
+    final capture = _section(source, 'Future<bool> _queueCloudSyncV2ReceivedMutation(',
+        'Future<Message> _persistCloudSyncV2ReceivedMessage(');
+    final seal = capture.indexOf('final seed = await api.cloudSyncSealReceivedArchiveSeed(');
+    final retention = capture.indexOf('journal.retain(', seal);
+    expect(retention, greaterThan(seal));
+    expect(capture.substring(seal + 'final seed = await '.length, retention), isNot(contains('await ')));
+    expect(capture.indexOf('inq.queue(IncomingReceivedMutationItem('), greaterThan(retention));
+    expect(capture.indexOf('pushService.reflectMessageDyn(wire)'), greaterThan(retention));
+    expect(capture, contains('journal.commitReflection('));
+    for (final forbidden in ['sendMsg(', 'pushOperations(', 'positiveIdsReceipt', 'api.sendMessage(']) {
+      expect(capture, isNot(contains(forbidden)));
+    }
   });
 
   test('Profile received scope reaches existing workers without developer-mode consent inheritance', () {

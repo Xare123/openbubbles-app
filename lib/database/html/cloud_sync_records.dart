@@ -8,6 +8,7 @@ const int cloudInboxServerModifiedAtUnixEpochFormat = 1;
 const int cloudInboxAppleEpochOffsetMillis = 978307200000;
 
 class CloudSyncLocalMutationIntentEntity {}
+class CloudSyncReceivedMutationIntentEntity {}
 
 class CloudSyncLocalSendIntentEntity {}
 

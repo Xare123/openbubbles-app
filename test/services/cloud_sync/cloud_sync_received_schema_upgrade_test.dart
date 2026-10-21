@@ -15,7 +15,9 @@ void main() {
       final current = generated.getObjectBoxModel();
       final previousMap = current.model.toMap();
       (previousMap['entities'] as List).removeWhere(
-        (e) => e['name'] == 'CloudSyncHistoricalArchiveIntentEntity',
+        (e) =>
+            e['name'] == 'CloudSyncHistoricalArchiveIntentEntity' ||
+            e['name'] == 'CloudSyncReceivedMutationIntentEntity',
       );
       previousMap['lastEntityId'] = '36:4861163290100543941';
       final entity = (previousMap['entities'] as List).cast<Map>().singleWhere(
@@ -28,7 +30,9 @@ void main() {
       previousMap['lastIndexId'] = '103:3376337646296598667';
       final previous = obx_internal.ModelDefinition(
         obx_internal.ModelInfo.fromMap(previousMap),
-        Map.of(current.bindings)..remove(CloudSyncHistoricalArchiveIntentEntity),
+        Map.of(current.bindings)
+          ..remove(CloudSyncHistoricalArchiveIntentEntity)
+          ..remove(CloudSyncReceivedMutationIntentEntity),
       );
       final root = await Directory(
         '${Directory.current.path}/build/test-temp',
@@ -87,7 +91,8 @@ void main() {
       previousMap['entities'] = entities
           .where(
             (dynamic e) => e['name'] != 'CloudSyncReceivedArchiveIntentEntity' &&
-                e['name'] != 'CloudSyncHistoricalArchiveIntentEntity',
+                e['name'] != 'CloudSyncHistoricalArchiveIntentEntity' &&
+                e['name'] != 'CloudSyncReceivedMutationIntentEntity',
           )
           .toList();
       expect(previousMap['entities'], hasLength(27));
@@ -98,7 +103,8 @@ void main() {
       final previousBindings = Map<Type, obx_internal.EntityDefinition>.from(
         current.bindings,
       )..remove(CloudSyncReceivedArchiveIntentEntity)
-       ..remove(CloudSyncHistoricalArchiveIntentEntity);
+       ..remove(CloudSyncHistoricalArchiveIntentEntity)
+       ..remove(CloudSyncReceivedMutationIntentEntity);
       final previous = obx_internal.ModelDefinition(
         previousInfo,
         previousBindings,

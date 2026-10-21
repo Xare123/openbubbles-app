@@ -682,7 +682,7 @@ void main() {
     );
   }
 
-  for (final origin in ['send', 'receive', 'mutation']) {
+  for (final origin in ['send', 'receive', 'mutation', 'received mutation']) {
     test(
       '$origin ownership appearing after adoption vetoes dispatch but not readback',
       () {
@@ -718,6 +718,17 @@ void main() {
               protectedSourceBinding: 'synthetic-only',
               createdAtMs: 1000,
               updatedAtMs: 1000,
+            ),
+          );
+        } else if (origin == 'received mutation') {
+          store.box<CloudSyncReceivedMutationIntentEntity>().put(
+            CloudSyncReceivedMutationIntentEntity(
+              intentKey: 'synthetic-received-mutation', accountFingerprint: _account,
+              ownershipEpoch: 1, mutationGuidHash: 'a' * 64,
+              targetGuidHash: _hash(['cloud-sync-received-archive-guid-v1', _guid]),
+              targetPart: 0, origin: 0, kind: 1, sentTimestampMs: 1700000010000,
+              sourceSha256: 'b' * 64, protectedSourceBinding: 'synthetic-only',
+              createdAtMs: 1000, updatedAtMs: 1000,
             ),
           );
         } else {

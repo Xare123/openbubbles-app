@@ -515,7 +515,8 @@ final class CloudSyncReceivedArchiveJournal {
       throw StateError('cloud_sync_received_archive_admission_changed');
     }
     final message = _store.box<Message>().get(expected.localMessageId)!;
-    if (message.dateEdited != null || message.messageSummaryInfo.isNotEmpty) {
+    if (message.dateEdited != null || message.messageSummaryInfo.isNotEmpty ||
+        _hasReceivedMutation(expected.source.messageGuidHash)) {
       // Until received mutation chaining exists, never archive a stale original
       // after learning that it was edited or retracted on another device.
       throw StateError('cloud_sync_received_archive_admitted_source_changed');
@@ -622,6 +623,7 @@ final class CloudSyncReceivedArchiveJournal {
     final chat = _store.box<Chat>().get(source.localChatId);
     if (message == null || chat == null || message.dateDeleted != null || chat.dateDeleted != null ||
         message.dateEdited != null || message.messageSummaryInfo.isNotEmpty ||
+        _hasReceivedMutation(intent.messageGuidHash) ||
         message.chat.targetId != source.localChatId || message.guid == null ||
         guidHashFor(message.guid!) != source.source.messageGuidHash ||
         message.isFromMe != (intent.origin == CloudSyncReceivedArchiveOrigin.mirrored.index) ||
@@ -630,6 +632,19 @@ final class CloudSyncReceivedArchiveJournal {
     }
     requireCloudSyncHistoricalParentUnchanged(store: _store, messageScope: operation.scope,
       binding: source.observation.parentBinding, chatId: source.localChatId);
+  }
+
+  bool _hasReceivedMutation(String originalGuidHash) {
+    final query = _store.box<CloudSyncReceivedMutationIntentEntity>().query(
+      CloudSyncReceivedMutationIntentEntity_.targetGuidHash.equals(originalGuidHash),
+    ).build();
+    try {
+      // Even an unreflected/missing-target event prevents creating a stale
+      // original. It does not grant permission for a conditional update.
+      return query.count() != 0;
+    } finally {
+      query.close();
+    }
   }
 
   static String _admittedOperationBinding(CloudOutboxOperation operation,

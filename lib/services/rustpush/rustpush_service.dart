@@ -53,6 +53,9 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_received_arc
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_received_archive_staging.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_received_delivery.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_received_source_runtime.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_received_mutation_identity.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_received_mutation_journal.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_received_mutation_source_binding.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_received_inspection_adapter.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_received_discovery_retain_adapter.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_received_reader_adapter.dart';
@@ -6789,6 +6792,11 @@ class RustPushService extends GetxService {
     final receiveStopwatch = Stopwatch()..start();
     final receiveId = _diagnosticHash(myMsg.id);
     Logger.info("rustpush_receive reflection_start id=$receiveId");
+    if ((myMsg.message is api.Message_Edit || myMsg.message is api.Message_Unsend) &&
+        await ls.retainEngineUntil(() => _trackCloudSyncV2ReceivedWork(() =>
+            _queueCloudSyncV2ReceivedMutation(myMsg, receiveStillCurrent)))) {
+      return;
+    }
     var reflected = await pushService.reflectMessageDyn(myMsg);
     Logger.info(
         "rustpush_receive reflection_complete id=$receiveId duration_ms=${_durationMs(receiveStopwatch)} reflected=${reflected != null}");
@@ -8851,6 +8859,123 @@ class RustPushService extends GetxService {
     _queueCloudSyncV2ReceivedSources(trigger);
   }
 
+  /// Retain received edit/unsend before reflection, including a missing target.
+  /// Ordinary IDS delivery stays distinct from any conditional CloudKit update.
+  Future<bool> _queueCloudSyncV2ReceivedMutation(api.MessageInst wire,
+      bool Function() receiveStillCurrent) async {
+    if (!CloudSyncDevGate.receivedArchiveCaptureEnabled ||
+        !CloudKitWriterOwnership.v2MutationsEnabled || !_cloudSyncV2CanaryRuntimeAllowed ||
+        !_cloudSyncV2ReceivedCaptureAvailable || ss.settings.cloudSyncingEnabled.value ||
+        wire.receivedOnHandle == null || loggingOut || _cloudSyncV2OutboundQuiescing) {
+      return false;
+    }
+    final capturedState = state;
+    final client = capturedState?.icloudServices?.cloudMessagesClient;
+    if (capturedState == null || client == null || statePath.isEmpty) return false;
+    final objectBox = Database.store;
+    final storage = statePath;
+    bool identityCurrent() => receiveStillCurrent() && !loggingOut && !_cloudSyncV2OutboundQuiescing &&
+        identical(capturedState, state) && identical(client, state?.icloudServices?.cloudMessagesClient) &&
+        storage == statePath && !objectBox.isClosed() && identical(objectBox, Database.store) &&
+        !ss.settings.cloudSyncingEnabled.value;
+    bool retained = false;
+    try {
+      final handles = await api.getHandles(state: capturedState.client);
+      if (!identityCurrent()) throw StateError('cloud_sync_received_mutation_identity_changed');
+      final live = CloudSyncReceivedArchiveLiveContext(observedViaLiveReceive: true,
+          observedLocalHandles: handles, receivedOnHandle: wire.receivedOnHandle!);
+      final shape = CloudSyncReceivedMutationIdentity.captureWire(wire, liveContext: live);
+      if (shape == null) return false;
+      final metadata = await api.cloudSyncCaptureReceivedIdentity(
+          cloudMessagesClient: client, storageDirectory: storage);
+      if (!identityCurrent()) throw StateError('cloud_sync_received_mutation_identity_changed');
+      final auth = CloudSyncNativeAuthSnapshot.fromNative(nativeSessionId: metadata.nativeSessionId,
+          accountFingerprint: metadata.accountFingerprint, protectedStoreIdentity: metadata.protectedStoreIdentity,
+          cloudMessagesClient: client);
+      final authority = ObjectBoxCloudKitWriterAuthority(store: objectBox);
+      final owner = authority.read(CloudKitWriterScope(accountFingerprint: auth.accountFingerprint));
+      if (owner == null || owner.owner != CloudKitWriterOwner.v2 || owner.automaticArchiveEpoch <= 0) return false;
+      final developerCapture = _cloudSyncV2DeveloperRuntimeAllowed;
+      if (!developerCapture) await ss.prefs.reload();
+      if (!identityCurrent()) throw StateError('cloud_sync_received_mutation_identity_changed');
+      final consentIdentity = CloudSyncAutomaticArchiveIdentity(
+        accountFingerprint: auth.accountFingerprint,
+        protectedStoreIdentity: auth.protectedStoreIdentity,
+        ownershipEpoch: owner.automaticArchiveEpoch,
+      );
+      final consent = developerCapture ? null : CloudSyncAutomaticArchivePreference(
+        identity: consentIdentity, storedValue: ss.prefs.get(consentIdentity.preferenceKey));
+      bool stillCurrent() {
+        if (!identityCurrent()) return false;
+        if (developerCapture) return _cloudSyncV2DeveloperRuntimeAllowed;
+        final current = authority.read(owner.scope);
+        return cloudSyncV2ReceivedArchiveAvailable && consent != null && current != null &&
+            current.owner == CloudKitWriterOwner.v2 && consent.permitsReceivedCapture(
+              accountFingerprint: auth.accountFingerprint, protectedStoreIdentity: auth.protectedStoreIdentity,
+              ownershipEpoch: current.automaticArchiveEpoch,
+              currentStoredValue: ss.prefs.get(consent.identity.preferenceKey));
+      }
+      if (!stillCurrent()) return false;
+      final journal = CloudSyncReceivedMutationJournal(store: objectBox, authority: authority, owner: owner);
+      Future<void> validate() async {
+        if (!developerCapture) await ss.prefs.reload();
+        if (!stillCurrent()) throw StateError('cloud_sync_received_mutation_identity_changed');
+        final now = await api.cloudSyncCaptureReceivedIdentity(cloudMessagesClient: client, storageDirectory: storage);
+        if (!stillCurrent() || now.accountFingerprint != auth.accountFingerprint ||
+            now.protectedStoreIdentity != auth.protectedStoreIdentity || now.nativeSessionId != auth.nativeSessionId) {
+          throw StateError('cloud_sync_received_mutation_identity_changed');
+        }
+      }
+      await validate();
+      var source = journal.findSource(eventGuid: wire.id, currentAuth: auth);
+      // A changed replay of an already-owned event must not fall through and
+      // apply a different body through the unjournaled path.
+      retained = source != null;
+      if (source == null) {
+        final seed = await api.cloudSyncSealReceivedArchiveSeed(cloudMessagesClient: client,
+            imClient: capturedState.client, storageDirectory: storage, expectedAuth: metadata, message: wire);
+        source = CloudSyncReceivedMutationSourceBinding(accountFingerprint: seed.accountFingerprint,
+            protectedStoreIdentity: seed.protectedStoreIdentity, mutationGuidHash: seed.messageGuidHash,
+            sourceSha256: seed.sourceSha256, ciphertext: seed.ciphertext);
+      }
+      final intentId = journal.retain(wire: wire, liveContext: live, source: source,
+          currentAuth: auth, stillCurrent: stillCurrent, now: DateTime.now().toUtc());
+      retained = true;
+      final completion = Completer<void>();
+      await inq.queue(IncomingReceivedMutationItem(completer: completion, process: () async {
+        if (!identityCurrent()) throw StateError('cloud_sync_received_mutation_identity_changed');
+        if (journal.reflectionCommitted(intentId: intentId, currentAuth: auth)) return;
+        // Local delivery remains possible if archive scope is later revoked;
+        // a granted captured event itself is retained for explicit recovery.
+        final targetGuid = switch (wire.message) {
+          api.Message_Edit(:final field0) => field0.tuuid,
+          api.Message_Unsend(:final field0) => field0.tuuid,
+          _ => null,
+        };
+        final before = targetGuid == null ? null : Message.findOne(guid: targetGuid);
+        if (before == null) return; // Exact event remains pending; never drop it.
+        final beforeDigest = CloudSyncReceivedMutationJournal.snapshot(before);
+        final reflected = await pushService.reflectMessageDyn(wire);
+        if (!identityCurrent()) throw StateError('cloud_sync_received_mutation_identity_changed');
+        if (reflected == null) return;
+        final saved = journal.commitReflection(intentId: intentId, wire: wire, liveContext: live,
+            currentAuth: auth, stillCurrent: identityCurrent, expectedBeforeSnapshot: beforeDigest,
+            reflected: reflected, now: DateTime.now().toUtc());
+        final chat = saved.chat.target;
+        if (chat != null) ah.refreshActiveMessage(chat, saved);
+        eventDispatcher.emit('message-updated-${saved.guid}');
+      }));
+      await completion.future;
+      return true;
+    } catch (error) {
+      if (!identityCurrent()) rethrow;
+      Logger.warn('Cloud Sync V2 received mutation deferred code=${cloudSyncV2SafeFailureCode(error)} retained=$retained');
+      // A retained mutation must not run through ordinary reflection a second
+      // time; its original event remains durable even when dependency work fails.
+      return retained;
+    }
+  }
+
   /// Local-only receive capture at the real persistence seam. Never queues a
   /// received CloudKit save or invents an outgoing IDS confirmation. Unsupported
   /// shapes and disabled/unprepared profiles keep ordinary receive behavior.
@@ -8883,10 +9008,14 @@ class RustPushService extends GetxService {
   }
 
   Future<Message> _trackCloudSyncV2ReceivedCapture(Future<Message> Function() action) {
+    return _trackCloudSyncV2ReceivedWork(action);
+  }
+
+  Future<T> _trackCloudSyncV2ReceivedWork<T>(Future<T> Function() action) {
     if (loggingOut || _cloudSyncV2OutboundQuiescing) {
       return Future.error(StateError('cloud_sync_received_archive_identity_changed'));
     }
-    final result = Future<Message>.sync(action);
+    final result = Future<T>.sync(action);
     late final Future<void> completion;
     completion = result.then<void>((_) {}, onError: (Object _, StackTrace __) {})
         .whenComplete(() => _cloudSyncV2ReceivedCaptures.remove(completion));

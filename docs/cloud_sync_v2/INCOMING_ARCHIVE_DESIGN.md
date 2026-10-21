@@ -9,6 +9,43 @@ timestamp: 2026-10-21
 
 # Decision
 
+## Active received edit/unsend slice, October21
+
+Native source8cf3a05a461aa04cc94d23981dfb8fcc2e4b1c0d adds a private immutable
+received-mutation codec and platform-encrypted inline seed. It reuses the existing
+seal API signature, not the outgoing receipt API. Distinct purpose and GUID/source
+domains prevent promotion into an original create or local-send confirmation.
+Both native account and registered-handle checks remain before synchronous sealing.
+One strict native39601015873/job119225221607 is running. Generated binding
+reproducibility, native compilation and app Rust tests have passed; dependency
+suites and postjobs are still pending. This is not Android or Apple proof.
+
+The pending Dart integration owns an encrypted event before ordinary reflection,
+including when its original target is missing. It reuses the existing incoming
+queue and capture/engine drain. Target reflection and its journal marker commit
+together. A duplicate cannot apply again; late edits and post-retraction edits
+stay retained rather than overwrite newer local state. Only reflection-owned
+fields change, preserving concurrent read/delivery/bookmark/cloud-map state.
+
+Retained events veto stale received/historical **creates and fresh dispatch**,
+not exact unknown-outcome readback or the ordinary semantic reader. This is not
+a conditional-update producer. No pending-event restart replay or remote update
+is claimed. These require a received-origin predecessor/actor proof and current
+generation/raw record/map/ETag through the existing update queue, never a fake IDS
+send receipt or an absence-to-overwrite shortcut.
+
+Final combined12-file affected run passed305tests. Earlier journal14, identity31,
+stale-create188 and integrated72-case batches overlap and are not additional
+coverage counts. Nine new paths analyzed clean; final analysis has zero errors,
+the exact8service baseline diagnostics, plus2unchanged handler diagnostics.
+Existing29 model
+entity/property/index definitions match dd0778c7 exactly; new entity38/index113
+only. The new synthetic forward-upgrade case preserves messages, media relations
+and uncertain queue entries across reopen. Initial boundary/timezone fixtures and
+two old index-limit fixtures were corrected without changing production limits.
+All five received flags stay off. No APK, Pixel, account, send/upload or live
+database operation is part of this slice. Full CloudKit production is incomplete.
+
 ## Current offline integration, October21
 
 Source14876fecb on319ec27d5 adds a separate, explicit received-text scope to the

@@ -43,6 +43,14 @@ class IncomingItem extends QueueItem {
   }
 }
 
+/// Live native mutation work retained before reflection. It uses the existing
+/// incoming queue, but cannot masquerade as a newly created Message row.
+class IncomingReceivedMutationItem extends QueueItem {
+  IncomingReceivedMutationItem({required this.process, super.completer})
+      : super(type: QueueType.updatedMessage);
+  final Future<void> Function() process;
+}
+
 class OutgoingItem extends QueueItem {
   Chat chat;
   Message message;
