@@ -1,9 +1,14 @@
-//! Immutable plain-text receive source. No network, persistence, IDS send or
+//! Immutable received source. No network, persistence, IDS send or
 //! CloudKit authority. Raw content stays native and must be protected by the
 //! separate staging wrapper before retention. No Debug implementations.
 #![cfg_attr(not(test), allow(dead_code))]
 
+use crate::cloud_sync_ids_attachment_source::{
+    decode_ids_attachment_source, encode_received_attachment_body,
+    message_inst_from_decoded_source, DecodedIdsAttachmentSource, DecodedPart,
+};
 use crate::cloud_sync_outbound::CloudSyncOutboundFailure as Failure;
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use rustpush::{Message, MessageInst, MessagePart, MessageTarget, MessageType, TextFormat};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -52,6 +57,10 @@ struct Source {
     // unchanged. A V2 group has no direct peer; exact discovery uses its GUID.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     group_id: Option<String>,
+    // V3 retains the complete bounded native body codec. Older source bytes
+    // and their direct/group digest contracts remain byte-for-byte unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    attachment_body: Option<String>,
 }
 
 pub(crate) struct ReceivedArchiveSource(Source);
@@ -119,17 +128,36 @@ impl ReceivedArchiveSource {
         {
             return Err(Failure::UnsupportedMessage);
         }
+        let has_media = normal
+            .parts
+            .0
+            .iter()
+            .any(|p| matches!(&p.part, MessagePart::Attachment(_)));
         let mut text = String::new();
         for indexed in &normal.parts.0 {
-            if indexed.ext.is_some() || indexed.idx.is_some_and(|v| v != 0) {
+            if indexed.ext.is_some()
+                || if has_media {
+                    indexed.idx.is_some_and(|v| v > i64::MAX as usize)
+                } else {
+                    indexed.idx.is_some_and(|v| v != 0)
+                }
+            {
                 return Err(Failure::UnsupportedMessage);
             }
-            let MessagePart::Text(value, TextFormat::Flags(flags)) = &indexed.part else {
-                return Err(Failure::UnsupportedMessage);
+            let value = match &indexed.part {
+                MessagePart::Text(value, TextFormat::Flags(flags)) => {
+                    if flags.bold || flags.italic || flags.underline || flags.strikethrough {
+                        return Err(Failure::UnsupportedMessage);
+                    }
+                    value.as_str()
+                }
+                MessagePart::Attachment(attachment)
+                    if has_media && attachment.part <= i64::MAX as u64 =>
+                {
+                    " "
+                }
+                _ => return Err(Failure::UnsupportedMessage),
             };
-            if flags.bold || flags.italic || flags.underline || flags.strikethrough {
-                return Err(Failure::UnsupportedMessage);
-            }
             if text
                 .len()
                 .checked_add(value.len())
@@ -139,7 +167,7 @@ impl ReceivedArchiveSource {
             }
             text.push_str(value);
         }
-        if text.trim_matches(dart_whitespace).is_empty() {
+        if !has_media && text.trim_matches(dart_whitespace).is_empty() {
             return Err(Failure::MalformedMessage);
         }
         let conversation = message
@@ -213,7 +241,13 @@ impl ReceivedArchiveSource {
         self_handles.dedup();
         let source = Source {
             domain: DOMAIN.into(),
-            version: if group_id.is_some() { 2 } else { 1 },
+            version: if has_media {
+                3
+            } else if group_id.is_some() {
+                2
+            } else {
+                1
+            },
             guid: message.id.clone(),
             sender: sender.into(),
             received_on_handle: recipient.into(),
@@ -227,6 +261,11 @@ impl ReceivedArchiveSource {
             conversation_name: conversation.cv_name.clone(),
             after_guid: conversation.after_guid.clone(),
             group_id,
+            attachment_body: if has_media {
+                Some(URL_SAFE_NO_PAD.encode(encode_received_attachment_body(message)?))
+            } else {
+                None
+            },
         };
         let received = Self(source);
         received.encode()?;
@@ -247,20 +286,22 @@ impl ReceivedArchiveSource {
         }
         let source: Source =
             serde_json::from_slice(bytes).map_err(|_| Failure::MalformedMessage)?;
-        if source.domain != DOMAIN || !matches!(source.version, 1 | 2) {
+        if source.domain != DOMAIN || !matches!(source.version, 1 | 2 | 3) {
             return Err(Failure::UnsupportedMessage);
         }
         if (source.version == 1 && source.group_id.is_some())
-            || (source.version == 2
+            || (source.version == 2 && source.group_id.is_none())
+            || (source.group_id.is_some()
                 && (!source.peer.is_empty()
                     || !source.group_id.as_deref().is_some_and(group_uuid)
                     || source.group_id != source.sender_guid))
+            || ((source.version == 3) != source.attachment_body.is_some())
         {
             return Err(Failure::BindingMismatch);
         }
         // Reconstruct only privately to reapply bounds. No caller receives a
         // sendable MessageInst, a delivery receipt, or reply-device token.
-        let wire = MessageInst {
+        let mut wire = MessageInst {
             id: source.guid.clone(),
             sender: Some(source.sender.clone()),
             received_on_handle: Some(source.received_on_handle.clone()),
@@ -280,6 +321,12 @@ impl ReceivedArchiveSource {
             verification_failed: false,
             certified_context: None,
         };
+        if let Some(body) = &source.attachment_body {
+            let decoded = decode_media_body(body)?;
+            let (mut restored, _) = message_inst_from_decoded_source(&decoded)?;
+            restored.received_on_handle = Some(source.received_on_handle.clone());
+            wire = restored;
+        }
         let canonical = Self::capture(&wire, &source.self_handles)?;
         if canonical.0 != source || canonical.encode()? != bytes {
             return Err(Failure::BindingMismatch);
@@ -305,6 +352,46 @@ impl ReceivedArchiveSource {
     pub(crate) fn text(&self) -> &str {
         &self.0.text
     }
+    pub(crate) fn has_media(&self) -> bool {
+        self.0.attachment_body.is_some()
+    }
+    /// Raw native body only. The surrounding received envelope supplies origin
+    /// proof; this return value is neither an outgoing receipt nor child proof.
+    pub(crate) fn media_body(&self) -> Result<DecodedIdsAttachmentSource, Failure> {
+        decode_media_body(
+            self.0
+                .attachment_body
+                .as_deref()
+                .ok_or(Failure::UnsupportedMessage)?,
+        )
+    }
+    /// Reuse the descriptor-to-metadata codec, with direction and fixed times
+    /// supplied by this authenticated receive source rather than UI state.
+    /// A matching plaintext snapshot, child upload and exact record readback
+    /// are still required; this is not an upload receipt or retry grant.
+    pub(crate) fn media_upload_material(
+        &self,
+        original_attachment_guid: &str,
+    ) -> Result<crate::cloud_sync_ids_attachment_source::DecodedAttachmentUploadMaterial, Failure>
+    {
+        let time = i64::try_from(self.sent_timestamp())
+            .ok()
+            .and_then(|time| time.checked_sub(978_307_200_000))
+            .and_then(|time| time.checked_mul(1_000_000))
+            .filter(|time| *time > 0)
+            .ok_or(Failure::MalformedMessage)?;
+        let mut material =
+            crate::cloud_sync_ids_attachment_source::decoded_attachment_upload_material(
+                &self.media_body()?,
+                original_attachment_guid,
+                &crate::cloud_sync_ids_attachment_source::NativeAttachmentMetaTimes {
+                    start_date_ns: time,
+                    created_date_ns: time,
+                },
+            )?;
+        material.meta.is_outgoing = self.origin() == ReceivedArchiveOrigin::Mirrored;
+        Ok(material)
+    }
     pub(crate) fn origin(&self) -> ReceivedArchiveOrigin {
         self.0.origin
     }
@@ -321,8 +408,10 @@ impl ReceivedArchiveSource {
     /// identity replaces only the route field; it never becomes a direct peer.
     pub(crate) fn source_sha256(&self) -> Result<String, Failure> {
         let s = &self.0;
-        digest(&serde_json::json!([
-            if s.group_id.is_some() {
+        let mut fields = serde_json::json!([
+            if self.has_media() {
+                "cloud-sync-received-archive-source-v3"
+            } else if s.group_id.is_some() {
                 "cloud-sync-received-archive-source-v2"
             } else {
                 "cloud-sync-received-archive-source-v1"
@@ -338,8 +427,43 @@ impl ReceivedArchiveSource {
             s.participants,
             s.conversation_name.as_deref().unwrap_or(""),
             s.after_guid.as_deref().unwrap_or("")
-        ]))
+        ]);
+        if self.has_media() {
+            fields
+                .as_array_mut()
+                .ok_or(Failure::MalformedMessage)?
+                .push(media_manifest(&self.media_body()?));
+        }
+        digest(&fields)
     }
+}
+
+fn decode_media_body(encoded: &str) -> Result<DecodedIdsAttachmentSource, Failure> {
+    let bytes = URL_SAFE_NO_PAD
+        .decode(encoded)
+        .map_err(|_| Failure::MalformedMessage)?;
+    decode_ids_attachment_source(&bytes)
+}
+
+fn media_manifest(body: &DecodedIdsAttachmentSource) -> serde_json::Value {
+    serde_json::Value::Array(
+        body.parts
+            .iter()
+            .map(|part| match part {
+                DecodedPart::Text { text, idx } => serde_json::json!([0, text, idx]),
+                DecodedPart::Attachment(a) => serde_json::json!([
+                    1,
+                    a.part,
+                    a.uti_type,
+                    a.mime,
+                    a.name,
+                    a.iris,
+                    [a.key, a.signature, a.object, a.url, a.size],
+                    a.idx
+                ]),
+            })
+            .collect(),
+    )
 }
 
 fn dart_whitespace(c: char) -> bool {
@@ -497,6 +621,272 @@ pub(crate) mod tests {
     }
 
     const GROUP_ID: &str = "77777777-8888-4999-aaaa-bbbbbbbbbbbb";
+    pub(crate) fn media_fixture(mirrored: bool, group: bool) -> (MessageInst, Vec<String>) {
+        let (mut wire, handles) = fixture(mirrored, "caption");
+        if group {
+            let conversation = wire.conversation.as_mut().unwrap();
+            conversation.sender_guid = Some(GROUP_ID.into());
+            conversation.participants.push("tel:+15550000002".into());
+        }
+        let Message::Message(normal) = &mut wire.message else {
+            unreachable!()
+        };
+        normal.parts.0[0].idx = Some(0);
+        normal.parts.0.push(rustpush::IndexedMessagePart {
+            part: MessagePart::Attachment(rustpush::Attachment {
+                a_type: rustpush::AttachmentType::MMCS(rustpush::MMCSFile {
+                    key: vec![7; 32],
+                    signature: vec![9; 21],
+                    object: "object-media".into(),
+                    url: "https://example.invalid/mmcs/media".into(),
+                    size: 1234,
+                }),
+                part: 2,
+                uti_type: "public.heic".into(),
+                mime: "image/heic".into(),
+                name: "photo.heic".into(),
+                iris: false,
+            }),
+            idx: Some(7),
+            ext: None,
+        });
+        (wire, handles)
+    }
+
+    #[test]
+    fn received_media_v3_round_trip_preserves_full_body_and_both_routes_origins() {
+        for mirrored in [false, true] {
+            for group in [false, true] {
+                let (wire, handles) = media_fixture(mirrored, group);
+                let source = ReceivedArchiveSource::capture(&wire, &handles).unwrap();
+                let bytes = source.encode().unwrap();
+                let restored = ReceivedArchiveSource::decode(&bytes).unwrap();
+                assert_eq!(restored.encode().unwrap(), bytes);
+                assert_eq!(
+                    restored.source_sha256().unwrap(),
+                    source.source_sha256().unwrap()
+                );
+                assert!(restored.has_media());
+                assert_eq!(restored.text(), "caption ");
+                assert_eq!(
+                    restored.group_id(),
+                    if group { Some(GROUP_ID) } else { None }
+                );
+                let body = restored.media_body().unwrap();
+                assert_eq!(body.message_guid, wire.id);
+                assert_eq!(body.sender, wire.sender.as_deref().unwrap());
+                assert_eq!(body.attachments()[0].key, vec![7; 32]);
+                assert_eq!(body.attachments()[0].signature, vec![9; 21]);
+                assert_eq!(body.attachments()[0].idx, Some(7));
+                assert_eq!(body.attachments()[0].part, 2);
+                // The original outgoing entry point still refuses receive
+                // contexts, regardless of the shared body representation.
+                assert!(
+                    crate::cloud_sync_ids_attachment_source::encode_ids_attachment_source(
+                        &wire,
+                        &["received:0".into()]
+                    )
+                    .is_err()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn received_media_v3_descriptor_and_body_drift_changes_source_identity() {
+        let (wire, handles) = media_fixture(false, false);
+        let baseline = ReceivedArchiveSource::capture(&wire, &handles)
+            .unwrap()
+            .source_sha256()
+            .unwrap();
+        for mutate in [
+            (|a: &mut rustpush::Attachment| a.name = "other.heic".into())
+                as fn(&mut rustpush::Attachment),
+            |a| a.mime = "video/quicktime".into(),
+            |a| a.uti_type = "com.apple.quicktime-movie".into(),
+            |a| a.iris = true,
+            |a| a.part = 3,
+            |a| {
+                if let rustpush::AttachmentType::MMCS(d) = &mut a.a_type {
+                    d.key[0] ^= 1;
+                }
+            },
+            |a| {
+                if let rustpush::AttachmentType::MMCS(d) = &mut a.a_type {
+                    d.signature[0] ^= 1;
+                }
+            },
+            |a| {
+                if let rustpush::AttachmentType::MMCS(d) = &mut a.a_type {
+                    d.object.push('x');
+                }
+            },
+            |a| {
+                if let rustpush::AttachmentType::MMCS(d) = &mut a.a_type {
+                    d.url.push('x');
+                }
+            },
+            |a| {
+                if let rustpush::AttachmentType::MMCS(d) = &mut a.a_type {
+                    d.size += 1;
+                }
+            },
+        ] {
+            let mut changed = wire.clone();
+            let Message::Message(normal) = &mut changed.message else {
+                unreachable!()
+            };
+            let MessagePart::Attachment(attachment) = &mut normal.parts.0[1].part else {
+                unreachable!()
+            };
+            mutate(attachment);
+            assert_ne!(
+                ReceivedArchiveSource::capture(&changed, &handles)
+                    .unwrap()
+                    .source_sha256()
+                    .unwrap(),
+                baseline
+            );
+        }
+        for change_index in [false, true] {
+            let mut changed = wire.clone();
+            let Message::Message(normal) = &mut changed.message else {
+                unreachable!()
+            };
+            if change_index {
+                normal.parts.0[1].idx = Some(8);
+            } else {
+                normal.parts.0[0].part =
+                    MessagePart::Text("other caption".into(), Default::default());
+            }
+            assert_ne!(
+                ReceivedArchiveSource::capture(&changed, &handles)
+                    .unwrap()
+                    .source_sha256()
+                    .unwrap(),
+                baseline
+            );
+        }
+    }
+
+    #[test]
+    fn received_media_v3_digest_matches_the_cross_language_manifest_vector() {
+        let (wire, handles) = media_fixture(false, false);
+        let source = ReceivedArchiveSource::capture(&wire, &handles).unwrap();
+        assert_eq!(
+            source.source_sha256().unwrap(),
+            "052435798c9b6bd01034da39c11740f3fb69c3b3aeccb90e5bc2d6f8967357da"
+        );
+        // Appending the body manifest must not alter the stable GUID domain.
+        assert_eq!(
+            source.guid_hash().unwrap(),
+            "cd7c99cec32925c682dd556e85b3f86856765d9dadc8c3b5796f8f5f4deccf57"
+        );
+    }
+
+    #[test]
+    fn received_media_upload_material_keeps_immutable_direction_times_and_exact_descriptor() {
+        for mirrored in [false, true] {
+            let (wire, handles) = media_fixture(mirrored, false);
+            let source = ReceivedArchiveSource::capture(&wire, &handles).unwrap();
+            let material = source.media_upload_material("received:0").unwrap();
+            assert_eq!(material.meta.is_outgoing, mirrored);
+            assert_eq!(material.meta.start_date, 721_692_800_000_000_000);
+            assert_eq!(material.meta.guid, format!("at_7_{}", wire.id));
+            assert_eq!(material.meta.total_bytes, 1234);
+            assert_eq!(material.file.key, vec![7; 32]);
+            assert_eq!(material.file.signature, vec![9; 21]);
+            assert!(source.media_upload_material("unrelated-local-id").is_err());
+        }
+    }
+
+    #[test]
+    fn received_media_v3_refuses_wrong_context_and_unsupported_or_unbounded_descriptors() {
+        let (wire, handles) = media_fixture(false, false);
+        for mutate in [
+            (|m: &mut MessageInst| m.received_on_handle = None) as fn(&mut MessageInst),
+            |m| m.received_on_handle = Some("mailto:wrong@example.com".into()),
+            |m| m.verification_failed = true,
+            |m| m.target = Some(vec![MessageTarget::Uuid("outbound".into())]),
+        ] {
+            let mut changed = wire.clone();
+            mutate(&mut changed);
+            assert!(ReceivedArchiveSource::capture(&changed, &handles).is_err());
+        }
+        for mutate in [
+            (|a: &mut rustpush::Attachment| a.a_type = rustpush::AttachmentType::Inline(vec![1]))
+                as fn(&mut rustpush::Attachment),
+            |a| a.name.clear(),
+            |a| a.part = u64::MAX,
+            |a| {
+                if let rustpush::AttachmentType::MMCS(d) = &mut a.a_type {
+                    d.key.pop();
+                }
+            },
+            |a| {
+                if let rustpush::AttachmentType::MMCS(d) = &mut a.a_type {
+                    d.signature.pop();
+                }
+            },
+            |a| {
+                if let rustpush::AttachmentType::MMCS(d) = &mut a.a_type {
+                    d.object = "bad\nobject".into();
+                }
+            },
+            |a| {
+                if let rustpush::AttachmentType::MMCS(d) = &mut a.a_type {
+                    d.size = 8 * 1024 * 1024 * 1024 + 1;
+                }
+            },
+        ] {
+            let mut changed = wire.clone();
+            let Message::Message(normal) = &mut changed.message else {
+                unreachable!()
+            };
+            let MessagePart::Attachment(a) = &mut normal.parts.0[1].part else {
+                unreachable!()
+            };
+            mutate(a);
+            assert!(ReceivedArchiveSource::capture(&changed, &handles).is_err());
+        }
+    }
+
+    #[test]
+    fn received_media_v3_cannot_be_downgraded_or_rebound_to_a_different_outer_source() {
+        let (wire, handles) = media_fixture(false, false);
+        let source = ReceivedArchiveSource::capture(&wire, &handles).unwrap();
+        for mutate in [
+            (|s: &mut Source| s.version = 1) as fn(&mut Source),
+            |s| s.attachment_body = None,
+            |s| s.text = "caption only".into(),
+            |s| s.sender = "mailto:impostor@example.com".into(),
+            |s| s.guid = "other-guid".into(),
+            |s| s.sent_timestamp += 1,
+            |s| s.attachment_body = Some("not-a-body".into()),
+        ] {
+            let mut changed: Source = serde_json::from_slice(&source.encode().unwrap()).unwrap();
+            mutate(&mut changed);
+            assert!(ReceivedArchiveSource::decode(&serde_json::to_vec(&changed).unwrap()).is_err());
+        }
+    }
+
+    #[test]
+    fn received_media_v3_supports_media_only_and_opaque_auxiliary_parts_without_stripping() {
+        let (mut wire, handles) = media_fixture(false, false);
+        let Message::Message(normal) = &mut wire.message else {
+            unreachable!()
+        };
+        normal.parts.0.remove(0);
+        let MessagePart::Attachment(a) = &mut normal.parts.0[0].part else {
+            unreachable!()
+        };
+        a.iris = true;
+        let source = ReceivedArchiveSource::capture(&wire, &handles).unwrap();
+        assert_eq!(source.text(), " ");
+        let restored = ReceivedArchiveSource::decode(&source.encode().unwrap()).unwrap();
+        assert!(restored.media_body().unwrap().attachments()[0].iris);
+    }
+
     fn group_fixture(mirrored: bool) -> (MessageInst, Vec<String>) {
         let (mut wire, handles) = fixture(mirrored, "ordinary group text");
         let conversation = wire.conversation.as_mut().unwrap();

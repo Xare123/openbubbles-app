@@ -167,8 +167,33 @@ pub(crate) fn encode_ids_attachment_source(
 ) -> Result<Vec<u8>, Failure> {
     // Pre-send capture: pins the exact value passed, not wire proof.
     let dto = build_dto(msg, attachment_guids)?;
+    encode_body_dto(&dto)
+}
+
+/// Body codec only. The caller must retain this inside its independently
+/// authenticated received-source envelope. This is not an IDS send receipt
+/// and cannot replace the outgoing writer's native receipt validation.
+pub(crate) fn encode_received_attachment_body(msg: &MessageInst) -> Result<Vec<u8>, Failure> {
+    let Message::Message(normal) = &msg.message else {
+        return Err(Failure::UnsupportedMessage);
+    };
+    let count = normal
+        .parts
+        .0
+        .iter()
+        .filter(|p| matches!(&p.part, MessagePart::Attachment(_)))
+        .count();
+    // Opaque body-slot IDs, not local composer GUIDs or upload authority.
+    let guids = (0..count)
+        .map(|index| format!("received:{index}"))
+        .collect::<Vec<_>>();
+    let dto = build_body_dto(msg, &guids, BodyOrigin::Received)?;
+    encode_body_dto(&dto)
+}
+
+fn encode_body_dto(dto: &SourceDto) -> Result<Vec<u8>, Failure> {
     let mut plist_bytes = Vec::new();
-    plist::to_writer_binary(&mut plist_bytes, &dto).map_err(|_| Failure::MalformedMessage)?;
+    plist::to_writer_binary(&mut plist_bytes, dto).map_err(|_| Failure::MalformedMessage)?;
     if plist_bytes.is_empty() {
         return Err(Failure::MalformedMessage);
     }
@@ -744,7 +769,21 @@ fn decoded_from_dto(dto: SourceDto) -> Result<DecodedIdsAttachmentSource, Failur
         }),
     })
 }
+#[derive(Clone, Copy)]
+enum BodyOrigin {
+    Outgoing,
+    Received,
+}
+
 fn build_dto(msg: &MessageInst, attachment_guids: &[String]) -> Result<SourceDto, Failure> {
+    build_body_dto(msg, attachment_guids, BodyOrigin::Outgoing)
+}
+
+fn build_body_dto(
+    msg: &MessageInst,
+    attachment_guids: &[String],
+    origin: BodyOrigin,
+) -> Result<SourceDto, Failure> {
     validate_identifier(&msg.id)?;
     let sender = msg.sender.as_ref().ok_or(Failure::MalformedMessage)?;
     validate_identifier(sender)?;
@@ -753,11 +792,34 @@ fn build_dto(msg: &MessageInst, attachment_guids: &[String]) -> Result<SourceDto
     validate_optional_identifier(&conversation.cv_name)?;
     validate_optional_identifier(&conversation.sender_guid)?;
     validate_optional_identifier(&conversation.after_guid)?;
-    if msg.target.is_some() {
-        return Err(Failure::UnsupportedMessage);
-    }
-    if msg.certified_context.is_some() || msg.received_on_handle.is_some() {
-        return Err(Failure::UnsupportedMessage);
+    match origin {
+        BodyOrigin::Outgoing => {
+            if msg.target.is_some()
+                || msg.certified_context.is_some()
+                || msg.received_on_handle.is_some()
+            {
+                return Err(Failure::UnsupportedMessage);
+            }
+        }
+        BodyOrigin::Received => {
+            let recipient = msg
+                .received_on_handle
+                .as_deref()
+                .ok_or(Failure::BindingMismatch)?;
+            validate_identifier(recipient)?;
+            if let Some(targets) = &msg.target {
+                if !targets.is_empty()
+                    && !matches!(targets.as_slice(), [rustpush::MessageTarget::Token(token)] if token.len() == 32)
+                {
+                    return Err(Failure::UnsupportedMessage);
+                }
+            }
+            if let Some(certified) = &msg.certified_context {
+                if certified.sender != *sender || certified.target != recipient {
+                    return Err(Failure::BindingMismatch);
+                }
+            }
+        }
     }
     if msg.verification_failed {
         return Err(Failure::UnsupportedMessage);
@@ -772,7 +834,10 @@ fn build_dto(msg: &MessageInst, attachment_guids: &[String]) -> Result<SourceDto
         || normal.effect.is_some()
         || normal.reply_guid.is_some()
         || normal.reply_part.is_some()
-        || normal.subject.is_some()
+        || match origin {
+            BodyOrigin::Outgoing => normal.subject.is_some(),
+            BodyOrigin::Received => normal.subject.as_ref().is_some_and(|v| !v.is_empty()),
+        }
         || normal.app.is_some()
         || normal.link_meta.is_some()
         || normal.scheduled.is_some()
@@ -781,6 +846,9 @@ fn build_dto(msg: &MessageInst, attachment_guids: &[String]) -> Result<SourceDto
     }
     let embedded_profile = match &normal.embedded_profile {
         None => None,
+        Some(_) if matches!(origin, BodyOrigin::Received) => {
+            return Err(Failure::UnsupportedMessage)
+        }
         Some(profile) => Some(profile_dto(profile)?),
     };
     if normal.parts.0.is_empty() || normal.parts.0.len() > MAX_PARTS {

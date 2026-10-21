@@ -17,6 +17,16 @@ pub(crate) fn project_received_plain_text(
     source: &ReceivedArchiveSource,
     chat: &CloudCanonicalChatPayload,
 ) -> Result<CloudMessage, Failure> {
+    if source.has_media() {
+        return Err(Failure::UnsupportedMessage);
+    }
+    project_direct_headers(source, chat)
+}
+
+fn project_direct_headers(
+    source: &ReceivedArchiveSource,
+    chat: &CloudCanonicalChatPayload,
+) -> Result<CloudMessage, Failure> {
     if chat.service() != CloudCanonicalService::IMessage
         || chat.style() != CloudCanonicalChatStyle::Direct
         || source.group_id().is_some()
@@ -41,6 +51,16 @@ pub(crate) fn project_received_plain_text(
 /// Current members/title/sender preference cannot establish that relationship:
 /// a former participant's old message still keeps its original sender.
 pub(crate) fn project_received_group_plain_text(
+    source: &ReceivedArchiveSource,
+    chat: &CloudCanonicalChatPayload,
+) -> Result<CloudMessage, Failure> {
+    if source.has_media() {
+        return Err(Failure::UnsupportedMessage);
+    }
+    project_group_headers(source, chat)
+}
+
+fn project_group_headers(
     source: &ReceivedArchiveSource,
     chat: &CloudCanonicalChatPayload,
 ) -> Result<CloudMessage, Failure> {
@@ -77,6 +97,34 @@ pub(crate) fn project_received_archive_plain_text(
     } else {
         project_received_plain_text(source, chat)
     }
+}
+
+/// Reuse the exact existing body projector without converting received
+/// metadata into an outgoing receipt. The result supplies neither child upload
+/// proof nor permission to create a parent; callers must establish both.
+pub(crate) fn project_received_media(
+    source: &ReceivedArchiveSource,
+    chat: &CloudCanonicalChatPayload,
+) -> Result<
+    (
+        CloudMessage,
+        crate::cloud_sync_attachment_parent::ParentAttributedProjection,
+    ),
+    Failure,
+> {
+    if !source.has_media() {
+        return Err(Failure::UnsupportedMessage);
+    }
+    let mut message = if source.group_id().is_some() {
+        project_group_headers(source, chat)?
+    } else {
+        project_direct_headers(source, chat)?
+    };
+    let projection =
+        crate::cloud_sync_attachment_parent::project_parent_attributed_body(&source.media_body()?)?;
+    message.msg_proto.0.text = Some(projection.text.clone());
+    message.msg_proto.0.attributed_body = Some(projection.encoded_body.clone());
+    Ok((message, projection))
 }
 
 fn project_headers(
@@ -209,6 +257,82 @@ pub(crate) mod tests {
                 ReceivedRecordMatchVerdict::EquivalentSupportedPlainText
             );
         }
+    }
+    #[test]
+    fn received_media_uses_original_headers_and_shared_body_but_never_plain_text_authority() {
+        for mirrored in [false, true] {
+            for group in [false, true] {
+                let (wire, handles) =
+                    crate::cloud_sync_received_source::tests::media_fixture(mirrored, group);
+                let source = ReceivedArchiveSource::capture(&wire, &handles).unwrap();
+                let canonical = if group {
+                    group_parent(0, true)
+                } else {
+                    chat(
+                        "remote@example.com",
+                        CloudCanonicalChatStyle::Direct,
+                        "mailto:later-alias@example.com",
+                    )
+                };
+                assert!(project_received_archive_plain_text(&source, &canonical).is_err());
+                assert!(project_received_plain_text(&source, &canonical).is_err());
+                assert!(project_received_group_plain_text(&source, &canonical).is_err());
+                let (projected, body) = project_received_media(&source, &canonical).unwrap();
+                assert_eq!(projected.guid, wire.id);
+                assert_eq!(projected.destination_caller_id, "owner@example.com");
+                assert_eq!(
+                    projected.sender,
+                    if mirrored { "" } else { "remote@example.com" }
+                );
+                assert_eq!(projected.flags.contains(MessageFlags::IS_FROM_ME), mirrored);
+                assert_eq!(body.text, "caption ");
+                assert_eq!(body.links.len(), 1);
+                assert_eq!(body.links[0].original_guid, "received:0");
+                assert_eq!(body.links[0].apple_guid, format!("at_7_{}", wire.id));
+                body.validate_encoded_body(
+                    projected.msg_proto.0.attributed_body.as_deref().unwrap(),
+                )
+                .unwrap();
+                assert_ne!(
+                    compare_received_record(&projected, &projected),
+                    ReceivedRecordMatchVerdict::EquivalentSupportedPlainText
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn received_media_projection_cannot_guess_a_parent_or_lose_auxiliary_descriptors() {
+        let (mut wire, handles) =
+            crate::cloud_sync_received_source::tests::media_fixture(false, false);
+        let source = ReceivedArchiveSource::capture(&wire, &handles).unwrap();
+        assert!(project_received_media(
+            &source,
+            &chat(
+                "other@example.com",
+                CloudCanonicalChatStyle::Direct,
+                "owner@example.com"
+            )
+        )
+        .is_err());
+        if let rustpush::Message::Message(normal) = &mut wire.message {
+            if let rustpush::MessagePart::Attachment(a) = &mut normal.parts.0[1].part {
+                a.iris = true;
+            }
+        }
+        let source = ReceivedArchiveSource::capture(&wire, &handles).unwrap();
+        assert!(source.media_body().unwrap().attachments()[0].iris);
+        // The shared projector refuses an all-auxiliary body rather than
+        // stripping the attachment and treating a caption as complete media.
+        assert!(project_received_media(
+            &source,
+            &chat(
+                "remote@example.com",
+                CloudCanonicalChatStyle::Direct,
+                "owner@example.com"
+            )
+        )
+        .is_err());
     }
     #[test]
     fn unrelated_or_group_parent_is_not_guessed_from_title_or_current_sender() {

@@ -397,6 +397,52 @@ mod tests {
     }
 
     #[test]
+    fn received_media_seed_reopens_exact_body_only_after_owned_lease_commit() {
+        for mirrored in [false, true] {
+            for group in [false, true] {
+                let directory = tempfile::tempdir().unwrap();
+                let path = directory.path().to_path_buf();
+                let identity = crate::cloud_sync_protector::protected_store_identity(
+                    path.to_string_lossy().into_owned(),
+                )
+                .unwrap();
+                let (wire, handles) =
+                    crate::cloud_sync_received_source::tests::media_fixture(mirrored, group);
+                let seed = seal_received_archive_seed(
+                    path.clone(),
+                    "A".repeat(43),
+                    &identity,
+                    &wire,
+                    &handles,
+                )
+                .unwrap();
+                assert!(!seed.ciphertext.contains("photo.heic"));
+                assert!(!seed.ciphertext.contains("object-media"));
+                let stage =
+                    stage_received_archive_seed(path.clone(), "A".repeat(43), &identity, &seed)
+                        .unwrap();
+                assert!(
+                    open_received_archive_source(path.clone(), "A".repeat(43), &stage).is_err()
+                );
+                cloud_sync_commit_protected_page_lease(
+                    path.clone(),
+                    &stage.lease_reference,
+                    std::slice::from_ref(&stage.protected_reference),
+                )
+                .unwrap();
+                let opened =
+                    open_received_archive_source(path.clone(), "A".repeat(43), &stage).unwrap();
+                assert_eq!(opened.source_sha256().unwrap(), seed.source_sha256);
+                assert!(opened.has_media());
+                let body = opened.media_body().unwrap();
+                assert_eq!(body.attachments()[0].name, "photo.heic");
+                assert_eq!(body.attachments()[0].key, vec![7; 32]);
+                assert!(open_received_archive_source(path, "B".repeat(43), &stage).is_err());
+            }
+        }
+    }
+
+    #[test]
     fn seed_refuses_account_store_ciphertext_and_descriptor_substitution() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().to_path_buf();
