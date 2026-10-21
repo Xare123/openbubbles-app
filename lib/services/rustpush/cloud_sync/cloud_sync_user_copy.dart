@@ -83,6 +83,7 @@ bool cloudSyncUserCodeIsRelay(String? code) => code == _relayUnavailableCode;
 /// A previous sync task has not finished yet. The user waits, then retries.
 bool cloudSyncUserCodeIsBusy(String? code) => const {
   'cloud_sync_v2_pcs_preparation_active',
+  'cloud_sync_v2_pcs_status_busy',
   'cloud_sync_native_auth_refresh_writer_busy',
   'cloud_sync_semantic_drain_controller_active',
   'coordinator_active',

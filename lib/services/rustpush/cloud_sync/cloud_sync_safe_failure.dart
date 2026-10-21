@@ -694,6 +694,7 @@ const _cloudSyncV2SafeFailureCodes = <String>{
   'cloud_sync_v2_pcs_preparation_unavailable',
   'cloud_sync_v2_pcs_recovery_fetch_failed',
   'cloud_sync_v2_pcs_recovery_required',
+  'cloud_sync_v2_pcs_status_busy',
   'cloud_sync_v2_pcs_status_failed',
   'cloud_sync_v2_pcs_restart_required',
   'cloud_sync_v2_pcs_ui_required',
@@ -978,3 +979,10 @@ String cloudSyncV2SafeFailureCodeForCandidate(String? candidate) =>
     _cloudSyncV2SafeFailureCodes.contains(candidate)
     ? candidate!
     : 'cloud_sync_unknown_failure';
+
+/// Only this checked native probe owns these two fixed outcomes. Never infer
+/// lost trust or a retry permission from arbitrary native exception text.
+String cloudSyncV2CliqueStatusFailureForNativeCode(String? candidate) =>
+    candidate == 'cloud_sync_v2_pcs_status_busy'
+        ? 'cloud_sync_v2_pcs_status_busy'
+        : 'cloud_sync_v2_pcs_status_failed';

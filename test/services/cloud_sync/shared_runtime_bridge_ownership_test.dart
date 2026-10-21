@@ -94,6 +94,7 @@ class _Handle extends Fake
         ArcIdmsAuthListenerImpl,
         ArcMutexVecActiveCircleSessionImpl,
         ArcMutexOptionCircleClientSessionDefaultAnisetteProviderImpl,
+        ArcKeychainClientDefaultAnisetteProviderImpl,
         ArcCloudMessagesClientDefaultAnisetteProviderImpl {
   bool disposed = false;
   final moveModes = <bool?>[];
@@ -132,6 +133,21 @@ class _Encoder extends RustLibApiImpl {
 }
 
 void main() {
+  test('checked clique probe borrows the keychain across repeated bridge calls', () async {
+    final binding = _Binding();
+    addTearDown(binding.close);
+    final encoder = _Encoder(binding);
+    final keychain = _Handle();
+    for (var repeat = 0; repeat < 2; repeat++) {
+      await expectLater(encoder.crateApiApiCloudSyncCheckClique(keychain: keychain),
+        throwsA(isA<_EncodedOnly>()));
+      expect(keychain.isDisposed, isFalse);
+    }
+    expect(keychain.moveModes, [false, false]);
+    expect(binding.dispatched, 2);
+    expect(binding.allocations, isEmpty);
+  });
+
   const names = [
     'capture identity',
     'historical stage',

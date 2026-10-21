@@ -2591,6 +2591,13 @@ Future<bool> isInClique({
   required ArcKeychainClientDefaultAnisetteProvider keychain,
 }) => RustLib.instance.api.crateApiApiIsInClique(keychain: keychain);
 
+/// Checked CloudKit trust status. A writer pause or failed trust refresh is
+/// unavailable, never a conclusive false that could disable sync or start
+/// recovery. Keep the legacy API for unrelated consumers and binary history.
+Future<bool> cloudSyncCheckClique({
+  required ArcKeychainClientDefaultAnisetteProvider keychain,
+}) => RustLib.instance.api.crateApiApiCloudSyncCheckClique(keychain: keychain);
+
 Future<void> joinCliqueWithBottle({
   required ArcKeychainClientDefaultAnisetteProvider keychain,
   required EscrowData bottle,

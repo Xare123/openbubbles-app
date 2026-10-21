@@ -4493,8 +4493,8 @@ class RustPushService extends GetxService {
       now: DateTime.now().toUtc(),
     );
 
-    var isInClique = await api.isInClique(
-        keychain: pushService.state!.icloudServices!.keychain!);
+    final isInClique = await _checkCloudSyncCliqueStatus(
+        pushService.state!.icloudServices!.keychain!);
     if (!isInClique) {
       Logger.warn("Skipping sync because we are no longer in the clique!");
       ss.settings.cloudSyncingEnabled.value = false;
@@ -5931,16 +5931,14 @@ class RustPushService extends GetxService {
       return;
     }
     if (push is api.PushMessage_CircleFinishEvent) {
-      if (await api.isInClique(
-          keychain: pushService.state!.icloudServices!.keychain!)) {
-        cachedInClique = true;
-        // enable after battle testing
-
-        // Logger.info("Joined clique, enabling sync!");
-        // ss.settings.cloudSyncingEnabled.value = true;
-        // ss.settings.attachmentSyncEnabled.value = false;
-        // ss.saveSettings();
-        // pushService.doCloudKitSync();
+      try {
+        if (await _checkCloudSyncCliqueStatus(
+            pushService.state!.icloudServices!.keychain!)) {
+          cachedInClique = true;
+          // Trust confirmation alone never enables sync or uploads.
+        }
+      } catch (error) {
+        Logger.warn('iCloud trust status deferred code=${cloudSyncV2SafeFailureCode(error)}');
       }
       return;
     }
@@ -7432,9 +7430,28 @@ class RustPushService extends GetxService {
     return result;
   }
 
+  Future<bool> _checkCloudSyncCliqueStatus(
+    lib.ArcKeychainClientDefaultAnisetteProvider keychain,
+  ) async {
+    try {
+      return await api.cloudSyncCheckClique(keychain: keychain);
+    } catch (error) {
+      throw StateError(cloudSyncV2CliqueStatusFailureForNativeCode(
+        error is AnyhowException ? error.message : null,
+      ));
+    }
+  }
+
   Future<bool> checkClique() async {
-    var isInClique = await api.isInClique(
-        keychain: pushService.state!.icloudServices!.keychain!);
+    final checkedState = state;
+    final keychain = checkedState?.icloudServices?.keychain;
+    if (keychain == null) {
+      throw StateError('cloud_sync_v2_pcs_client_unavailable');
+    }
+    final isInClique = await _checkCloudSyncCliqueStatus(keychain);
+    if (!identical(state, checkedState)) {
+      throw StateError('cloud_sync_v2_pcs_account_changed');
+    }
     cachedInClique = isInClique;
     return isInClique;
   }
@@ -7972,7 +7989,7 @@ class RustPushService extends GetxService {
               passwords: passwords, conn: initializedState.conn),
       readClique: !initial || keychain == null
           ? null
-          : () => api.isInClique(keychain: keychain),
+          : () => _checkCloudSyncCliqueStatus(keychain),
       // The coordinator publishes only a timely result for this same state.
       // Timeout/error remains unknown and never overwrites a cached success.
       publishClique: (trusted) => cachedInClique = trusted,
@@ -10688,12 +10705,14 @@ class RustPushService extends GetxService {
     bool ready;
     try {
       ready = await awaitCloudSyncPcsOperation(
-        api.isInClique(keychain: keychain), _cloudSyncV2PcsOperationTimeout,
+        _checkCloudSyncCliqueStatus(keychain), _cloudSyncV2PcsOperationTimeout,
         poisonUntilProcessRestart: interlock.poisonUntilProcessRestart);
     } on CloudSyncPcsRestartRequired {
       rethrow;
-    } catch (_) {
-      throw StateError('cloud_sync_v2_pcs_status_failed');
+    } catch (error) {
+      throw StateError(cloudSyncV2CliqueStatusFailureForNativeCode(
+        cloudSyncV2SafeFailureCode(error),
+      ));
     }
     ensureAccountStillActive();
     if (ready) {
@@ -10766,12 +10785,14 @@ class RustPushService extends GetxService {
 
       try {
         ready = await awaitCloudSyncPcsOperation(
-          api.isInClique(keychain: keychain), _cloudSyncV2PcsOperationTimeout,
+          _checkCloudSyncCliqueStatus(keychain), _cloudSyncV2PcsOperationTimeout,
           poisonUntilProcessRestart: interlock.poisonUntilProcessRestart);
       } on CloudSyncPcsRestartRequired {
         rethrow;
-      } catch (_) {
-        throw StateError('cloud_sync_v2_pcs_status_failed');
+      } catch (error) {
+        throw StateError(cloudSyncV2CliqueStatusFailureForNativeCode(
+          cloudSyncV2SafeFailureCode(error),
+        ));
       }
       ensureAccountStillActive();
       if (!ready) {

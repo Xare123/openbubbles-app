@@ -670,6 +670,8 @@ void main() {
 
   test('exposes reviewed native auth codes', () {
     const codes = <String>{
+      'cloud_sync_v2_pcs_status_busy',
+      'cloud_sync_v2_pcs_status_failed',
       'cloud_sync_native_auth_account_fingerprint_failed',
       'cloud_sync_native_auth_account_changed',
       'cloud_sync_native_auth_account_unavailable',
@@ -707,6 +709,18 @@ void main() {
     };
     for (final code in codes) {
       expect(cloudSyncV2SafeFailureCode(StateError(code)), code);
+    }
+  });
+
+  test('checked trust status accepts exact busy only and hides all native detail', () {
+    expect(cloudSyncV2CliqueStatusFailureForNativeCode('cloud_sync_v2_pcs_status_busy'),
+      'cloud_sync_v2_pcs_status_busy');
+    for (final value in <String?>[
+      null, 'cloud_sync_v2_pcs_status_failed', 'private refresh failure',
+      'cloud_sync_v2_pcs_status_busy with private detail',
+    ]) {
+      expect(cloudSyncV2CliqueStatusFailureForNativeCode(value),
+        'cloud_sync_v2_pcs_status_failed');
     }
   });
 

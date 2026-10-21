@@ -191,7 +191,7 @@ void main() {
     expect(method, contains('_cloudSyncV2CanaryRuntimeAllowed'));
     expect(method, contains('_cloudSyncV2DeveloperRuntimeAllowed'));
     expect(method, contains('legacy_sync_active'));
-    expect(method, contains('.isInClique('));
+    expect(method, contains('_checkCloudSyncCliqueStatus('));
     expect(method, contains('.getBottles('));
     expect(method, contains('.joinCliqueWithBottle('));
     expect(method, contains('promptPassword('));

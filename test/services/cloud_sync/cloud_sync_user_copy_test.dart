@@ -19,6 +19,18 @@ CloudSyncUserNotice noticeFor({
 );
 
 void main() {
+  test('busy trust status asks to wait, not to repair sign-in or encryption', () {
+    final notice = noticeFor(
+      phase: CloudSyncProgressPhase.error,
+      safeFailure: 'cloud_sync_v2_pcs_status_busy',
+    );
+    expect(notice.state, CloudSyncUserState.runningElsewhere);
+    expect(notice.canStart, isTrue);
+    expect(cloudSyncUserCodeIsAuth('cloud_sync_v2_pcs_status_busy'), isFalse);
+    expect(cloudSyncUserCodeNeedsRestart('cloud_sync_v2_pcs_status_busy', false), isFalse);
+    expect(notice.action, contains('Start / resume'));
+  });
+
   test(
     'legacy conflict explains the existing mode without a permanent retry lock',
     () {
