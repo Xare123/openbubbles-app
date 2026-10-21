@@ -16,9 +16,13 @@ received-mutation codec and platform-encrypted inline seed. It reuses the existi
 seal API signature, not the outgoing receipt API. Distinct purpose and GUID/source
 domains prevent promotion into an original create or local-send confirmation.
 Both native account and registered-handle checks remain before synchronous sealing.
-One strict native39601015873/job119225221607 is running. Generated binding
-reproducibility, native compilation and app Rust tests have passed; dependency
-suites and postjobs are still pending. This is not Android or Apple proof.
+Sole strict native39601015873/job119225221607 passed14m14s:955appRust,
+449rustpush,16provider(1ignored/12filtered),40protector. Binding reproducibility,
+compilation and postjobs passed; all4new source/encryption regressions observed
+passing in saved logs. Artifact12345988596 is metadata-only because strict drift
+passed. This is not Android or Apple proof. Dart integrationbb1cea710 uses the
+identical native tree d6864d59b801cbfa198524f223bf577ce3fbe60c and unchanged bindings,
+locks and six recursive pins; no second native run is required for that follow-up.
 
 The pending Dart integration owns an encrypted event before ordinary reflection,
 including when its original target is missing. It reuses the existing incoming
