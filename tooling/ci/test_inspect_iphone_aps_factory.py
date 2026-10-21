@@ -6,6 +6,16 @@ import inspect_iphone_aps_factory as probe
 
 
 class APSFactoryGuards(unittest.TestCase):
+    def test_followup_targets_only_two_observed_blocks_not_original_factory(self):
+        self.assertEqual(probe.BLOCKS, {
+            "___29+[APSConnection copyIdentity]_block_invoke": 0x1a2f43848,
+            "___29+[APSConnection copyIdentity]_block_invoke.202": 0x1a2f43978,
+        })
+        self.assertEqual(probe.EXPECTED_CACHE_SHA256,
+            "feb18dafcc76f6583b68575b34414f233749100430608624336c7112fbab39d7")
+        with self.assertRaises(ValueError):
+            probe.factory_command(Path("ipsw"), Path("cache"), Path("owned"), "+[APSConnection copyIdentity]")
+
     def test_mode_is_explicit_and_excludes_old_analysis_and_writes(self):
         for env in ({}, {"NATIVE_APS_FACTORY_ANALYSIS": "false"},
                     {"NATIVE_APS_FACTORY_ANALYSIS": "True"},
@@ -17,9 +27,8 @@ class APSFactoryGuards(unittest.TestCase):
         probe.require_mode({"NATIVE_APS_FACTORY_ANALYSIS": "true"})
 
     def test_only_one_fixed_factory_not_whole_image_disassembly(self):
-        command = probe.factory_command(Path("ipsw"), Path("cache"), Path("owned"))
-        self.assertEqual(command, ["ipsw", "dyld", "disass", "cache", "--symbol",
-            "+[APSConnection copyIdentity]", "--symbol-image", probe.IMAGE,
+        command = probe.factory_command(Path("ipsw"), Path("cache"), Path("owned"), next(iter(probe.BLOCKS)))
+        self.assertEqual(command, ["ipsw", "dyld", "disass", "cache", "--vaddr", "0x1a2f43848",
             "--cache", str(Path("owned/aps-symbols.a2s"))])
         for flag in ("--image", "--force", "--dec", "--dylibs", "--quiet", "--json"):
             self.assertNotIn(flag, command)
@@ -35,25 +44,35 @@ class APSFactoryGuards(unittest.TestCase):
             probe.select_metadata(b"copyIdentity\n" * 25)
 
     def test_real_addressed_factory_required_not_declaration_or_text(self):
-        for raw in (b"", probe.SYMBOL.encode(), b"0x180001000: 00 00 80 d2 mov x0, #0",
-                    (probe.SYMBOL + "\n0x100000000: 00 00 80 d2 mov x0, #0").encode()):
+        symbol = next(iter(probe.BLOCKS))
+        for raw in (b"", symbol.encode(), b"0x180001000: 00 00 80 d2 mov x0, #0",
+                    (symbol + "\n0x100000000: 00 00 80 d2 mov x0, #0").encode()):
             with self.subTest(raw=raw), self.assertRaises(ValueError):
-                probe.parse_factory(raw)
+                probe.parse_factory(raw, symbol)
 
     def test_two_instruction_fixture_remains_static_not_runtime_proof(self):
-        result = probe.parse_factory((probe.SYMBOL + ":\n"
-            "0x180001000: 00 00 80 d2 mov x0, #0\n"
-            "0x180001004: c0 03 5f d6 ret\n").encode())
+        symbol = next(iter(probe.BLOCKS))
+        result = probe.parse_factory((symbol + ":\n"
+            "0x1a2f43848: 00 00 80 d2 mov x0, #0\n"
+            "0x1a2f4384c: c0 03 5f d6 ret\n").encode(), symbol)
         self.assertEqual(result["instruction_count"], 2)
         self.assertFalse(result["executed"])
         self.assertFalse(result["cause_of_runtime_null_proved"])
 
     def test_noncontiguous_duplicate_or_oversized_bodies_rejected(self):
-        for raw in ((probe.SYMBOL + "\n0x180001000: 00 00 80 d2 mov x0, #0\n"
-                     "0x180001008: c0 03 5f d6 ret").encode(),
+        symbol = next(iter(probe.BLOCKS))
+        for raw in ((symbol + "\n0x1a2f43848: 00 00 80 d2 mov x0, #0\n"
+                     "0x1a2f43850: c0 03 5f d6 ret").encode(),
                     b"x" * 300001):
             with self.subTest(size=len(raw)), self.assertRaises(ValueError):
-                probe.parse_factory(raw)
+                probe.parse_factory(raw, symbol)
+
+    def test_other_block_name_or_wrong_entry_rejected(self):
+        symbol = next(iter(probe.BLOCKS))
+        with self.assertRaises(ValueError):
+            probe.parse_factory(b"0x1a2f43848: c0 03 5f d6 ret", "some-other-function")
+        with self.assertRaises(ValueError):
+            probe.parse_factory(b"0x1a2f43978: c0 03 5f d6 ret", symbol)
 
     def test_owns_readonly_mount_and_complete_cleanup_without_native_execution(self):
         source = inspect.getsource(probe.inspect_on_mac)

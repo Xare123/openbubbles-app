@@ -18,7 +18,13 @@ import time
 import inspect_iphone_activation_native as owned
 
 IMAGE = "/System/Library/PrivateFrameworks/ApplePushService.framework/ApplePushService"
-SYMBOL = "+[APSConnection copyIdentity]"
+ORIGINAL_FACTORY = "+[APSConnection copyIdentity]"
+# Observed as addressed block pointers in run39524670643, not guessed selectors.
+BLOCKS = {
+    "___29+[APSConnection copyIdentity]_block_invoke": 0x1a2f43848,
+    "___29+[APSConnection copyIdentity]_block_invoke.202": 0x1a2f43978,
+}
+EXPECTED_CACHE_SHA256 = "feb18dafcc76f6583b68575b34414f233749100430608624336c7112fbab39d7"
 CACHE_PATHS = (
     "System/Library/Caches/com.apple.dyld/dyld_shared_cache_arm64",
     "System/Library/dyld/dyld_shared_cache_arm64",
@@ -37,11 +43,13 @@ def metadata_command(tool, cache):
     return [str(tool), "dyld", "macho", str(cache), IMAGE, "--objc"]
 
 
-def factory_command(tool, cache, work):
-    # v3.1.739 declares --image mutually exclusive with --symbol. Use the
-    # independently verified --symbol-image flag and a writable OWNED a2s path.
-    return [str(tool), "dyld", "disass", str(cache), "--symbol", SYMBOL,
-            "--symbol-image", IMAGE, "--cache", str(work / "aps-symbols.a2s")]
+def factory_command(tool, cache, work, symbol):
+    if symbol not in BLOCKS:
+        raise ValueError("only-observed-aps-factory-blocks-permitted")
+    # Only previously observed addresses after exact cache hash equality. This
+    # avoids guessing local-symbol spellings or repeating the factory body.
+    return [str(tool), "dyld", "disass", str(cache), "--vaddr", hex(BLOCKS[symbol]),
+            "--cache", str(work / "aps-symbols.a2s")]
 
 
 def select_metadata(raw):
@@ -56,12 +64,12 @@ def select_metadata(raw):
     return selected
 
 
-def parse_factory(raw):
+def parse_factory(raw, symbol):
+    if symbol not in BLOCKS:
+        raise ValueError("only-observed-aps-factory-blocks-permitted")
     if len(raw) > 300000:
         raise ValueError("aps-factory-output-limit")
     text = owned.ANSI_SEQUENCE.sub("", raw.decode("utf-8"))
-    if SYMBOL not in text:
-        raise ValueError("exact-factory-symbol-not-observed")
     rows = []
     for line in text.splitlines():
         match = owned.INSTRUCTION_LINE.fullmatch(line)
@@ -74,9 +82,11 @@ def parse_factory(raw):
                          "mnemonic": match[3], "operands": match[4]})
     if not 1 <= len(rows) <= 1024:
         raise ValueError("bounded-aps-factory-instructions-required")
+    if int(rows[0]["address"], 16) != BLOCKS[symbol]:
+        raise ValueError("observed-block-entry-required")
     if any(int(b["address"], 16) != int(a["address"], 16) + 4 for a, b in zip(rows, rows[1:])):
         raise ValueError("contiguous-single-factory-required")
-    return {"symbol": SYMBOL, "instruction_count": len(rows), "instructions": rows,
+    return {"symbol_from_prior_reference": symbol, "instruction_count": len(rows), "instructions": rows,
             "executed": False, "cause_of_runtime_null_proved": False}
 
 
@@ -92,6 +102,8 @@ def cache_identity(cache, mount):
         digest.update(header)
         while block := stream.read(1024 * 1024):
             digest.update(block)
+    if digest.hexdigest() != EXPECTED_CACHE_SHA256:
+        raise ValueError("previously-observed-aps-cache-mismatch")
     return {"sha256": digest.hexdigest(), "bytes": cache.stat().st_size,
             "architecture": "arm64", "full_firmware_checksum_verified": False}
 
@@ -107,7 +119,8 @@ def inspect_on_mac(out):
     (work / "tmp").mkdir()
     report = {"schema": 1, "status": "failed", "source_sha": os.environ.get("GITHUB_SHA"),
               "firmware": owned.FIRMWARE, "expected_version": "15.7.9", "expected_build": "19H365",
-              "image": IMAGE, "symbol": SYMBOL, "accounts": 0, "activation_requests": 0,
+              "image": IMAGE, "targets": list(BLOCKS), "previous_factory_body_not_repeated": True,
+              "prior_factory_run": 39524670643, "accounts": 0, "activation_requests": 0,
               "phone_operations": 0, "native_private_keys_read": False, "binary_artifact_retained": False,
               "runtime_null_cause_or_access_proved": False, "entitlements_changed": False}
     start = time.monotonic()
@@ -139,20 +152,23 @@ def inspect_on_mac(out):
         report["cache"] = cache_identity(cache, mount)
         _, metadata, _ = owned.run_owned(metadata_command(tool, cache), work, "aps-objc", 180)
         report["selected_objc_metadata"] = select_metadata(metadata)
-        code, assembly, error = owned.run_owned(factory_command(tool, cache, work), work, "aps-factory", 180, check=False)
-        report["factory_disassembly_exit"] = code
-        report["factory_disassembly_stdout_bytes"] = len(assembly)
-        report["factory_disassembly_stdout_sha256"] = hashlib.sha256(assembly).hexdigest()
-        if code != 0:
-            # Only public-tool bounded diagnostics. No raw binary or dylib export.
-            raise owned.CommandFailure("aps-factory", code, error)
-        try:
-            report["factory"] = parse_factory(assembly)
-        except ValueError:
-            # A bounded public-code format diagnostic, not the whole framework.
-            report["factory_output_preview"] = [line[:400] for line in
-                owned.ANSI_SEQUENCE.sub("", assembly.decode(errors="replace")).splitlines()[:24]]
-            raise
+        report["blocks"] = []
+        for index, symbol in enumerate(BLOCKS):
+            entry = {"symbol_from_prior_reference": symbol}
+            report["blocks"].append(entry)
+            code, assembly, error = owned.run_owned(factory_command(tool, cache, work, symbol),
+                work, f"aps-block-{index}", 180, check=False)
+            entry["disassembly_exit"] = code
+            entry["stdout_bytes"] = len(assembly)
+            entry["stdout_sha256"] = hashlib.sha256(assembly).hexdigest()
+            if code != 0:
+                raise owned.CommandFailure(f"aps-block-{index}", code, error)
+            try:
+                entry["code"] = parse_factory(assembly, symbol)
+            except ValueError:
+                entry["public_output_preview"] = [line[:400] for line in
+                    owned.ANSI_SEQUENCE.sub("", assembly.decode(errors="replace")).splitlines()[:24]]
+                raise
         report["status"] = "aps-factory-static-inspection-completed"
     except Exception as error:
         report["error_type"] = type(error).__name__
