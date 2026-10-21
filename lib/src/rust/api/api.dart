@@ -246,6 +246,21 @@ cloudSyncStageReceivedArchiveSeed({
   seed: seed,
 );
 
+/// Reopen the captured source after restart using the actual persisted native
+/// account composition. This local-only operation performs no CloudKit warm,
+/// registration, IDS send or upload. A restart must never claim live receipt.
+Future<CloudSyncRestoredReceivedMutation> cloudSyncRestoreReceivedMutationSeed({
+  required ArcCloudMessagesClientDefaultAnisetteProvider cloudMessagesClient,
+  required String storageDirectory,
+  required CloudSyncNativeAuthMetadata expectedAuth,
+  required CloudSyncNativeReceivedArchiveSeed seed,
+}) => RustLib.instance.api.crateApiApiCloudSyncRestoreReceivedMutationSeed(
+  cloudMessagesClient: cloudMessagesClient,
+  storageDirectory: storageDirectory,
+  expectedAuth: expectedAuth,
+  seed: seed,
+);
+
 /// Metadata-only peek for the adapter to route a fresh Found back to normal
 /// projection instead of repeatedly treating its older cached Absent as current.
 Future<CloudSyncReceivedRecordDisposition>
@@ -5872,6 +5887,52 @@ class CloudSyncReceivedRecordObservation {
           protectedRawRecordLeaseReference ==
               other.protectedRawRecordLeaseReference &&
           rawGeneration == other.rawGeneration;
+}
+
+/// Typed local recovery of an already encrypted receive, not a new live IDS
+/// observation, send receipt or remote update permit. No device reply token,
+/// receipt or caller-selected replacement body is restored.
+class CloudSyncRestoredReceivedMutation {
+  final String accountFingerprint;
+  final String protectedStoreIdentity;
+  final String mutationGuidHash;
+  final String targetGuidHash;
+  final String sourceSha256;
+  final List<String> capturedLocalHandles;
+  final MessageInst message;
+
+  const CloudSyncRestoredReceivedMutation({
+    required this.accountFingerprint,
+    required this.protectedStoreIdentity,
+    required this.mutationGuidHash,
+    required this.targetGuidHash,
+    required this.sourceSha256,
+    required this.capturedLocalHandles,
+    required this.message,
+  });
+
+  @override
+  int get hashCode =>
+      accountFingerprint.hashCode ^
+      protectedStoreIdentity.hashCode ^
+      mutationGuidHash.hashCode ^
+      targetGuidHash.hashCode ^
+      sourceSha256.hashCode ^
+      capturedLocalHandles.hashCode ^
+      message.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is CloudSyncRestoredReceivedMutation &&
+          runtimeType == other.runtimeType &&
+          accountFingerprint == other.accountFingerprint &&
+          protectedStoreIdentity == other.protectedStoreIdentity &&
+          mutationGuidHash == other.mutationGuidHash &&
+          targetGuidHash == other.targetGuidHash &&
+          sourceSha256 == other.sourceSha256 &&
+          capturedLocalHandles == other.capturedLocalHandles &&
+          message == other.message;
 }
 
 enum CloudSyncTransientAssociationKind {

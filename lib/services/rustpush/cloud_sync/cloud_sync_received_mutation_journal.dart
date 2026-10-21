@@ -122,18 +122,36 @@ final class CloudSyncReceivedMutationJournal {
     required CloudSyncNativeAuthSnapshot currentAuth,
     int afterId = 0,
     int limit = 20,
+    bool onlyPendingReflection = false,
+    int? maximumIntentId,
   }) => _store.runInTransaction(TxMode.read, () {
     _requireCurrent(currentAuth, () => true);
-    if (limit < 1 || limit > 50 || afterId < 0) _fail('limit_invalid');
+    if (limit < 1 ||
+        limit > 50 ||
+        afterId < 0 ||
+        (maximumIntentId != null && maximumIntentId < 0)) {
+      _fail('limit_invalid');
+    }
+    var condition = CloudSyncReceivedMutationIntentEntity_.accountFingerprint
+        .equals(currentAuth.accountFingerprint)
+        .and(
+          CloudSyncReceivedMutationIntentEntity_.ownershipEpoch.equals(
+            _owner.automaticArchiveEpoch,
+          ),
+        )
+        .and(CloudSyncReceivedMutationIntentEntity_.id.greaterThan(afterId));
+    if (onlyPendingReflection) {
+      condition = condition.and(
+        CloudSyncReceivedMutationIntentEntity_.state.equals(0),
+      );
+    }
+    if (maximumIntentId != null) {
+      condition = condition.and(
+        CloudSyncReceivedMutationIntentEntity_.id.lessOrEqual(maximumIntentId),
+      );
+    }
     final query = (_store.box<CloudSyncReceivedMutationIntentEntity>().query(
-      CloudSyncReceivedMutationIntentEntity_.accountFingerprint
-          .equals(currentAuth.accountFingerprint)
-          .and(
-            CloudSyncReceivedMutationIntentEntity_.ownershipEpoch.equals(
-              _owner.automaticArchiveEpoch,
-            ),
-          )
-          .and(CloudSyncReceivedMutationIntentEntity_.id.greaterThan(afterId)),
+      condition,
     )..order(CloudSyncReceivedMutationIntentEntity_.id)).build()..limit = limit;
     try {
       final rows = query.find();
@@ -141,6 +159,31 @@ final class CloudSyncReceivedMutationJournal {
         _validateRow(row, currentAuth);
       }
       return rows;
+    } finally {
+      query.close();
+    }
+  });
+
+  int captureReadHighWatermark({
+    required CloudSyncNativeAuthSnapshot currentAuth,
+  }) => _store.runInTransaction(TxMode.read, () {
+    _requireCurrent(currentAuth, () => true);
+    final query =
+        (_store.box<CloudSyncReceivedMutationIntentEntity>().query(
+              CloudSyncReceivedMutationIntentEntity_.accountFingerprint
+                  .equals(currentAuth.accountFingerprint)
+                  .and(
+                    CloudSyncReceivedMutationIntentEntity_.ownershipEpoch
+                        .equals(_owner.automaticArchiveEpoch),
+                  ),
+            )..order(
+              CloudSyncReceivedMutationIntentEntity_.id,
+              flags: Order.descending,
+            ))
+            .build()
+          ..limit = 1;
+    try {
+      return query.findFirst()?.id ?? 0;
     } finally {
       query.close();
     }
@@ -167,15 +210,73 @@ final class CloudSyncReceivedMutationJournal {
     required String expectedBeforeSnapshot,
     required Message reflected,
     required DateTime now,
+  }) => _commitReflection(
+    intentId: intentId,
+    wire: wire,
+    currentAuth: currentAuth,
+    stillCurrent: stillCurrent,
+    expectedBeforeSnapshot: expectedBeforeSnapshot,
+    reflected: reflected,
+    now: now,
+    capturedLocalHandles: liveContext.observedLocalHandles,
+    identify: (row) => CloudSyncReceivedMutationIdentity.captureWire(
+      wire,
+      liveContext: liveContext,
+      expectedSourceSha256: row.sourceSha256,
+    ),
+  );
+
+  /// Local crash recovery only. A native-restored event is not a new live
+  /// receive. It must match the first retained source and current account/store.
+  Message commitReplayedReflection({
+    required int intentId,
+    required api.CloudSyncRestoredReceivedMutation restored,
+    required CloudSyncNativeAuthSnapshot currentAuth,
+    required bool Function() stillCurrent,
+    required String expectedBeforeSnapshot,
+    required Message reflected,
+    required DateTime now,
+  }) {
+    if (restored.accountFingerprint != currentAuth.accountFingerprint ||
+        restored.protectedStoreIdentity != currentAuth.protectedStoreIdentity) {
+      _fail('source_changed');
+    }
+    return _commitReflection(
+      intentId: intentId,
+      wire: restored.message,
+      currentAuth: currentAuth,
+      stillCurrent: stillCurrent,
+      expectedBeforeSnapshot: expectedBeforeSnapshot,
+      reflected: reflected,
+      now: now,
+      capturedLocalHandles: restored.capturedLocalHandles,
+      identify: (row) => CloudSyncReceivedMutationIdentity.restoreNative(
+        restored,
+        expectedGuidHash: row.mutationGuidHash,
+        expectedTargetGuidHash: row.targetGuidHash,
+        expectedSourceSha256: row.sourceSha256,
+      ),
+    );
+  }
+
+  Message _commitReflection({
+    required int intentId,
+    required api.MessageInst wire,
+    required CloudSyncNativeAuthSnapshot currentAuth,
+    required bool Function() stillCurrent,
+    required String expectedBeforeSnapshot,
+    required Message reflected,
+    required DateTime now,
+    required List<String> capturedLocalHandles,
+    required CloudSyncReceivedMutationIdentity? Function(
+      CloudSyncReceivedMutationIntentEntity,
+    )
+    identify,
   }) => _store.runInTransaction(TxMode.write, () {
     _requireCurrent(currentAuth, stillCurrent);
     final row = _read(intentId);
     _validateRow(row, currentAuth);
-    final identity = CloudSyncReceivedMutationIdentity.captureWire(
-      wire,
-      liveContext: liveContext,
-      expectedSourceSha256: row.sourceSha256,
-    );
+    final identity = identify(row);
     if (identity == null || identity.guidHash != row.mutationGuidHash) {
       _fail('source_changed');
     }
@@ -194,7 +295,7 @@ final class CloudSyncReceivedMutationJournal {
       _fail('target_missing');
     }
     if (row.state >= 1) return target;
-    _requireTargetAuthor(target, wire, identity, liveContext);
+    _requireTargetAuthor(target, wire, identity, capturedLocalHandles);
     if (snapshot(target) != expectedBeforeSnapshot ||
         reflected.id != target.id ||
         reflected.chat.targetId != target.chat.targetId ||
@@ -288,7 +389,7 @@ final class CloudSyncReceivedMutationJournal {
     Message target,
     api.MessageInst wire,
     CloudSyncReceivedMutationIdentity identity,
-    CloudSyncReceivedArchiveLiveContext liveContext,
+    List<String> capturedLocalHandles,
   ) {
     final chat = _store.box<Chat>().get(target.chat.targetId);
     if (chat == null ||
@@ -317,7 +418,7 @@ final class CloudSyncReceivedMutationJournal {
     }
     if (chat.style == 45) {
       final peers = wire.conversation!.participants
-          .where((h) => !liveContext.observedLocalHandles.contains(h))
+          .where((h) => !capturedLocalHandles.contains(h))
           .map(_bare)
           .toSet();
       if (peers.length != 1 ||

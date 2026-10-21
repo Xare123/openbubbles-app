@@ -2541,6 +2541,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   dco_decode_cloud_sync_received_record_observation(dynamic raw);
 
   @protected
+  CloudSyncRestoredReceivedMutation
+  dco_decode_cloud_sync_restored_received_mutation(dynamic raw);
+
+  @protected
   CloudSyncStagedChatIdentityCandidate
   dco_decode_cloud_sync_staged_chat_identity_candidate(dynamic raw);
 
@@ -6773,6 +6777,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   CloudSyncReceivedRecordObservation
   sse_decode_cloud_sync_received_record_observation(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  CloudSyncRestoredReceivedMutation
+  sse_decode_cloud_sync_restored_received_mutation(
     SseDeserializer deserializer,
   );
 
@@ -11739,6 +11749,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_cloud_sync_received_record_observation(
     CloudSyncReceivedRecordObservation self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_cloud_sync_restored_received_mutation(
+    CloudSyncRestoredReceivedMutation self,
     SseSerializer serializer,
   );
 

@@ -55,6 +55,7 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_received_del
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_received_source_runtime.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_received_mutation_identity.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_received_mutation_journal.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_received_mutation_replay.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_received_mutation_source_binding.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_received_inspection_adapter.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_received_discovery_retain_adapter.dart';
@@ -8251,6 +8252,9 @@ class RustPushService extends GetxService {
   String? _cloudSyncV2ReceivedCursor;
   int? _cloudSyncV2ReceivedRoundCeiling;
   bool _cloudSyncV2ReceivedPassDeferred = false;
+  int _cloudSyncV2ReceivedMutationCursor = 0;
+  int? _cloudSyncV2ReceivedMutationRoundCeiling;
+  bool _cloudSyncV2ReceivedMutationPassDeferred = false;
   final _cloudSyncV2AndroidBackgroundRegistration = CloudSyncBackgroundRegistration();
   bool get _cloudSyncV2AndroidBackgroundRegistered =>
       _cloudSyncV2AndroidBackgroundRegistration.registered;
@@ -8966,6 +8970,7 @@ class RustPushService extends GetxService {
         eventDispatcher.emit('message-updated-${saved.guid}');
       }));
       await completion.future;
+      _queueCloudSyncV2ReceivedSources(CloudSyncTrigger.localOutbox);
       return true;
     } catch (error) {
       if (!identityCurrent()) rethrow;
@@ -9042,6 +9047,9 @@ class RustPushService extends GetxService {
       onError: (error, _) {
         _cloudSyncV2ReceivedCursor = null;
         _cloudSyncV2ReceivedRoundCeiling = null;
+        _cloudSyncV2ReceivedMutationCursor = 0;
+        _cloudSyncV2ReceivedMutationRoundCeiling = null;
+        _cloudSyncV2ReceivedMutationPassDeferred = false;
         Logger.warn('Cloud Sync V2 received source retry deferred code=${cloudSyncV2SafeFailureCode(error)}');
       });
     _cloudSyncV2ReceivedRuntime!.request(trigger);
@@ -9099,6 +9107,40 @@ class RustPushService extends GetxService {
     }
     var materialized = 0;
     try {
+      final mutations = CloudSyncReceivedMutationJournal(store: objectBox, authority: authority, owner: owner);
+      _cloudSyncV2ReceivedMutationRoundCeiling ??= mutations.captureReadHighWatermark(currentAuth: captured);
+      final mutationReplay = await CloudSyncReceivedMutationReplay(
+        journal: mutations, currentAuth: captured, stillCurrent: stillCurrent, validateIdentity: validate,
+        restoreNative: (source) => api.cloudSyncRestoreReceivedMutationSeed(cloudMessagesClient: client,
+          storageDirectory: storagePath, expectedAuth: metadata,
+          seed: api.CloudSyncNativeReceivedArchiveSeed(accountFingerprint: source.accountFingerprint,
+            protectedStoreIdentity: source.protectedStoreIdentity, messageGuidHash: source.mutationGuidHash,
+            sourceSha256: source.sourceSha256, ciphertext: source.ciphertext)),
+        enqueueLocal: (process) async {
+          final completion = Completer<void>();
+          await inq.queue(IncomingReceivedMutationItem(completer: completion, process: process));
+          await completion.future;
+        },
+        readTarget: (guid) => Message.findOne(guid: guid),
+        reflect: pushService.reflectMessageDyn,
+        onReflected: (saved) {
+          final chat = saved.chat.target;
+          if (chat != null) ah.refreshActiveMessage(chat, saved);
+          eventDispatcher.emit('message-updated-${saved.guid}');
+        },
+        onDeferred: (error) => Logger.warn('Cloud Sync V2 received mutation replay retained code=${cloudSyncV2SafeFailureCode(error)}'),
+      ).runPage(afterId: _cloudSyncV2ReceivedMutationCursor,
+        maximumIntentId: _cloudSyncV2ReceivedMutationRoundCeiling!);
+      _cloudSyncV2ReceivedMutationCursor = mutationReplay.nextId;
+      _cloudSyncV2ReceivedMutationPassDeferred |= mutationReplay.deferred;
+      final mutationDeferred = _cloudSyncV2ReceivedMutationPassDeferred;
+      final hasNewMutations = mutationReplay.exhausted &&
+        mutations.captureReadHighWatermark(currentAuth: captured) > _cloudSyncV2ReceivedMutationRoundCeiling!;
+      if (mutationReplay.exhausted) {
+        _cloudSyncV2ReceivedMutationCursor = 0;
+        _cloudSyncV2ReceivedMutationRoundCeiling = null;
+        _cloudSyncV2ReceivedMutationPassDeferred = false;
+      }
       for (final intent in page.ready) {
         await validate();
         try {
@@ -9271,8 +9313,9 @@ class RustPushService extends GetxService {
         _cloudSyncV2ReceivedRoundCeiling = null;
       }
       if (materialized > 0) Logger.info('Cloud Sync V2 received source pass localReady=$materialized');
-      return (more: !page.exhausted || ((hasNewCaptures || foundRemaining) && !deferred),
-          deferred: deferred || hasNewCaptures || foundRemaining);
+      return (more: !page.exhausted || !mutationReplay.exhausted ||
+          ((hasNewCaptures || foundRemaining || hasNewMutations) && !deferred && !mutationDeferred),
+          deferred: deferred || mutationDeferred || hasNewCaptures || hasNewMutations || foundRemaining);
     } finally {
       await transport.quiesceNativeOperations();
     }
@@ -12704,6 +12747,9 @@ class RustPushService extends GetxService {
         _cloudSyncV2ReceivedRoundCeiling = null;
         _cloudSyncV2ReceivedPassDeferred = false;
         await _drainCloudSyncV2ReceivedCaptures().timeout(_cloudSyncV2OutboundQuiescenceTimeout);
+        _cloudSyncV2ReceivedMutationCursor = 0;
+        _cloudSyncV2ReceivedMutationRoundCeiling = null;
+        _cloudSyncV2ReceivedMutationPassDeferred = false;
       } on TimeoutException {
         throw StateError('cloud_sync_received_archive_quiescence_timeout');
       }

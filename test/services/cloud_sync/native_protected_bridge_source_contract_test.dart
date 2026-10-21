@@ -579,6 +579,34 @@ void main() {
     }
   });
 
+  test('retained mutation replay uses native ownership and the existing queue without live provenance', () {
+    final native = File('rust/src/api/api.rs').readAsStringSync();
+    final restore = _section(native, 'pub async fn cloud_sync_restore_received_mutation_seed(',
+        'fn cloud_sync_restore_received_mutation_seed_bound(');
+    final before = restore.indexOf('cloud_sync_require_received_auth(&expected_auth, &before)?');
+    final opened = restore.indexOf('cloud_sync_restore_received_mutation_seed_bound(');
+    final after = restore.indexOf('cloud_sync_require_received_auth(&before, &after)?');
+    expect(before, greaterThanOrEqualTo(0));
+    expect(opened, greaterThan(before));
+    expect(after, greaterThan(opened));
+    expect(restore.indexOf('Ok(restored)'), greaterThan(after));
+    final service = File('lib/services/rustpush/rustpush_service.dart').readAsStringSync();
+    final worker = _section(service, 'Future<({bool more, bool deferred})> _materializeCloudSyncV2ReceivedSources()',
+        'Future<Message> _captureCloudSyncV2ReceivedMessage(');
+    expect(worker, contains('CloudSyncReceivedMutationReplay('));
+    expect(worker, contains('api.cloudSyncRestoreReceivedMutationSeed('));
+    expect(worker, contains('inq.queue(IncomingReceivedMutationItem('));
+    expect(worker, contains('maximumIntentId: _cloudSyncV2ReceivedMutationRoundCeiling!'));
+    final replay = File('lib/services/rustpush/cloud_sync/cloud_sync_received_mutation_replay.dart').readAsStringSync();
+    expect(replay, contains('journal.commitReplayedReflection('));
+    expect(replay, contains('await enqueueLocal('));
+    expect(replay, contains('onlyPendingReflection: true'));
+    for (final forbidden in ['observedViaLiveReceive: true', 'api.sendMessage(',
+      'CloudSyncReceivedSourceRuntime(', 'Timer(', 'stageMessageUpdate(', 'admitProtectedLocalMutationUpdate(']) {
+      expect(replay, isNot(contains(forbidden)));
+    }
+  });
+
   test('Profile received scope reaches existing workers without developer-mode consent inheritance', () {
     final service = File('lib/services/rustpush/rustpush_service.dart').readAsStringSync();
     final profile = _section(service, 'bool get cloudSyncV2ReceivedArchiveAvailable',

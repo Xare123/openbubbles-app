@@ -52,11 +52,53 @@ final class CloudSyncReceivedMutationIdentity {
     required CloudSyncReceivedArchiveLiveContext liveContext,
     String? expectedSourceSha256,
   }) {
-    final localHandles = liveContext.observedLocalHandles;
-    final recipient = liveContext.receivedOnHandle;
+    if (!liveContext.observedViaLiveReceive) return null;
+    return _identifyWire(
+      wire,
+      localHandles: liveContext.observedLocalHandles,
+      recipient: liveContext.receivedOnHandle,
+      expectedSourceSha256: expectedSourceSha256,
+    );
+  }
+
+  /// Revalidate the typed result of native seed reopening. This does not claim
+  /// another live receive or confer native authority. Account/store ownership
+  /// remains the journal's responsibility. A remote updater must separately
+  /// reopen the encrypted source and prove the decrypted original author.
+  static CloudSyncReceivedMutationIdentity? restoreNative(
+    api.CloudSyncRestoredReceivedMutation restored, {
+    required String expectedGuidHash,
+    required String expectedTargetGuidHash,
+    required String expectedSourceSha256,
+  }) {
+    final recipient = restored.message.receivedOnHandle;
+    if (recipient == null ||
+        restored.mutationGuidHash != expectedGuidHash ||
+        restored.targetGuidHash != expectedTargetGuidHash ||
+        restored.sourceSha256 != expectedSourceSha256) {
+      return null;
+    }
+    final identity = _identifyWire(
+      restored.message,
+      localHandles: restored.capturedLocalHandles,
+      recipient: recipient,
+      expectedSourceSha256: expectedSourceSha256,
+    );
+    if (identity?.guidHash != expectedGuidHash ||
+        identity?.targetGuidHash != expectedTargetGuidHash) {
+      return null;
+    }
+    return identity;
+  }
+
+  static CloudSyncReceivedMutationIdentity? _identifyWire(
+    api.MessageInst wire, {
+    required List<String> localHandles,
+    required String recipient,
+    String? expectedSourceSha256,
+  }) {
     final sender = wire.sender;
-    if (!liveContext.observedViaLiveReceive ||
-        localHandles.isEmpty ||
+    if (localHandles.isEmpty ||
         localHandles.length > _maxObservedLocalHandles ||
         localHandles.any((handle) => !_isHandle(handle)) ||
         !_isHandle(recipient) ||

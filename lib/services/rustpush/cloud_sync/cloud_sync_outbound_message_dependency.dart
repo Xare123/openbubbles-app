@@ -8,6 +8,7 @@ import 'cloud_sync_outbound_chat_binding.dart';
 import 'cloud_sync_outbound_group_binding.dart';
 import 'cloud_sync_persistent_keys.dart';
 import 'cloud_sync_reaction_send_identity.dart';
+import 'cloud_sync_received_archive_identity.dart';
 import 'cloud_sync_record_maps.dart';
 import 'objectbox_canonical_semantic_entity_adapter.dart';
 
@@ -16,7 +17,7 @@ import 'objectbox_canonical_semantic_entity_adapter.dart';
 typedef CloudSyncConfirmedLocalParentReader =
     List<Object>? Function(Message parent);
 
-/// Exact current-generation CloudKit predecessor for one journaled local
+/// Exact current-generation CloudKit predecessor for one journaled
 /// edit/unsend. Raw GUIDs remain local to this bounded lookup; the returned
 /// value contains only durable hashes and protected references.
 final class CloudSyncMessageMutationPredecessor {
@@ -55,6 +56,67 @@ requireCloudSyncMessageMutationPredecessor({
   required int localChatId,
   required String targetGuidHash,
   CloudSyncConfirmedLocalParentReader? readConfirmedLocalParent,
+}) => _requireCloudSyncMessageMutationPredecessor(
+  store: store,
+  messageScope: messageScope,
+  localMessageId: localMessageId,
+  localChatId: localChatId,
+  targetGuidHash: targetGuidHash,
+  lane: _MutationPredecessorLane.outgoing,
+  readConfirmedLocalParent: readConfirmedLocalParent,
+);
+
+/// Resolve local predecessor evidence for a received or mirrored mutation.
+///
+/// Incoming targets must be incoming rows; mirrored targets must be own rows.
+/// Both use the received-archive GUID namespace, never the outgoing-send one.
+/// This proves only the current local snapshot/map/raw-source relationship.
+/// It proves neither the mutation's author nor its route against decrypted
+/// Apple data, and grants no native, send, receipt or remote-write authority.
+CloudSyncMessageMutationPredecessor
+requireCloudSyncReceivedMessageMutationPredecessor({
+  required Store store,
+  required CloudSyncScope messageScope,
+  required int localMessageId,
+  required int localChatId,
+  required String targetGuidHash,
+  required CloudSyncReceivedArchiveOrigin origin,
+  CloudSyncConfirmedLocalParentReader? readConfirmedLocalParent,
+}) => _requireCloudSyncMessageMutationPredecessor(
+  store: store,
+  messageScope: messageScope,
+  localMessageId: localMessageId,
+  localChatId: localChatId,
+  targetGuidHash: targetGuidHash,
+  lane: switch (origin) {
+    CloudSyncReceivedArchiveOrigin.incoming =>
+      _MutationPredecessorLane.incoming,
+    CloudSyncReceivedArchiveOrigin.mirrored =>
+      _MutationPredecessorLane.mirrored,
+  },
+  readConfirmedLocalParent: readConfirmedLocalParent,
+);
+
+enum _MutationPredecessorLane {
+  outgoing('cloud-sync-local-send-guid-v1', true),
+  incoming('cloud-sync-received-archive-guid-v1', false),
+  mirrored('cloud-sync-received-archive-guid-v1', true);
+
+  const _MutationPredecessorLane(this.guidNamespace, this.isFromMe);
+
+  final String guidNamespace;
+  final bool isFromMe;
+}
+
+CloudSyncMessageMutationPredecessor
+_requireCloudSyncMessageMutationPredecessor({
+  required Store store,
+  required CloudSyncScope messageScope,
+  required int localMessageId,
+  required int localChatId,
+  required String targetGuidHash,
+  required _MutationPredecessorLane lane,
+  CloudSyncConfirmedLocalParentReader? readConfirmedLocalParent,
 }) {
   Never reject() => throw CloudSyncFailure(
     category: CloudFailureCategory.dependency,
@@ -77,9 +139,9 @@ requireCloudSyncMessageMutationPredecessor({
   if (message == null ||
       canonicalGuid == null ||
       canonicalGuid.isEmpty ||
-      _localSendGuidHash(canonicalGuid) != targetGuidHash ||
+      _mutationTargetGuidHash(canonicalGuid, lane) != targetGuidHash ||
       message.chat.targetId != localChatId ||
-      message.isFromMe != true ||
+      message.isFromMe != lane.isFromMe ||
       message.verificationFailed ||
       message.dateDeleted != null ||
       message.associatedMessageGuid != null ||
@@ -697,8 +759,8 @@ final _sha256Digest = RegExp(r'^[0-9a-f]{64}$');
 
 String _digest(String value) => sha256.convert(utf8.encode(value)).toString();
 
-String _localSendGuidHash(String value) => sha256
+String _mutationTargetGuidHash(String value, _MutationPredecessorLane lane) => sha256
     .convert(
-      utf8.encode(jsonEncode(<Object?>['cloud-sync-local-send-guid-v1', value])),
+      utf8.encode(jsonEncode(<Object?>[lane.guidNamespace, value])),
     )
     .toString();

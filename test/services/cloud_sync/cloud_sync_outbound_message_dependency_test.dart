@@ -207,6 +207,29 @@ void main() {
     },
   );
 
+  test('outgoing mutation predecessor keeps its namespace and direction', () {
+    String hash(String namespace) => sha256
+        .convert(utf8.encode(jsonEncode([namespace, _parentGuid])))
+        .toString();
+    final outgoingHash = hash('cloud-sync-local-send-guid-v1');
+    final receivedHash = hash('cloud-sync-received-archive-guid-v1');
+    CloudSyncMessageMutationPredecessor resolve(String targetGuidHash) =>
+        requireCloudSyncMessageMutationPredecessor(
+          store: f.db,
+          messageScope: f.messageScope,
+          localMessageId: f.parentId,
+          localChatId: f.chatId,
+          targetGuidHash: targetGuidHash,
+        );
+
+    f.db.box<Message>().put(f.parent..isFromMe = false);
+    expect(() => resolve(outgoingHash), _blocked);
+    expect(() => resolve(receivedHash), _blocked);
+    f.db.box<Message>().put(f.parent..isFromMe = true);
+    expect(() => resolve(outgoingHash), returnsNormally);
+    expect(() => resolve(receivedHash), _blocked);
+  });
+
   test('mutation predecessor rejects drift and unfinished readback', () {
     f.db.box<Message>().put(f.parent..isFromMe = true);
     final mapCount = f.db.box<CloudRecordMapEntity>().count();
