@@ -118,6 +118,8 @@ $nativeDiagnosticCases = @(
     'cloud_sync_transient_bridge::tests::message_required_masks_distinguish_absent_and_without_value',
     'cloud_sync_transient_bridge::tests::message_extension_diagnostics_never_return_provider_values',
     'cloud_sync_transient_bridge::tests::retained_reply_diagnostics_are_bounded_and_value_free',
+    'cloud_sync_transient_bridge::tests::message_parent_detail_does_not_relabel_post_conversion_failures',
+    'cloud_sync_transient_bridge::tests::message_parent_diagnostic_codes_are_closed_and_content_free',
     'tests::native_logger_handle_outlives_initialization',
     'desktop_native_logging::tests::findmy_probe_cannot_enable_broad_native_debug'
 )
@@ -147,6 +149,8 @@ $nativeExtensionSpotCases = @(
     'cloud_sync_extension_payload::tests::recognized_raw_icon_bytes_are_preserved_without_a_gzip_roundtrip'
 )
 $nativeConverterSpotCases = @(
+    'cloud_sync_canonical_converter::tests::message_parent_diagnostics_preserve_strict_rejection_and_hide_values',
+    'cloud_sync_canonical_converter::tests::message_parent_diagnostics_do_not_label_ready_or_unrelated_outcomes',
     'cloud_sync_canonical_converter::tests::extension_archive_projects_renderer_metadata_with_base_message',
     'cloud_sync_canonical_converter::tests::group_routing_digest_matches_dart_framed_sha256_vector'
     'cloud_sync_canonical_converter::tests::multipart_numeric_reply_keeps_its_exact_parent_dependency'
