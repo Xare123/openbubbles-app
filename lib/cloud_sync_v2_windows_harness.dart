@@ -2303,7 +2303,7 @@ class CloudSyncV2WindowsHarnessState extends State<CloudSyncV2WindowsHarness> {
       if (!mounted) return;
       setState(() {
         _busy = false;
-        _status = 'Ready. The Store app must remain closed while this runs.';
+        _status = 'Ready. The isolated test profile is reserved.';
       });
       await _setRuntimeStage('cloudkit-client-ready', state: 'ready');
       _resumeAfterTwoFactor = null;
