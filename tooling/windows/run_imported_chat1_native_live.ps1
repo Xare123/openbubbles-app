@@ -14,6 +14,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
+. (Join-Path $PSScriptRoot 'cloud_sync_profile_process_guard.ps1')
 
 # Runs exactly one ignored, read-only Rust integration test from a previously
 # verified and locally signed native-test-host bundle. This launcher never
@@ -394,7 +395,7 @@ function Assert-StandaloneManifest {
 
 function Assert-StandaloneNoProfileOwner {
     $names = @('bluebubbles_app', 'flutter', 'dart', 'native-compose-tests')
-    $found = @(Get-Process -Name $names -ErrorAction SilentlyContinue)
+    $found = @(Get-CloudSyncPotentialProfileOwners -Names $names)
     if ($found.Count -ne 0) { Fail-StandaloneNativeLive 'profile_process_running' }
 }
 

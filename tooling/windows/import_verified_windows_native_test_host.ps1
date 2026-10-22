@@ -20,6 +20,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
+. (Join-Path $PSScriptRoot 'cloud_sync_profile_process_guard.ps1')
 
 # Bounded, fail-closed importer for cloud-built Windows native-test-host bundles.
 # Verifies a read-only native-test-host archive (exactly native-compose-tests.exe,
@@ -212,9 +213,9 @@ function Resolve-NativeTestHostProfileRoot {
 
 function Get-NativeTestHostBlockingProcess {
     $found = New-Object System.Collections.Generic.List[string]
-    foreach ($name in @(Get-NativeTestHostBlockedProcessNames)) {
-        $hits = @(Get-Process -Name $name -ErrorAction SilentlyContinue)
-        if ($hits.Count -gt 0) { $found.Add($name) }
+    foreach ($process in @(Get-CloudSyncPotentialProfileOwners `
+        -Names @(Get-NativeTestHostBlockedProcessNames))) {
+        $found.Add($process.ProcessName)
     }
     return @($found)
 }

@@ -916,6 +916,12 @@ try {
         objectbox_sha256 = $hostInfo.Hashes['objectbox.dll']
         harness_test_sha256 = (Get-FileHash -LiteralPath $harnessTest -Algorithm SHA256).Hash.ToLowerInvariant()
         launcher_sha256 = (Get-FileHash -LiteralPath $PSCommandPath -Algorithm SHA256).Hash.ToLowerInvariant()
+        profile_guard_launcher_sha256 = (Get-FileHash -LiteralPath (
+            Join-Path $PSScriptRoot 'run_imported_chat1_native_live.ps1'
+        ) -Algorithm SHA256).Hash.ToLowerInvariant()
+        process_guard_sha256 = (Get-FileHash -LiteralPath (
+            Join-Path $PSScriptRoot 'cloud_sync_profile_process_guard.ps1'
+        ) -Algorithm SHA256).Hash.ToLowerInvariant()
         operation = $(if ($Drain) {
             'confirmed-dart-objectbox-drain-with-projection-sweep'
         } else {
