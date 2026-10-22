@@ -324,6 +324,21 @@ abstract final class CloudSyncSemanticDiagnosticCodes {
     'canonical_build',
   };
 
+  // Secondary detail only. It must not become a retry/disposition safe code.
+  static const _nativeMessageParentSegments = <String>{
+    'association_type_absent_reference',
+    'association_type_absent_range',
+    'standalone_empty_reference',
+    'standalone_reference',
+    'standalone_partial_range',
+    'standalone_nonzero_range',
+    'reaction_parent_absent',
+    'reaction_parent_grammar',
+    'reply_parent_grammar',
+    'reply_parent_ambiguous',
+    'association_reply_conflict',
+  };
+
   // Native attachment quarantine detail. Closed vocabulary only.
   // Metadata reuses the CloudRawPresenceFailure diagnostic suffixes already
   // used for native_chat_property_presence (base failure suffixes only; no
@@ -424,6 +439,11 @@ abstract final class CloudSyncSemanticDiagnosticCodes {
           code,
           'native_chat_conversion_',
           _nativeChatConversionSegments,
+        ) ||
+        _matchesPrefix(
+          code,
+          'native_message_parent_',
+          _nativeMessageParentSegments,
         ) ||
         _matchesPrefix(
           code,

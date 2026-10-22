@@ -2833,11 +2833,47 @@ fn reaction_kind(index: u32) -> Option<CloudCanonicalReactionKind> {
     }
 }
 
+/// Closed detail for a parent/reply rejection. These labels contain no wire
+/// values and never change the primary quarantine reason or retry policy.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum CloudMessageParentDiagnosticCode {
+    AssociationTypeAbsentReference,
+    AssociationTypeAbsentRange,
+    StandaloneEmptyReference,
+    StandaloneReference,
+    StandalonePartialRange,
+    StandaloneNonzeroRange,
+    ReactionParentAbsent,
+    ReactionParentGrammar,
+    ReplyParentGrammar,
+    ReplyParentAmbiguous,
+    AssociationReplyConflict,
+}
+
+impl CloudMessageParentDiagnosticCode {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::AssociationTypeAbsentReference => "association_type_absent_reference",
+            Self::AssociationTypeAbsentRange => "association_type_absent_range",
+            Self::StandaloneEmptyReference => "standalone_empty_reference",
+            Self::StandaloneReference => "standalone_reference",
+            Self::StandalonePartialRange => "standalone_partial_range",
+            Self::StandaloneNonzeroRange => "standalone_nonzero_range",
+            Self::ReactionParentAbsent => "reaction_parent_absent",
+            Self::ReactionParentGrammar => "reaction_parent_grammar",
+            Self::ReplyParentGrammar => "reply_parent_grammar",
+            Self::ReplyParentAmbiguous => "reply_parent_ambiguous",
+            Self::AssociationReplyConflict => "association_reply_conflict",
+        }
+    }
+}
+
 fn build_association(
     context: &CloudCanonicalConversionContext<'_>,
     message_type: i64,
     proto: &MessageProto,
     extension_session: Option<&crate::cloud_sync_extension_metadata::ExtensionSessionContext>,
+    diagnostic: &mut Option<CloudMessageParentDiagnosticCode>,
 ) -> Result<
     (
         CloudCanonicalMessageAssociation,
@@ -2862,6 +2898,11 @@ fn build_association(
             || proto.associated_message_range_location.is_some()
             || proto.associated_message_range_length.is_some()
         {
+            *diagnostic = Some(if proto.associated_message_guid.is_some() {
+                CloudMessageParentDiagnosticCode::AssociationTypeAbsentReference
+            } else {
+                CloudMessageParentDiagnosticCode::AssociationTypeAbsentRange
+            });
             return Err(CloudCanonicalConversionOutcome::Quarantined(
                 CloudCanonicalQuarantineReason::MalformedParent,
             ));
@@ -2884,6 +2925,16 @@ fn build_association(
             (None, None) | (Some(0), Some(0))
         );
         if proto.associated_message_guid.is_some() || !range_is_standalone {
+            *diagnostic = Some(match proto.associated_message_guid.as_deref() {
+                Some("") => CloudMessageParentDiagnosticCode::StandaloneEmptyReference,
+                Some(_) => CloudMessageParentDiagnosticCode::StandaloneReference,
+                None if proto.associated_message_range_location.is_some()
+                    != proto.associated_message_range_length.is_some() =>
+                {
+                    CloudMessageParentDiagnosticCode::StandalonePartialRange
+                }
+                None => CloudMessageParentDiagnosticCode::StandaloneNonzeroRange,
+            });
             return Err(CloudCanonicalConversionOutcome::Quarantined(
                 CloudCanonicalQuarantineReason::MalformedParent,
             ));
@@ -2951,12 +3002,14 @@ fn build_association(
             CloudCanonicalDeferredReason::UnsupportedSticker,
         ));
     }
-    let parent_wire = proto.associated_message_guid.as_deref().ok_or(
+    let parent_wire = proto.associated_message_guid.as_deref().ok_or_else(|| {
+        *diagnostic = Some(CloudMessageParentDiagnosticCode::ReactionParentAbsent);
         CloudCanonicalConversionOutcome::Quarantined(
             CloudCanonicalQuarantineReason::MalformedParent,
-        ),
-    )?;
+        )
+    })?;
     let parsed = parse_associated_parent(parent_wire).map_err(|_| {
+        *diagnostic = Some(CloudMessageParentDiagnosticCode::ReactionParentGrammar);
         CloudCanonicalConversionOutcome::Quarantined(
             CloudCanonicalQuarantineReason::MalformedParent,
         )
@@ -2988,11 +3041,18 @@ fn build_association(
 fn build_reply(
     context: &CloudCanonicalConversionContext<'_>,
     proto_2: Option<&MessageProto2>,
+    diagnostic: &mut Option<CloudMessageParentDiagnosticCode>,
 ) -> Result<Option<CloudCanonicalReplyReference>, CloudCanonicalConversionOutcome> {
     let Some(reply) = proto_2.and_then(|value| value.reply.as_deref()) else {
         return Ok(None);
     };
     let parsed = parse_reply_parent(reply).map_err(|error| {
+        *diagnostic = Some(match error {
+            CloudCanonicalValidationFailure::AmbiguousReplyParent => {
+                CloudMessageParentDiagnosticCode::ReplyParentAmbiguous
+            }
+            _ => CloudMessageParentDiagnosticCode::ReplyParentGrammar,
+        });
         CloudCanonicalConversionOutcome::Quarantined(match error {
             CloudCanonicalValidationFailure::AmbiguousReplyParent => {
                 CloudCanonicalQuarantineReason::AmbiguousReply
@@ -3144,6 +3204,28 @@ pub(crate) fn convert_message(
     presence: &CloudRawRecordPresence,
     message: &CloudMessage,
 ) -> CloudCanonicalConversionOutcome {
+    convert_message_with_diagnostic(context, presence, message).0
+}
+
+pub(crate) fn convert_message_with_diagnostic(
+    context: &CloudCanonicalConversionContext<'_>,
+    presence: &CloudRawRecordPresence,
+    message: &CloudMessage,
+) -> (
+    CloudCanonicalConversionOutcome,
+    Option<CloudMessageParentDiagnosticCode>,
+) {
+    let mut diagnostic = None;
+    let outcome = convert_message_internal(context, presence, message, &mut diagnostic);
+    (outcome, diagnostic)
+}
+
+fn convert_message_internal(
+    context: &CloudCanonicalConversionContext<'_>,
+    presence: &CloudRawRecordPresence,
+    message: &CloudMessage,
+    diagnostic: &mut Option<CloudMessageParentDiagnosticCode>,
+) -> CloudCanonicalConversionOutcome {
     if let Err(reason) = require_present(
         presence,
         &[
@@ -3222,11 +3304,13 @@ pub(crate) fn convert_message(
         Err(outcome) => return outcome,
     };
     let (association, entity_kind, association_parent_hash) =
-        match build_association(context, message.r#type, proto, extension_session.as_ref()) {
+        match build_association(
+            context, message.r#type, proto, extension_session.as_ref(), diagnostic,
+        ) {
             Ok(value) => value,
             Err(outcome) => return outcome,
         };
-    let reply = match build_reply(context, proto_2) {
+    let reply = match build_reply(context, proto_2, diagnostic) {
         Ok(value) => value,
         Err(outcome) => return outcome,
     };
@@ -3236,6 +3320,7 @@ pub(crate) fn convert_message(
         }))
         && reply.is_some()
     {
+        *diagnostic = Some(CloudMessageParentDiagnosticCode::AssociationReplyConflict);
         return CloudCanonicalConversionOutcome::Quarantined(
             CloudCanonicalQuarantineReason::AmbiguousReply,
         );
@@ -5933,6 +6018,110 @@ mod tests {
                 CloudCanonicalOutOfScopeService::SmsFamily
             )
         );
+    }
+
+    #[test]
+    fn message_parent_diagnostics_preserve_strict_rejection_and_hide_values() {
+        use CloudMessageParentDiagnosticCode as Detail;
+
+        let hasher = CloudSemanticIdentifierHasher::new(b"fixture-key").unwrap();
+        let conversion_context = context(&hasher, "server-parent-detail", None);
+        let presence = message_presence();
+        let mut cases = Vec::new();
+
+        let mut no_type_reference = normal_message(Some(SECRET));
+        no_type_reference.msg_proto.0.associated_message_guid = Some(SECRET.to_owned());
+        cases.push((no_type_reference, Detail::AssociationTypeAbsentReference));
+        let mut no_type_range = normal_message(Some(SECRET));
+        no_type_range.msg_proto.0.associated_message_range_location = Some(0);
+        cases.push((no_type_range, Detail::AssociationTypeAbsentRange));
+
+        let mut standalone = normal_message(Some(SECRET));
+        standalone.msg_proto.0.associated_message_type = Some(0);
+        let mut empty_reference = standalone.clone();
+        empty_reference.msg_proto.0.associated_message_guid = Some(String::new());
+        cases.push((empty_reference, Detail::StandaloneEmptyReference));
+        let mut standalone_reference = standalone.clone();
+        standalone_reference.msg_proto.0.associated_message_guid = Some(SECRET.to_owned());
+        cases.push((standalone_reference, Detail::StandaloneReference));
+        for (location, length) in [(Some(0), None), (None, Some(0))] {
+            let mut partial_range = standalone.clone();
+            partial_range.msg_proto.0.associated_message_range_location = location;
+            partial_range.msg_proto.0.associated_message_range_length = length;
+            cases.push((partial_range, Detail::StandalonePartialRange));
+        }
+        for (location, length) in [(0, 1), (u32::MAX, 0)] {
+            let mut nonzero_range = standalone.clone();
+            nonzero_range.msg_proto.0.associated_message_range_location = Some(location);
+            nonzero_range.msg_proto.0.associated_message_range_length = Some(length);
+            cases.push((nonzero_range, Detail::StandaloneNonzeroRange));
+        }
+
+        let mut absent_parent = reaction_message();
+        absent_parent.msg_proto.0.associated_message_guid = None;
+        cases.push((absent_parent, Detail::ReactionParentAbsent));
+        let mut malformed_parent = reaction_message();
+        malformed_parent.msg_proto.0.associated_message_guid = Some(format!("p:x/{SECRET}"));
+        cases.push((malformed_parent, Detail::ReactionParentGrammar));
+        let mut malformed_reply = normal_message(Some(SECRET));
+        malformed_reply.msg_proto_2 = Some(GZipWrapper(MessageProto2 {
+            reply: Some(SECRET.to_owned()),
+        }));
+        cases.push((malformed_reply, Detail::ReplyParentGrammar));
+        let mut ambiguous_reply = normal_message(Some(SECRET));
+        ambiguous_reply.msg_proto_2 = Some(GZipWrapper(MessageProto2 {
+            reply: Some(format!("r:0:other:{SECRET}")),
+        }));
+        cases.push((ambiguous_reply, Detail::ReplyParentAmbiguous));
+        let mut reaction_reply = reaction_message();
+        reaction_reply.msg_proto_2 = Some(GZipWrapper(MessageProto2 {
+            reply: Some(format!("r:0:{SECRET}")),
+        }));
+        cases.push((reaction_reply, Detail::AssociationReplyConflict));
+
+        for (message, expected_detail) in cases {
+            let (outcome, detail) =
+                convert_message_with_diagnostic(&conversion_context, &presence, &message);
+            let expected_reason = match expected_detail {
+                Detail::ReplyParentAmbiguous | Detail::AssociationReplyConflict => {
+                    CloudCanonicalQuarantineReason::AmbiguousReply
+                }
+                _ => CloudCanonicalQuarantineReason::MalformedParent,
+            };
+            assert_eq!(outcome, CloudCanonicalConversionOutcome::Quarantined(expected_reason));
+            assert_eq!(detail, Some(expected_detail));
+            assert_eq!(outcome, convert_message(&conversion_context, &presence, &message));
+            assert!(!format!("{detail:?} {}", expected_detail.as_str()).contains(SECRET));
+        }
+    }
+
+    #[test]
+    fn message_parent_diagnostics_do_not_label_ready_or_unrelated_outcomes() {
+        let hasher = CloudSemanticIdentifierHasher::new(b"fixture-key").unwrap();
+        let conversion_context = context(&hasher, "server-parent-detail-ready", None);
+        let presence = message_presence();
+        for message in [normal_message(Some(SECRET)), reaction_message()] {
+            let (outcome, detail) =
+                convert_message_with_diagnostic(&conversion_context, &presence, &message);
+            assert!(matches!(outcome, CloudCanonicalConversionOutcome::Ready(_)));
+            assert_eq!(detail, None);
+        }
+        let mut carrier = reaction_message();
+        carrier.service = "SMS".to_owned();
+        carrier.msg_proto.0.associated_message_guid = None;
+        let (outcome, detail) =
+            convert_message_with_diagnostic(&conversion_context, &presence, &carrier);
+        assert!(matches!(outcome, CloudCanonicalConversionOutcome::OutOfScopeService(_)));
+        assert_eq!(detail, None);
+
+        let mut unsupported = normal_message(Some(SECRET));
+        unsupported.r#type = 99;
+        unsupported.msg_proto.0.associated_message_guid = Some(SECRET.to_owned());
+        let (outcome, detail) =
+            convert_message_with_diagnostic(&conversion_context, &presence, &unsupported);
+        assert_eq!(outcome, CloudCanonicalConversionOutcome::Quarantined(
+            CloudCanonicalQuarantineReason::UnsupportedMessageType));
+        assert_eq!(detail, None);
     }
 
     #[test]

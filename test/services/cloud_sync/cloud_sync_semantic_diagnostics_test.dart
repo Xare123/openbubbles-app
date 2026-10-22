@@ -3,6 +3,45 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_safe_failure
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('message parent detail is closed metadata, not a disposition code', () {
+    const suffixes = <String>[
+      'association_type_absent_reference',
+      'association_type_absent_range',
+      'standalone_empty_reference',
+      'standalone_reference',
+      'standalone_partial_range',
+      'standalone_nonzero_range',
+      'reaction_parent_absent',
+      'reaction_parent_grammar',
+      'reply_parent_grammar',
+      'reply_parent_ambiguous',
+      'association_reply_conflict',
+    ];
+    final diagnostics = CloudSyncSemanticDiagnosticCollector();
+    for (final suffix in suffixes) {
+      final code = 'native_message_parent_$suffix';
+      expect(CloudSyncSemanticDiagnosticCodes.isReviewed(code), isTrue);
+      diagnostics.record(code);
+      expect(cloudSyncV2SafeFailureCodeForCandidate(code),
+          'cloud_sync_unknown_failure');
+      expect(CloudSyncV2DecoderSafeFailureCodes.readOnlyCanaryRetainableDependencies
+          .contains(code), isFalse);
+    }
+    for (final code in const <String>[
+      'native_message_parent_',
+      'native_message_parent_future_branch',
+      'native_message_parent_reply_parent_grammar:private-target',
+      'native_message_parent_standalone_reference_extra',
+    ]) {
+      expect(CloudSyncSemanticDiagnosticCodes.isReviewed(code), isFalse);
+      diagnostics.record(code);
+    }
+    expect(diagnostics.snapshot().length, suffixes.length + 1);
+    expect(diagnostics.snapshot()['diagnostic_code_invalid'], 4);
+    expect(() => CloudSyncSemanticDiagnosticCollector.validatedSnapshot(
+        diagnostics.snapshot()), returnsNormally);
+  });
+
   test('group route conflicts report no raw routing identifier', () {
     final diagnostics = CloudSyncSemanticDiagnosticCollector();
     diagnostics.record('canonical_chat_group_route_conflict');

@@ -18,10 +18,12 @@ use std::{
 use crate::{
     cloud_sync_canonical_converter::{
         attachment_ui_shape_label, capture_attachment_ui_shape,
-        convert_attachment_with_diagnostic, convert_chat_with_diagnostic, convert_message, convert_tombstone,
+        convert_attachment_with_diagnostic, convert_chat_with_diagnostic,
+        convert_message_with_diagnostic, convert_tombstone,
         CloudAttachmentDiagnosticCode, CloudCanonicalConversionContext, CloudCanonicalConversionOutcome,
         CloudCanonicalOutOfScopeService, CloudCanonicalQuarantineReason,
-        CloudCanonicalValidationDiagnosticClass, CloudChatDiagnosticCode, CloudRawFieldPresence,
+        CloudCanonicalValidationDiagnosticClass, CloudChatDiagnosticCode,
+        CloudMessageParentDiagnosticCode, CloudRawFieldPresence,
         CloudRawPresenceFailure, CloudRawRecordPresence,
     },
     cloud_sync_canonical_dto::{
@@ -335,7 +337,7 @@ fn classify_chat_property_shape(value: &[u8]) -> CloudTransientChatPropertyShape
     CloudTransientChatPropertyShape::Unknown
 }
 
-/// Closed, content-free detail for an already-quarantined chat/attachment record.
+/// Closed, content-free detail for an already-quarantined record.
 ///
 /// This never changes projection disposition. It only preserves which strict
 /// parser boundary rejected the record so a Canary run can distinguish a real
@@ -349,6 +351,7 @@ pub(crate) enum CloudTransientQuarantineDiagnostic {
     ChatPropertyPresence(CloudRawPresenceFailure),
     ChatPropertyPresenceWithShape(CloudRawPresenceFailure, CloudTransientChatPropertyShape),
     ChatConversion(CloudChatDiagnosticCode),
+    MessageParent(CloudMessageParentDiagnosticCode),
     AttachmentMetadataAbsent,
     AttachmentMetadataPresence(CloudRawPresenceFailure),
     AttachmentConversion(CloudAttachmentDiagnosticCode),
@@ -377,6 +380,9 @@ impl CloudTransientQuarantineDiagnostic {
             Self::ChatConversion(code) => {
                 format!("native_chat_conversion_{}", code.as_str())
             }
+            Self::MessageParent(code) => {
+                format!("native_message_parent_{}", code.as_str())
+            }
             Self::AttachmentMetadataAbsent => "native_attachment_metadata_absent".to_owned(),
             Self::AttachmentMetadataPresence(reason) => {
                 format!("native_attachment_metadata_{}", reason.diagnostic_code())
@@ -397,6 +403,22 @@ fn attachment_conversion_diagnostic(
         (CloudTransientDecodeOutcome::Quarantined(reason), Some(code), true) => {
             CloudTransientDecodeOutcome::QuarantinedWithDiagnostic(
                 reason, CloudTransientQuarantineDiagnostic::AttachmentConversion(code),
+            )
+        }
+        (outcome, _, _) => outcome,
+    }
+}
+
+fn message_parent_conversion_diagnostic(
+    outcome: CloudTransientDecodeOutcome,
+    diagnostic: Option<CloudMessageParentDiagnosticCode>,
+    converter_quarantined: bool,
+) -> CloudTransientDecodeOutcome {
+    match (outcome, diagnostic, converter_quarantined) {
+        (CloudTransientDecodeOutcome::Quarantined(reason), Some(code), true) => {
+            CloudTransientDecodeOutcome::QuarantinedWithDiagnostic(
+                reason,
+                CloudTransientQuarantineDiagnostic::MessageParent(code),
             )
         }
         (outcome, _, _) => outcome,
@@ -2778,7 +2800,8 @@ async fn cloud_sync_decode_transient_record_with_pcs_access(
                 Ok(value) => value,
                 Err(failure) => return CloudTransientDecodeOutcome::Failure(failure),
             };
-            let converted = convert_message(&context, &presence, &message);
+            let (converted, parent_diagnostic) =
+                convert_message_with_diagnostic(&context, &presence, &message);
             if matches!(
                 &converted,
                 CloudCanonicalConversionOutcome::Quarantined(_)
@@ -2858,7 +2881,14 @@ async fn cloud_sync_decode_transient_record_with_pcs_access(
                     diagnostic.message_kind,
                 );
             }
-            converted
+            let converter_quarantined =
+                matches!(&converted, CloudCanonicalConversionOutcome::Quarantined(_));
+            let outcome = normalize_conversion(
+                converted, &hasher, &scope_fingerprint, &zone_fingerprint, request.generation,
+            );
+            return message_parent_conversion_diagnostic(
+                outcome, parent_diagnostic, converter_quarantined,
+            );
         }
         CloudNativeStream::Attachments => {
             let decompressed = match encrypted_field_bytes(&record, &record_key, "cm") {
@@ -2932,6 +2962,7 @@ mod tests {
     }
 
     use super::*;
+    use crate::cloud_sync_canonical_converter::convert_message;
     use crate::cloud_sync_canonical_dto::{
         parse_associated_parent, CloudCanonicalAlias, CloudCanonicalAttachmentPayload,
         CloudCanonicalChatPayload, CloudCanonicalChatStyle, CloudCanonicalEnvelope,
@@ -2948,6 +2979,51 @@ mod tests {
 
     fn digest(character: char) -> String {
         character.to_string().repeat(43)
+    }
+
+    #[test]
+    fn message_parent_detail_does_not_relabel_post_conversion_failures() {
+        let detail = Some(CloudMessageParentDiagnosticCode::ReplyParentGrammar);
+        for reason in [CloudCanonicalQuarantineReason::MalformedParent,
+            CloudCanonicalQuarantineReason::AmbiguousReply] {
+            assert!(matches!(message_parent_conversion_diagnostic(
+                CloudTransientDecodeOutcome::Quarantined(reason), detail, true),
+                CloudTransientDecodeOutcome::QuarantinedWithDiagnostic(actual,
+                    CloudTransientQuarantineDiagnostic::MessageParent(
+                        CloudMessageParentDiagnosticCode::ReplyParentGrammar)) if actual == reason));
+        }
+        for diagnostic in [None, detail] {
+            assert!(matches!(message_parent_conversion_diagnostic(
+                CloudTransientDecodeOutcome::Quarantined(
+                    CloudCanonicalQuarantineReason::InvalidCanonicalPayload), diagnostic, false),
+                CloudTransientDecodeOutcome::Quarantined(
+                    CloudCanonicalQuarantineReason::InvalidCanonicalPayload)));
+            assert!(matches!(message_parent_conversion_diagnostic(
+                CloudTransientDecodeOutcome::Failure(CloudTransientBridgeFailure::ScopeMismatch),
+                diagnostic, true),
+                CloudTransientDecodeOutcome::Failure(CloudTransientBridgeFailure::ScopeMismatch)));
+        }
+    }
+
+    #[test]
+    fn message_parent_diagnostic_codes_are_closed_and_content_free() {
+        use CloudMessageParentDiagnosticCode as Detail;
+        for (detail, suffix) in [
+            (Detail::AssociationTypeAbsentReference, "association_type_absent_reference"),
+            (Detail::AssociationTypeAbsentRange, "association_type_absent_range"),
+            (Detail::StandaloneEmptyReference, "standalone_empty_reference"),
+            (Detail::StandaloneReference, "standalone_reference"),
+            (Detail::StandalonePartialRange, "standalone_partial_range"),
+            (Detail::StandaloneNonzeroRange, "standalone_nonzero_range"),
+            (Detail::ReactionParentAbsent, "reaction_parent_absent"),
+            (Detail::ReactionParentGrammar, "reaction_parent_grammar"),
+            (Detail::ReplyParentGrammar, "reply_parent_grammar"),
+            (Detail::ReplyParentAmbiguous, "reply_parent_ambiguous"),
+            (Detail::AssociationReplyConflict, "association_reply_conflict"),
+        ] {
+            assert_eq!(CloudTransientQuarantineDiagnostic::MessageParent(detail).safe_code(),
+                format!("native_message_parent_{suffix}"));
+        }
     }
 
     #[test]
@@ -4432,7 +4508,7 @@ mod tests {
             .unwrap();
         let normal_decode = messages.find("let strict_record_key").unwrap();
         let normal_convert = messages
-            .find("convert_message(&context, &presence, &message)")
+            .find("convert_message_with_diagnostic(&context, &presence, &message)")
             .unwrap();
         assert!(
             preflight < system_event

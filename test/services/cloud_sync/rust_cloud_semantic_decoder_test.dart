@@ -845,6 +845,33 @@ void main() {
     },
   );
 
+  test('message parent detail does not change quarantine or retry policy', () async {
+    for (final reason in [frb.CloudSyncTransientQuarantineReason.malformedParent,
+      frb.CloudSyncTransientQuarantineReason.ambiguousReply]) {
+      for (final detail in ['native_message_parent_reply_parent_grammar',
+        'native_message_parent_standalone_empty_reference',
+        'native_message_parent_reply_parent_grammar:private-target']) {
+        final diagnostics = CloudSyncSemanticDiagnosticCollector();
+        final entry = _entry();
+        bindings.result = frb.CloudSyncTransientDecodeResult(
+          protectedSourceReference: _sourceReference,
+          generation: BigInt.from(entry.generation),
+          quarantineReason: reason,
+          quarantineDiagnosticSafeCode: detail,
+        );
+        final primary = reason == frb.CloudSyncTransientQuarantineReason.malformedParent
+            ? 'native_quarantined_malformed_parent'
+            : 'native_quarantined_ambiguous_reply';
+        await _expectFailure(decoder(diagnosticRecorder: diagnostics.record)
+            .decode(entry), CloudFailureCategory.malformedRecord, safeCode: primary);
+        expect(diagnostics.snapshot(), <String, int>{
+          primary: 1,
+          detail.contains(':') ? 'diagnostic_code_invalid' : detail: 1,
+        });
+      }
+    }
+  });
+
   test('records reviewed content-free chat quarantine detail', () async {
     final diagnostics = CloudSyncSemanticDiagnosticCollector();
     final entry = _entry();
