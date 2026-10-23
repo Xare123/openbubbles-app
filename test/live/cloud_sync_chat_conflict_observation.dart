@@ -287,16 +287,20 @@ Future<Map<String, Object?>> observeQuarantinedChatConflict({
   final inspectNext = Platform.environment['OPENBUBBLES_INSPECT_NEXT_CHAT_CONFLICT'] == '1';
   final inspectNonDirect = Platform.environment['OPENBUBBLES_INSPECT_NON_DIRECT_CHAT_CONFLICT'] == '1';
   final inspectPostGroup = Platform.environment['OPENBUBBLES_INSPECT_POST_GROUP_CHAT_CONFLICT'] == '1';
-  _require([inspectNext, inspectNonDirect, inspectPostGroup].where((value) => value).length <= 1);
-  final snapshotRoot = inspectPostGroup
+  final inspectRecordMapping = Platform.environment['OPENBUBBLES_INSPECT_RECORD_MAPPING_CHAT_CONFLICT'] == '1';
+  _require([inspectNext, inspectNonDirect, inspectPostGroup, inspectRecordMapping]
+      .where((value) => value).length <= 1);
+  final snapshotRoot = inspectRecordMapping
+      ? '${_snapshotRoot.substring(0, _snapshotRoot.length - 1)}R' : inspectPostGroup
       ? '${_snapshotRoot.substring(0, _snapshotRoot.length - 1)}O' : inspectNonDirect
       ? '${_snapshotRoot.substring(0, _snapshotRoot.length - 1)}L' : inspectNext
       ? '${_snapshotRoot.substring(0, _snapshotRoot.length - 1)}G' : _snapshotRoot;
-  final snapshotHash = inspectPostGroup
+  final snapshotHash = inspectRecordMapping
+      ? 'ec8b3df143cf700b6108437ce47d7a4723392bb3ee9d3f67da1ab87797956e51' : inspectPostGroup
       ? 'c3a674e0cf0e2e3d0961b0c50666bd6ee3716b65324e5a6266167f375a175c63' : inspectNonDirect
       ? '3c50655371f63412d26db87b6e716e4a61af3b62c69273a3a4f73103b5c23015' : inspectNext
       ? '21635c19e36223fd3d7d645d7477e1a7cddb54c8467b702d77e2cd99ae8fe287' : _snapshotHash;
-  final expectedSequence = inspectPostGroup ? 958 : inspectNonDirect ? 869 : inspectNext ? 864 : 863;
+  final expectedSequence = inspectRecordMapping ? 962 : inspectPostGroup ? 958 : inspectNonDirect ? 869 : inspectNext ? 864 : 863;
   final originalFile = File('${profile.path}/objectbox/data.mdb');
   final originalHash = await _hash(originalFile);
   final beforeState = quarantinedChatObservationPreservedState(store);
@@ -394,9 +398,13 @@ Future<Map<String, Object?>> observeQuarantinedChatConflict({
               r.mapKey.startsWith('record-map:'),
         )
         .toList();
-    final previous = <String, Object?>{'map_count': collisions.length};
-    if (collisions.length == 1) {
-      final oldMap = collisions.single;
+    // A mapping-only hold can instead have an existing logical owner under a
+    // different physical record. Inspect only that exact canonical map, never
+    // an arbitrary alias/recipient candidate. This mode remains read-only.
+    final previousMaps = inspectRecordMapping && collisions.isEmpty ? canonicalMaps : collisions;
+    final previous = <String, Object?>{'map_count': previousMaps.length};
+    if (previousMaps.length == 1) {
+      final oldMap = previousMaps.single;
       final oldRows = copy
           .box<CloudInboxChangeEntity>()
           .getAll()
@@ -434,6 +442,11 @@ Future<Map<String, Object?>> observeQuarantinedChatConflict({
                 oldChat.logicalEntityKeyHash == oldMap.logicalEntityKeyHash,
             'same_chat_identifier':
                 oldChat.chatIdentifier == chatPayload.chatIdentifier,
+            'same_canonical_guid': oldChat.canonicalGuid == chatPayload.canonicalGuid,
+            'same_service': oldChat.service == chatPayload.service,
+            'same_style': oldChat.style == chatPayload.style,
+            'same_logical_key': oldChat.logicalEntityKeyHash == chatPayload.logicalEntityKeyHash,
+            'same_physical_record': oldRow.serverRecordIdHash == row.serverRecordIdHash,
             'same_participants': jsonEncode(oldPeers) == jsonEncode(newPeers),
             'same_one_participant':
                 oldPeers.length == 1 &&
