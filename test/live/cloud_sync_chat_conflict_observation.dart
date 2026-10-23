@@ -287,23 +287,27 @@ Future<Map<String, Object?>> observeQuarantinedChatConflict({
   final inspectNext = Platform.environment['OPENBUBBLES_INSPECT_NEXT_CHAT_CONFLICT'] == '1';
   final inspectNonDirect = Platform.environment['OPENBUBBLES_INSPECT_NON_DIRECT_CHAT_CONFLICT'] == '1';
   final inspectPostGroup = Platform.environment['OPENBUBBLES_INSPECT_POST_GROUP_CHAT_CONFLICT'] == '1';
-  final inspectRecordMapping = Platform.environment['OPENBUBBLES_INSPECT_RECORD_MAPPING_CHAT_CONFLICT'] == '1';
+  final inspectPostMembership = Platform.environment['OPENBUBBLES_INSPECT_POST_MEMBERSHIP_CHAT_CONFLICT'] == '1';
+  final inspectRecordMapping = inspectPostMembership ||
+      Platform.environment['OPENBUBBLES_INSPECT_RECORD_MAPPING_CHAT_CONFLICT'] == '1';
   final inspectPostDirectSource = Platform.environment['OPENBUBBLES_INSPECT_POST_DIRECT_SOURCE_CHAT_CONFLICT'] == '1';
   _require([inspectNext, inspectNonDirect, inspectPostGroup, inspectRecordMapping, inspectPostDirectSource]
       .where((value) => value).length <= 1);
-  final snapshotRoot = inspectPostDirectSource
+  final snapshotRoot = inspectPostMembership
+      ? '${_snapshotRoot.substring(0, _snapshotRoot.length - 1)}X' : inspectPostDirectSource
       ? '${_snapshotRoot.substring(0, _snapshotRoot.length - 1)}U' : inspectRecordMapping
       ? '${_snapshotRoot.substring(0, _snapshotRoot.length - 1)}R' : inspectPostGroup
       ? '${_snapshotRoot.substring(0, _snapshotRoot.length - 1)}O' : inspectNonDirect
       ? '${_snapshotRoot.substring(0, _snapshotRoot.length - 1)}L' : inspectNext
       ? '${_snapshotRoot.substring(0, _snapshotRoot.length - 1)}G' : _snapshotRoot;
-  final snapshotHash = inspectPostDirectSource
+  final snapshotHash = inspectPostMembership
+      ? '49ada61e1e2150524f0c3bb073ee9201b022c258c15948abdb380d0a7ba73bce' : inspectPostDirectSource
       ? '4a62f362d4fcea0b9f58751f3b51175813837c361d73d240ee4fdf412586210e' : inspectRecordMapping
       ? 'ec8b3df143cf700b6108437ce47d7a4723392bb3ee9d3f67da1ab87797956e51' : inspectPostGroup
       ? 'c3a674e0cf0e2e3d0961b0c50666bd6ee3716b65324e5a6266167f375a175c63' : inspectNonDirect
       ? '3c50655371f63412d26db87b6e716e4a61af3b62c69273a3a4f73103b5c23015' : inspectNext
       ? '21635c19e36223fd3d7d645d7477e1a7cddb54c8467b702d77e2cd99ae8fe287' : _snapshotHash;
-  final expectedSequence = inspectPostDirectSource ? 981 : inspectRecordMapping ? 962 : inspectPostGroup ? 958 : inspectNonDirect ? 869 : inspectNext ? 864 : 863;
+  final expectedSequence = inspectPostMembership ? 1075 : inspectPostDirectSource ? 981 : inspectRecordMapping ? 962 : inspectPostGroup ? 958 : inspectNonDirect ? 869 : inspectNext ? 864 : 863;
   final originalFile = File('${profile.path}/objectbox/data.mdb');
   final originalHash = await _hash(originalFile);
   final beforeState = quarantinedChatObservationPreservedState(store);
@@ -488,7 +492,7 @@ Future<Map<String, Object?>> observeQuarantinedChatConflict({
                 oldMap.pendingUpdateOperationId != null ||
                 oldMap.protectedReadbackLeaseReference != null,
           });
-          if (inspectPostDirectSource) {
+          if (inspectPostDirectSource || inspectPostMembership) {
             final priorQuery = copy.box<Chat>().query(Chat_.guid.equals(oldChat.canonicalGuid))
                 .build()..limit = 2;
             final List<Chat> priorChats;
