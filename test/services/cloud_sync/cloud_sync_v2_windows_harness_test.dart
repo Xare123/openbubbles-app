@@ -49,6 +49,18 @@ void main() {
     expect(launch, contains("OPENBUBBLES_INSPECT_RETAINED"));
     expect(launch, contains('writeCloudSyncV2RetainedInspectionReport('));
     expect(launch, contains("'retained-inspection-complete'"));
+    expect(launch, contains('_handleMissingReadAuthentication(error)'));
+    final liveFixture = File(
+      'test/live/cloud_sync_v2_windows_live_harness_test.dart',
+    ).readAsStringSync();
+    final retainedLaunch = liveFixture.substring(
+      liveFixture.indexOf("'inspect-retained' =>"),
+      liveFixture.indexOf("'materialize-retained-body' =>"),
+    );
+    expect(retainedLaunch, contains('.retainedInspection'));
+    expect(retainedLaunch, isNot(contains('.interactive')));
+    expect(liveFixture, isNot(contains('!.inspectRetainedForTestHost()')));
+    expect(liveFixture, contains("detail['report_sha256']"));
     for (final forbidden in ['_runSemanticPull(', '_runLocalWrite(', 'SharedPushState', 'runCloudSyncWindowsHistoricalImport(', 'materializeRetainedBody']) {
       expect(core, isNot(contains(forbidden)));
       expect(launch, isNot(contains(forbidden)));

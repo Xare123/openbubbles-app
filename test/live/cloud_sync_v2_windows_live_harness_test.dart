@@ -8,6 +8,7 @@ import 'package:bluebubbles/services/backend/filesystem/cloud_sync_windows_dev_p
 import 'package:bluebubbles/src/rust/api/api.dart' as api;
 import 'package:bluebubbles/src/rust/frb_generated.dart';
 import 'package:bluebubbles/utils/logger/logger.dart';
+import 'package:crypto/crypto.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart'
     show ExternalLibrary;
@@ -141,7 +142,7 @@ void main() {
                       candidate ==
                           harness
                               .CloudSyncV2WindowsHarnessOperation
-                              .interactive,
+                              .retainedInspection,
                     'materialize-retained-body' =>
                       candidate ==
                           harness
@@ -231,11 +232,32 @@ void main() {
         expect(bodied?['durable_state_unchanged'], isTrue);
       }
       if (Platform.environment['OPENBUBBLES_INSPECT_RETAINED'] == '1') {
-        final observed = await tester.runAsync<Map<String, Object?>>(
-          () => harnessKey.currentState!.inspectRetainedForTestHost(),
-        );
+        // Initialization executes the real launch action, including its single
+        // saved-session recovery. Do not bypass it with the interactive-only
+        // inspector, which used to fail before normal recovery could run.
+        expect(status['state'], 'finished', reason: jsonEncode(status));
+        expect(status['stage'], 'retained-inspection-complete');
+        final detail = jsonDecode(status['detail'] as String)
+            as Map<String, dynamic>;
+        final reportName = 'windows-retained-observation-$launchId.json';
+        expect(detail['report_file'], reportName);
+        final reportBytes = File(path.join(
+          profile.path, 'cloud-sync-v2', 'reports', reportName,
+        )).readAsBytesSync();
+        expect(sha256.convert(reportBytes).toString(), detail['report_sha256']);
+        final report = jsonDecode(utf8.decode(reportBytes))
+            as Map<String, dynamic>;
+        expect(report['version'], 'cloud-sync-v2-retained-observation-v1');
+        expect(report['launch_id'], launchId);
+        expect(report['process_id'], pid);
+        final observed = <String, Object?>{
+          for (final key in const [
+            'durable_state_unchanged', 'window_offset', 'limit_per_category',
+            'cases',
+          ]) key: report[key],
+        };
         debugPrint('windows_retained_observation=${jsonEncode(observed)}');
-        expect(observed?['durable_state_unchanged'], isTrue);
+        expect(observed['durable_state_unchanged'], isTrue);
       }
       if (Platform.environment['OPENBUBBLES_INSPECT_CHAT_PARENTS'] == '1') {
         expect(operation, 'inspect-chat-parents');
