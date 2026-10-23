@@ -226,7 +226,7 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
         CloudAppliedAttachmentProjectionRepairAdapter,
         CloudLegacyCanonicalOwnershipProofAdapter,
         CloudMessageContentTransitionProofAdapter,
-        CloudDirectChatRecordConvergenceProofAdapter,
+        CloudChatRecordConvergenceProofAdapter,
         CloudChatServiceRouteTransitionProofAdapter {
   static final RegExp _externalDigestPattern = RegExp(r'^[A-Za-z0-9_-]{43}$');
 
@@ -1074,7 +1074,7 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
   }
 
   @override
-  void validateDirectChatRecordConvergence({
+  void validateChatRecordConvergence({
     required CloudSyncScope scope,
     required int generation,
     required CloudChatEntityPayload payload,
@@ -1085,20 +1085,24 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
       logicalEntityKeyHash: payload.logicalEntityKeyHash,
     );
     final chat = guid == null ? null : _findChat(guid);
+    final isGroup = payload.style == CloudSemanticChatStyle.group;
+    final service = payload.service;
     final participant = payload.participantHandles.length == 1
         ? _normalizeHandle(payload.participantHandles.single)
         : null;
-    if (payload.service != CloudSemanticService.iMessage ||
-        payload.style != CloudSemanticChatStyle.direct ||
+    if ((service != CloudSemanticService.iMessage &&
+            !(isGroup && service == CloudSemanticService.sms)) ||
+        (!isGroup && payload.style != CloudSemanticChatStyle.direct) ||
         guid != payload.canonicalGuid ||
-        guid != 'iMessage;-;${payload.chatIdentifier}' ||
-        participant?.address != payload.chatIdentifier ||
-        chat == null || chat.id == null || chat.id! <= 0 || chat.isRpSms ||
-        chat.isRoutingStub || chat.style != 45 ||
+        guid != '${_serviceName(service!)};${isGroup ? '+' : '-'};${payload.chatIdentifier}' ||
+        (!isGroup && participant?.address != payload.chatIdentifier) ||
+        chat == null || chat.id == null || chat.id! <= 0 ||
+        chat.isRpSms != (service == CloudSemanticService.sms) ||
+        chat.dateDeleted != null || chat.isRoutingStub || chat.style != (isGroup ? 43 : 45) ||
         chat.chatIdentifier != payload.chatIdentifier ||
-        chat.handles.length != 1 ||
-        chat.handles.single.address != payload.chatIdentifier ||
-        chat.handles.single.service != 'iMessage') {
+        (!isGroup && (chat.handles.length != 1 ||
+          chat.handles.single.address != payload.chatIdentifier ||
+          chat.handles.single.service != 'iMessage'))) {
       throw CloudSyncFailure(
         category: CloudFailureCategory.conflict,
         safeCode: 'canonical_chat_convergence_unproven',
@@ -1111,12 +1115,37 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
     _requireCanonicalIdentityOwnership(scope: scope, generation: generation,
       kind: CloudEntityKind.chat, logicalEntityKeyHash: payload.logicalEntityKeyHash,
       canonicalGuid: guid);
+    if (isGroup) {
+      final groupAliases = payload.aliases.where(
+        (alias) => alias.kind == CloudSemanticChatAliasKind.groupId).toList();
+      final participants = <String>{};
+      for (final raw in payload.participantHandles) {
+        final normalized = _normalizeHandle(raw, allowOpaqueParticipant: true);
+        if (normalized == null || !participants.add(normalized.address)) {
+          throw CloudSyncFailure(category: CloudFailureCategory.conflict,
+            safeCode: 'canonical_chat_convergence_unproven');
+        }
+      }
+      if (payload.groupId?.isNotEmpty != true || groupAliases.length != 1 ||
+          participants.length < 2) {
+        throw CloudSyncFailure(category: CloudFailureCategory.conflict,
+          safeCode: 'canonical_chat_convergence_unproven');
+      }
+      final owners = _resolveChatOwnersByAlias(scope: scope, generation: generation,
+        service: service, kind: CloudSemanticChatAliasKind.groupId,
+        aliasKeyHash: groupAliases.single.keyHash);
+      if (owners[chat.id]?.chat.guid != guid ||
+          owners[chat.id]?.logicalEntityKeyHash != payload.logicalEntityKeyHash) {
+        throw CloudSyncFailure(category: CloudFailureCategory.conflict,
+          safeCode: 'canonical_chat_convergence_unproven');
+      }
+    }
     final lookup = CloudCanonicalIdentityDigest.forCanonicalGuidLookup(
       scope: scope, generation: generation, canonicalGuid: guid,
     );
     for (final alias in payload.aliases) {
       _validateChatAliasClaim(
-        scope: scope, generation: generation, service: CloudSemanticService.iMessage,
+        scope: scope, generation: generation, service: service,
         alias: alias, logicalEntityKeyHash: payload.logicalEntityKeyHash,
         canonicalGuidHash: canonicalHash, canonicalGuidLookupHash: lookup,
         expectedChat: chat,

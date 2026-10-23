@@ -3542,6 +3542,120 @@ void main() {
     }
   });
 
+  group('fresh physical group Chat recovery', () {
+    for (final scenario in [
+      (service: CloudSemanticService.sms, failure: 'none'),
+      (service: CloudSemanticService.iMessage, failure: 'none'),
+      (service: CloudSemanticService.sms, failure: 'different group'),
+      (service: CloudSemanticService.sms, failure: 'missing durable group'),
+      (service: CloudSemanticService.sms, failure: 'pending target'),
+      (service: CloudSemanticService.sms, failure: 'deleted group'),
+    ]) {
+      test('${scenario.service.name}: ${scenario.failure}', () async {
+        final scope = _scope(zone: 'chatManateeZone', persistenceLane: CloudSyncPersistenceLane.semantic);
+        var registry = TransientCloudCanonicalIdentityRegistry();
+        var currentTime = now;
+        CloudChatEntityPayload groupPayload({bool differentGroup = false}) => CloudChatEntityPayload(
+          logicalEntityKeyHash: _indexedDigest('fresh-group-${scenario.service.name}'),
+          canonicalGuid: '${scenario.service == CloudSemanticService.sms ? 'SMS' : 'iMessage'};+;synthetic-fresh-group',
+          chatIdentifier: 'synthetic-fresh-group', displayName: null,
+          groupId: differentGroup ? 'other-group' : 'same-group',
+          participantHandles: const ['tel:+15555550101', 'mailto:peer@example.invalid'],
+          service: scenario.service, style: CloudSemanticChatStyle.group,
+          aliases: [
+            CloudSemanticChatAlias(kind: CloudSemanticChatAliasKind.serviceIdentifier,
+              keyHash: _indexedDigest('fresh-group-service')),
+            CloudSemanticChatAlias(kind: CloudSemanticChatAliasKind.groupId,
+              keyHash: _indexedDigest(differentGroup ? 'other-group' : 'same-group')),
+          ],
+        );
+        ObjectBoxCloudSemanticStoreGateway gateway() => ObjectBoxCloudSemanticStoreGateway(
+          store: objectBox, clock: () => currentTime,
+          canonicalAdapter: ObjectBoxCanonicalSemanticEntityAdapter(store: objectBox,
+            identityResolver: registry, semanticApplyEnabled: true, allowChatUpserts: true,
+            activeScopeProvider: () => CloudCanonicalActiveScope(scope: scope, generation: leaseFence.generation)),
+        );
+        TransactionalCloudInboxApplier applier(CloudInboxEntry entry, CloudChatEntityPayload payload) =>
+          TransactionalCloudInboxApplier(store: gateway(), identityRegistrar: registry,
+            activeScopeRevalidator: () async => true,
+            decoder: _FixedDecoder(CloudDecodedMutation.upsert(scope: scope, generation: entry.generation,
+              changeId: entry.change.changeId, payload: payload,
+              snapshot: _chatSnapshot(logicalEntityKeyHash: payload.logicalEntityKeyHash,
+                etagHash: entry.change.etagHash!,
+                encryptedRawRecordReference: entry.change.encryptedPayloadReference!))));
+        final first = _entry(scope: scope, serverModifiedAt: now);
+        _seedDurableFence(objectBox, entry: first, leaseFence: leaseFence, now: now);
+        final checkpoints = objectBox.box<CloudSyncCheckpointEntity>();
+        checkpoints.put(checkpoints.getAll().single..persistenceLane = scope.persistenceLane.name);
+        final originalPayload = groupPayload();
+        expect((await applier(first, originalPayload).apply(first, leaseFence: leaseFence)).disposition,
+          CloudInboxApplyDisposition.applied);
+        final originalChat = objectBox.box<Chat>().getAll().single;
+        final handles = originalChat.handles.map((handle) => handle.id).toSet();
+        final historyId = objectBox.box<Message>().put(Message(guid: 'fresh-group-history', text: 'Keep group history')
+          ..chat.targetId = originalChat.id!);
+        final oldMap = cloudSyncFindRecordMap(store: objectBox, scope: scope,
+          generation: first.generation, logicalEntityKeyHash: originalPayload.logicalEntityKeyHash)!;
+        final oldReplay = objectBox.box<CloudSemanticReplayEntity>().getAll().single;
+        final second = _entry(scope: scope, sequence: 2, batchId: 'fresh-group-second',
+          changeId: _indexedDigest('fresh-group-change'), recordIdHash: _indexedDigest('fresh-group-record'),
+          encryptedServerRecordId: _indexedProtectedReference('fresh-group-record'),
+          etagHash: _indexedDigest('fresh-group-etag'),
+          encryptedPayloadReference: _indexedProtectedReference('fresh-group-raw'),
+          payloadSha256: _sha256('fresh-group-bytes'), serverModifiedAt: now.add(const Duration(seconds: 2)));
+        checkpoints.put(checkpoints.getAll().single..fetchedSequence = 2..lastBatchId = second.batchId
+          ..pendingBatchId = second.batchId..pendingFetchedTokenCiphertext = 'protected-fresh-group-cursor');
+        _putPendingInboxEntry(objectBox, entry: second, now: now);
+        final inbox = objectBox.box<CloudInboxChangeEntity>();
+        inbox.put(inbox.getAll().singleWhere((row) => row.fetchSequence == 2)
+          ..status = CloudInboxStatus.quarantined.index..failureCategory = CloudFailureCategory.conflict.name
+          ..retryCount = 1..completedAtMs = now.add(const Duration(seconds: 1)).millisecondsSinceEpoch
+          ..updatedAtMs = now.add(const Duration(seconds: 1)).millisecondsSinceEpoch);
+        if (scenario.failure == 'missing durable group') {
+          final aliases = objectBox.box<CloudSemanticChatAliasEntity>();
+          aliases.removeMany(aliases.getAll().where((alias) => alias.aliasKind == 'groupId')
+            .map((alias) => alias.id).toList());
+        } else if (scenario.failure == 'pending target') {
+          objectBox.box<CloudRecordMapEntity>().put(oldMap..pendingUpdateOperationId = 'pending-group-write');
+        } else if (scenario.failure == 'deleted group') {
+          objectBox.box<Chat>().put(originalChat..dateDeleted = now);
+        }
+        objectBox.close();
+        objectBox = await openStore(directory: directory.path);
+        registry = TransientCloudCanonicalIdentityRegistry();
+        currentTime = now.add(const Duration(seconds: 10));
+        final before = _durableSyncControlFingerprint(objectBox);
+        final incoming = groupPayload(differentGroup: scenario.failure == 'different group');
+        final recovery = applier(second, incoming);
+        expect(gateway().allowDirectChatRecordConvergence, isFalse);
+        expect(await recovery.requeueChatServiceRouteBarrier(scope, leaseFence: leaseFence), scenario.failure == 'none');
+        if (scenario.failure != 'none') {
+          expect(_durableSyncControlFingerprint(objectBox), before);
+        } else {
+          expect(await recovery.requeueChatServiceRouteBarrier(scope, leaseFence: leaseFence), isFalse);
+          objectBox.close();
+          objectBox = await openStore(directory: directory.path);
+          registry = TransientCloudCanonicalIdentityRegistry();
+          expect((await applier(second, incoming).apply(second, leaseFence: leaseFence)).disposition,
+            CloudInboxApplyDisposition.applied);
+          final current = cloudSyncFindRecordMap(store: objectBox, scope: scope,
+            generation: second.generation, logicalEntityKeyHash: incoming.logicalEntityKeyHash)!;
+          final former = cloudSyncFindRecordMap(store: objectBox, scope: scope,
+            generation: second.generation, logicalEntityKeyHash: incoming.logicalEntityKeyHash,
+            serverRecordIdHash: first.change.recordIdHash)!;
+          expect(current.serverRecordIdHash, second.change.recordIdHash);
+          expect(cloudSyncRecordMapProvenanceMatches(former, oldMap), isTrue);
+          expect(objectBox.box<CloudSemanticReplayEntity>().get(oldReplay.id)!.replayKey, oldReplay.replayKey);
+        }
+        expect(objectBox.box<Chat>().count(), 1);
+        expect(objectBox.box<Chat>().get(originalChat.id!)!.handles.map((handle) => handle.id).toSet(), handles);
+        expect(objectBox.box<Message>().get(historyId)!.chat.targetId, originalChat.id);
+        expect(objectBox.box<Message>().get(historyId)!.text, 'Keep group history');
+        expect(objectBox.box<CloudOutboxOperationEntity>().count(), 0);
+      });
+    }
+  });
+
   for (final reopen in [false, true]) {
     for (final scenario in [
       'same record update',

@@ -43,11 +43,11 @@ abstract interface class CloudMessageContentTransitionProofAdapter {
   });
 }
 
-/// Proves an existing canonical direct Chat can own another physical record.
+/// Proves an existing canonical Chat can own another physical record.
 /// A shared hash/alias alone is not enough; this must validate the actual
 /// recipient, service, style, participant relation and all incoming aliases.
-abstract interface class CloudDirectChatRecordConvergenceProofAdapter {
-  void validateDirectChatRecordConvergence({
+abstract interface class CloudChatRecordConvergenceProofAdapter {
+  void validateChatRecordConvergence({
     required CloudSyncScope scope,
     required int generation,
     required CloudChatEntityPayload payload,
@@ -2814,9 +2814,12 @@ final class _ObjectBoxCloudSemanticStoreTransaction
     final existing = _findRecordMapByKey(_context.recordMapKey(payload.logicalEntityKeyHash));
     if (collisions.isEmpty && existing != null &&
         existing.serverRecordIdHash != _context.entry.change.recordIdHash &&
-        payload.service == CloudSemanticService.iMessage &&
-        payload.style == CloudSemanticChatStyle.direct &&
-        proofAdapter is CloudDirectChatRecordConvergenceProofAdapter) {
+        ((payload.service == CloudSemanticService.iMessage &&
+            payload.style == CloudSemanticChatStyle.direct) ||
+          (payload.style == CloudSemanticChatStyle.group &&
+            (payload.service == CloudSemanticService.iMessage ||
+              payload.service == CloudSemanticService.sms))) &&
+        proofAdapter is CloudChatRecordConvergenceProofAdapter) {
       _validateRecordMapScope(existing, payload.logicalEntityKeyHash,
         expectedChange: _context.entry.change);
       cloudSyncFindRecordMap(store: _canonicalAdapter.store, scope: scope,
@@ -2830,8 +2833,8 @@ final class _ObjectBoxCloudSemanticStoreTransaction
       }
       if (priorSourceProven) {
         _requireChatRecordIdle(existing, incomingLogicalKey: payload.logicalEntityKeyHash);
-        (proofAdapter as CloudDirectChatRecordConvergenceProofAdapter)
-            .validateDirectChatRecordConvergence(scope: scope,
+        (proofAdapter as CloudChatRecordConvergenceProofAdapter)
+            .validateChatRecordConvergence(scope: scope,
               generation: _context.entry.generation, payload: payload);
         _chatMembershipProven = true;
       }
@@ -2843,12 +2846,15 @@ final class _ObjectBoxCloudSemanticStoreTransaction
         generation: _context.entry.generation,
         logicalEntityKeyHash: payload.logicalEntityKeyHash);
       if (existing.serverRecordIdHash != _context.entry.change.recordIdHash) {
-        if (proofAdapter is! CloudDirectChatRecordConvergenceProofAdapter) {
+        // Existing-target service-route convergence remains direct-only. The
+        // observed group case above has no physical-route collision.
+        if (payload.style != CloudSemanticChatStyle.direct ||
+            proofAdapter is! CloudChatRecordConvergenceProofAdapter) {
           throw CloudSyncFailure(category: CloudFailureCategory.conflict,
             safeCode: 'semantic_record_mapping_conflict');
         }
-        (proofAdapter as CloudDirectChatRecordConvergenceProofAdapter)
-            .validateDirectChatRecordConvergence(scope: scope,
+        (proofAdapter as CloudChatRecordConvergenceProofAdapter)
+            .validateChatRecordConvergence(scope: scope,
               generation: _context.entry.generation, payload: payload);
       }
       _chatMembershipProven = true;
@@ -3058,11 +3064,12 @@ final class _ObjectBoxCloudSemanticStoreTransaction
                 null) &&
         _allowDirectChatRecordConvergence && !_chatMembershipProven &&
         payload is CloudChatEntityPayload &&
-        _canonicalAdapter is CloudDirectChatRecordConvergenceProofAdapter &&
+        payload.style == CloudSemanticChatStyle.direct &&
+        _canonicalAdapter is CloudChatRecordConvergenceProofAdapter &&
         _context.entry.scope.zone == 'chatManateeZone' &&
         _findSnapshot(key) != null) {
-      (_canonicalAdapter as CloudDirectChatRecordConvergenceProofAdapter)
-          .validateDirectChatRecordConvergence(
+      (_canonicalAdapter as CloudChatRecordConvergenceProofAdapter)
+          .validateChatRecordConvergence(
             scope: _context.entry.scope,
             generation: _context.entry.generation,
             payload: payload,

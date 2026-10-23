@@ -728,8 +728,10 @@ Future<Map<String, Object?>> observeQuarantinedChatConflict({
       return raw;
     }).toSet();
     final groupRoute = chatPayload.style == CloudSemanticChatStyle.group;
+    final smsRoute = chatPayload.service == CloudSemanticService.sms;
+    final expectedService = smsRoute ? 'SMS' : 'iMessage';
     final newRouteMatches = routeApplied && newChats.length == 1 &&
-        newChats.single.dateDeleted == null && !newChats.single.isRpSms &&
+        newChats.single.dateDeleted == null && newChats.single.isRpSms == smsRoute &&
         !newChats.single.isRoutingStub && newChats.single.style == (groupRoute ? 43 : 45) &&
         newChats.single.chatIdentifier == chatPayload.chatIdentifier &&
         (groupRoute
@@ -738,11 +740,11 @@ Future<Map<String, Object?>> observeQuarantinedChatConflict({
             newChats.single.handles.length == expectedParticipants.length &&
             newChats.single.handles.map((handle) => handle.address).toSet().length ==
                 expectedParticipants.length &&
-            newChats.single.handles.every((handle) => handle.service == 'iMessage' &&
+            newChats.single.handles.every((handle) => handle.service == expectedService &&
                 expectedParticipants.contains(handle.address))
           : newChats.single.handles.length == 1 &&
             newChats.single.handles.single.address == chatPayload.chatIdentifier &&
-            newChats.single.handles.single.service == 'iMessage');
+            newChats.single.handles.single.service == expectedService);
     final outboxUnchanged = copy.box<CloudOutboxOperationEntity>().count() == outboxCount;
     // The launcher enforces every copy-preservation predicate. Return its
     // content-free negatives too so a held qualification retains its cause.
