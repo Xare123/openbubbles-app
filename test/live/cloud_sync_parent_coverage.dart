@@ -12,6 +12,17 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/rust_cloud_semantic_dec
 
 const parentCoverageChatJournalLimit = 4096;
 
+// Additional comparison-only case folding, also used by native identity diagnostics.
+// Overlap is a diagnostic witness, never canonical ownership or merge authority.
+bool parentCoverageCaseFoldedReferenceOverlap(String reference, String candidate) {
+  final referenceVariants = Chat.cloudIdentityCandidates(reference)
+      .map((value) => value.toLowerCase())
+      .toSet();
+  return Chat.cloudIdentityCandidates(candidate).any(
+    (value) => referenceVariants.contains(value.toLowerCase()),
+  );
+}
+
 // Diagnostic selection only. The caller supplies the descending, same-scope
 // journal read. Keep the latest physical tombstone as well as saves; an older
 // save must not become a live chat simply because it can still be decoded.
@@ -312,23 +323,30 @@ Future<Map<String, Object?>> observeCachedParentCoverage({
             alias.keyHash == message.msgProto4GroupIdAliasKeyHash,
       );
       final normalizedFields = <String>[];
+      final caseFoldedOnlyFields = <String>[];
       for (final field in <String, String?>{
         'canonical_guid': chat.canonicalGuid,
         'chat_identifier': chat.chatIdentifier,
         'group_id': chat.groupId,
         'original_group_id': chat.originalGroupId,
       }.entries) {
-        if (field.value != null &&
-            Chat.cloudIdentityCandidates(
-              field.value!,
-            ).any(legacyVariants.contains)) {
+        if (field.value == null) continue;
+        if (Chat.cloudIdentityCandidates(
+          field.value!,
+        ).any(legacyVariants.contains)) {
           normalizedFields.add(field.key);
+        } else if (parentCoverageCaseFoldedReferenceOverlap(
+          message.chatIdentifier,
+          field.value!,
+        )) {
+          caseFoldedOnlyFields.add(field.key);
         }
       }
       if (!exact &&
           kinds.isEmpty &&
           !corroborates &&
-          normalizedFields.isEmpty) {
+          normalizedFields.isEmpty &&
+          caseFoldedOnlyFields.isEmpty) {
         continue;
       }
       final canonicalQuery =
@@ -370,6 +388,7 @@ Future<Map<String, Object?>> observeCachedParentCoverage({
         'alias_kinds': kinds.toList(),
         'proto4_corroborates': corroborates,
         'legacy_normalized_fields': normalizedFields,
+        'case_folded_only_fields': caseFoldedOnlyFields,
         'service': chat.service?.name,
         'style': chat.style?.name,
         'canonical_rows': canonical.length,

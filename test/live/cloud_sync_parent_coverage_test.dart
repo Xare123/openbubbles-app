@@ -25,6 +25,32 @@ CloudInboxChangeEntity _row(
 );
 
 void main() {
+  test('cached parent comparison notices case-only UUID wrapper differences', () {
+    const upper = 'AAAAAAAA-BBBB-4CCC-8DDD-EEEEEEEEEEEE';
+    const lower = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
+    expect(parentCoverageCaseFoldedReferenceOverlap(upper, lower), isTrue);
+    expect(
+      parentCoverageCaseFoldedReferenceOverlap(upper, 'iMessage;+;$lower'),
+      isTrue,
+    );
+    expect(
+      parentCoverageCaseFoldedReferenceOverlap('iMessage;+;$upper', lower),
+      isTrue,
+    );
+  });
+
+  test('cached parent comparison rejects unrelated or empty references', () {
+    expect(parentCoverageCaseFoldedReferenceOverlap('', ''), isFalse);
+    expect(
+      parentCoverageCaseFoldedReferenceOverlap('opaque-one', 'opaque-two'),
+      isFalse,
+    );
+    expect(
+      parentCoverageCaseFoldedReferenceOverlap('+15555550100', '+15555550101'),
+      isFalse,
+    );
+  });
+
   test(
     'cached parent coverage retains latest physical tombstone over old save',
     () {
