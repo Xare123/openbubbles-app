@@ -1081,6 +1081,23 @@ abstract interface class CloudChatServiceRouteBindingTransaction {
   });
 }
 
+/// Storage half of the one-attempt, never-committed Chat route recovery.
+/// Selection is read-only. Reservation must repeat every source/ownership and
+/// coordinator check atomically, without changing protected bytes or cursors.
+abstract interface class CloudChatServiceRouteRecoveryStoreGateway {
+  Future<CloudInboxEntry?> readChatServiceRouteBarrier({
+    required CloudSyncScope scope,
+    required CloudCoordinatorLeaseFence leaseFence,
+  });
+
+  Future<bool> requeueProvenChatServiceRouteBarrier({
+    required CloudInboxEntry entry,
+    required CloudCoordinatorLeaseFence leaseFence,
+    required CloudChatEntityPayload payload,
+    required CloudSemanticSnapshot snapshot,
+  });
+}
+
 /// Only Chat routing metadata may be reconsidered after the historical SMS
 /// exclusion policy changed. Carrier message bodies are still out of scope.
 bool cloudSyncIsHistoricalChatMetadataScope(CloudSyncScope scope) =>
@@ -1097,6 +1114,7 @@ class TransactionalCloudInboxApplier
         CloudLegacyOwnershipRepairer,
         CloudRetainedProjectionReprocessor,
         CloudRetainedProjectionWindowReprocessor,
+        CloudChatServiceRouteBarrierRecovery,
         CloudOwnWriterPrecisionBarrierRecovery,
         CloudReadOnlyTombstoneAcknowledgementPolicy {
   const TransactionalCloudInboxApplier({
@@ -1129,6 +1147,69 @@ class TransactionalCloudInboxApplier
 
   @override
   bool get readOnlyTombstoneAcknowledgementsEnabled => !_allowTombstones;
+
+  @override
+  Future<bool> requeueChatServiceRouteBarrier(
+    CloudSyncScope scope, {
+    required CloudCoordinatorLeaseFence leaseFence,
+  }) async {
+    final store = _store;
+    final registrar = _identityRegistrar;
+    final revalidate = _activeScopeRevalidator;
+    if (store is! CloudChatServiceRouteRecoveryStoreGateway ||
+        registrar == null || revalidate == null ||
+        !cloudSyncIsHistoricalChatMetadataScope(scope)) {
+      return false;
+    }
+    try {
+      final recoveryStore = store as CloudChatServiceRouteRecoveryStoreGateway;
+      final entry = await recoveryStore
+          .readChatServiceRouteBarrier(scope: scope, leaseFence: leaseFence);
+      if (entry == null) return false;
+      if (!await revalidate()) {
+        _recordDiagnostic('chat_route_recovery_account_changed');
+        return false;
+      }
+      final decoded = await _decoder.decode(entry);
+      final payload = decoded.payload;
+      final snapshot = decoded.snapshot;
+      if (decoded.scope != entry.scope ||
+          decoded.generation != entry.generation ||
+          decoded.changeId != entry.change.changeId ||
+          decoded.kind != CloudDecodedMutationKind.upsert ||
+          decoded.tombstone != null ||
+          payload is! CloudChatEntityPayload || snapshot == null ||
+          snapshot.kind != CloudEntityKind.chat ||
+          snapshot.logicalEntityKeyHash != payload.logicalEntityKeyHash ||
+          snapshot.etagHash != entry.change.etagHash ||
+          snapshot.encryptedRawRecordReference != entry.change.encryptedPayloadReference) {
+        _recordDiagnostic('chat_route_recovery_decode_rejected');
+        return false;
+      }
+      if (!await revalidate()) {
+        _recordDiagnostic('chat_route_recovery_account_changed');
+        return false;
+      }
+      final identityLease = registrar.bind(decoded);
+      try {
+        final reserved = await recoveryStore.requeueProvenChatServiceRouteBarrier(
+          entry: entry, leaseFence: leaseFence, payload: payload, snapshot: snapshot);
+        if (reserved) _recordDiagnostic('chat_route_barrier_requeued');
+        return reserved;
+      } finally {
+        identityLease.release();
+      }
+    } on CloudSyncFailure catch (failure) {
+      _recordDiagnostic(failure.safeCode ?? 'chat_route_recovery_unavailable');
+      return false;
+    } on CloudSemanticDecodeFailure catch (failure) {
+      _recordDiagnostic(failure.safeCode ?? 'chat_route_recovery_decode_rejected');
+      return false;
+    } catch (_) {
+      _recordDiagnostic('chat_route_recovery_unavailable');
+      return false;
+    }
+  }
 
   @override
   Future<CloudRetainedProjectionResult> reprojectRetainedUnprojected({

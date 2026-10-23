@@ -424,7 +424,8 @@ final class ObjectBoxCloudSemanticStoreGateway
         CloudAppliedProjectionRepairStoreGateway,
         CloudLegacyOwnershipRepairStoreGateway,
         CloudRetainedProjectionStoreGateway,
-        CloudRetainedProjectionWindowStoreGateway {
+        CloudRetainedProjectionWindowStoreGateway,
+        CloudChatServiceRouteRecoveryStoreGateway {
   ObjectBoxCloudSemanticStoreGateway({
     required Store store,
     required CloudCanonicalSemanticEntityAdapter canonicalAdapter,
@@ -495,6 +496,187 @@ final class ObjectBoxCloudSemanticStoreGateway
   final Box<Chat> _chats;
   final Box<Attachment> _attachments;
   final Box<CloudSemanticChatAliasEntity> _chatAliases;
+
+  @override
+  Future<CloudInboxEntry?> readChatServiceRouteBarrier({
+    required CloudSyncScope scope,
+    required CloudCoordinatorLeaseFence leaseFence,
+  }) async => _store.runInTransaction(TxMode.read, () =>
+      _chatServiceRouteBarrierLocked(scope, leaseFence)?.entry);
+
+  /// No failed semantic transaction committed for these rows. Reserve one
+  /// retry only AFTER the same typed route proof succeeds inside this write
+  /// transaction. Keep original failure/completion and every protected source;
+  /// ordinary apply owns the later canonical mutation and terminal outcome.
+  @override
+  Future<bool> requeueProvenChatServiceRouteBarrier({
+    required CloudInboxEntry entry,
+    required CloudCoordinatorLeaseFence leaseFence,
+    required CloudChatEntityPayload payload,
+    required CloudSemanticSnapshot snapshot,
+  }) async {
+    if (!_activeStores.add(_store)) {
+      throw _failure('semantic_nested_transaction_forbidden');
+    }
+    try {
+      return _store.runInTransaction(TxMode.write, () {
+        final candidate = _chatServiceRouteBarrierLocked(entry.scope, leaseFence);
+        if (candidate == null || candidate.entry.sequence != entry.sequence ||
+            candidate.entry.generation != entry.generation ||
+            candidate.entry.change.changeId != entry.change.changeId ||
+            entry.attemptCount != 1 ||
+            entry.completedAt != candidate.entry.completedAt ||
+            entry.createdAt != candidate.entry.createdAt) {
+          return false;
+        }
+        final nowMs = _clock().toUtc().millisecondsSinceEpoch;
+        // Check the originally decoded envelope, not just the re-selected row.
+        final durable = ObjectBoxCloudSemanticFence.validateLocked(
+          store: _store, entry: entry, leaseFence: leaseFence, nowMs: nowMs,
+          expectedInboxStatus: CloudInboxStatus.quarantined,
+          canonicalAdapter: _canonicalAdapter,
+        );
+        final context = _SemanticTransactionContext.prepare(
+          entry: entry, leaseFence: leaseFence);
+        final transaction = _ObjectBoxCloudSemanticStoreTransaction(
+          context: context, updatedAtMs: nowMs,
+          inboxEntity: durable.inbox, checkpointEntity: durable.checkpoint,
+          initialInboxStatus: CloudInboxStatus.quarantined,
+          advanceCheckpointOnTerminal: false, checkpoints: _checkpoints,
+          inbox: _inbox, recordMaps: _recordMaps, snapshots: _snapshots,
+          replay: _replay, canonicalAdapter: _canonicalAdapter,
+        );
+        try {
+          transaction.prepareChatServiceRouteBinding(payload: payload, snapshot: snapshot);
+          // This recovery targets the first previously rejected route, not an
+          // unrelated failure of an existing logical route or a generic retry.
+          if (transaction._chatRouteCollisionIds.length != 1 ||
+              transaction._findRecordMapByKey(context.recordMapKey(
+                payload.logicalEntityKeyHash)) != null) {
+            return false;
+          }
+          durable.inbox
+            ..status = CloudInboxStatus.pending.index
+            ..retryCount = 2
+            ..updatedAtMs = nowMs;
+          _inbox.put(durable.inbox);
+          return true;
+        } finally {
+          transaction.invalidate();
+        }
+      });
+    } finally {
+      _activeStores.remove(_store);
+    }
+  }
+
+  ({CloudInboxEntry entry, CloudObjectBoxDurableFence durable})?
+      _chatServiceRouteBarrierLocked(
+    CloudSyncScope scope, CloudCoordinatorLeaseFence leaseFence,
+  ) {
+    if (!cloudSyncIsHistoricalChatMetadataScope(scope)) {
+      return null;
+    }
+    final scopeKey = cloudSyncPersistentScopeKey(scope);
+    final checkpointQuery = _checkpoints.query(
+      CloudSyncCheckpointEntity_.checkpointKey.equals(scopeKey)).build();
+    final CloudSyncCheckpointEntity? checkpoint;
+    try { checkpoint = checkpointQuery.findUnique(); }
+    finally { checkpointQuery.close(); }
+    if (checkpoint == null || checkpoint.generation <= 0 ||
+        checkpoint.pendingBatchId == null ||
+        checkpoint.pendingFetchedTokenCiphertext == null ||
+        checkpoint.persistenceLane != scope.persistenceLane.name) {
+      return null;
+    }
+    final query = (_inbox.query(
+      CloudInboxChangeEntity_.scopeKey.equals(scopeKey)
+        .and(CloudInboxChangeEntity_.generation.equals(checkpoint.generation))
+        .and(CloudInboxChangeEntity_.status.notEquals(CloudInboxStatus.applied.index))
+        .and(CloudInboxChangeEntity_.status.notEquals(CloudInboxStatus.retainedUnprojected.index)),
+    )..order(CloudInboxChangeEntity_.fetchSequence)).build()..limit = 2;
+    final List<CloudInboxChangeEntity> rows;
+    try { rows = query.find(); } finally { query.close(); }
+    if (rows.isEmpty || (rows.length > 1 && rows[0].fetchSequence == rows[1].fetchSequence)) {
+      return null;
+    }
+    final row = rows.first;
+    if (row.status != CloudInboxStatus.quarantined.index ||
+        row.fetchSequence <= checkpoint.appliedSequence ||
+        row.batchId != checkpoint.pendingBatchId || row.changeType != 'save' ||
+        row.isTombstone || row.preflightCategory != null || row.preflightCode != null ||
+        row.failureCategory != CloudFailureCategory.conflict.name ||
+        row.retryCount != 1 || row.nextEligibleAtMs != 0 ||
+        row.completedAtMs <= 0 || row.completedAtMs != row.updatedAtMs ||
+        row.updatedAtMs >= _clock().toUtc().millisecondsSinceEpoch ||
+        row.etagHash == null || row.encryptedPayloadRef == null ||
+        row.payloadSha256 == null) {
+      return null;
+    }
+    // A corrupted/missing earlier journal entry must not make this look like
+    // the first unresolved barrier. Validate sequence continuity and identity,
+    // including duplicate terminal rows, before reserving this uncommon retry.
+    final journalQuery = (_inbox.query(
+      CloudInboxChangeEntity_.scopeKey.equals(scopeKey)
+        .and(CloudInboxChangeEntity_.generation.equals(checkpoint.generation)),
+    )..order(CloudInboxChangeEntity_.fetchSequence)).build();
+    try {
+      final journal = journalQuery.find();
+      if (journal.length != checkpoint.fetchedSequence) {
+        return null;
+      }
+      for (final (index, item) in journal.indexed) {
+        if (item.fetchSequence != index + 1 ||
+            item.accountFingerprint != scope.accountFingerprint ||
+            item.zone != scope.zone) {
+          return null;
+        }
+      }
+    } finally { journalQuery.close(); }
+    final replayQuery = _replay.query(
+      CloudSemanticReplayEntity_.scopeKey.equals(scopeKey)
+        .and(CloudSemanticReplayEntity_.generation.equals(row.generation))
+        .and(CloudSemanticReplayEntity_.inboxSequence.equals(row.fetchSequence)
+          .or(CloudSemanticReplayEntity_.changeIdHash.equals(
+            _SemanticTransactionContext._digest(row.changeIdHash)))),
+    ).build()..limit = 1;
+    try { if (replayQuery.findFirst() != null) return null; }
+    finally { replayQuery.close(); }
+    final mapQuery = _recordMaps.query(
+      CloudRecordMapEntity_.scopeKey.equals(scopeKey)
+        .and(CloudRecordMapEntity_.generation.equals(row.generation))
+        .and(CloudRecordMapEntity_.serverRecordIdHash.equals(row.serverRecordIdHash)),
+    ).build()..limit = 2;
+    final List<CloudRecordMapEntity> maps;
+    try { maps = mapQuery.find(); } finally { mapQuery.close(); }
+    if (maps.length != 1 || maps.single.mapKey != cloudSyncCanonicalRecordMapKey(
+        scope, maps.single.logicalEntityKeyHash)) {
+      return null;
+    }
+    final entry = CloudInboxEntry(
+      scope: scope, sequence: row.fetchSequence, generation: row.generation,
+      batchId: row.batchId, status: CloudInboxStatus.quarantined,
+      attemptCount: row.retryCount, lastFailure: CloudFailureCategory.conflict,
+      createdAt: DateTime.fromMillisecondsSinceEpoch(row.createdAtMs, isUtc: true),
+      completedAt: DateTime.fromMillisecondsSinceEpoch(row.completedAtMs, isUtc: true),
+      change: CloudFetchedChange(
+        changeId: row.changeIdHash, recordIdHash: row.serverRecordIdHash,
+        etagHash: row.etagHash, type: CloudChangeType.save,
+        encryptedServerRecordId: row.encryptedServerRecordId,
+        protectedSystemFieldsReference: row.protectedSystemFieldsRef,
+        encryptedPayloadReference: row.encryptedPayloadRef,
+        payloadSha256: row.payloadSha256,
+        serverModifiedAt: cloudInboxCanonicalServerModifiedAt(row),
+      ),
+    );
+    final durable = ObjectBoxCloudSemanticFence.validateLocked(
+      store: _store, entry: entry, leaseFence: leaseFence,
+      nowMs: _clock().toUtc().millisecondsSinceEpoch,
+      expectedInboxStatus: CloudInboxStatus.quarantined,
+      canonicalAdapter: _canonicalAdapter,
+    );
+    return (entry: entry, durable: durable);
+  }
 
   @override
   Future<T> writeTransaction<T>({

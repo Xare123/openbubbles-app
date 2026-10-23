@@ -142,6 +142,17 @@ String _rowBinding(CloudInboxChangeEntity row) => jsonEncode([
   row.completedAtMs,
 ]);
 
+// Only processing status/failure/retry/scheduling/completion fields may differ.
+// Enumerate source fields rather than relying on offsets in the full binding.
+String _immutableInboxSource(CloudInboxChangeEntity row) => jsonEncode([
+  row.id, row.changeKey, row.changeIdHash, row.scopeKey, row.accountFingerprint,
+  row.zone, row.serverRecordIdHash, row.etagHash, row.changeType,
+  row.encryptedServerRecordId, row.protectedSystemFieldsRef,
+  row.encryptedPayloadRef, row.payloadSha256, row.batchId, row.generation,
+  row.fetchSequence, row.isTombstone, row.preflightCategory, row.preflightCode,
+  row.serverModifiedAtMs, row.serverModifiedAtFormatVersion, row.createdAtMs,
+]);
+
 CloudInboxEntry _entry(CloudInboxChangeEntity row, CloudSyncScope scope) =>
     CloudInboxEntry(
       scope: scope,
@@ -206,6 +217,8 @@ Future<Map<String, Object?>> observeQuarantinedChatConflict({
   required BigInt pauseToken,
 }) async {
   _require(Platform.environment['OPENBUBBLES_INSPECT_QUARANTINED_CHAT'] == '1');
+  final productionRecovery =
+      Platform.environment['OPENBUBBLES_QUALIFY_CHAT_ROUTE_RECOVERY'] == '1';
   final originalFile = File('${profile.path}/objectbox/data.mdb');
   final originalHash = await _hash(originalFile);
   final beforeState = quarantinedChatObservationPreservedState(store);
@@ -393,13 +406,15 @@ Future<Map<String, Object?>> observeQuarantinedChatConflict({
       collectIds: priorIds, ignoredRows: copyMutableRows);
     final outboxCount = copy.box<CloudOutboxOperationEntity>().count();
 
-    // Diagnostic reconstruction ONLY: restore this copy's exact captured row
-    // to its pre-failure pending state. Live quarantine/cursors are untouched.
-    copiedRow.status = CloudInboxStatus.pending.index;
-    copiedRow.failureCategory = null;
-    copiedRow.nextEligibleAtMs = 0;
-    copiedRow.completedAtMs = 0;
-    copy.box<CloudInboxChangeEntity>().put(copiedRow);
+    if (!productionRecovery) {
+      // Historical diagnosis ONLY. The new recovery mode MUST NOT enter this
+      // direct status reconstruction; it uses the production reservation API.
+      copiedRow.status = CloudInboxStatus.pending.index;
+      copiedRow.failureCategory = null;
+      copiedRow.nextEligibleAtMs = 0;
+      copiedRow.completedAtMs = 0;
+      copy.box<CloudInboxChangeEntity>().put(copiedRow);
+    }
     final durable = ObjectBoxCloudSyncStore(
       store: copy,
       protector: _NoAccountAccess(),
@@ -422,20 +437,35 @@ Future<Map<String, Object?>> observeQuarantinedChatConflict({
       diagnosticRecorder: diagnostics.record,
     );
     final CloudInboxApplyResult result;
+    bool? recoveryReserved;
+    bool? repeatedRecoveryReserved;
     try {
-      result = await TransactionalCloudInboxApplier(
+      final applier = TransactionalCloudInboxApplier(
         decoder: _DecodedOnce(decoded),
         store: ObjectBoxCloudSemanticStoreGateway(
           store: copy,
           canonicalAdapter: projector,
         ),
         identityRegistrar: identities,
+        activeScopeRevalidator: () async => true,
         diagnosticRecorder: diagnostics.record,
-      ).apply(_entry(copiedRow, scope), leaseFence: fence!);
+      );
+      if (productionRecovery) {
+        recoveryReserved = await applier.requeueChatServiceRouteBarrier(scope,
+          leaseFence: fence!);
+        repeatedRecoveryReserved = await applier.requeueChatServiceRouteBarrier(scope,
+          leaseFence: fence);
+      }
+      final pending = copy.box<CloudInboxChangeEntity>().get(copiedRow.id)!;
+      result = pending.status == CloudInboxStatus.pending.index
+          ? await applier.apply(_entry(pending, scope), leaseFence: fence!)
+          : const CloudInboxApplyResult.deferred(safeCode: 'chat_route_recovery_unavailable');
     } finally {
       await durable.releaseCoordinatorLease(scope, leaseFence: fence!);
     }
     final afterIds = <String, Set<int>>{};
+    final sourcePreserved = _immutableInboxSource(row) == _immutableInboxSource(
+      copy.box<CloudInboxChangeEntity>().get(copiedRow.id)!);
     final priorDataPreserved = priorData ==
         quarantinedChatObservationPreservedState(copy,
           collectIds: afterIds, restrictIds: priorIds,
@@ -459,7 +489,7 @@ Future<Map<String, Object?>> observeQuarantinedChatConflict({
         newChats.single.handles.single.address == chatPayload.chatIdentifier &&
         newChats.single.handles.single.service == 'iMessage';
     final outboxUnchanged = copy.box<CloudOutboxOperationEntity>().count() == outboxCount;
-    _require(priorDataPreserved && !unexpectedNewRows && outboxUnchanged);
+    _require(priorDataPreserved && !unexpectedNewRows && outboxUnchanged && sourcePreserved);
     if (routeApplied) {
       _require(newRouteMatches);
     }
@@ -476,8 +506,12 @@ Future<Map<String, Object?>> observeQuarantinedChatConflict({
       'original_database_byte_exact': await _hash(originalFile) == originalHash,
       'exact_operation_fence_lease_excluded': true,
       'snapshot_source_unchanged': true,
-      'copy_only_pre_failure_reconstruction': true,
+      'copy_only_pre_failure_reconstruction': !productionRecovery,
+      'copy_production_recovery_attempted': productionRecovery,
+      'copy_production_recovery_reserved': recoveryReserved,
+      'copy_repeated_recovery_reserved': repeatedRecoveryReserved,
       'copy_original_data_rows_preserved': priorDataPreserved,
+      'copy_conflict_source_preserved': sourcePreserved,
       'copy_unexpected_new_rows': unexpectedNewRows,
       'copy_outbox_unchanged': outboxUnchanged,
       'copy_new_route_matches': newRouteMatches,

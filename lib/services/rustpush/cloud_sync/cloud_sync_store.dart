@@ -499,6 +499,17 @@ abstract interface class CloudOwnWriterPrecisionBarrierRecovery {
   });
 }
 
+/// One local retry of a never-committed direct-Chat service-route conflict.
+/// The ordinary protected decoder and exact prior route proof must succeed
+/// before reserving the retry. No cursor, canonical entity or remote write is
+/// changed by this capability; a failed retry cannot reserve another attempt.
+abstract interface class CloudChatServiceRouteBarrierRecovery {
+  Future<bool> requeueChatServiceRouteBarrier(
+    CloudSyncScope scope, {
+    required CloudCoordinatorLeaseFence leaseFence,
+  });
+}
+
 /// Read-only distinction between hard quarantine and soft projection debt.
 abstract interface class CloudQuarantinedInboxBarrierReader {
   Future<bool> hasQuarantinedInboxBarrier(CloudSyncScope scope);

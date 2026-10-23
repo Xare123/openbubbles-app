@@ -763,6 +763,13 @@ class CloudSyncEngine {
 
       if (config.flags.semanticApply && !_isCancelled(cancellationToken)) {
         await _renewCoordinatorLeaseOrThrow();
+        if (_inboxApplier is CloudChatServiceRouteBarrierRecovery) {
+          await (_inboxApplier as CloudChatServiceRouteBarrierRecovery)
+              .requeueChatServiceRouteBarrier(
+                scope,
+                leaseFence: _requireActiveLeaseFence(),
+              );
+        }
         if (_inboxApplier is CloudOwnWriterPrecisionBarrierRecovery) {
           await (_inboxApplier as CloudOwnWriterPrecisionBarrierRecovery)
               .requeueOwnWriterPrecisionBarrier(

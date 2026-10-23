@@ -2886,6 +2886,7 @@ void main() {
     late CloudInboxEntry first;
     late int oldChatId;
     late int historyId;
+    late DateTime routeNow;
 
     CloudChatEntityPayload payload(CloudSemanticService service, {
       String identifier = peer, String participant = peer, String? logicalKey,
@@ -2902,7 +2903,7 @@ void main() {
 
     ObjectBoxCloudSemanticStoreGateway routeGateway() =>
         ObjectBoxCloudSemanticStoreGateway(
-          store: objectBox, clock: () => now,
+          store: objectBox, clock: () => routeNow,
           canonicalAdapter: ObjectBoxCanonicalSemanticEntityAdapter(
             store: objectBox, identityResolver: identities,
             activeScopeProvider: () => CloudCanonicalActiveScope(
@@ -2911,8 +2912,8 @@ void main() {
           ),
         );
 
-    Future<CloudInboxApplyResult> project(CloudInboxEntry entry,
-        CloudChatEntityPayload chat) => TransactionalCloudInboxApplier(
+    TransactionalCloudInboxApplier routeApplier(CloudInboxEntry entry,
+        CloudChatEntityPayload chat, {Future<bool> Function()? revalidate}) => TransactionalCloudInboxApplier(
       decoder: _FixedDecoder(CloudDecodedMutation.upsert(
         scope: routeScope, generation: entry.generation,
         changeId: entry.change.changeId, payload: chat,
@@ -2920,8 +2921,12 @@ void main() {
           etagHash: entry.change.etagHash!,
           encryptedRawRecordReference: entry.change.encryptedPayloadReference!),
       )), store: routeGateway(), identityRegistrar: identities,
-      activeScopeRevalidator: () async => true,
-    ).apply(entry, leaseFence: leaseFence);
+      activeScopeRevalidator: revalidate ?? () async => true,
+    );
+
+    Future<CloudInboxApplyResult> project(CloudInboxEntry entry,
+        CloudChatEntityPayload chat) => routeApplier(entry, chat)
+            .apply(entry, leaseFence: leaseFence);
 
     CloudInboxEntry next(int sequence, {DateTime? modified, String? etag}) => _entry(
       scope: routeScope, sequence: sequence, batchId: 'route-$sequence',
@@ -2943,6 +2948,7 @@ void main() {
     }
 
     setUp(() async {
+      routeNow = now;
       routeScope = _scope(zone: 'chatManateeZone',
         persistenceLane: CloudSyncPersistenceLane.semantic);
       identities = TransientCloudCanonicalIdentityRegistry();
@@ -2959,6 +2965,107 @@ void main() {
         guid: 'preserved-route-history', text: 'Synthetic history')
         ..chat.targetId = oldChatId);
     });
+
+    CloudInboxEntry stageBarrier() {
+      final second = next(2);
+      stage(second);
+      final checkpoints = objectBox.box<CloudSyncCheckpointEntity>();
+      checkpoints.put(checkpoints.getAll().single
+        ..pendingBatchId = second.batchId
+        ..pendingFetchedTokenCiphertext = 'protected-route-next-cursor');
+      final inbox = objectBox.box<CloudInboxChangeEntity>();
+      inbox.put(inbox.getAll().singleWhere((r) => r.fetchSequence == 2)
+        ..status = CloudInboxStatus.quarantined.index
+        ..failureCategory = CloudFailureCategory.conflict.name
+        ..retryCount = 1
+        ..completedAtMs = now.add(const Duration(seconds: 1)).millisecondsSinceEpoch
+        ..updatedAtMs = now.add(const Duration(seconds: 1)).millisecondsSinceEpoch);
+      routeNow = now.add(const Duration(seconds: 10));
+      return second;
+    }
+
+    for (final restart in [false, true]) {
+      test('production recovery reserves one retry and preserves evidence (restart=$restart)', () async {
+        final second = stageBarrier();
+        final before = jsonDecode(_durableSyncControlFingerprint(objectBox)) as Map;
+        final recovery = routeApplier(second, payload(CloudSemanticService.iMessage));
+        expect(await recovery.requeueChatServiceRouteBarrier(routeScope,
+          leaseFence: leaseFence), isTrue);
+        final after = jsonDecode(_durableSyncControlFingerprint(objectBox)) as Map;
+        // Exactly status/retry reservation/update time may change, not failure
+        // completion, protected bytes, checkpoint or any canonical metadata.
+        final beforeRow = (before['inbox'] as List).singleWhere((r) => r[12] == 2) as List;
+        final afterRow = (after['inbox'] as List).singleWhere((r) => r[12] == 2) as List;
+        expect(afterRow[13], CloudInboxStatus.pending.index);
+        expect(afterRow[18], 2);
+        for (final index in [13, 18, 21]) { afterRow[index] = beforeRow[index]; }
+        expect(after, before);
+        expect(objectBox.box<Chat>().count(), 1);
+        expect(objectBox.box<Message>().get(historyId)!.chat.targetId, oldChatId);
+        expect(objectBox.box<CloudOutboxOperationEntity>().count(), 0);
+        expect(await recovery.requeueChatServiceRouteBarrier(routeScope,
+          leaseFence: leaseFence), isFalse);
+        if (restart) {
+          objectBox.close();
+          objectBox = await openStore(directory: directory.path);
+        }
+        expect((await project(second, payload(CloudSemanticService.iMessage))).disposition,
+          CloudInboxApplyDisposition.applied);
+        expect(objectBox.box<Chat>().count(), 2);
+        expect(objectBox.box<CloudSemanticReplayEntity>().count(), 2);
+        expect(objectBox.box<Message>().get(historyId)!.chat.targetId, oldChatId);
+        expect(await routeApplier(second, payload(CloudSemanticService.iMessage))
+          .requeueChatServiceRouteBarrier(routeScope, leaseFence: leaseFence), isFalse);
+      });
+    }
+
+    for (final failed in ['already retried', 'semantic receipt', 'earlier pending',
+      'pending map', 'changed peer', 'account before decode', 'account after decode',
+      'missing journal row', 'changed after decode']) {
+      test('production recovery holds $failed without reopening', () async {
+        final second = stageBarrier();
+        final inbox = objectBox.box<CloudInboxChangeEntity>();
+        switch (failed) {
+          case 'already retried': inbox.put(inbox.getAll().singleWhere((r) => r.fetchSequence == 2)
+            ..retryCount = 3);
+          case 'semantic receipt':
+            final replays = objectBox.box<CloudSemanticReplayEntity>();
+            replays.put(replays.getAll().single..inboxSequence = 2);
+          case 'earlier pending': inbox.put(inbox.getAll().singleWhere((r) => r.fetchSequence == 1)
+            ..status = CloudInboxStatus.pending.index);
+          case 'pending map':
+            final maps = objectBox.box<CloudRecordMapEntity>();
+            maps.put(maps.getAll().single..pendingUpdateOperationId = 'synthetic-pending-update');
+          case 'changed peer': objectBox.box<Chat>().put(objectBox.box<Chat>().get(oldChatId)!
+            ..chatIdentifier = 'other@example.invalid');
+          case 'missing journal row': inbox.remove(inbox.getAll().singleWhere(
+            (r) => r.fetchSequence == 1).id);
+        }
+        final before = _durableSyncControlFingerprint(objectBox);
+        var revalidations = 0;
+        final recovery = routeApplier(second, payload(CloudSemanticService.iMessage),
+          revalidate: () async {
+            revalidations++;
+            if (failed == 'changed after decode' && revalidations == 2) {
+              inbox.put(inbox.getAll().singleWhere((r) => r.fetchSequence == 2)
+                ..encryptedPayloadRef = _indexedProtectedReference('changed-after-decode'));
+            }
+            return !(failed == 'account before decode' ||
+                (failed == 'account after decode' && revalidations == 2));
+          });
+        expect(await recovery.requeueChatServiceRouteBarrier(routeScope,
+          leaseFence: leaseFence), isFalse);
+        if (failed != 'changed after decode') {
+          expect(_durableSyncControlFingerprint(objectBox), before);
+        } else {
+          expect(inbox.getAll().singleWhere((r) => r.fetchSequence == 2).status,
+            CloudInboxStatus.quarantined.index);
+          expect(inbox.getAll().singleWhere((r) => r.fetchSequence == 2).retryCount, 1);
+        }
+        expect(objectBox.box<Chat>().count(), 1);
+        expect(objectBox.box<Message>().get(historyId)!.chat.targetId, oldChatId);
+      });
+    }
 
     for (final reopen in [false, true]) {
       for (final legacyRawGeneration in [false, true]) {
