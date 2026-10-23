@@ -256,12 +256,13 @@ Future<Map<String, Object?>> observeQuarantinedChatConflict({
     final copiedRow = copy.box<CloudInboxChangeEntity>().get(row.id);
     _require(copiedRow != null && _rowBinding(copiedRow) == originalBinding);
     final diagnostics = CloudSyncSemanticDiagnosticCollector();
-    final decoded = await RustCloudSemanticDecoder(
+    final decoder = RustCloudSemanticDecoder(
       readAuthSnapshot: () async => auth,
       storageDirectory: profile.path,
       nativeWriterPauseToken: pauseToken,
       diagnosticRecorder: diagnostics.record,
-    ).decode(_entry(row, scope));
+    );
+    final decoded = await decoder.decode(_entry(row, scope));
     final payload = decoded.payload;
     _require(payload is CloudChatEntityPayload && decoded.snapshot != null);
     final chatPayload = payload as CloudChatEntityPayload;
@@ -278,6 +279,88 @@ Future<Map<String, Object?>> observeQuarantinedChatConflict({
     final canonicalMaps = maps
         .where((r) => r.mapKey.startsWith('record-map:'))
         .toList();
+    // Read the ONE exact previously applied protected version, when present.
+    // This distinguishes an actual route transition from an older converter's
+    // bad projection; no prior identity or plaintext escapes this observation.
+    final collisions = copy
+        .box<CloudRecordMapEntity>()
+        .getAll()
+        .where(
+          (r) =>
+              r.scopeKey == scopeKey &&
+              r.accountFingerprint == auth.accountFingerprint &&
+              r.generation == row.generation &&
+              r.serverRecordIdHash == row.serverRecordIdHash &&
+              r.mapKey.startsWith('record-map:'),
+        )
+        .toList();
+    final previous = <String, Object?>{'map_count': collisions.length};
+    if (collisions.length == 1) {
+      final oldMap = collisions.single;
+      final oldRows = copy
+          .box<CloudInboxChangeEntity>()
+          .getAll()
+          .where(
+            (old) =>
+                old.scopeKey == scopeKey &&
+                old.accountFingerprint == auth.accountFingerprint &&
+                old.generation == row.generation &&
+                old.zone == scope.zone &&
+                old.status == CloudInboxStatus.applied.index &&
+                old.changeType == 'save' &&
+                !old.isTombstone &&
+                old.serverRecordIdHash == oldMap.serverRecordIdHash &&
+                old.etagHash == oldMap.etagHash &&
+                old.encryptedPayloadRef == oldMap.encryptedRawRecordRef,
+          )
+          .toList();
+      previous['exact_applied_source_count'] = oldRows.length;
+      if (oldRows.length == 1) {
+        final oldRow = oldRows.single;
+        try {
+          final oldDecoded = await decoder.decode(_entry(oldRow, scope));
+          final oldPayload = oldDecoded.payload;
+          _require(oldPayload is CloudChatEntityPayload);
+          final oldChat = oldPayload as CloudChatEntityPayload;
+          final oldPeers = oldChat.participantHandles.toList()..sort();
+          final newPeers = chatPayload.participantHandles.toList()..sort();
+          final oldDate = cloudInboxCanonicalServerModifiedAt(oldRow);
+          final newDate = cloudInboxCanonicalServerModifiedAt(row);
+          previous.addAll({
+            'decode': 'ready',
+            'service': oldChat.service?.name,
+            'style': oldChat.style?.name,
+            'logical_key_matches_existing_map':
+                oldChat.logicalEntityKeyHash == oldMap.logicalEntityKeyHash,
+            'same_chat_identifier':
+                oldChat.chatIdentifier == chatPayload.chatIdentifier,
+            'same_participants': jsonEncode(oldPeers) == jsonEncode(newPeers),
+            'same_one_participant':
+                oldPeers.length == 1 &&
+                newPeers.length == 1 &&
+                oldPeers.single == newPeers.single,
+            'sms_to_imessage_direct_guid_pair':
+                oldChat.canonicalGuid ==
+                    'SMS;-;${chatPayload.chatIdentifier}' &&
+                chatPayload.canonicalGuid ==
+                    'iMessage;-;${chatPayload.chatIdentifier}',
+            'server_time_strictly_increases':
+                oldDate != null && newDate != null && newDate.isAfter(oldDate),
+            'different_logical_keys':
+                oldChat.logicalEntityKeyHash !=
+                chatPayload.logicalEntityKeyHash,
+            'previous_pending_update':
+                oldMap.pendingUpdateOperationId != null ||
+                oldMap.protectedReadbackLeaseReference != null,
+          });
+        } catch (error) {
+          previous['decode'] = 'failed';
+          previous['failure_code'] = error is CloudSemanticDecodeFailure
+              ? cloudSyncV2SafeFailureCodeForCandidate(error.safeCode)
+              : cloudSyncV2SafeFailureCode(error);
+        }
+      }
+    }
     final canonicalChats = copy
         .box<Chat>()
         .query(Chat_.guid.equals(chatPayload.canonicalGuid))
@@ -355,6 +438,7 @@ Future<Map<String, Object?>> observeQuarantinedChatConflict({
       'canonical_map_same_record': canonicalMaps.length == 1
           ? canonicalMaps.single.serverRecordIdHash == row.serverRecordIdHash
           : null,
+      'previous_protected_version': previous,
       'disposition': result.disposition.name,
       'failure_category': result.failureCategory?.name,
       'failure_code': result.safeCode == null
