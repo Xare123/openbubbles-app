@@ -288,19 +288,22 @@ Future<Map<String, Object?>> observeQuarantinedChatConflict({
   final inspectNonDirect = Platform.environment['OPENBUBBLES_INSPECT_NON_DIRECT_CHAT_CONFLICT'] == '1';
   final inspectPostGroup = Platform.environment['OPENBUBBLES_INSPECT_POST_GROUP_CHAT_CONFLICT'] == '1';
   final inspectRecordMapping = Platform.environment['OPENBUBBLES_INSPECT_RECORD_MAPPING_CHAT_CONFLICT'] == '1';
-  _require([inspectNext, inspectNonDirect, inspectPostGroup, inspectRecordMapping]
+  final inspectPostDirectSource = Platform.environment['OPENBUBBLES_INSPECT_POST_DIRECT_SOURCE_CHAT_CONFLICT'] == '1';
+  _require([inspectNext, inspectNonDirect, inspectPostGroup, inspectRecordMapping, inspectPostDirectSource]
       .where((value) => value).length <= 1);
-  final snapshotRoot = inspectRecordMapping
+  final snapshotRoot = inspectPostDirectSource
+      ? '${_snapshotRoot.substring(0, _snapshotRoot.length - 1)}U' : inspectRecordMapping
       ? '${_snapshotRoot.substring(0, _snapshotRoot.length - 1)}R' : inspectPostGroup
       ? '${_snapshotRoot.substring(0, _snapshotRoot.length - 1)}O' : inspectNonDirect
       ? '${_snapshotRoot.substring(0, _snapshotRoot.length - 1)}L' : inspectNext
       ? '${_snapshotRoot.substring(0, _snapshotRoot.length - 1)}G' : _snapshotRoot;
-  final snapshotHash = inspectRecordMapping
+  final snapshotHash = inspectPostDirectSource
+      ? '4a62f362d4fcea0b9f58751f3b51175813837c361d73d240ee4fdf412586210e' : inspectRecordMapping
       ? 'ec8b3df143cf700b6108437ce47d7a4723392bb3ee9d3f67da1ab87797956e51' : inspectPostGroup
       ? 'c3a674e0cf0e2e3d0961b0c50666bd6ee3716b65324e5a6266167f375a175c63' : inspectNonDirect
       ? '3c50655371f63412d26db87b6e716e4a61af3b62c69273a3a4f73103b5c23015' : inspectNext
       ? '21635c19e36223fd3d7d645d7477e1a7cddb54c8467b702d77e2cd99ae8fe287' : _snapshotHash;
-  final expectedSequence = inspectRecordMapping ? 962 : inspectPostGroup ? 958 : inspectNonDirect ? 869 : inspectNext ? 864 : 863;
+  final expectedSequence = inspectPostDirectSource ? 981 : inspectRecordMapping ? 962 : inspectPostGroup ? 958 : inspectNonDirect ? 869 : inspectNext ? 864 : 863;
   final originalFile = File('${profile.path}/objectbox/data.mdb');
   final originalHash = await _hash(originalFile);
   final beforeState = quarantinedChatObservationPreservedState(store);
@@ -485,6 +488,37 @@ Future<Map<String, Object?>> observeQuarantinedChatConflict({
                 oldMap.pendingUpdateOperationId != null ||
                 oldMap.protectedReadbackLeaseReference != null,
           });
+          if (inspectPostDirectSource) {
+            final priorQuery = copy.box<Chat>().query(Chat_.guid.equals(oldChat.canonicalGuid))
+                .build()..limit = 2;
+            final List<Chat> priorChats;
+            try { priorChats = priorQuery.find(); } finally { priorQuery.close(); }
+            previous['canonical_prior_count'] = priorChats.length;
+            if (priorChats.length == 1) {
+              final prior = priorChats.single;
+              Set<String> addresses(Iterable<String> raw) => raw.map((value) {
+                final lower = value.toLowerCase();
+                return lower.startsWith('tel:') ? value.substring(4)
+                    : lower.startsWith('mailto:') ? value.substring(7) : value;
+              }).toSet();
+              final stored = prior.handles.map((handle) => handle.address).toSet();
+              bool same(Set<String> expected) => stored.length == expected.length &&
+                  prior.handles.length == stored.length && stored.containsAll(expected);
+              previous['canonical_prior_participant_count'] = prior.handles.length;
+              previous['canonical_prior_matches_previous_participants'] = same(addresses(oldPeers));
+              previous['canonical_prior_matches_incoming_participants'] = same(addresses(newPeers));
+              previous['canonical_prior_identifier_matches_previous'] = prior.chatIdentifier == oldChat.chatIdentifier;
+              final incomingGroupAliases = chatPayload.aliases.where(
+                  (alias) => alias.kind == CloudSemanticChatAliasKind.groupId).toList();
+              previous['incoming_group_alias_matches_prior_owner'] = incomingGroupAliases.length == 1 &&
+                  copy.box<CloudSemanticChatAliasEntity>().getAll().any((alias) =>
+                    alias.scopeKey == scopeKey && alias.generation == row.generation &&
+                    alias.service == oldChat.service?.name && alias.aliasKind == 'groupId' &&
+                    alias.aliasKeyHash == incomingGroupAliases.single.keyHash &&
+                    alias.chatLogicalEntityKeyHash == oldMap.logicalEntityKeyHash &&
+                    alias.chatId == prior.id && alias.bindingKey.startsWith('semantic-chat-claim2:'));
+            }
+          }
         } catch (error) {
           previous['decode'] = 'failed';
           previous['failure_code'] = error is CloudSemanticDecodeFailure
