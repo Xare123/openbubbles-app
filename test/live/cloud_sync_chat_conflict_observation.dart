@@ -285,11 +285,15 @@ Future<Map<String, Object?>> observeQuarantinedChatConflict({
   final productionRecovery =
       Platform.environment['OPENBUBBLES_QUALIFY_CHAT_ROUTE_RECOVERY'] == '1';
   final inspectNext = Platform.environment['OPENBUBBLES_INSPECT_NEXT_CHAT_CONFLICT'] == '1';
-  final snapshotRoot = inspectNext
+  final inspectNonDirect = Platform.environment['OPENBUBBLES_INSPECT_NON_DIRECT_CHAT_CONFLICT'] == '1';
+  _require(!(inspectNext && inspectNonDirect));
+  final snapshotRoot = inspectNonDirect
+      ? '${_snapshotRoot.substring(0, _snapshotRoot.length - 1)}L' : inspectNext
       ? '${_snapshotRoot.substring(0, _snapshotRoot.length - 1)}G' : _snapshotRoot;
-  final snapshotHash = inspectNext
+  final snapshotHash = inspectNonDirect
+      ? '3c50655371f63412d26db87b6e716e4a61af3b62c69273a3a4f73103b5c23015' : inspectNext
       ? '21635c19e36223fd3d7d645d7477e1a7cddb54c8467b702d77e2cd99ae8fe287' : _snapshotHash;
-  final expectedSequence = inspectNext ? 864 : 863;
+  final expectedSequence = inspectNonDirect ? 869 : inspectNext ? 864 : 863;
   final originalFile = File('${profile.path}/objectbox/data.mdb');
   final originalHash = await _hash(originalFile);
   final beforeState = quarantinedChatObservationPreservedState(store);
@@ -432,6 +436,25 @@ Future<Map<String, Object?>> observeQuarantinedChatConflict({
                 oldPeers.length == 1 &&
                 newPeers.length == 1 &&
                 oldPeers.single == newPeers.single,
+            'previous_participant_count': oldPeers.length,
+            'incoming_participant_count': newPeers.length,
+            'previous_has_group_id': oldChat.groupId?.isNotEmpty == true,
+            'incoming_has_group_id': chatPayload.groupId?.isNotEmpty == true,
+            'same_nonempty_group_id': oldChat.groupId?.isNotEmpty == true &&
+                oldChat.groupId == chatPayload.groupId,
+            'same_nonempty_original_group_id': oldChat.originalGroupId?.isNotEmpty == true &&
+                oldChat.originalGroupId == chatPayload.originalGroupId,
+            'same_typed_alias_count': oldChat.aliases.where((old) =>
+                chatPayload.aliases.any((current) => current.kind == old.kind &&
+                  current.keyHash == old.keyHash)).length,
+            'group_version_equal': oldChat.groupVersion != null &&
+                oldChat.groupVersion == chatPayload.groupVersion,
+            'group_version_increases': oldChat.groupVersion != null &&
+                chatPayload.groupVersion != null &&
+                chatPayload.groupVersion! > oldChat.groupVersion!,
+            'sms_to_imessage_group_guid_pair':
+                oldChat.canonicalGuid == 'SMS;+;${chatPayload.chatIdentifier}' &&
+                chatPayload.canonicalGuid == 'iMessage;+;${chatPayload.chatIdentifier}',
             'sms_to_imessage_direct_guid_pair':
                 oldChat.canonicalGuid ==
                     'SMS;-;${chatPayload.chatIdentifier}' &&
