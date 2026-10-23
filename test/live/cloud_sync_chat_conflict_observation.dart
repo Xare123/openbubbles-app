@@ -514,7 +514,7 @@ Future<Map<String, Object?>> observeQuarantinedChatConflict({
       for (final lease in copy.box<CloudSyncLeaseEntity>().getAll())
         if (lease.scopeKey == scopeKey) 'CloudSyncLeaseEntity:${lease.id}',
     };
-    final targetMap = inspectNext && productionRecovery && canonicalMaps.length == 1
+    final targetMap = (inspectNext || inspectRecordMapping) && productionRecovery && canonicalMaps.length == 1
         ? canonicalMaps.single : null;
     final targetMetadata = <String, String>{};
     if (targetMap != null) {
@@ -634,7 +634,7 @@ Future<Map<String, Object?>> observeQuarantinedChatConflict({
     // the Chat row, its other fields, participant links or message history.
     ({int id, String? before, String after})? usingHandleProjection;
     final addressed = chatPayload.lastAddressedHandle;
-    if (inspectNext && productionRecovery && canonicalChatBefore != null &&
+    if ((inspectNext || inspectRecordMapping) && productionRecovery && canonicalChatBefore != null &&
         chatPayload.lastAddressedHandleState == CloudSemanticFieldState.value &&
         addressed != null && addressed.isNotEmpty) {
       final lower = addressed.toLowerCase();

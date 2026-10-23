@@ -1108,6 +1108,9 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
       scope: scope, generation: generation, kind: CloudEntityKind.chat,
       logicalEntityKeyHash: payload.logicalEntityKeyHash, canonicalGuid: guid!,
     );
+    _requireCanonicalIdentityOwnership(scope: scope, generation: generation,
+      kind: CloudEntityKind.chat, logicalEntityKeyHash: payload.logicalEntityKeyHash,
+      canonicalGuid: guid);
     final lookup = CloudCanonicalIdentityDigest.forCanonicalGuidLookup(
       scope: scope, generation: generation, canonicalGuid: guid,
     );

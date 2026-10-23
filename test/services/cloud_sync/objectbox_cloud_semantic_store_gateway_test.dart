@@ -3106,6 +3106,99 @@ void main() {
       });
     }
 
+    for (final blocked in ['none', 'stale source', 'missing source receipt',
+        'pending target', 'pending incoming record', 'missing target map']) {
+      test('fresh physical direct Chat recovery: $blocked', () async {
+        final targetPayload = payload(CloudSemanticService.iMessage);
+        final other = _entry(scope: routeScope, sequence: 2, batchId: 'fresh-target',
+          changeId: _indexedDigest('fresh-target-change'),
+          recordIdHash: _indexedDigest('fresh-target-record'),
+          encryptedServerRecordId: _indexedProtectedReference('fresh-target-record'),
+          etagHash: _indexedDigest('fresh-target-etag'),
+          encryptedPayloadReference: _indexedProtectedReference('fresh-target-raw'),
+          payloadSha256: _sha256('fresh-target-bytes'),
+          serverModifiedAt: now.add(const Duration(seconds: 1)));
+        stage(other);
+        expect((await project(other, targetPayload)).disposition, CloudInboxApplyDisposition.applied);
+        final target = objectBox.box<Chat>().getAll().singleWhere((chat) => !chat.isRpSms);
+        final targetHistoryId = objectBox.box<Message>().put(Message(
+          guid: 'preserved-direct-convergence-history', text: 'Existing target history')
+          ..chat.targetId = target.id!);
+        final oldTargetMap = cloudSyncFindRecordMap(store: objectBox, scope: routeScope,
+          generation: other.generation, logicalEntityKeyHash: targetPayload.logicalEntityKeyHash)!;
+        final incoming = _entry(scope: routeScope, sequence: 3, batchId: 'fresh-physical',
+          changeId: _indexedDigest('fresh-physical-change'),
+          recordIdHash: _indexedDigest('fresh-physical-record'),
+          encryptedServerRecordId: _indexedProtectedReference('fresh-physical-record'),
+          etagHash: _indexedDigest('fresh-physical-etag'),
+          encryptedPayloadReference: _indexedProtectedReference('fresh-physical-raw'),
+          payloadSha256: _sha256('fresh-physical-bytes'),
+          serverModifiedAt: blocked == 'stale source' ? now : now.add(const Duration(seconds: 3)));
+        stage(incoming);
+        final checkpoints = objectBox.box<CloudSyncCheckpointEntity>();
+        checkpoints.put(checkpoints.getAll().single..pendingBatchId = incoming.batchId
+          ..pendingFetchedTokenCiphertext = 'protected-fresh-physical-cursor');
+        final inbox = objectBox.box<CloudInboxChangeEntity>();
+        inbox.put(inbox.getAll().singleWhere((row) => row.fetchSequence == 3)
+          ..status = CloudInboxStatus.quarantined.index
+          ..failureCategory = CloudFailureCategory.conflict.name..retryCount = 1
+          ..completedAtMs = now.add(const Duration(seconds: 1)).millisecondsSinceEpoch
+          ..updatedAtMs = now.add(const Duration(seconds: 1)).millisecondsSinceEpoch);
+        final maps = objectBox.box<CloudRecordMapEntity>();
+        switch (blocked) {
+          case 'missing source receipt':
+            final replay = objectBox.box<CloudSemanticReplayEntity>();
+            replay.remove(replay.getAll().singleWhere((row) => row.inboxSequence == 2).id);
+          case 'pending target': maps.put(oldTargetMap..pendingUpdateOperationId = 'pending-target');
+          case 'missing target map': maps.remove(oldTargetMap.id);
+          case 'pending incoming record': objectBox.box<CloudOutboxOperationEntity>().put(
+            CloudOutboxOperationEntity(operationId: _sha256('pending-new-physical'),
+              scopeKey: _scopeKey(routeScope), accountFingerprint: routeScope.accountFingerprint,
+              zone: routeScope.zone, logicalEntityKeyHash: _indexedDigest('unrelated-logical-key'),
+              serverRecordIdHash: incoming.change.recordIdHash, action: 0, mutationRevision: 1,
+              state: CloudOutboxStatus.pending.index,
+              createdAtMs: now.millisecondsSinceEpoch, updatedAtMs: now.millisecondsSinceEpoch));
+        }
+        routeNow = now.add(const Duration(seconds: 10));
+        objectBox.close();
+        objectBox = await openStore(directory: directory.path);
+        identities = TransientCloudCanonicalIdentityRegistry();
+        final before = _durableSyncControlFingerprint(objectBox);
+        final recovery = routeApplier(incoming, targetPayload);
+        expect(routeGateway().allowDirectChatRecordConvergence, isFalse);
+        expect(await recovery.requeueChatServiceRouteBarrier(routeScope, leaseFence: leaseFence),
+          blocked == 'none');
+        if (blocked != 'none') {
+          expect(_durableSyncControlFingerprint(objectBox), before);
+          return;
+        }
+        expect(await recovery.requeueChatServiceRouteBarrier(routeScope, leaseFence: leaseFence), isFalse);
+        objectBox.close();
+        objectBox = await openStore(directory: directory.path);
+        identities = TransientCloudCanonicalIdentityRegistry();
+        expect((await project(incoming, targetPayload)).disposition, CloudInboxApplyDisposition.applied);
+        expect(objectBox.box<Chat>().count(), 2);
+        expect(objectBox.box<Chat>().get(target.id!)!.guid, targetPayload.canonicalGuid);
+        expect(objectBox.box<Message>().get(targetHistoryId)!.chat.targetId, target.id);
+        expect(objectBox.box<Message>().get(historyId)!.chat.targetId, oldChatId);
+        final current = cloudSyncFindRecordMap(store: objectBox, scope: routeScope,
+          generation: incoming.generation, logicalEntityKeyHash: targetPayload.logicalEntityKeyHash)!;
+        final former = cloudSyncFindRecordMap(store: objectBox, scope: routeScope,
+          generation: incoming.generation, logicalEntityKeyHash: targetPayload.logicalEntityKeyHash,
+          serverRecordIdHash: other.change.recordIdHash)!;
+        expect(current.serverRecordIdHash, incoming.change.recordIdHash);
+        expect(cloudSyncRecordMapProvenanceMatches(former, oldTargetMap), isTrue);
+        objectBox.box<CloudInboxChangeEntity>().put(objectBox.box<CloudInboxChangeEntity>().getAll()
+          .singleWhere((row) => row.fetchSequence == 2)..status = CloudInboxStatus.pending.index);
+        expect((await project(other, targetPayload)).disposition, CloudInboxApplyDisposition.applied);
+        expect(cloudSyncFindRecordMap(store: objectBox, scope: routeScope,
+          generation: incoming.generation, logicalEntityKeyHash: targetPayload.logicalEntityKeyHash)!
+          .serverRecordIdHash, incoming.change.recordIdHash);
+        expect(objectBox.box<CloudSemanticReplayEntity>().count(), 3);
+        expect(objectBox.box<CloudOutboxOperationEntity>().count(), 0);
+      });
+    }
+
     for (final restart in [false, true]) {
       test('production recovery reserves one retry and preserves evidence (restart=$restart)', () async {
         final second = stageBarrier();
