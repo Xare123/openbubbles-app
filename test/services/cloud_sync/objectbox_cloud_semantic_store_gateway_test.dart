@@ -3550,23 +3550,32 @@ void main() {
       (service: CloudSemanticService.sms, failure: 'missing durable group'),
       (service: CloudSemanticService.sms, failure: 'pending target'),
       (service: CloudSemanticService.sms, failure: 'deleted group'),
+      (service: CloudSemanticService.sms, failure: 'direct none'),
+      (service: CloudSemanticService.sms, failure: 'direct changed peer'),
+      (service: CloudSemanticService.sms, failure: 'direct pending target'),
+      (service: CloudSemanticService.sms, failure: 'direct stale source'),
     ]) {
       test('${scenario.service.name}: ${scenario.failure}', () async {
+        final direct = scenario.failure.startsWith('direct ');
+        final failure = direct ? scenario.failure.substring(7) : scenario.failure;
+        final identifier = direct ? '+15555550101' : 'synthetic-fresh-group';
         final scope = _scope(zone: 'chatManateeZone', persistenceLane: CloudSyncPersistenceLane.semantic);
         var registry = TransientCloudCanonicalIdentityRegistry();
         var currentTime = now;
-        CloudChatEntityPayload groupPayload({bool differentGroup = false}) => CloudChatEntityPayload(
+        CloudChatEntityPayload groupPayload({bool differentGroup = false, bool incoming = false}) => CloudChatEntityPayload(
           logicalEntityKeyHash: _indexedDigest('fresh-group-${scenario.service.name}'),
-          canonicalGuid: '${scenario.service == CloudSemanticService.sms ? 'SMS' : 'iMessage'};+;synthetic-fresh-group',
-          chatIdentifier: 'synthetic-fresh-group', displayName: null,
-          groupId: differentGroup ? 'other-group' : 'same-group',
-          participantHandles: const ['tel:+15555550101', 'mailto:peer@example.invalid'],
-          service: scenario.service, style: CloudSemanticChatStyle.group,
+          canonicalGuid: '${scenario.service == CloudSemanticService.sms ? 'SMS' : 'iMessage'};${direct ? '-' : '+'};$identifier',
+          chatIdentifier: identifier, displayName: null,
+          groupId: differentGroup ? 'other-group' : direct && incoming ? 'new-direct-group' : 'same-group',
+          participantHandles: direct
+            ? [incoming && failure == 'changed peer' ? 'tel:+15555550102' : 'tel:+15555550101']
+            : const ['tel:+15555550101', 'mailto:peer@example.invalid'],
+          service: scenario.service, style: direct ? CloudSemanticChatStyle.direct : CloudSemanticChatStyle.group,
           aliases: [
             CloudSemanticChatAlias(kind: CloudSemanticChatAliasKind.serviceIdentifier,
               keyHash: _indexedDigest('fresh-group-service')),
             CloudSemanticChatAlias(kind: CloudSemanticChatAliasKind.groupId,
-              keyHash: _indexedDigest(differentGroup ? 'other-group' : 'same-group')),
+              keyHash: _indexedDigest(differentGroup ? 'other-group' : direct && incoming ? 'new-direct-group' : 'same-group')),
           ],
         );
         ObjectBoxCloudSemanticStoreGateway gateway() => ObjectBoxCloudSemanticStoreGateway(
@@ -3602,7 +3611,8 @@ void main() {
           encryptedServerRecordId: _indexedProtectedReference('fresh-group-record'),
           etagHash: _indexedDigest('fresh-group-etag'),
           encryptedPayloadReference: _indexedProtectedReference('fresh-group-raw'),
-          payloadSha256: _sha256('fresh-group-bytes'), serverModifiedAt: now.add(const Duration(seconds: 2)));
+          payloadSha256: _sha256('fresh-group-bytes'), serverModifiedAt: failure == 'stale source'
+            ? now : now.add(const Duration(seconds: 2)));
         checkpoints.put(checkpoints.getAll().single..fetchedSequence = 2..lastBatchId = second.batchId
           ..pendingBatchId = second.batchId..pendingFetchedTokenCiphertext = 'protected-fresh-group-cursor');
         _putPendingInboxEntry(objectBox, entry: second, now: now);
@@ -3611,13 +3621,13 @@ void main() {
           ..status = CloudInboxStatus.quarantined.index..failureCategory = CloudFailureCategory.conflict.name
           ..retryCount = 1..completedAtMs = now.add(const Duration(seconds: 1)).millisecondsSinceEpoch
           ..updatedAtMs = now.add(const Duration(seconds: 1)).millisecondsSinceEpoch);
-        if (scenario.failure == 'missing durable group') {
+        if (failure == 'missing durable group') {
           final aliases = objectBox.box<CloudSemanticChatAliasEntity>();
           aliases.removeMany(aliases.getAll().where((alias) => alias.aliasKind == 'groupId')
             .map((alias) => alias.id).toList());
-        } else if (scenario.failure == 'pending target') {
+        } else if (failure == 'pending target') {
           objectBox.box<CloudRecordMapEntity>().put(oldMap..pendingUpdateOperationId = 'pending-group-write');
-        } else if (scenario.failure == 'deleted group') {
+        } else if (failure == 'deleted group') {
           objectBox.box<Chat>().put(originalChat..dateDeleted = now);
         }
         objectBox.close();
@@ -3625,11 +3635,11 @@ void main() {
         registry = TransientCloudCanonicalIdentityRegistry();
         currentTime = now.add(const Duration(seconds: 10));
         final before = _durableSyncControlFingerprint(objectBox);
-        final incoming = groupPayload(differentGroup: scenario.failure == 'different group');
+        final incoming = groupPayload(differentGroup: failure == 'different group', incoming: true);
         final recovery = applier(second, incoming);
         expect(gateway().allowDirectChatRecordConvergence, isFalse);
-        expect(await recovery.requeueChatServiceRouteBarrier(scope, leaseFence: leaseFence), scenario.failure == 'none');
-        if (scenario.failure != 'none') {
+        expect(await recovery.requeueChatServiceRouteBarrier(scope, leaseFence: leaseFence), failure == 'none');
+        if (failure != 'none') {
           expect(_durableSyncControlFingerprint(objectBox), before);
         } else {
           expect(await recovery.requeueChatServiceRouteBarrier(scope, leaseFence: leaseFence), isFalse);

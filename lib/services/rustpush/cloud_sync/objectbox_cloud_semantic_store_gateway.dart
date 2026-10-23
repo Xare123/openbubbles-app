@@ -2814,11 +2814,8 @@ final class _ObjectBoxCloudSemanticStoreTransaction
     final existing = _findRecordMapByKey(_context.recordMapKey(payload.logicalEntityKeyHash));
     if (collisions.isEmpty && existing != null &&
         existing.serverRecordIdHash != _context.entry.change.recordIdHash &&
-        ((payload.service == CloudSemanticService.iMessage &&
-            payload.style == CloudSemanticChatStyle.direct) ||
-          (payload.style == CloudSemanticChatStyle.group &&
-            (payload.service == CloudSemanticService.iMessage ||
-              payload.service == CloudSemanticService.sms))) &&
+        (payload.service == CloudSemanticService.iMessage || payload.service == CloudSemanticService.sms) &&
+        (payload.style == CloudSemanticChatStyle.direct || payload.style == CloudSemanticChatStyle.group) &&
         proofAdapter is CloudChatRecordConvergenceProofAdapter) {
       _validateRecordMapScope(existing, payload.logicalEntityKeyHash,
         expectedChange: _context.entry.change);
@@ -2848,7 +2845,8 @@ final class _ObjectBoxCloudSemanticStoreTransaction
       if (existing.serverRecordIdHash != _context.entry.change.recordIdHash) {
         // Existing-target service-route convergence remains direct-only. The
         // observed group case above has no physical-route collision.
-        if (payload.style != CloudSemanticChatStyle.direct ||
+        if (payload.service != CloudSemanticService.iMessage ||
+            payload.style != CloudSemanticChatStyle.direct ||
             proofAdapter is! CloudChatRecordConvergenceProofAdapter) {
           throw CloudSyncFailure(category: CloudFailureCategory.conflict,
             safeCode: 'semantic_record_mapping_conflict');
@@ -3064,6 +3062,7 @@ final class _ObjectBoxCloudSemanticStoreTransaction
                 null) &&
         _allowDirectChatRecordConvergence && !_chatMembershipProven &&
         payload is CloudChatEntityPayload &&
+        payload.service == CloudSemanticService.iMessage &&
         payload.style == CloudSemanticChatStyle.direct &&
         _canonicalAdapter is CloudChatRecordConvergenceProofAdapter &&
         _context.entry.scope.zone == 'chatManateeZone' &&

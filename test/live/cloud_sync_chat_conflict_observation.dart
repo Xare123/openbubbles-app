@@ -581,8 +581,7 @@ Future<Map<String, Object?>> observeQuarantinedChatConflict({
     };
     final incomingVersion = chatPayload.groupVersion;
     final ({int id, int? before, int after})? groupVersionProjection =
-        inspectPostMembership && productionRecovery && canonicalChatBefore != null &&
-        chatPayload.style == CloudSemanticChatStyle.group &&
+        (inspectPostMembership || inspectPostGroupSource) && productionRecovery && canonicalChatBefore != null &&
         chatPayload.groupVersionState == CloudSemanticFieldState.value && incomingVersion != null &&
         (canonicalChatBefore.groupVersion == null || incomingVersion > canonicalChatBefore.groupVersion!)
       ? (id: canonicalChatBefore.id!, before: canonicalChatBefore.groupVersion, after: incomingVersion)

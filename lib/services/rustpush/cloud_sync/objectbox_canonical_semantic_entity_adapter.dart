@@ -1090,8 +1090,7 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
     final participant = payload.participantHandles.length == 1
         ? _normalizeHandle(payload.participantHandles.single)
         : null;
-    if ((service != CloudSemanticService.iMessage &&
-            !(isGroup && service == CloudSemanticService.sms)) ||
+    if ((service != CloudSemanticService.iMessage && service != CloudSemanticService.sms) ||
         (!isGroup && payload.style != CloudSemanticChatStyle.direct) ||
         guid != payload.canonicalGuid ||
         guid != '${_serviceName(service!)};${isGroup ? '+' : '-'};${payload.chatIdentifier}' ||
@@ -1102,7 +1101,7 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
         chat.chatIdentifier != payload.chatIdentifier ||
         (!isGroup && (chat.handles.length != 1 ||
           chat.handles.single.address != payload.chatIdentifier ||
-          chat.handles.single.service != 'iMessage'))) {
+          chat.handles.single.service != _serviceName(service)))) {
       throw CloudSyncFailure(
         category: CloudFailureCategory.conflict,
         safeCode: 'canonical_chat_convergence_unproven',
