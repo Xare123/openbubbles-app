@@ -2879,6 +2879,188 @@ void main() {
     },
   );
 
+  group('direct Chat service route transition', () {
+    const peer = 'route-peer@example.invalid';
+    late CloudSyncScope routeScope;
+    late TransientCloudCanonicalIdentityRegistry identities;
+    late CloudInboxEntry first;
+    late int oldChatId;
+    late int historyId;
+
+    CloudChatEntityPayload payload(CloudSemanticService service, {
+      String identifier = peer, String participant = peer, String? logicalKey,
+      CloudSemanticChatStyle style = CloudSemanticChatStyle.direct,
+    }) => CloudChatEntityPayload(
+      logicalEntityKeyHash: logicalKey ?? _indexedDigest('route-${service.name}'),
+      canonicalGuid: '${service == CloudSemanticService.sms ? 'SMS' : 'iMessage'};-;$identifier',
+      chatIdentifier: identifier, displayName: null, participantHandles: [participant],
+      aliases: [CloudSemanticChatAlias(
+        kind: CloudSemanticChatAliasKind.serviceIdentifier,
+        keyHash: _indexedDigest('route-alias'),
+      )], service: service, style: style,
+    );
+
+    ObjectBoxCloudSemanticStoreGateway routeGateway() =>
+        ObjectBoxCloudSemanticStoreGateway(
+          store: objectBox, clock: () => now,
+          canonicalAdapter: ObjectBoxCanonicalSemanticEntityAdapter(
+            store: objectBox, identityResolver: identities,
+            activeScopeProvider: () => CloudCanonicalActiveScope(
+              scope: routeScope, generation: leaseFence.generation),
+            semanticApplyEnabled: true, allowChatUpserts: true,
+          ),
+        );
+
+    Future<CloudInboxApplyResult> project(CloudInboxEntry entry,
+        CloudChatEntityPayload chat) => TransactionalCloudInboxApplier(
+      decoder: _FixedDecoder(CloudDecodedMutation.upsert(
+        scope: routeScope, generation: entry.generation,
+        changeId: entry.change.changeId, payload: chat,
+        snapshot: _chatSnapshot(logicalEntityKeyHash: chat.logicalEntityKeyHash,
+          etagHash: entry.change.etagHash!,
+          encryptedRawRecordReference: entry.change.encryptedPayloadReference!),
+      )), store: routeGateway(), identityRegistrar: identities,
+      activeScopeRevalidator: () async => true,
+    ).apply(entry, leaseFence: leaseFence);
+
+    CloudInboxEntry next(int sequence, {DateTime? modified, String? etag}) => _entry(
+      scope: routeScope, sequence: sequence, batchId: 'route-$sequence',
+      changeId: _indexedDigest('route-change-$sequence'),
+      recordIdHash: first.change.recordIdHash,
+      encryptedServerRecordId: first.change.encryptedServerRecordId,
+      etagHash: etag ?? _indexedDigest('route-etag-$sequence'),
+      encryptedPayloadReference: _indexedProtectedReference('route-raw-$sequence'),
+      payloadSha256: _sha256('route-bytes-$sequence'),
+      serverModifiedAt: modified ?? now.add(Duration(seconds: sequence)),
+    );
+
+    void stage(CloudInboxEntry entry) {
+      final box = objectBox.box<CloudSyncCheckpointEntity>();
+      final cp = box.getAll().single
+        ..fetchedSequence = entry.sequence ..lastBatchId = entry.batchId;
+      box.put(cp);
+      _putPendingInboxEntry(objectBox, entry: entry, now: now);
+    }
+
+    setUp(() async {
+      routeScope = _scope(zone: 'chatManateeZone',
+        persistenceLane: CloudSyncPersistenceLane.semantic);
+      identities = TransientCloudCanonicalIdentityRegistry();
+      first = _entry(scope: routeScope, serverModifiedAt: now,
+        changeId: _indexedDigest('route-initial-change'));
+      _seedDurableFence(objectBox, entry: first, leaseFence: leaseFence, now: now);
+      final cp = objectBox.box<CloudSyncCheckpointEntity>().getAll().single
+        ..persistenceLane = routeScope.persistenceLane.name;
+      objectBox.box<CloudSyncCheckpointEntity>().put(cp);
+      expect((await project(first, payload(CloudSemanticService.sms))).disposition,
+        CloudInboxApplyDisposition.applied);
+      oldChatId = objectBox.box<Chat>().getAll().single.id!;
+      historyId = objectBox.box<Message>().put(Message(
+        guid: 'preserved-route-history', text: 'Synthetic history')
+        ..chat.targetId = oldChatId);
+    });
+
+    for (final reopen in [false, true]) {
+      test('preserves both routes and reverse-cycle replay (reopen=$reopen)', () async {
+        final oldMap = objectBox.box<CloudRecordMapEntity>().getAll().single;
+        final oldReplay = objectBox.box<CloudSemanticReplayEntity>().getAll().single;
+        if (reopen) {
+          objectBox.close();
+          objectBox = await openStore(directory: directory.path);
+        }
+        expect(routeGateway().allowDirectChatRecordConvergence, isFalse);
+        final second = next(2);
+        stage(second);
+        final result = await project(second, payload(CloudSemanticService.iMessage));
+        expect(result.disposition, CloudInboxApplyDisposition.applied,
+          reason: '${result.safeCode}');
+        expect(objectBox.box<Chat>().count(), 2);
+        expect(objectBox.box<CloudRecordMapEntity>().count(), 2);
+        expect(objectBox.box<CloudSemanticSnapshotEntity>().count(), 2);
+        expect(objectBox.box<CloudSemanticReplayEntity>().count(), 2);
+        expect(objectBox.box<CloudSemanticChatAliasEntity>().count(), 2);
+        final preservedMap = objectBox.box<CloudRecordMapEntity>().get(oldMap.id)!;
+        expect(preservedMap.etagHash, oldMap.etagHash);
+        expect(preservedMap.encryptedRawRecordRef, oldMap.encryptedRawRecordRef);
+        expect(objectBox.box<Message>().get(historyId)!.chat.targetId, oldChatId);
+        final newChatId = objectBox.box<Chat>().getAll().singleWhere(
+          (chat) => !chat.isRpSms).id!;
+        final newHistoryId = objectBox.box<Message>().put(Message(
+          guid: 'preserved-new-route-history')..chat.targetId = newChatId);
+        final third = next(3);
+        stage(third);
+        final reversed = await project(third, payload(CloudSemanticService.sms));
+        expect(reversed.disposition, CloudInboxApplyDisposition.applied,
+          reason: '${reversed.safeCode}');
+        expect(objectBox.box<Chat>().count(), 2);
+        expect(objectBox.box<Message>().get(historyId)!.chat.targetId, oldChatId);
+        expect(objectBox.box<Message>().get(newHistoryId)!.chat.targetId, newChatId);
+        expect(objectBox.box<CloudRecordMapEntity>().count(), 2);
+        expect(objectBox.box<CloudSemanticReplayEntity>().count(), 3);
+        expect(objectBox.box<CloudSemanticReplayEntity>().get(oldReplay.id)!.updatedAtMs,
+          oldReplay.updatedAtMs);
+        expect(objectBox.box<CloudRecordMapEntity>().get(oldMap.id)!.etagHash,
+          third.change.etagHash);
+        final inbox = objectBox.box<CloudInboxChangeEntity>();
+        inbox.put(inbox.getAll().singleWhere((r) => r.fetchSequence == 1)
+          ..status = CloudInboxStatus.pending.index);
+        expect((await project(first, payload(CloudSemanticService.sms))).disposition,
+          CloudInboxApplyDisposition.applied);
+        expect(objectBox.box<CloudSemanticReplayEntity>().count(), 3);
+        expect(objectBox.box<CloudOutboxOperationEntity>().count(), 0);
+      });
+    }
+
+    for (final failure in ['recipient', 'participant', 'group', 'stale', 'equal',
+      'missing replay', 'deleted owner', 'routing stub', 'pending update',
+      'pending readback', 'snapshot retracted', 'wrong replay owner',
+      'pending outbox', 'same service', 'same etag']) {
+      test('rejects $failure atomically', () async {
+        final second = next(2, etag: failure == 'same etag' ? first.change.etagHash : null,
+          modified: failure == 'stale'
+            ? now.subtract(const Duration(seconds: 1)) : failure == 'equal' ? now : null);
+        stage(second);
+        final maps = objectBox.box<CloudRecordMapEntity>();
+        final replays = objectBox.box<CloudSemanticReplayEntity>();
+        final chats = objectBox.box<Chat>();
+        switch (failure) {
+          case 'missing replay': replays.removeAll();
+          case 'deleted owner': chats.put(chats.get(oldChatId)!..dateDeleted = now);
+          case 'routing stub': chats.put(chats.get(oldChatId)!..isRoutingStub = true);
+          case 'pending update': maps.put(maps.getAll().single
+            ..pendingUpdateOperationId = 'synthetic-pending-route-update');
+          case 'pending readback': maps.put(maps.getAll().single
+            ..protectedReadbackLeaseReference = _indexedProtectedReference('route-readback'));
+          case 'snapshot retracted':
+            final box = objectBox.box<CloudSemanticSnapshotEntity>();
+            box.put(box.getAll().single..retractedAtMs = now.millisecondsSinceEpoch);
+          case 'wrong replay owner': replays.put(replays.getAll().single
+            ..logicalEntityKeyHash = _indexedDigest('wrong-route-owner'));
+          case 'pending outbox': objectBox.box<CloudOutboxOperationEntity>().put(
+            CloudOutboxOperationEntity(operationId: _sha256('pending-route-outbox'),
+              scopeKey: _scopeKey(routeScope), accountFingerprint: routeScope.accountFingerprint,
+              zone: routeScope.zone, logicalEntityKeyHash: payload(CloudSemanticService.sms).logicalEntityKeyHash,
+              action: 0, mutationRevision: 1, state: CloudOutboxStatus.pending.index,
+              serverRecordIdHash: first.change.recordIdHash,
+              createdAtMs: now.millisecondsSinceEpoch, updatedAtMs: now.millisecondsSinceEpoch));
+        }
+        final before = _durableSyncControlFingerprint(objectBox);
+        final incoming = payload(failure == 'same service'
+            ? CloudSemanticService.sms : CloudSemanticService.iMessage,
+          logicalKey: failure == 'same service' ? _indexedDigest('another-sms-logical-key') : null,
+          identifier: failure == 'recipient' ? 'other@example.invalid' : peer,
+          participant: failure == 'participant' ? 'other@example.invalid' : peer,
+          style: failure == 'group' ? CloudSemanticChatStyle.group : CloudSemanticChatStyle.direct);
+        final result = await project(second, incoming);
+        expect(result.disposition, isNot(CloudInboxApplyDisposition.applied));
+        expect(_durableSyncControlFingerprint(objectBox), before);
+        expect(chats.count(), 1);
+        expect(objectBox.box<Message>().get(historyId)!.chat.targetId, oldChatId);
+        expect(objectBox.box<CloudOutboxOperationEntity>().count(), failure == 'pending outbox' ? 1 : 0);
+      });
+    }
+  });
+
   for (final reopen in [false, true]) {
     for (final scenario in [
       'same record update',

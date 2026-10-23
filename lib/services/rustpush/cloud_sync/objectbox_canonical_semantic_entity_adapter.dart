@@ -226,7 +226,8 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
         CloudAppliedAttachmentProjectionRepairAdapter,
         CloudLegacyCanonicalOwnershipProofAdapter,
         CloudMessageContentTransitionProofAdapter,
-        CloudDirectChatRecordConvergenceProofAdapter {
+        CloudDirectChatRecordConvergenceProofAdapter,
+        CloudDirectChatServiceRouteTransitionProofAdapter {
   static final RegExp _externalDigestPattern = RegExp(r'^[A-Za-z0-9_-]{43}$');
 
   ObjectBoxCanonicalSemanticEntityAdapter({
@@ -1118,6 +1119,53 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
         expectedChat: chat,
       );
     }
+  }
+
+  @override
+  void validateDirectChatServiceRouteTransition({
+    required CloudSyncScope scope,
+    required int generation,
+    required CloudChatEntityPayload payload,
+    required String previousLogicalEntityKeyHash,
+  }) {
+    _requireActiveScope(scope, generation);
+    Never reject() => throw CloudSyncFailure(
+      category: CloudFailureCategory.conflict,
+      safeCode: 'canonical_chat_service_route_transition_unproven');
+    final service = payload.service;
+    if ((service != CloudSemanticService.iMessage && service != CloudSemanticService.sms) ||
+        payload.style != CloudSemanticChatStyle.direct || payload.chatIdentifier.isEmpty ||
+        payload.participantHandles.length != 1 ||
+        payload.logicalEntityKeyHash == previousLogicalEntityKeyHash) {
+      reject();
+    }
+    final previousService = service == CloudSemanticService.iMessage
+        ? CloudSemanticService.sms : CloudSemanticService.iMessage;
+    final guid = '${_serviceName(service!)};-;${payload.chatIdentifier}';
+    final previousGuid = '${_serviceName(previousService)};-;${payload.chatIdentifier}';
+    final participant = _normalizeHandle(payload.participantHandles.single,
+      allowOpaqueParticipant: true);
+    if (guid != payload.canonicalGuid || participant?.address != payload.chatIdentifier ||
+        _resolveCanonicalGuid(scope: scope, generation: generation,
+          kind: CloudEntityKind.chat, logicalEntityKeyHash: payload.logicalEntityKeyHash) != guid) {
+      reject();
+    }
+    final previous = _findUniqueLegacyOwnershipChat(previousGuid);
+    if (previous == null || previous.id == null || previous.id! <= 0 ||
+        previous.dateDeleted != null || previous.isRoutingStub || previous.style != 45 ||
+        previous.chatIdentifier != payload.chatIdentifier ||
+        previous.isRpSms != (previousService == CloudSemanticService.sms) ||
+        previous.handles.length != 1 ||
+        previous.handles.single.address != payload.chatIdentifier ||
+        previous.handles.single.service != _serviceName(previousService)) {
+      reject();
+    }
+    // Resolve the prior route from its OWN exact durable ownership proof, not
+    // from the new transient decode or a matching recipient alone.
+    _requireCanonicalIdentityOwnership(scope: scope, generation: generation,
+      kind: CloudEntityKind.chat, logicalEntityKeyHash: previousLogicalEntityKeyHash,
+      canonicalGuid: previousGuid);
+    _diagnosticRecorder?.call('canonical_chat_service_route_transition_proven');
   }
 
   CloudCanonicalSemanticMutationReceipt _applyChatUpsert({

@@ -64,6 +64,22 @@ void main() {
           quarantinedChatObservationPreservedState(store),
           isNot(withMessage),
         );
+
+        final originalIds = <String, Set<int>>{};
+        final originalRows = quarantinedChatObservationPreservedState(store,
+          collectIds: originalIds);
+        final added = Message(guid: 'synthetic-new-observation-message');
+        added.id = messages.put(added);
+        expect(quarantinedChatObservationPreservedState(store,
+          restrictIds: originalIds), originalRows);
+        message.text = 'changed again';
+        messages.put(message);
+        expect(quarantinedChatObservationPreservedState(store,
+          restrictIds: originalIds), isNot(originalRows));
+        expect(quarantinedChatObservationPreservedState(store,
+          ignoredRows: {'Message:${added.id}'}),
+          quarantinedChatObservationPreservedState(store,
+            restrictIds: originalIds));
       } finally {
         store.close();
         await scratch.delete(recursive: true);

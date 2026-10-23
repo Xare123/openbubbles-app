@@ -40,6 +40,7 @@ abstract final class CloudSyncSemanticDiagnosticCodes {
     'canonical_chat_repair_snapshot_mismatch',
     'canonical_chat_repair_target_unavailable',
     'canonical_chat_service_conflict',
+    'canonical_chat_service_route_transition_proven',
     'canonical_chat_shape_invalid',
     'canonical_chat_style_conflict',
     'canonical_extension_descendants_repaired',

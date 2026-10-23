@@ -31,8 +31,9 @@ Future<String> _hash(File file) async =>
     (await sha256.bind(file.openRead()).first).toString();
 
 void _require(bool condition) {
-  if (!condition)
+  if (!condition) {
     throw StateError('quarantined_chat_observation_binding_failed');
+  }
 }
 
 // ObjectBox updates its file pages for the normal operation-fence heartbeat.
@@ -40,7 +41,11 @@ void _require(bool condition) {
 // sentinel lease. A message, cursor, replay, alias or unrelated lease change
 // remains a hard failure. None of these private digests is printed.
 String quarantinedChatObservationPreservedState(
-  Store store,
+  Store store, {
+  Map<String, Set<int>>? collectIds,
+  Map<String, Set<int>>? restrictIds,
+  Set<String> ignoredRows = const {},
+}
 ) => store.runInTransaction(TxMode.read, () {
   final model = getObjectBoxModel();
   final entities = <String, Object?>{};
@@ -48,10 +53,14 @@ String quarantinedChatObservationPreservedState(
     final binding = model.bindings[T]! as EntityDefinition<T>;
     final rows = store.box<T>().getAll()
       ..sort((a, b) => binding.getId(a)!.compareTo(binding.getId(b)!));
+    collectIds?[T.toString()] = rows.map((r) => binding.getId(r)!).toSet();
     entities[T.toString()] = [
       for (final row in rows)
         if (!(row is CloudSyncLeaseEntity &&
-            row.scopeKey == CloudKitOperationInterlock.fenceScopeKey))
+                row.scopeKey == CloudKitOperationInterlock.fenceScopeKey) &&
+            !ignoredRows.contains('${T.toString()}:${binding.getId(row)}') &&
+            (restrictIds == null ||
+                restrictIds[T.toString()]!.contains(binding.getId(row))))
           [
             binding.getId(row),
             (() {
@@ -372,9 +381,21 @@ Future<Map<String, Object?>> observeQuarantinedChatConflict({
       canonicalChats.close();
     }
 
+    final priorIds = <String, Set<int>>{};
+    final copyMutableRows = <String>{
+      'CloudInboxChangeEntity:${copiedRow!.id}',
+      for (final cp in copy.box<CloudSyncCheckpointEntity>().getAll())
+        if (cp.checkpointKey == scopeKey) 'CloudSyncCheckpointEntity:${cp.id}',
+      for (final lease in copy.box<CloudSyncLeaseEntity>().getAll())
+        if (lease.scopeKey == scopeKey) 'CloudSyncLeaseEntity:${lease.id}',
+    };
+    final priorData = quarantinedChatObservationPreservedState(copy,
+      collectIds: priorIds, ignoredRows: copyMutableRows);
+    final outboxCount = copy.box<CloudOutboxOperationEntity>().count();
+
     // Diagnostic reconstruction ONLY: restore this copy's exact captured row
     // to its pre-failure pending state. Live quarantine/cursors are untouched.
-    copiedRow!.status = CloudInboxStatus.pending.index;
+    copiedRow.status = CloudInboxStatus.pending.index;
     copiedRow.failureCategory = null;
     copiedRow.nextEligibleAtMs = 0;
     copiedRow.completedAtMs = 0;
@@ -414,6 +435,34 @@ Future<Map<String, Object?>> observeQuarantinedChatConflict({
     } finally {
       await durable.releaseCoordinatorLease(scope, leaseFence: fence!);
     }
+    final afterIds = <String, Set<int>>{};
+    final priorDataPreserved = priorData ==
+        quarantinedChatObservationPreservedState(copy,
+          collectIds: afterIds, restrictIds: priorIds,
+          ignoredRows: copyMutableRows);
+    const permittedNewTypes = {
+      'Chat', 'Handle', 'CloudRecordMapEntity', 'CloudSemanticSnapshotEntity',
+      'CloudSemanticReplayEntity', 'CloudSemanticChatAliasEntity',
+      'CloudSyncLeaseEntity',
+    };
+    final unexpectedNewRows = afterIds.entries.any((entry) =>
+      !permittedNewTypes.contains(entry.key) &&
+      entry.value.difference(priorIds[entry.key]!).isNotEmpty);
+    final newChats = copy.box<Chat>().getAll().where(
+      (chat) => chat.guid == chatPayload.canonicalGuid).toList();
+    final routeApplied = result.disposition == CloudInboxApplyDisposition.applied;
+    final newRouteMatches = routeApplied && newChats.length == 1 &&
+        newChats.single.dateDeleted == null && !newChats.single.isRpSms &&
+        !newChats.single.isRoutingStub && newChats.single.style == 45 &&
+        newChats.single.chatIdentifier == chatPayload.chatIdentifier &&
+        newChats.single.handles.length == 1 &&
+        newChats.single.handles.single.address == chatPayload.chatIdentifier &&
+        newChats.single.handles.single.service == 'iMessage';
+    final outboxUnchanged = copy.box<CloudOutboxOperationEntity>().count() == outboxCount;
+    _require(priorDataPreserved && !unexpectedNewRows && outboxUnchanged);
+    if (routeApplied) {
+      _require(newRouteMatches);
+    }
     _require(
       quarantinedChatObservationPreservedState(store) == beforeState &&
           _rowBinding(store.box<CloudInboxChangeEntity>().get(row.id)!) ==
@@ -428,6 +477,10 @@ Future<Map<String, Object?>> observeQuarantinedChatConflict({
       'exact_operation_fence_lease_excluded': true,
       'snapshot_source_unchanged': true,
       'copy_only_pre_failure_reconstruction': true,
+      'copy_original_data_rows_preserved': priorDataPreserved,
+      'copy_unexpected_new_rows': unexpectedNewRows,
+      'copy_outbox_unchanged': outboxUnchanged,
+      'copy_new_route_matches': newRouteMatches,
       'generation': row.generation,
       'sequence': row.fetchSequence,
       'chat_style': chatPayload.style?.name,

@@ -1071,6 +1071,16 @@ abstract interface class CloudSemanticStoreTransaction {
   void recordConflict(String changeId, String safeCode);
 }
 
+/// Optional proof step for a typed Chat's physical-record service transition.
+abstract interface class CloudChatServiceRouteBindingTransaction {
+  /// Prepares a same-physical-record direct-service transition using the full
+  /// decoded Chat, including on a metadata-only/no-change binding path.
+  void prepareChatServiceRouteBinding({
+    required CloudChatEntityPayload payload,
+    required CloudSemanticSnapshot snapshot,
+  });
+}
+
 /// Only Chat routing metadata may be reconsidered after the historical SMS
 /// exclusion policy changed. Carrier message bodies are still out of scope.
 bool cloudSyncIsHistoricalChatMetadataScope(CloudSyncScope scope) =>
@@ -1982,6 +1992,12 @@ class TransactionalCloudInboxApplier
         safeCode: safeCode,
         inboxStatusPersisted: true,
       );
+    }
+
+    if (payload is CloudChatEntityPayload &&
+        transaction is CloudChatServiceRouteBindingTransaction) {
+      (transaction as CloudChatServiceRouteBindingTransaction)
+          .prepareChatServiceRouteBinding(payload: payload, snapshot: incoming);
     }
 
     if (decision.conflicts.contains(

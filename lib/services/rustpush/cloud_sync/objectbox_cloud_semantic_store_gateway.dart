@@ -54,6 +54,17 @@ abstract interface class CloudDirectChatRecordConvergenceProofAdapter {
   });
 }
 
+/// Read-only canonical half of an authenticated physical-record route change.
+/// The gateway separately proves the exact prior source/replay and ordering.
+abstract interface class CloudDirectChatServiceRouteTransitionProofAdapter {
+  void validateDirectChatServiceRouteTransition({
+    required CloudSyncScope scope,
+    required int generation,
+    required CloudChatEntityPayload payload,
+    required String previousLogicalEntityKeyHash,
+  });
+}
+
 /// Synchronous bridge to the app's canonical Message/Chat/Attachment boxes.
 ///
 /// Implementations must mutate only boxes from [store]. Network, filesystem,
@@ -2043,7 +2054,8 @@ final class _SemanticTransactionContext {
 final class _ObjectBoxCloudSemanticStoreTransaction
     implements
         CloudSemanticStoreTransaction,
-        CloudMessageContentTransitionTransaction {
+        CloudMessageContentTransitionTransaction,
+        CloudChatServiceRouteBindingTransaction {
   _ObjectBoxCloudSemanticStoreTransaction({
     required this._context,
     required this._updatedAtMs,
@@ -2079,6 +2091,8 @@ final class _ObjectBoxCloudSemanticStoreTransaction
   bool _projectionRepairPerformed = false;
   bool _recordMapWritten = false;
   bool _chatMembershipProven = false;
+  CloudChatEntityPayload? _chatRoutePayload;
+  final Set<int> _chatRouteCollisionIds = <int>{};
   _SemanticTransactionPhase _phase = _SemanticTransactionPhase.open;
   String? _boundLogicalEntityKeyHash;
   String? _pendingConflictSafeCode;
@@ -2471,11 +2485,15 @@ final class _ObjectBoxCloudSemanticStoreTransaction
         collision.logicalEntityKeyHash,
         expectedChange: _context.entry.change,
       );
-      if ((collision.mapKey != mapKey &&
+      final provenServiceRoute =
+          _chatRoutePayload?.logicalEntityKeyHash == logicalEntityKeyHash &&
+          _chatRouteCollisionIds.contains(collision.id);
+      if (!provenServiceRoute &&
+          ((collision.mapKey != mapKey &&
               (!_chatMembershipProven ||
                   collision.mapKey !=
                       _memberKey(collision.serverRecordIdHash))) ||
-          collision.logicalEntityKeyHash != logicalEntityKeyHash) {
+          collision.logicalEntityKeyHash != logicalEntityKeyHash)) {
         throw CloudSyncFailure(
           category: CloudFailureCategory.conflict,
           safeCode: 'semantic_record_mapping_conflict',
@@ -2523,6 +2541,153 @@ final class _ObjectBoxCloudSemanticStoreTransaction
     }
     _recordMapWritten = true;
     _boundLogicalEntityKeyHash = logicalEntityKeyHash;
+  }
+
+  @override
+  void prepareChatServiceRouteBinding({
+    required CloudChatEntityPayload payload,
+    required CloudSemanticSnapshot snapshot,
+  }) {
+    _ensureActive();
+    _ensureOpen();
+    if (_chatRoutePayload != null) {
+      if (!identical(_chatRoutePayload, payload)) {
+        throw ObjectBoxCloudSemanticStoreGateway._failure(
+          'semantic_record_binding_changed');
+      }
+      return;
+    }
+    final scope = _context.entry.scope;
+    if (scope.container != 'com.apple.messages.cloud' ||
+        scope.database != 'private' || scope.zone != 'chatManateeZone' ||
+        scope.streamKind != CloudSyncStreamKind.messages ||
+        scope.persistenceLane != CloudSyncPersistenceLane.semantic) {
+      return;
+    }
+    if (snapshot.kind != CloudEntityKind.chat ||
+        snapshot.logicalEntityKeyHash != payload.logicalEntityKeyHash) {
+      throw ObjectBoxCloudSemanticStoreGateway._malformed(
+        'semantic_stream_entity_mismatch');
+    }
+    _validateSnapshot(snapshot);
+    final collisions = _findRecordMapsByServerHash(
+      _context.entry.change.recordIdHash,
+    ).where((map) => map.logicalEntityKeyHash != payload.logicalEntityKeyHash);
+    final proofAdapter = _canonicalAdapter;
+    for (final prior in collisions) {
+      if (proofAdapter is! CloudDirectChatServiceRouteTransitionProofAdapter ||
+          prior.mapKey != _context.recordMapKey(prior.logicalEntityKeyHash)) {
+        throw CloudSyncFailure(category: CloudFailureCategory.conflict,
+          safeCode: 'semantic_record_mapping_conflict');
+      }
+      _validateRecordMapScope(prior, prior.logicalEntityKeyHash,
+        expectedChange: _context.entry.change);
+      final existing = _findRecordMapByKey(
+        _context.recordMapKey(payload.logicalEntityKeyHash));
+      bool pending(CloudRecordMapEntity map) =>
+          map.protectedReadbackLeaseReference != null ||
+          map.pendingUpdateOperationId != null ||
+          map.pendingUpdatePredecessorEtagHash != null;
+      if (pending(prior) || (existing != null && pending(existing))) {
+        throw CloudSyncFailure(category: CloudFailureCategory.dependency,
+          safeCode: 'semantic_chat_route_transition_pending');
+      }
+      final outboxQuery = _canonicalAdapter.store.box<CloudOutboxOperationEntity>().query(
+        CloudOutboxOperationEntity_.scopeKey.equals(_context.scopeKey)
+          .and(CloudOutboxOperationEntity_.state.notEquals(CloudOutboxStatus.confirmed.index))
+          .and(CloudOutboxOperationEntity_.serverRecordIdHash.equals(prior.serverRecordIdHash)
+            .or(CloudOutboxOperationEntity_.logicalEntityKeyHash.equals(prior.logicalEntityKeyHash))
+            .or(CloudOutboxOperationEntity_.logicalEntityKeyHash.equals(payload.logicalEntityKeyHash))),
+      ).build()..limit = 1;
+      try {
+        if (outboxQuery.findFirst() != null) {
+          throw CloudSyncFailure(category: CloudFailureCategory.dependency,
+            safeCode: 'semantic_chat_route_transition_pending');
+        }
+      } finally { outboxQuery.close(); }
+      _requireChatRouteSource(prior);
+      (proofAdapter as CloudDirectChatServiceRouteTransitionProofAdapter)
+          .validateDirectChatServiceRouteTransition(
+        scope: scope, generation: _context.entry.generation, payload: payload,
+        previousLogicalEntityKeyHash: prior.logicalEntityKeyHash,
+      );
+      _chatRouteCollisionIds.add(prior.id);
+    }
+    _chatRoutePayload = payload;
+  }
+
+  void _requireChatRouteSource(CloudRecordMapEntity prior) {
+    Never reject() => throw CloudSyncFailure(
+      category: CloudFailureCategory.conflict,
+      safeCode: 'semantic_chat_route_transition_source_unproven');
+    final priorSnapshot = _findSnapshot(
+      _context.snapshotKey(CloudEntityKind.chat, prior.logicalEntityKeyHash));
+    if (priorSnapshot == null || prior.etagHash == null ||
+        _context.entry.change.etagHash == null ||
+        prior.etagHash == _context.entry.change.etagHash ||
+        prior.encryptedRawRecordRef == null ||
+        prior.rawRecordGeneration != _context.entry.generation) {
+      reject();
+    }
+    _validateSnapshotScope(priorSnapshot,
+      expectedKind: CloudEntityKind.chat,
+      expectedLogicalKeyHash: prior.logicalEntityKeyHash);
+    if (priorSnapshot.etagHash != prior.etagHash ||
+        priorSnapshot.retractedAtMs >= 0) {
+      reject();
+    }
+    final query = _inbox.query(
+      CloudInboxChangeEntity_.scopeKey.equals(_context.scopeKey)
+        .and(CloudInboxChangeEntity_.generation.equals(_context.entry.generation))
+        .and(CloudInboxChangeEntity_.serverRecordIdHash.equals(prior.serverRecordIdHash))
+        .and(CloudInboxChangeEntity_.etagHash.equals(prior.etagHash!))
+        .and(CloudInboxChangeEntity_.encryptedPayloadRef.equals(prior.encryptedRawRecordRef!))
+        .and(CloudInboxChangeEntity_.status.equals(CloudInboxStatus.applied.index)),
+    ).build()..limit = 2;
+    final List<CloudInboxChangeEntity> rows;
+    try { rows = query.find(); } finally { query.close(); }
+    if (rows.length != 1) {
+      reject();
+    }
+    final row = rows.single;
+    final scope = _context.entry.scope;
+    final oldTime = cloudInboxCanonicalServerModifiedAt(row);
+    final newTime = _context.entry.change.serverModifiedAt;
+    if (row.accountFingerprint != scope.accountFingerprint || row.zone != scope.zone ||
+        row.failureCategory != null || row.preflightCategory != null ||
+        row.preflightCode != null || row.completedAtMs <= 0 ||
+        row.nextEligibleAtMs != 0 || row.isTombstone || row.changeType != 'save' ||
+        row.fetchSequence <= 0 || row.fetchSequence >= _context.entry.sequence ||
+        row.fetchSequence > _checkpointEntity.fetchedSequence ||
+        row.encryptedServerRecordId != prior.encryptedServerRecordId ||
+        row.changeKey != cloudSyncPersistentChangeKey(scope, row.generation, row.changeIdHash) ||
+        !ObjectBoxCloudSemanticStoreGateway._base64UrlDigestPattern.hasMatch(row.changeIdHash) ||
+        row.payloadSha256 == null ||
+        !ObjectBoxCloudSemanticStoreGateway._lowerHexDigestPattern.hasMatch(row.payloadSha256!) ||
+        oldTime == null || newTime == null || !newTime.isAfter(oldTime)) {
+      reject();
+    }
+    final changeHash = _SemanticTransactionContext._digest(row.changeIdHash);
+    final replayKey = 'semantic-replay4:${_context.scopeGenerationKey}:$changeHash';
+    final replayQuery = _replay.query(
+      CloudSemanticReplayEntity_.replayKey.equals(replayKey)).build();
+    final CloudSemanticReplayEntity? receipt;
+    try { receipt = replayQuery.findUnique(); } finally { replayQuery.close(); }
+    if (receipt == null || receipt.scopeGenerationKey != _context.scopeGenerationKey ||
+        receipt.scopeKey != _context.scopeKey || receipt.accountFingerprint != scope.accountFingerprint ||
+        receipt.container != scope.container || receipt.database != scope.database ||
+        receipt.zone != scope.zone || receipt.streamKind != scope.streamKind.name ||
+        receipt.schemaVersion != scope.schemaVersion || receipt.generation != row.generation ||
+        receipt.changeIdHash != changeHash || receipt.inboxSequence != row.fetchSequence ||
+        receipt.serverRecordIdHash != prior.serverRecordIdHash ||
+        receipt.logicalEntityKeyHash != prior.logicalEntityKeyHash ||
+        receipt.changeType != 'save' || receipt.payloadSha256 != row.payloadSha256 ||
+        receipt.protectedPayloadReferenceHash != _SemanticTransactionContext._digest(
+          'semantic-payload-reference\u001f${row.encryptedPayloadRef}') ||
+        receipt.terminalOutcome != _SemanticReplayOutcome.applied.name ||
+        receipt.terminalSafeCode != null) {
+      reject();
+    }
   }
 
   @override
@@ -2608,6 +2773,9 @@ final class _ObjectBoxCloudSemanticStoreTransaction
         kind: snapshot.kind,
         logicalEntityKeyHash: snapshot.logicalEntityKeyHash,
       );
+    }
+    if (payload is CloudChatEntityPayload) {
+      prepareChatServiceRouteBinding(payload: payload, snapshot: snapshot);
     }
     final priorMap = _findRecordMapByKey(
       _context.recordMapKey(snapshot.logicalEntityKeyHash),
