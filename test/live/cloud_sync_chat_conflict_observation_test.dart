@@ -7,6 +7,34 @@ import 'package:flutter_test/flutter_test.dart';
 import 'cloud_sync_chat_conflict_observation.dart';
 
 void main() {
+  test('only the exact authenticated usingHandle projection may normalize', () async {
+    final scratch = await Directory.systemTemp.createTemp('chat-using-handle-proof-');
+    final store = await openStore(directory: scratch.path);
+    try {
+      final chat = Chat(guid: 'synthetic-using-handle-owner', usingHandle: 'tel:+15555550100');
+      chat.id = store.box<Chat>().put(chat);
+      final before = quarantinedChatObservationPreservedState(store);
+      chat.usingHandle = 'mailto:synthetic@example.invalid';
+      store.box<Chat>().put(chat);
+      final projection = (id: chat.id!, before: 'tel:+15555550100',
+        after: 'mailto:synthetic@example.invalid');
+      expect(quarantinedChatObservationPreservedState(store,
+        checkedUsingHandleProjection: projection), before);
+      expect(store.box<Chat>().get(chat.id!)!.usingHandle, projection.after);
+      chat.displayName = 'must-not-be-ignored';
+      store.box<Chat>().put(chat);
+      expect(quarantinedChatObservationPreservedState(store,
+        checkedUsingHandleProjection: projection), isNot(before));
+      chat..displayName = null..usingHandle = 'mailto:wrong@example.invalid';
+      store.box<Chat>().put(chat);
+      expect(() => quarantinedChatObservationPreservedState(store,
+        checkedUsingHandleProjection: projection), throwsStateError);
+    } finally {
+      store.close();
+      await scratch.delete(recursive: true);
+    }
+  });
+
   test('rotation normalization retains ownership and pending-write fields', () {
     final row = CloudRecordMapEntity(id: 5, mapKey: 'canonical', scopeKey: 'scope',
       accountFingerprint: 'account', zone: 'chat', logicalEntityKeyHash: 'logical',

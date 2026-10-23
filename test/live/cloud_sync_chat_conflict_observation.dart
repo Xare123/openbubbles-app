@@ -91,6 +91,7 @@ String quarantinedChatObservationPreservedState(
   Map<String, Set<int>>? collectIds,
   Map<String, Set<int>>? restrictIds,
   Map<String, String>? collectRowHashes,
+  ({int id, String? before, String after})? checkedUsingHandleProjection,
   Set<String> ignoredRows = const {},
 }
 ) => store.runInTransaction(TxMode.read, () {
@@ -112,8 +113,19 @@ String quarantinedChatObservationPreservedState(
             binding.getId(row),
             (() {
               final builder = fb.Builder(initialSize: 1024);
-              binding.objectToFB(row, builder);
-              return sha256.convert(builder.buffer).toString();
+              final projection = checkedUsingHandleProjection;
+              final target = row is Chat && row.id == projection?.id ? row : null;
+              final actual = target?.usingHandle;
+              try {
+                if (target != null) {
+                  _require(actual == projection!.after);
+                  target.usingHandle = projection.before;
+                }
+                binding.objectToFB(row, builder);
+                return sha256.convert(builder.buffer).toString();
+              } finally {
+                if (target != null) target.usingHandle = actual;
+              }
             })(),
             if (row is Chat) (row.handles.map((h) => h.id).toList()..sort()),
             if (row is Chat) (row.messages.map((m) => m.id).toList()..sort()),
@@ -577,10 +589,27 @@ Future<Map<String, Object?>> observeQuarantinedChatConflict({
     final sourcePreserved = _immutableInboxSource(row) == _immutableInboxSource(
       copy.box<CloudInboxChangeEntity>().get(copiedRow.id)!);
     final afterRowHashes = <String, String>{};
+    // J proved that only this existing Chat's usingHandle changes. Match that
+    // one value to the actual authenticated lastAddressedHandle, using the
+    // same explicit scheme framing as the production adapter; do not ignore
+    // the Chat row, its other fields, participant links or message history.
+    ({int id, String? before, String after})? usingHandleProjection;
+    final addressed = chatPayload.lastAddressedHandle;
+    if (inspectNext && productionRecovery && canonicalChatBefore != null &&
+        chatPayload.lastAddressedHandleState == CloudSemanticFieldState.value &&
+        addressed != null && addressed.isNotEmpty) {
+      final lower = addressed.toLowerCase();
+      final expected = lower.startsWith('mailto:') ? 'mailto:${addressed.substring(7)}'
+          : lower.startsWith('tel:') ? 'tel:${addressed.substring(4)}'
+          : addressed.contains('@') ? 'mailto:$addressed' : 'tel:$addressed';
+      usingHandleProjection = (id: canonicalChatBefore.id!,
+        before: canonicalChatBefore.usingHandle, after: expected);
+    }
     final priorDataPreserved = priorData ==
         quarantinedChatObservationPreservedState(copy,
           collectIds: afterIds, restrictIds: priorIds,
-          ignoredRows: copyMutableRows, collectRowHashes: afterRowHashes);
+          ignoredRows: copyMutableRows, collectRowHashes: afterRowHashes,
+          checkedUsingHandleProjection: usingHandleProjection);
     final changedRowTypes = <String, int>{};
     for (final entry in beforeRowHashes.entries) {
       if (afterRowHashes[entry.key] != entry.value) {
@@ -649,6 +678,7 @@ Future<Map<String, Object?>> observeQuarantinedChatConflict({
       'copy_original_data_rows_preserved': priorDataPreserved,
       'copy_changed_existing_row_types': changedRowTypes,
       'copy_changed_existing_chat_fields': changedChatFields,
+      'copy_using_handle_projection_checked': usingHandleProjection != null,
       'copy_target_route_metadata_rotation_verified': targetMetadataVerified,
       'copy_conflict_source_preserved': sourcePreserved,
       'copy_unexpected_new_rows': unexpectedNewRows,
