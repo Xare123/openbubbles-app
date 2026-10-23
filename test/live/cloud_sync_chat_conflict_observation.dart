@@ -28,11 +28,18 @@ const _snapshotRoot =
 const _snapshotHash =
     'e967b549397b8378a2b79bdfe7bcf018cb8e3b2e9e4deff7d2f5920ab8c64a6f';
 
-// For an already-existing target route, only its source metadata rotates. The
+// For an existing target, source metadata rotates. A separately checked group
+// version/digest may also advance to the exact native-decoded metadata. The
 // old source must survive as an exact member, checked separately below. This
 // hash still covers every other serialized field, including ownership and
 // pending-writer fields. It never puts the normalized in-memory object in DB.
-String quarantinedChatRotationIdentityHash(Object row) {
+String quarantinedChatRotationIdentityHash(Object row, {
+  ({int? version, String? digest})? checkedGroupMetadata,
+}) {
+  if (checkedGroupMetadata != null &&
+      (row is! CloudSemanticSnapshotEntity || row.entityKind != 'chat')) {
+    throw StateError('quarantined_chat_rotation_type_forbidden');
+  }
   final restore = <void Function()>[];
   try {
     if (row is CloudRecordMapEntity) {
@@ -49,6 +56,13 @@ String quarantinedChatRotationIdentityHash(Object row) {
       final etag = row.etagHash, updated = row.updatedAtMs;
       restore.add(() { row.etagHash = etag; row.updatedAtMs = updated; });
       row.etagHash = null; row.updatedAtMs = 0;
+      if (checkedGroupMetadata != null) {
+        _require(row.groupVersion == checkedGroupMetadata.version &&
+            row.groupMetadataDigest == checkedGroupMetadata.digest);
+        final version = row.groupVersion, digest = row.groupMetadataDigest;
+        restore.add(() { row.groupVersion = version; row.groupMetadataDigest = digest; });
+        row.groupVersion = null; row.groupMetadataDigest = null;
+      }
     } else if (row is CloudSemanticChatAliasEntity) {
       final updated = row.updatedAtMs;
       restore.add(() => row.updatedAtMs = updated);
@@ -92,6 +106,7 @@ String quarantinedChatObservationPreservedState(
   Map<String, Set<int>>? restrictIds,
   Map<String, String>? collectRowHashes,
   ({int id, String? before, String after})? checkedUsingHandleProjection,
+  ({int id, int? before, int after})? checkedGroupVersionProjection,
   Set<String> ignoredRows = const {},
 }
 ) => store.runInTransaction(TxMode.read, () {
@@ -116,15 +131,23 @@ String quarantinedChatObservationPreservedState(
               final projection = checkedUsingHandleProjection;
               final target = row is Chat && row.id == projection?.id ? row : null;
               final actual = target?.usingHandle;
+              final versionProjection = checkedGroupVersionProjection;
+              final versionTarget = row is Chat && row.id == versionProjection?.id ? row : null;
+              final actualVersion = versionTarget?.groupVersion;
               try {
                 if (target != null) {
                   _require(actual == projection!.after);
                   target.usingHandle = projection.before;
                 }
+                if (versionTarget != null) {
+                  _require(actualVersion == versionProjection!.after);
+                  versionTarget.groupVersion = versionProjection.before;
+                }
                 binding.objectToFB(row, builder);
                 return sha256.convert(builder.buffer).toString();
               } finally {
                 if (target != null) target.usingHandle = actual;
+                if (versionTarget != null) versionTarget.groupVersion = actualVersion;
               }
             })(),
             if (row is Chat) (row.handles.map((h) => h.id).toList()..sort()),
@@ -552,6 +575,14 @@ Future<Map<String, Object?>> observeQuarantinedChatConflict({
       for (final lease in copy.box<CloudSyncLeaseEntity>().getAll())
         if (lease.scopeKey == scopeKey) 'CloudSyncLeaseEntity:${lease.id}',
     };
+    final incomingVersion = chatPayload.groupVersion;
+    final ({int id, int? before, int after})? groupVersionProjection =
+        inspectPostMembership && productionRecovery && canonicalChatBefore != null &&
+        chatPayload.style == CloudSemanticChatStyle.group &&
+        chatPayload.groupVersionState == CloudSemanticFieldState.value && incomingVersion != null &&
+        (canonicalChatBefore.groupVersion == null || incomingVersion > canonicalChatBefore.groupVersion!)
+      ? (id: canonicalChatBefore.id!, before: canonicalChatBefore.groupVersion, after: incomingVersion)
+      : null;
     final targetMap = (inspectNext || inspectRecordMapping) && productionRecovery && canonicalMaps.length == 1
         ? canonicalMaps.single : null;
     final targetMetadata = <String, String>{};
@@ -559,7 +590,9 @@ Future<Map<String, Object?>> observeQuarantinedChatConflict({
       void remember(Object value, int id) {
         final key = '${value.runtimeType}:$id';
         copyMutableRows.add(key);
-        targetMetadata[key] = quarantinedChatRotationIdentityHash(value);
+        targetMetadata[key] = quarantinedChatRotationIdentityHash(value,
+          checkedGroupMetadata: value is CloudSemanticSnapshotEntity && groupVersionProjection != null
+            ? (version: value.groupVersion, digest: value.groupMetadataDigest) : null);
       }
       remember(targetMap, targetMap.id);
       final snapshots = copy.box<CloudSemanticSnapshotEntity>().getAll().where((value) =>
@@ -649,7 +682,9 @@ Future<Map<String, Object?>> observeQuarantinedChatConflict({
             'CloudRecordMapEntity:${value.id}': quarantinedChatRotationIdentityHash(value),
         for (final value in copy.box<CloudSemanticSnapshotEntity>().getAll())
           if (targetMetadata.containsKey('CloudSemanticSnapshotEntity:${value.id}'))
-            'CloudSemanticSnapshotEntity:${value.id}': quarantinedChatRotationIdentityHash(value),
+            'CloudSemanticSnapshotEntity:${value.id}': quarantinedChatRotationIdentityHash(value,
+              checkedGroupMetadata: groupVersionProjection != null
+                ? (version: decoded.snapshot!.groupVersion, digest: decoded.snapshot!.groupMetadataDigest) : null),
         for (final value in copy.box<CloudSemanticChatAliasEntity>().getAll())
           if (targetMetadata.containsKey('CloudSemanticChatAliasEntity:${value.id}'))
             'CloudSemanticChatAliasEntity:${value.id}': quarantinedChatRotationIdentityHash(value),
@@ -686,7 +721,8 @@ Future<Map<String, Object?>> observeQuarantinedChatConflict({
         quarantinedChatObservationPreservedState(copy,
           collectIds: afterIds, restrictIds: priorIds,
           ignoredRows: copyMutableRows, collectRowHashes: afterRowHashes,
-          checkedUsingHandleProjection: usingHandleProjection);
+          checkedUsingHandleProjection: usingHandleProjection,
+          checkedGroupVersionProjection: groupVersionProjection);
     final changedRowTypes = <String, int>{};
     for (final entry in beforeRowHashes.entries) {
       if (afterRowHashes[entry.key] != entry.value) {

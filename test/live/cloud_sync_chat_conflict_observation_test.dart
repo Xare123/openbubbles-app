@@ -7,6 +7,53 @@ import 'package:flutter_test/flutter_test.dart';
 import 'cloud_sync_chat_conflict_observation.dart';
 
 void main() {
+  test('group version normalization requires the exact expected projection', () async {
+    final scratch = await Directory.systemTemp.createTemp('chat-group-version-proof-');
+    final store = await openStore(directory: scratch.path);
+    try {
+      final chat = Chat(guid: 'synthetic-group-version-owner', usingHandle: 'tel:+15555550100');
+      chat.id = store.box<Chat>().put(chat);
+      final before = quarantinedChatObservationPreservedState(store);
+      chat..groupVersion = 17..usingHandle = 'tel:+15555550101';
+      store.box<Chat>().put(chat);
+      final version = (id: chat.id!, before: null as int?, after: 17);
+      final handle = (id: chat.id!, before: 'tel:+15555550100', after: 'tel:+15555550101');
+      expect(quarantinedChatObservationPreservedState(store,
+        checkedGroupVersionProjection: version, checkedUsingHandleProjection: handle), before);
+      expect(store.box<Chat>().get(chat.id!)!.groupVersion, 17);
+      chat.groupVersion = 18;
+      store.box<Chat>().put(chat);
+      expect(() => quarantinedChatObservationPreservedState(store,
+        checkedGroupVersionProjection: version, checkedUsingHandleProjection: handle), throwsStateError);
+      chat..groupVersion = 17..displayName = 'not-an-exempt-field';
+      store.box<Chat>().put(chat);
+      expect(quarantinedChatObservationPreservedState(store,
+        checkedGroupVersionProjection: version, checkedUsingHandleProjection: handle), isNot(before));
+    } finally {
+      store.close();
+      await scratch.delete(recursive: true);
+    }
+  });
+
+  test('group snapshot normalization checks incoming metadata and retains identity', () {
+    final row = CloudSemanticSnapshotEntity(id: 2, snapshotKey: 'snapshot',
+      scopeGenerationKey: 'generation', scopeKey: 'scope', accountFingerprint: 'account',
+      container: 'messages', database: 'private', zone: 'chat', streamKind: 'messages',
+      schemaVersion: 1, generation: 7, entityKind: 'chat', logicalEntityKeyHash: 'logical',
+      canonicalGuidHash: 'owner-proof', groupMetadataDigest: 'old-metadata', updatedAtMs: 10);
+    final before = quarantinedChatRotationIdentityHash(row,
+      checkedGroupMetadata: (version: null, digest: 'old-metadata'));
+    row..groupVersion = 17..groupMetadataDigest = 'incoming-metadata';
+    final incoming = (version: 17, digest: 'incoming-metadata');
+    expect(quarantinedChatRotationIdentityHash(row, checkedGroupMetadata: incoming), before);
+    expect(row.groupVersion, 17);
+    expect(row.groupMetadataDigest, incoming.digest);
+    row.groupMetadataDigest = 'wrong';
+    expect(() => quarantinedChatRotationIdentityHash(row, checkedGroupMetadata: incoming), throwsStateError);
+    row..groupMetadataDigest = incoming.digest..canonicalGuidHash = 'wrong-owner';
+    expect(quarantinedChatRotationIdentityHash(row, checkedGroupMetadata: incoming), isNot(before));
+  });
+
   test('only the exact authenticated usingHandle projection may normalize', () async {
     final scratch = await Directory.systemTemp.createTemp('chat-using-handle-proof-');
     final store = await openStore(directory: scratch.path);
