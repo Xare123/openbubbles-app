@@ -219,11 +219,17 @@ Future<Map<String, Object?>> observeQuarantinedChatConflict({
   _require(Platform.environment['OPENBUBBLES_INSPECT_QUARANTINED_CHAT'] == '1');
   final productionRecovery =
       Platform.environment['OPENBUBBLES_QUALIFY_CHAT_ROUTE_RECOVERY'] == '1';
+  final inspectNext = Platform.environment['OPENBUBBLES_INSPECT_NEXT_CHAT_CONFLICT'] == '1';
+  final snapshotRoot = inspectNext
+      ? '${_snapshotRoot.substring(0, _snapshotRoot.length - 1)}G' : _snapshotRoot;
+  final snapshotHash = inspectNext
+      ? '21635c19e36223fd3d7d645d7477e1a7cddb54c8467b702d77e2cd99ae8fe287' : _snapshotHash;
+  final expectedSequence = inspectNext ? 864 : 863;
   final originalFile = File('${profile.path}/objectbox/data.mdb');
   final originalHash = await _hash(originalFile);
   final beforeState = quarantinedChatObservationPreservedState(store);
-  final snapshotFile = File('$_snapshotRoot/data.mdb');
-  _require(await _hash(snapshotFile) == _snapshotHash);
+  final snapshotFile = File('$snapshotRoot/data.mdb');
+  _require(await _hash(snapshotFile) == snapshotHash);
   final scope = CloudSyncScope(
     accountFingerprint: auth.accountFingerprint,
     container: 'com.apple.messages.cloud',
@@ -245,7 +251,7 @@ Future<Map<String, Object?>> observeQuarantinedChatConflict({
                 )
                 .and(CloudInboxChangeEntity_.zone.equals(scope.zone))
                 .and(CloudInboxChangeEntity_.generation.equals(1))
-                .and(CloudInboxChangeEntity_.fetchSequence.equals(863))
+                .and(CloudInboxChangeEntity_.fetchSequence.equals(expectedSequence))
                 .and(
                   CloudInboxChangeEntity_.status.equals(
                     CloudInboxStatus.quarantined.index,
@@ -273,7 +279,7 @@ Future<Map<String, Object?>> observeQuarantinedChatConflict({
   Store? copy;
   try {
     await snapshotFile.copy('${scratch.path}/data.mdb');
-    _require(await _hash(File('${scratch.path}/data.mdb')) == _snapshotHash);
+    _require(await _hash(File('${scratch.path}/data.mdb')) == snapshotHash);
     copy = await openStore(directory: scratch.path);
     final copiedRow = copy.box<CloudInboxChangeEntity>().get(row.id);
     _require(copiedRow != null && _rowBinding(copiedRow) == originalBinding);
@@ -497,7 +503,7 @@ Future<Map<String, Object?>> observeQuarantinedChatConflict({
       quarantinedChatObservationPreservedState(store) == beforeState &&
           _rowBinding(store.box<CloudInboxChangeEntity>().get(row.id)!) ==
               originalBinding &&
-          await _hash(snapshotFile) == _snapshotHash,
+          await _hash(snapshotFile) == snapshotHash,
     );
     return {
       'decode': 'ready',
@@ -543,7 +549,7 @@ Future<Map<String, Object?>> observeQuarantinedChatConflict({
     await scratch.delete(recursive: true);
     _require(
       quarantinedChatObservationPreservedState(store) == beforeState &&
-          await _hash(snapshotFile) == _snapshotHash,
+          await _hash(snapshotFile) == snapshotHash,
     );
   }
 }
