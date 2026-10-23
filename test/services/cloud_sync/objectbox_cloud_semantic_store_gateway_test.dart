@@ -2961,8 +2961,13 @@ void main() {
     });
 
     for (final reopen in [false, true]) {
-      test('preserves both routes and reverse-cycle replay (reopen=$reopen)', () async {
+      for (final legacyRawGeneration in [false, true]) {
+      test('preserves both routes and reverse-cycle replay (reopen=$reopen, legacyRaw=$legacyRawGeneration)', () async {
         final oldMap = objectBox.box<CloudRecordMapEntity>().getAll().single;
+        if (legacyRawGeneration) {
+          oldMap.rawRecordGeneration = 0;
+          objectBox.box<CloudRecordMapEntity>().put(oldMap);
+        }
         final oldReplay = objectBox.box<CloudSemanticReplayEntity>().getAll().single;
         if (reopen) {
           objectBox.close();
@@ -2982,6 +2987,7 @@ void main() {
         final preservedMap = objectBox.box<CloudRecordMapEntity>().get(oldMap.id)!;
         expect(preservedMap.etagHash, oldMap.etagHash);
         expect(preservedMap.encryptedRawRecordRef, oldMap.encryptedRawRecordRef);
+        expect(preservedMap.rawRecordGeneration, legacyRawGeneration ? 0 : first.generation);
         expect(objectBox.box<Message>().get(historyId)!.chat.targetId, oldChatId);
         final newChatId = objectBox.box<Chat>().getAll().singleWhere(
           (chat) => !chat.isRpSms).id!;
@@ -3009,12 +3015,13 @@ void main() {
         expect(objectBox.box<CloudSemanticReplayEntity>().count(), 3);
         expect(objectBox.box<CloudOutboxOperationEntity>().count(), 0);
       });
+      }
     }
 
     for (final failure in ['recipient', 'participant', 'group', 'stale', 'equal',
       'missing replay', 'deleted owner', 'routing stub', 'pending update',
       'pending readback', 'snapshot retracted', 'wrong replay owner',
-      'pending outbox', 'same service', 'same etag']) {
+      'pending outbox', 'same service', 'same etag', 'different known raw generation']) {
       test('rejects $failure atomically', () async {
         final second = next(2, etag: failure == 'same etag' ? first.change.etagHash : null,
           modified: failure == 'stale'
@@ -3036,6 +3043,8 @@ void main() {
             box.put(box.getAll().single..retractedAtMs = now.millisecondsSinceEpoch);
           case 'wrong replay owner': replays.put(replays.getAll().single
             ..logicalEntityKeyHash = _indexedDigest('wrong-route-owner'));
+          case 'different known raw generation': maps.put(maps.getAll().single
+            ..rawRecordGeneration = first.generation + 1);
           case 'pending outbox': objectBox.box<CloudOutboxOperationEntity>().put(
             CloudOutboxOperationEntity(operationId: _sha256('pending-route-outbox'),
               scopeKey: _scopeKey(routeScope), accountFingerprint: routeScope.accountFingerprint,

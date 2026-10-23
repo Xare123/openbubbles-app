@@ -2626,9 +2626,14 @@ final class _ObjectBoxCloudSemanticStoreTransaction
         _context.entry.change.etagHash == null ||
         prior.etagHash == _context.entry.change.etagHash ||
         prior.encryptedRawRecordRef == null ||
-        prior.rawRecordGeneration != _context.entry.generation) {
+        (prior.rawRecordGeneration != 0 &&
+            prior.rawRecordGeneration != _context.entry.generation)) {
       reject();
     }
+    // Zero is the pre-property legacy sentinel, not a different known epoch.
+    // The exact applied inbox/replay below must still prove these same raw
+    // bytes under this generation. Keep the old map unchanged and unwritable;
+    // accepting this read lineage never grants a conditional-write capability.
     _validateSnapshotScope(priorSnapshot,
       expectedKind: CloudEntityKind.chat,
       expectedLogicalKeyHash: prior.logicalEntityKeyHash);
