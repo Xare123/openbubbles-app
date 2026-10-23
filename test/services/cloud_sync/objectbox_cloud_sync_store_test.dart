@@ -291,6 +291,69 @@ void main() {
     );
   }
 
+  for (final action in ['update iMessage', 'update preserved SMS', 'reset']) {
+    test('route-scoped Chat members preserve cross-route provenance: $action', () async {
+      final scope = CloudSyncScope(accountFingerprint: testAccountFingerprintA,
+        container: 'com.apple.messages.cloud', database: 'private',
+        zone: 'chatManateeZone', persistenceLane: CloudSyncPersistenceLane.semantic);
+      await store.readCheckpoint(scope);
+      final sms = 'S' * 43, imessage = 'I' * 43;
+      final physical = 'A' * 43, other = 'B' * 43;
+      final maps = objectBox.box<CloudRecordMapEntity>();
+      CloudRecordMapEntity row(String key, String logical, String server,
+          String etag) => CloudRecordMapEntity(mapKey: key,
+        scopeKey: cloudSyncPersistentScopeKey(scope),
+        accountFingerprint: scope.accountFingerprint, zone: scope.zone,
+        logicalEntityKeyHash: logical, serverRecordIdHash: server,
+        generation: 1, encryptedServerRecordId: testProtectedReference(server[0]),
+        etagHash: etag, encryptedRawRecordRef: testProtectedReference(etag[0]),
+        rawRecordGeneration: 1, updatedAtMs: testEpoch.millisecondsSinceEpoch);
+      String canonical(String logical) => cloudSyncCanonicalRecordMapKey(scope, logical);
+      String member(String logical, String server) => cloudSyncChatRecordMemberKey(
+        scope, 1, server, logicalEntityKeyHash: logical);
+      maps.putMany([
+        row(canonical(sms), sms, physical, 'O' * 43),
+        row(member(sms, physical), sms, physical, 'O' * 43),
+        row(cloudSyncChatRecordMemberKey(scope, 1, physical), sms, physical, 'O' * 43),
+        row(canonical(imessage), imessage, physical, 'N' * 43),
+        row(member(imessage, physical), imessage, physical, 'N' * 43),
+        row(member(imessage, other), imessage, other, 'B' * 43),
+      ]);
+      final before = {for (final map in maps.getAll()) map.mapKey:
+        [map.etagHash, map.encryptedRawRecordRef, map.rawRecordGeneration]};
+      await reopen();
+      if (action == 'reset') {
+        await store.rebootstrapAfterReset(_resetRequest(scope), now: testEpoch);
+        expect((await store.readCheckpoint(scope)).generation, 2);
+        expect(objectBox.box<CloudRecordMapEntity>().getAll()
+          .where((map) => !map.mapKey.startsWith('record-map:'))
+          .every((map) => map.generation == 1), isTrue);
+        expect(await store.readRecordMap(scope, logicalEntityKeyHash: imessage,
+          generation: 2, serverRecordIdHash: physical), isNull);
+        return;
+      }
+      final logical = action == 'update iMessage' ? imessage : sms;
+      await store.upsertRecordMap(CloudRecordMapEntry(scope: scope,
+        logicalEntityKeyHash: logical, serverRecordIdHash: physical,
+        encryptedServerRecordId: testProtectedReference('A'), etagHash: 'Z' * 43,
+        encryptedRawRecordReference: testProtectedReference('Z'), updatedAt: testEpoch),
+        generation: 1);
+      await reopen();
+      final rows = objectBox.box<CloudRecordMapEntity>().getAll();
+      expect(rows, hasLength(6));
+      for (final map in rows) {
+        if (map.logicalEntityKeyHash == logical && map.serverRecordIdHash == physical) {
+          expect(map.etagHash, 'Z' * 43);
+          expect(map.encryptedRawRecordRef, testProtectedReference('Z'));
+        } else {
+          expect([map.etagHash, map.encryptedRawRecordRef, map.rawRecordGeneration],
+            before[map.mapKey], reason: 'Never mirror across another service route or physical source');
+        }
+      }
+      expect(objectBox.box<CloudOutboxOperationEntity>().count(), 0);
+    });
+  }
+
   group('Chat member create receipt', () {
     const leaseId = 'synthetic-chat-member-receipt-lease';
     final scope = CloudSyncScope(

@@ -548,11 +548,10 @@ final class ObjectBoxCloudSemanticStoreGateway
         );
         try {
           transaction.prepareChatServiceRouteBinding(payload: payload, snapshot: snapshot);
-          // This recovery targets the first previously rejected route, not an
-          // unrelated failure of an existing logical route or a generic retry.
-          if (transaction._chatRouteCollisionIds.length != 1 ||
-              transaction._findRecordMapByKey(context.recordMapKey(
-                payload.logicalEntityKeyHash)) != null) {
+          // One proved previous route, possibly with legacy/member mirrors.
+          // An existing target is allowed only after the same direct-route
+          // and convergence proof used by normal apply, never a generic retry.
+          if (transaction._chatRouteLogicalKeys.length != 1) {
             return false;
           }
           durable.inbox
@@ -646,11 +645,18 @@ final class ObjectBoxCloudSemanticStoreGateway
       CloudRecordMapEntity_.scopeKey.equals(scopeKey)
         .and(CloudRecordMapEntity_.generation.equals(row.generation))
         .and(CloudRecordMapEntity_.serverRecordIdHash.equals(row.serverRecordIdHash)),
-    ).build()..limit = 2;
+    ).build()..limit = 4;
     final List<CloudRecordMapEntity> maps;
     try { maps = mapQuery.find(); } finally { mapQuery.close(); }
-    if (maps.length != 1 || maps.single.mapKey != cloudSyncCanonicalRecordMapKey(
-        scope, maps.single.logicalEntityKeyHash)) {
+    final owners = maps.where((map) => map.mapKey == cloudSyncCanonicalRecordMapKey(
+      scope, map.logicalEntityKeyHash)).toList();
+    if (maps.isEmpty || maps.length > 3 || owners.length != 1 ||
+        maps.any((map) => !cloudSyncRecordMapProvenanceMatches(map, owners.single) ||
+          (map.mapKey != owners.single.mapKey &&
+           map.mapKey != cloudSyncChatRecordMemberKey(scope, map.generation,
+             map.serverRecordIdHash, logicalEntityKeyHash: map.logicalEntityKeyHash) &&
+           map.mapKey != cloudSyncChatRecordMemberKey(scope, map.generation,
+             map.serverRecordIdHash)))) {
       return null;
     }
     final entry = CloudInboxEntry(
@@ -2275,6 +2281,7 @@ final class _ObjectBoxCloudSemanticStoreTransaction
   bool _chatMembershipProven = false;
   CloudChatEntityPayload? _chatRoutePayload;
   final Set<int> _chatRouteCollisionIds = <int>{};
+  final Set<String> _chatRouteLogicalKeys = <String>{};
   _SemanticTransactionPhase _phase = _SemanticTransactionPhase.open;
   String? _boundLogicalEntityKeyHash;
   String? _pendingConflictSafeCode;
@@ -2673,8 +2680,7 @@ final class _ObjectBoxCloudSemanticStoreTransaction
       if (!provenServiceRoute &&
           ((collision.mapKey != mapKey &&
               (!_chatMembershipProven ||
-                  collision.mapKey !=
-                      _memberKey(collision.serverRecordIdHash))) ||
+                  !_isRecordMember(collision))) ||
           collision.logicalEntityKeyHash != logicalEntityKeyHash)) {
         throw CloudSyncFailure(
           category: CloudFailureCategory.conflict,
@@ -2692,6 +2698,14 @@ final class _ObjectBoxCloudSemanticStoreTransaction
       throw ObjectBoxCloudSemanticStoreGateway._failure(
         'message_update_readback_finalization_pending',
       );
+    }
+    // Preserve each former route before adding another member for the same
+    // physical record. A physical-only v1 row cannot represent both owners.
+    for (final collision in collisions) {
+      if (_chatRouteCollisionIds.contains(collision.id) &&
+          collision.mapKey == _context.recordMapKey(collision.logicalEntityKeyHash)) {
+        _putRecordMember(collision);
+      }
     }
     if (_chatMembershipProven && existing != null) {
       _putRecordMember(existing);
@@ -2718,7 +2732,7 @@ final class _ObjectBoxCloudSemanticStoreTransaction
         updatedAtMs: _updatedAtMs,
       ),
     );
-    if (_chatMembershipProven) {
+    if (_chatMembershipProven || _chatRouteCollisionIds.isNotEmpty) {
       _putRecordMember(_findRecordMapByKey(mapKey)!);
     }
     _recordMapWritten = true;
@@ -2754,16 +2768,28 @@ final class _ObjectBoxCloudSemanticStoreTransaction
     _validateSnapshot(snapshot);
     final collisions = _findRecordMapsByServerHash(
       _context.entry.change.recordIdHash,
-    ).where((map) => map.logicalEntityKeyHash != payload.logicalEntityKeyHash);
+    ).where((map) => map.logicalEntityKeyHash != payload.logicalEntityKeyHash).toList();
     final proofAdapter = _canonicalAdapter;
-    for (final prior in collisions) {
+    for (final logicalKey in collisions.map((row) => row.logicalEntityKeyHash).toSet()) {
+      final prior = _findRecordMapByKey(_context.recordMapKey(logicalKey));
+      final mirrors = collisions.where((row) => row.logicalEntityKeyHash == logicalKey);
       if (proofAdapter is! CloudDirectChatServiceRouteTransitionProofAdapter ||
-          prior.mapKey != _context.recordMapKey(prior.logicalEntityKeyHash)) {
+          prior == null || prior.serverRecordIdHash != _context.entry.change.recordIdHash) {
         throw CloudSyncFailure(category: CloudFailureCategory.conflict,
           safeCode: 'semantic_record_mapping_conflict');
       }
       _validateRecordMapScope(prior, prior.logicalEntityKeyHash,
         expectedChange: _context.entry.change);
+      for (final mirror in mirrors) {
+        _validateRecordMapScope(mirror, logicalKey,
+          expectedChange: _context.entry.change);
+        if (!cloudSyncRecordMapProvenanceMatches(prior, mirror)) {
+          throw CloudSyncFailure(category: CloudFailureCategory.conflict,
+            safeCode: 'semantic_record_mapping_conflict');
+        }
+      }
+      cloudSyncFindRecordMap(store: _canonicalAdapter.store, scope: scope,
+        generation: _context.entry.generation, logicalEntityKeyHash: logicalKey);
       final existing = _findRecordMapByKey(
         _context.recordMapKey(payload.logicalEntityKeyHash));
       bool pending(CloudRecordMapEntity map) =>
@@ -2793,7 +2819,30 @@ final class _ObjectBoxCloudSemanticStoreTransaction
         scope: scope, generation: _context.entry.generation, payload: payload,
         previousLogicalEntityKeyHash: prior.logicalEntityKeyHash,
       );
-      _chatRouteCollisionIds.add(prior.id);
+      _chatRouteCollisionIds.addAll(mirrors.map((row) => row.id));
+      _chatRouteLogicalKeys.add(logicalKey);
+    }
+    if (_chatRouteLogicalKeys.length > 1) {
+      throw CloudSyncFailure(category: CloudFailureCategory.conflict,
+        safeCode: 'semantic_record_mapping_conflict');
+    }
+    final existing = _findRecordMapByKey(_context.recordMapKey(payload.logicalEntityKeyHash));
+    if (collisions.isNotEmpty && existing != null) {
+      _validateRecordMapScope(existing, payload.logicalEntityKeyHash,
+        expectedChange: _context.entry.change);
+      cloudSyncFindRecordMap(store: _canonicalAdapter.store, scope: scope,
+        generation: _context.entry.generation,
+        logicalEntityKeyHash: payload.logicalEntityKeyHash);
+      if (existing.serverRecordIdHash != _context.entry.change.recordIdHash) {
+        if (proofAdapter is! CloudDirectChatRecordConvergenceProofAdapter) {
+          throw CloudSyncFailure(category: CloudFailureCategory.conflict,
+            safeCode: 'semantic_record_mapping_conflict');
+        }
+        (proofAdapter as CloudDirectChatRecordConvergenceProofAdapter)
+            .validateDirectChatRecordConvergence(scope: scope,
+              generation: _context.entry.generation, payload: payload);
+      }
+      _chatMembershipProven = true;
     }
     _chatRoutePayload = payload;
   }
@@ -2969,9 +3018,9 @@ final class _ObjectBoxCloudSemanticStoreTransaction
     );
     if (priorMap != null &&
         (priorMap.serverRecordIdHash != _context.entry.change.recordIdHash ||
-            _findRecordMapByKey(_memberKey(priorMap.serverRecordIdHash)) !=
+            _findRecordMapByKey(_memberKey(priorMap)) !=
                 null) &&
-        _allowDirectChatRecordConvergence &&
+        _allowDirectChatRecordConvergence && !_chatMembershipProven &&
         payload is CloudChatEntityPayload &&
         _canonicalAdapter is CloudDirectChatRecordConvergenceProofAdapter &&
         _context.entry.scope.zone == 'chatManateeZone' &&
@@ -3660,14 +3709,19 @@ final class _ObjectBoxCloudSemanticStoreTransaction
     }
   }
 
-  String _memberKey(String recordIdHash) => cloudSyncChatRecordMemberKey(
+  String _memberKey(CloudRecordMapEntity row) => cloudSyncChatRecordMemberKey(
     _context.entry.scope,
     _context.entry.generation,
-    recordIdHash,
+    row.serverRecordIdHash,
+    logicalEntityKeyHash: row.logicalEntityKeyHash,
   );
 
+  bool _isRecordMember(CloudRecordMapEntity row) =>
+      row.mapKey == _memberKey(row) || row.mapKey == cloudSyncChatRecordMemberKey(
+        _context.entry.scope, _context.entry.generation, row.serverRecordIdHash);
+
   void _putRecordMember(CloudRecordMapEntity source) {
-    final key = _memberKey(source.serverRecordIdHash);
+    final key = _memberKey(source);
     final previous = _findRecordMapByKey(key);
     if (previous != null) {
       _validateRecordMapScope(
@@ -3675,11 +3729,18 @@ final class _ObjectBoxCloudSemanticStoreTransaction
         source.logicalEntityKeyHash,
         expectedChange: _context.entry.change,
       );
+      if ((previous.protectedReadbackLeaseReference != null ||
+          previous.pendingUpdateOperationId != null ||
+          previous.pendingUpdatePredecessorEtagHash != null) &&
+          !cloudSyncRecordMapProvenanceMatches(previous, source)) {
+        throw CloudSyncFailure(category: CloudFailureCategory.dependency,
+          safeCode: 'semantic_chat_route_transition_pending');
+      }
     }
-    _recordMaps.put(
+    CloudRecordMapEntity copy({required String mapKey, required int id}) =>
       CloudRecordMapEntity(
-        id: previous?.id ?? 0,
-        mapKey: key,
+        id: id,
+        mapKey: mapKey,
         scopeKey: source.scopeKey,
         accountFingerprint: source.accountFingerprint,
         zone: source.zone,
@@ -3695,8 +3756,16 @@ final class _ObjectBoxCloudSemanticStoreTransaction
         pendingUpdatePredecessorEtagHash:
             source.pendingUpdatePredecessorEtagHash,
         updatedAtMs: source.updatedAtMs,
-      ),
-    );
+      );
+    _recordMaps.put(copy(mapKey: key, id: previous?.id ?? 0));
+    final legacyKey = cloudSyncChatRecordMemberKey(_context.entry.scope,
+      _context.entry.generation, source.serverRecordIdHash);
+    final legacy = _findRecordMapByKey(legacyKey);
+    if (legacy != null && legacy.logicalEntityKeyHash == source.logicalEntityKeyHash) {
+      _validateRecordMapScope(legacy, source.logicalEntityKeyHash,
+        expectedChange: _context.entry.change);
+      _recordMaps.put(copy(mapKey: legacyKey, id: legacy.id));
+    }
   }
 
   List<CloudRecordMapEntity> _findRecordMapsByServerHash(
@@ -3745,7 +3814,7 @@ final class _ObjectBoxCloudSemanticStoreTransaction
     );
     final isMember =
         scope.zone == 'chatManateeZone' &&
-        entity.mapKey == _memberKey(entity.serverRecordIdHash);
+        _isRecordMember(entity);
     if ((entity.mapKey != _context.recordMapKey(logicalEntityKeyHash) &&
             !isMember) ||
         entity.scopeKey != _context.scopeKey ||

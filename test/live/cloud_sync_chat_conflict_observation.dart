@@ -9,6 +9,7 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_manual_shado
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_models.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_persistent_keys.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_protector.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_record_maps.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_safe_failure.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_semantic_diagnostics.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_operation_interlock.dart';
@@ -26,6 +27,51 @@ const _snapshotRoot =
     'build-evidence/message-parent-diagnostics-20261022/CHAT_CONFLICT_SNAPSHOT_20261023_A';
 const _snapshotHash =
     'e967b549397b8378a2b79bdfe7bcf018cb8e3b2e9e4deff7d2f5920ab8c64a6f';
+
+// For an already-existing target route, only its source metadata rotates. The
+// old source must survive as an exact member, checked separately below. This
+// hash still covers every other serialized field, including ownership and
+// pending-writer fields. It never puts the normalized in-memory object in DB.
+String quarantinedChatRotationIdentityHash(Object row) {
+  final restore = <void Function()>[];
+  try {
+    if (row is CloudRecordMapEntity) {
+      final server = row.serverRecordIdHash, encrypted = row.encryptedServerRecordId;
+      final etag = row.etagHash, raw = row.encryptedRawRecordRef;
+      final generation = row.rawRecordGeneration, updated = row.updatedAtMs;
+      restore.add(() { row.serverRecordIdHash = server; row.encryptedServerRecordId = encrypted;
+        row.etagHash = etag; row.encryptedRawRecordRef = raw;
+        row.rawRecordGeneration = generation; row.updatedAtMs = updated; });
+      row.serverRecordIdHash = ''; row.encryptedServerRecordId = '';
+      row.etagHash = null; row.encryptedRawRecordRef = null;
+      row.rawRecordGeneration = 0; row.updatedAtMs = 0;
+    } else if (row is CloudSemanticSnapshotEntity) {
+      final etag = row.etagHash, updated = row.updatedAtMs;
+      restore.add(() { row.etagHash = etag; row.updatedAtMs = updated; });
+      row.etagHash = null; row.updatedAtMs = 0;
+    } else if (row is CloudSemanticChatAliasEntity) {
+      final updated = row.updatedAtMs;
+      restore.add(() => row.updatedAtMs = updated);
+      row.updatedAtMs = 0;
+    } else {
+      throw StateError('quarantined_chat_rotation_type_forbidden');
+    }
+    String hashTyped<T>(T value) {
+      final binding = getObjectBoxModel().bindings[T]! as EntityDefinition<T>;
+      final builder = fb.Builder(initialSize: 1024);
+      binding.objectToFB(value, builder);
+      return sha256.convert(builder.buffer).toString();
+    }
+    return switch (row) {
+      CloudRecordMapEntity value => hashTyped(value),
+      CloudSemanticSnapshotEntity value => hashTyped(value),
+      CloudSemanticChatAliasEntity value => hashTyped(value),
+      _ => throw StateError('quarantined_chat_rotation_type_forbidden'),
+    };
+  } finally {
+    for (final undo in restore.reversed) { undo(); }
+  }
+}
 
 Future<String> _hash(File file) async =>
     (await sha256.bind(file.openRead()).first).toString();
@@ -408,6 +454,27 @@ Future<Map<String, Object?>> observeQuarantinedChatConflict({
       for (final lease in copy.box<CloudSyncLeaseEntity>().getAll())
         if (lease.scopeKey == scopeKey) 'CloudSyncLeaseEntity:${lease.id}',
     };
+    final targetMap = inspectNext && productionRecovery && canonicalMaps.length == 1
+        ? canonicalMaps.single : null;
+    final targetMetadata = <String, String>{};
+    if (targetMap != null) {
+      void remember(Object value, int id) {
+        final key = '${value.runtimeType}:$id';
+        copyMutableRows.add(key);
+        targetMetadata[key] = quarantinedChatRotationIdentityHash(value);
+      }
+      remember(targetMap, targetMap.id);
+      final snapshots = copy.box<CloudSemanticSnapshotEntity>().getAll().where((value) =>
+        value.scopeKey == scopeKey && value.generation == row.generation &&
+        value.entityKind == 'chat' && value.logicalEntityKeyHash == chatPayload.logicalEntityKeyHash).toList();
+      _require(snapshots.length == 1);
+      remember(snapshots.single, snapshots.single.id);
+      for (final alias in copy.box<CloudSemanticChatAliasEntity>().getAll().where((value) =>
+          value.scopeKey == scopeKey && value.generation == row.generation &&
+          value.chatLogicalEntityKeyHash == chatPayload.logicalEntityKeyHash)) {
+        remember(alias, alias.id);
+      }
+    }
     final priorData = quarantinedChatObservationPreservedState(copy,
       collectIds: priorIds, ignoredRows: copyMutableRows);
     final outboxCount = copy.box<CloudOutboxOperationEntity>().count();
@@ -470,6 +537,33 @@ Future<Map<String, Object?>> observeQuarantinedChatConflict({
       await durable.releaseCoordinatorLease(scope, leaseFence: fence!);
     }
     final afterIds = <String, Set<int>>{};
+    var targetMetadataVerified = targetMap == null;
+    if (targetMap != null && result.disposition == CloudInboxApplyDisposition.applied) {
+      final current = cloudSyncFindRecordMap(store: copy, scope: scope,
+        generation: row.generation, logicalEntityKeyHash: chatPayload.logicalEntityKeyHash);
+      final former = cloudSyncFindRecordMap(store: copy, scope: scope,
+        generation: row.generation, logicalEntityKeyHash: chatPayload.logicalEntityKeyHash,
+        serverRecordIdHash: targetMap.serverRecordIdHash);
+      final afterMetadata = <String, String>{
+        for (final value in copy.box<CloudRecordMapEntity>().getAll())
+          if (targetMetadata.containsKey('CloudRecordMapEntity:${value.id}'))
+            'CloudRecordMapEntity:${value.id}': quarantinedChatRotationIdentityHash(value),
+        for (final value in copy.box<CloudSemanticSnapshotEntity>().getAll())
+          if (targetMetadata.containsKey('CloudSemanticSnapshotEntity:${value.id}'))
+            'CloudSemanticSnapshotEntity:${value.id}': quarantinedChatRotationIdentityHash(value),
+        for (final value in copy.box<CloudSemanticChatAliasEntity>().getAll())
+          if (targetMetadata.containsKey('CloudSemanticChatAliasEntity:${value.id}'))
+            'CloudSemanticChatAliasEntity:${value.id}': quarantinedChatRotationIdentityHash(value),
+      };
+      targetMetadataVerified = current != null && former != null &&
+        current.id == targetMap.id && current.serverRecordIdHash == row.serverRecordIdHash &&
+        current.encryptedServerRecordId == row.encryptedServerRecordId &&
+        current.etagHash == row.etagHash && current.encryptedRawRecordRef == row.encryptedPayloadRef &&
+        current.rawRecordGeneration == row.generation &&
+        cloudSyncRecordMapProvenanceMatches(former, targetMap) &&
+        afterMetadata.length == targetMetadata.length &&
+        targetMetadata.entries.every((entry) => afterMetadata[entry.key] == entry.value);
+    }
     final sourcePreserved = _immutableInboxSource(row) == _immutableInboxSource(
       copy.box<CloudInboxChangeEntity>().get(copiedRow.id)!);
     final priorDataPreserved = priorData ==
@@ -495,7 +589,9 @@ Future<Map<String, Object?>> observeQuarantinedChatConflict({
         newChats.single.handles.single.address == chatPayload.chatIdentifier &&
         newChats.single.handles.single.service == 'iMessage';
     final outboxUnchanged = copy.box<CloudOutboxOperationEntity>().count() == outboxCount;
-    _require(priorDataPreserved && !unexpectedNewRows && outboxUnchanged && sourcePreserved);
+    // The launcher enforces every copy-preservation predicate. Return its
+    // content-free negatives too so a held qualification retains its cause.
+    // Live state and immutable snapshot tripwires below remain hard failures.
     if (routeApplied) {
       _require(newRouteMatches);
     }
@@ -517,6 +613,7 @@ Future<Map<String, Object?>> observeQuarantinedChatConflict({
       'copy_production_recovery_reserved': recoveryReserved,
       'copy_repeated_recovery_reserved': repeatedRecoveryReserved,
       'copy_original_data_rows_preserved': priorDataPreserved,
+      'copy_target_route_metadata_rotation_verified': targetMetadataVerified,
       'copy_conflict_source_preserved': sourcePreserved,
       'copy_unexpected_new_rows': unexpectedNewRows,
       'copy_outbox_unchanged': outboxUnchanged,

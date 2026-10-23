@@ -32,11 +32,15 @@ String cloudSyncCanonicalRecordMapKey(
 ) =>
     'record-map:${sha256.convert(utf8.encode('${scope.storageKey}\u001frecord-map\u001f$logicalKey'))}';
 
-/// A Chat's physical CloudKit record, independent of its canonical owner.
-/// Never use this key as a create receipt or as evidence of a remote deletion.
+/// A Chat record's provenance, not a create receipt or remote-deletion proof.
+/// Existing physical-only v1 keys remain readable. New members include their
+/// logical route: one physical record can transition between SMS and iMessage
+/// without destroying the older route's retained history or immutable bindings.
 String cloudSyncChatRecordMemberKey(
   CloudSyncScope scope,
   int generation,
-  String serverRecordIdHash,
-) =>
-    'record-member-v1:${sha256.convert(utf8.encode('${scope.storageKey}\u001f$generation\u001f$serverRecordIdHash'))}';
+  String serverRecordIdHash, {
+  String? logicalEntityKeyHash,
+}) => logicalEntityKeyHash == null
+    ? 'record-member-v1:${sha256.convert(utf8.encode('${scope.storageKey}\u001f$generation\u001f$serverRecordIdHash'))}'
+    : 'record-member-v2:${sha256.convert(utf8.encode('${scope.storageKey}\u001f$generation\u001f$logicalEntityKeyHash\u001f$serverRecordIdHash'))}';

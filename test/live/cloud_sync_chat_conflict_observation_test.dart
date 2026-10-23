@@ -7,6 +7,44 @@ import 'package:flutter_test/flutter_test.dart';
 import 'cloud_sync_chat_conflict_observation.dart';
 
 void main() {
+  test('rotation normalization retains ownership and pending-write fields', () {
+    final row = CloudRecordMapEntity(id: 5, mapKey: 'canonical', scopeKey: 'scope',
+      accountFingerprint: 'account', zone: 'chat', logicalEntityKeyHash: 'logical',
+      serverRecordIdHash: 'old-server', encryptedServerRecordId: 'old-ref',
+      etagHash: 'old-etag', encryptedRawRecordRef: 'old-raw',
+      rawRecordGeneration: 7, generation: 7, updatedAtMs: 10);
+    final before = quarantinedChatRotationIdentityHash(row);
+    expect(row.serverRecordIdHash, 'old-server');
+    expect(row.rawRecordGeneration, 7);
+    row..serverRecordIdHash = 'new-server'..etagHash = 'new-etag'
+      ..encryptedServerRecordId = 'new-ref'..encryptedRawRecordRef = 'new-raw'
+      ..updatedAtMs = 20;
+    expect(quarantinedChatRotationIdentityHash(row), before);
+    expect(row.serverRecordIdHash, 'new-server');
+    row.pendingUpdateOperationId = 'must-not-hide';
+    expect(quarantinedChatRotationIdentityHash(row), isNot(before));
+    row..pendingUpdateOperationId = null..logicalEntityKeyHash = 'other-owner';
+    expect(quarantinedChatRotationIdentityHash(row), isNot(before));
+    expect(() => quarantinedChatRotationIdentityHash(Message(guid: 'never-ignore-history')),
+      throwsStateError);
+  });
+
+  test('rotation normalization never hides snapshot semantic changes', () {
+    final row = CloudSemanticSnapshotEntity(id: 2, snapshotKey: 'snapshot',
+      scopeGenerationKey: 'generation', scopeKey: 'scope', accountFingerprint: 'account',
+      container: 'messages', database: 'private', zone: 'chat', streamKind: 'messages',
+      schemaVersion: 1, generation: 7, entityKind: 'chat', logicalEntityKeyHash: 'logical',
+      canonicalGuidHash: 'owner-proof', etagHash: 'old-etag', updatedAtMs: 10);
+    final before = quarantinedChatRotationIdentityHash(row);
+    row..etagHash = 'new-etag'..updatedAtMs = 20;
+    expect(quarantinedChatRotationIdentityHash(row), before);
+    expect(row.etagHash, 'new-etag');
+    row.canonicalGuidHash = 'different-owner';
+    expect(quarantinedChatRotationIdentityHash(row), isNot(before));
+    row..canonicalGuidHash = 'owner-proof'..retractedAtMs = 50;
+    expect(quarantinedChatRotationIdentityHash(row), isNot(before));
+  });
+
   test(
     'observation ignores only its exact fence lease, not user or sync rows',
     () async {

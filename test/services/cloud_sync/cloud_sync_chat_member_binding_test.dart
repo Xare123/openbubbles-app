@@ -8,6 +8,7 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_models.dart'
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_outbound_chat_binding.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_persistent_keys.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_protector.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_record_maps.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_writer_authority.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_writer_ownership.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/objectbox_cloud_sync_store.dart';
@@ -58,6 +59,84 @@ void main() {
       expect(f.memberA.encryptedServerRecordId, mapA.encryptedServerRecordId);
       expect(f.memberA.encryptedRawRecordRef, mapA.encryptedRawRecordRef);
       f.expectUnchangedLocalState();
+    });
+  }
+
+  for (final reopen in [false, true]) {
+    test('v2 route-scoped A stays pinned, new admission selects B (reopen=$reopen)', () async {
+      final admitted = f.intent;
+      final bindingA = admitted.admittedChatBinding!;
+      final mapA = f.canonical;
+      final logicalA = mapA.logicalEntityKeyHash;
+      final recordA = mapA.serverRecordIdHash;
+      expect(f.capture(), bindingA);
+      f.joinB(routeScopedMembers: true);
+      if (reopen) await f.reopen();
+      expect(f.intent.admittedChatBinding, bindingA);
+      final rows = f.db.box<CloudRecordMapEntity>().getAll();
+      final v1A = rows.singleWhere(
+        (row) => row.mapKey == cloudSyncChatRecordMemberKey(f.chatScope, 1, recordA),
+      );
+      final v2KeyA = cloudSyncChatRecordMemberKey(
+        f.chatScope, 1, recordA, logicalEntityKeyHash: logicalA);
+      final v2A = rows.singleWhere((row) => row.mapKey == v2KeyA);
+      expect(v2A.logicalEntityKeyHash, logicalA);
+      expect(v2A.serverRecordIdHash, recordA);
+      expect(cloudSyncRecordMapProvenanceMatches(v1A, v2A), isTrue);
+      final v2KeyB = cloudSyncChatRecordMemberKey(
+        f.chatScope, 1, _recordB, logicalEntityKeyHash: logicalA);
+      final v2B = rows.singleWhere((row) => row.mapKey == v2KeyB);
+      expect(v2B.logicalEntityKeyHash, logicalA);
+      expect(v2B.serverRecordIdHash, _recordB);
+      expect(() => f.validate(bindingA), returnsNormally);
+      final bindingB = f.capture();
+      final decodedA = jsonDecode(bindingA) as List;
+      final decodedB = jsonDecode(bindingB) as List;
+      expect(decodedB[7], _recordB);
+      expect(decodedB.take(7), orderedEquals(decodedA.take(7)));
+      expect(() => f.validate(bindingB), returnsNormally);
+      final recovered = f.readIntent();
+      expect(recovered.admittedChatBinding, bindingA);
+      f.expectUnchangedLocalState();
+    });
+  }
+
+  for (final reopen in [false, true]) {
+    test('missing v2 A falls back to v1 without retargeting to B (reopen=$reopen)', () async {
+      final bindingA = f.intent.admittedChatBinding!;
+      final logicalA = f.canonical.logicalEntityKeyHash;
+      final recordA = f.canonical.serverRecordIdHash;
+      f.joinB(routeScopedMembers: true);
+      final v2KeyA = cloudSyncChatRecordMemberKey(
+        f.chatScope, 1, recordA, logicalEntityKeyHash: logicalA);
+      final v2A = f.db.box<CloudRecordMapEntity>().getAll().singleWhere(
+        (row) => row.mapKey == v2KeyA);
+      f.db.box<CloudRecordMapEntity>().remove(v2A.id);
+      if (reopen) await f.reopen();
+      expect(f.intent.admittedChatBinding, bindingA);
+      expect(() => f.validate(bindingA), returnsNormally);
+      expect(jsonDecode(f.capture())[7], _recordB);
+      expect(f.readIntent().admittedChatBinding, bindingA);
+      f.expectUnchangedLocalState();
+    });
+  }
+
+  for (final reopen in [false, true]) {
+    test('v2 route disagreement never retargets A to B (reopen=$reopen)', () async {
+      final bindingA = f.intent.admittedChatBinding!;
+      final logicalA = f.canonical.logicalEntityKeyHash;
+      final recordA = f.canonical.serverRecordIdHash;
+      f.joinB(routeScopedMembers: true);
+      final v2KeyA = cloudSyncChatRecordMemberKey(
+        f.chatScope, 1, recordA, logicalEntityKeyHash: logicalA);
+      final v2A = f.db.box<CloudRecordMapEntity>().getAll().singleWhere(
+        (row) => row.mapKey == v2KeyA);
+      f.db.box<CloudRecordMapEntity>().put(v2A..etagHash = 'U' * 43);
+      if (reopen) await f.reopen();
+      expect(f.intent.admittedChatBinding, bindingA);
+      expect(() => f.validate(bindingA), throwsA(isA<CloudSyncFailure>()));
+      expect(f.readIntent, throwsA(isA<CloudSyncFailure>()));
+      expect(jsonDecode(f.capture())[7], _recordB);
     });
   }
 
@@ -510,8 +589,10 @@ final class _Fixture {
     return f;
   }
 
-  void joinB() => db.runInTransaction(TxMode.write, () {
+  void joinB({bool routeScopedMembers = false}) =>
+      db.runInTransaction(TxMode.write, () {
     final previous = canonical;
+    final previousLogical = previous.logicalEntityKeyHash;
     db.box<CloudRecordMapEntity>().put(
       _copyMap(
         previous,
@@ -522,6 +603,19 @@ final class _Fixture {
         ),
       ),
     );
+    if (routeScopedMembers) {
+      db.box<CloudRecordMapEntity>().put(
+        _copyMap(
+          previous,
+          mapKey: cloudSyncChatRecordMemberKey(
+            chatScope,
+            1,
+            previous.serverRecordIdHash,
+            logicalEntityKeyHash: previousLogical,
+          ),
+        ),
+      );
+    }
     final next = _copyMap(previous, mapKey: previous.mapKey)
       ..id = previous.id
       ..serverRecordIdHash = _recordB
@@ -529,6 +623,19 @@ final class _Fixture {
       ..encryptedServerRecordId = 'obcs2.ref.${'B' * 43}'
       ..encryptedRawRecordRef = 'obcs2.ref.${'C' * 43}';
     db.box<CloudRecordMapEntity>().put(next);
+    if (routeScopedMembers) {
+      db.box<CloudRecordMapEntity>().put(
+        _copyMap(
+          next,
+          mapKey: cloudSyncChatRecordMemberKey(
+            chatScope,
+            1,
+            next.serverRecordIdHash,
+            logicalEntityKeyHash: next.logicalEntityKeyHash,
+          ),
+        ),
+      );
+    }
     db.box<CloudSemanticSnapshotEntity>().put(snapshot..etagHash = _etagB);
     appendSource(next);
   });

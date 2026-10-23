@@ -37,20 +37,20 @@ CloudRecordMapEntity? cloudSyncFindRecordMap({
   final canonical = read(canonicalKey);
   if (generation <= 0) reject();
   if (canonical == null || canonical.generation != generation) return null;
-  void validate(CloudRecordMapEntity row, String key) {
+  void validate(CloudRecordMapEntity row, String key, String logicalKey) {
     if (row.mapKey != key ||
         row.scopeKey != cloudSyncPersistentScopeKey(scope) ||
         row.accountFingerprint != scope.accountFingerprint ||
         row.zone != scope.zone ||
         row.generation != generation ||
-        row.logicalEntityKeyHash != logicalEntityKeyHash ||
+        row.logicalEntityKeyHash != logicalKey ||
         row.serverRecordIdHash.isEmpty ||
         row.encryptedServerRecordId.isEmpty) {
       reject();
     }
   }
 
-  validate(canonical, canonicalKey);
+  validate(canonical, canonicalKey, logicalEntityKeyHash);
   final chatMembersAllowed =
       scope.container == 'com.apple.messages.cloud' &&
       scope.database == 'private' &&
@@ -64,25 +64,72 @@ CloudRecordMapEntity? cloudSyncFindRecordMap({
         : null;
   }
   final target = serverRecordIdHash ?? canonical.serverRecordIdHash;
-  final key = cloudSyncChatRecordMemberKey(scope, generation, target);
-  final member = read(key);
+  final key = cloudSyncChatRecordMemberKey(scope, generation, target,
+    logicalEntityKeyHash: logicalEntityKeyHash);
+  final legacyKey = cloudSyncChatRecordMemberKey(scope, generation, target);
+  final routedMember = read(key);
+  final legacyMember = read(legacyKey);
+  if (routedMember != null) {
+    validate(routedMember, key, logicalEntityKeyHash);
+    if (routedMember.serverRecordIdHash != target) reject();
+  }
+  if (legacyMember != null) {
+    validate(legacyMember, legacyKey, legacyMember.logicalEntityKeyHash);
+    if (legacyMember.serverRecordIdHash != target) reject();
+    if (legacyMember.logicalEntityKeyHash == logicalEntityKeyHash) {
+      if (routedMember != null &&
+          !cloudSyncRecordMapProvenanceMatches(legacyMember, routedMember)) {
+        reject();
+      }
+    } else {
+      // A foreign v1 row is never a fallback for this route. It can coexist
+      // only when both routes have explicit v2 provenance and its own durable
+      // owner still exists. Do not silently hide a corrupt legacy owner.
+      if (routedMember == null) reject();
+      final ownerKey = cloudSyncCanonicalRecordMapKey(
+        scope, legacyMember.logicalEntityKeyHash);
+      final owner = read(ownerKey);
+      final foreignKey = cloudSyncChatRecordMemberKey(scope, generation, target,
+        logicalEntityKeyHash: legacyMember.logicalEntityKeyHash);
+      final foreign = read(foreignKey);
+      if (owner == null || foreign == null) reject();
+      validate(owner, ownerKey, legacyMember.logicalEntityKeyHash);
+      validate(foreign, foreignKey, legacyMember.logicalEntityKeyHash);
+      if (!cloudSyncRecordMapProvenanceMatches(legacyMember, foreign) ||
+          (owner.serverRecordIdHash == target &&
+              !cloudSyncRecordMapProvenanceMatches(owner, foreign))) {
+        reject();
+      }
+    }
+  }
+  final member = routedMember ?? legacyMember;
   if (member != null) {
-    validate(member, key);
+    validate(member, routedMember == null ? legacyKey : key,
+      logicalEntityKeyHash);
     if (member.serverRecordIdHash != target) reject();
   }
   if (canonical.serverRecordIdHash != target) return member;
   if (member != null &&
-      (member.etagHash != canonical.etagHash ||
-          member.encryptedServerRecordId != canonical.encryptedServerRecordId ||
-          member.encryptedRawRecordRef != canonical.encryptedRawRecordRef ||
-          member.rawRecordGeneration != canonical.rawRecordGeneration ||
-          member.protectedReadbackLeaseReference !=
-              canonical.protectedReadbackLeaseReference ||
-          member.pendingUpdateOperationId !=
-              canonical.pendingUpdateOperationId ||
-          member.pendingUpdatePredecessorEtagHash !=
-              canonical.pendingUpdatePredecessorEtagHash)) {
+      !cloudSyncRecordMapProvenanceMatches(member, canonical)) {
     reject();
   }
   return canonical;
 }
+
+/// Compares the immutable source and pending-writer fields, not row IDs, keys
+/// or timestamps. Mirroring provenance must never replace write authority.
+bool cloudSyncRecordMapProvenanceMatches(
+  CloudRecordMapEntity left,
+  CloudRecordMapEntity right,
+) => left.scopeKey == right.scopeKey &&
+    left.accountFingerprint == right.accountFingerprint &&
+    left.zone == right.zone && left.generation == right.generation &&
+    left.logicalEntityKeyHash == right.logicalEntityKeyHash &&
+    left.serverRecordIdHash == right.serverRecordIdHash &&
+    left.etagHash == right.etagHash &&
+    left.encryptedServerRecordId == right.encryptedServerRecordId &&
+    left.encryptedRawRecordRef == right.encryptedRawRecordRef &&
+    left.rawRecordGeneration == right.rawRecordGeneration &&
+    left.protectedReadbackLeaseReference == right.protectedReadbackLeaseReference &&
+    left.pendingUpdateOperationId == right.pendingUpdateOperationId &&
+    left.pendingUpdatePredecessorEtagHash == right.pendingUpdatePredecessorEtagHash;

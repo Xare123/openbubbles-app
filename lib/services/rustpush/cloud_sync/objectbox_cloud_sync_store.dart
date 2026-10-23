@@ -3597,7 +3597,9 @@ class ObjectBoxCloudSyncStore
         nowMs: nowMs,
       );
       for (final entity in _findRecordMapsForScopeLocked(request.scope)) {
-        if (entity.mapKey ==
+        if (entity.mapKey == cloudSyncChatRecordMemberKey(
+              request.scope, entity.generation, entity.serverRecordIdHash,
+              logicalEntityKeyHash: entity.logicalEntityKeyHash) || entity.mapKey ==
             cloudSyncChatRecordMemberKey(
               request.scope,
               entity.generation,
@@ -6157,35 +6159,36 @@ class ObjectBoxCloudSyncStore
       scope,
       row.logicalEntityKeyHash,
     );
-    final memberKey = cloudSyncChatRecordMemberKey(
-      scope,
-      row.generation,
-      row.serverRecordIdHash,
-    );
-    final mirror = _findRecordMapByKeyLocked(
-      row.mapKey == canonicalKey ? memberKey : canonicalKey,
-    );
-    if (mirror == null ||
+    final memberKey = cloudSyncChatRecordMemberKey(scope, row.generation,
+      row.serverRecordIdHash, logicalEntityKeyHash: row.logicalEntityKeyHash);
+    final legacyKey = cloudSyncChatRecordMemberKey(scope, row.generation,
+      row.serverRecordIdHash);
+    for (final key in {canonicalKey, memberKey, legacyKey}) {
+      if (row.mapKey == key) continue;
+      final mirror = _findRecordMapByKeyLocked(key);
+      if (mirror == null ||
         mirror.generation != row.generation ||
-        mirror.serverRecordIdHash != row.serverRecordIdHash) {
-      return;
+        mirror.serverRecordIdHash != row.serverRecordIdHash ||
+        (key == legacyKey && mirror.logicalEntityKeyHash != row.logicalEntityKeyHash)) {
+        continue;
+      }
+      if (mirror.logicalEntityKeyHash != row.logicalEntityKeyHash ||
+          mirror.accountFingerprint != row.accountFingerprint ||
+          mirror.scopeKey != row.scopeKey ||
+          mirror.zone != row.zone) {
+        throw _storageFailure('scope_collision');
+      }
+      mirror
+        ..encryptedServerRecordId = row.encryptedServerRecordId
+        ..etagHash = row.etagHash
+        ..encryptedRawRecordRef = row.encryptedRawRecordRef
+        ..rawRecordGeneration = row.rawRecordGeneration
+        ..protectedReadbackLeaseReference = row.protectedReadbackLeaseReference
+        ..pendingUpdateOperationId = row.pendingUpdateOperationId
+        ..pendingUpdatePredecessorEtagHash = row.pendingUpdatePredecessorEtagHash
+        ..updatedAtMs = row.updatedAtMs;
+      _recordMaps.put(mirror);
     }
-    if (mirror.logicalEntityKeyHash != row.logicalEntityKeyHash ||
-        mirror.accountFingerprint != row.accountFingerprint ||
-        mirror.scopeKey != row.scopeKey ||
-        mirror.zone != row.zone) {
-      throw _storageFailure('scope_collision');
-    }
-    mirror
-      ..encryptedServerRecordId = row.encryptedServerRecordId
-      ..etagHash = row.etagHash
-      ..encryptedRawRecordRef = row.encryptedRawRecordRef
-      ..rawRecordGeneration = row.rawRecordGeneration
-      ..protectedReadbackLeaseReference = row.protectedReadbackLeaseReference
-      ..pendingUpdateOperationId = row.pendingUpdateOperationId
-      ..pendingUpdatePredecessorEtagHash = row.pendingUpdatePredecessorEtagHash
-      ..updatedAtMs = row.updatedAtMs;
-    _recordMaps.put(mirror);
   }
 
   CloudRecordMapEntry _recordMapEntryFromEntity(

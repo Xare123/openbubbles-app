@@ -30,4 +30,20 @@ void main() {
     expect(keys, hasLength(12));
     expect(() => cloudSyncPersistentChangeKey(scope(), 0, 'C' * 43), throwsArgumentError);
   });
+  test('route members distinguish logical owners without changing v1 keys', () {
+    final chat = scope(zone: 'chatManateeZone');
+    final legacy = cloudSyncChatRecordMemberKey(chat, 1, 'R' * 43);
+    expect(legacy, startsWith('record-member-v1:'));
+    final keys = {
+      for (final generation in [1, 2])
+        for (final account in ['A', 'B'])
+          for (final logical in ['S', 'I'])
+            cloudSyncChatRecordMemberKey(scope(account: account,
+              zone: 'chatManateeZone'), generation, 'R' * 43,
+              logicalEntityKeyHash: logical * 43),
+    };
+    expect(keys, hasLength(8));
+    expect(keys.every((key) => key.startsWith('record-member-v2:')), isTrue);
+    expect(keys, isNot(contains(legacy)));
+  });
 }
