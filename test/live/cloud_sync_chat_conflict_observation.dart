@@ -667,13 +667,28 @@ Future<Map<String, Object?>> observeQuarantinedChatConflict({
     final newChats = copy.box<Chat>().getAll().where(
       (chat) => chat.guid == chatPayload.canonicalGuid).toList();
     final routeApplied = result.disposition == CloudInboxApplyDisposition.applied;
+    final expectedParticipants = chatPayload.participantHandles.map((raw) {
+      final lower = raw.toLowerCase();
+      if (lower.startsWith('tel:')) return raw.substring(4);
+      if (lower.startsWith('mailto:')) return raw.substring(7);
+      return raw;
+    }).toSet();
+    final groupRoute = chatPayload.style == CloudSemanticChatStyle.group;
     final newRouteMatches = routeApplied && newChats.length == 1 &&
         newChats.single.dateDeleted == null && !newChats.single.isRpSms &&
-        !newChats.single.isRoutingStub && newChats.single.style == 45 &&
+        !newChats.single.isRoutingStub && newChats.single.style == (groupRoute ? 43 : 45) &&
         newChats.single.chatIdentifier == chatPayload.chatIdentifier &&
-        newChats.single.handles.length == 1 &&
-        newChats.single.handles.single.address == chatPayload.chatIdentifier &&
-        newChats.single.handles.single.service == 'iMessage';
+        (groupRoute
+          ? expectedParticipants.length >= 2 &&
+            newChats.single.cloudGuid == chatPayload.groupId &&
+            newChats.single.handles.length == expectedParticipants.length &&
+            newChats.single.handles.map((handle) => handle.address).toSet().length ==
+                expectedParticipants.length &&
+            newChats.single.handles.every((handle) => handle.service == 'iMessage' &&
+                expectedParticipants.contains(handle.address))
+          : newChats.single.handles.length == 1 &&
+            newChats.single.handles.single.address == chatPayload.chatIdentifier &&
+            newChats.single.handles.single.service == 'iMessage');
     final outboxUnchanged = copy.box<CloudOutboxOperationEntity>().count() == outboxCount;
     // The launcher enforces every copy-preservation predicate. Return its
     // content-free negatives too so a held qualification retains its cause.

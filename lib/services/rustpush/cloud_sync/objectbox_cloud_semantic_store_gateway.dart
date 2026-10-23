@@ -56,8 +56,8 @@ abstract interface class CloudDirectChatRecordConvergenceProofAdapter {
 
 /// Read-only canonical half of an authenticated physical-record route change.
 /// The gateway separately proves the exact prior source/replay and ordering.
-abstract interface class CloudDirectChatServiceRouteTransitionProofAdapter {
-  void validateDirectChatServiceRouteTransition({
+abstract interface class CloudChatServiceRouteTransitionProofAdapter {
+  void validateChatServiceRouteTransition({
     required CloudSyncScope scope,
     required int generation,
     required CloudChatEntityPayload payload,
@@ -549,8 +549,8 @@ final class ObjectBoxCloudSemanticStoreGateway
         try {
           transaction.prepareChatServiceRouteBinding(payload: payload, snapshot: snapshot);
           // One proved previous route, possibly with legacy/member mirrors.
-          // An existing target is allowed only after the same direct-route
-          // and convergence proof used by normal apply, never a generic retry.
+          // An existing target is allowed only after the same route proof
+          // and direct-target convergence used by normal apply, never a generic retry.
           if (transaction._chatRouteLogicalKeys.length != 1) {
             return false;
           }
@@ -2773,7 +2773,7 @@ final class _ObjectBoxCloudSemanticStoreTransaction
     for (final logicalKey in collisions.map((row) => row.logicalEntityKeyHash).toSet()) {
       final prior = _findRecordMapByKey(_context.recordMapKey(logicalKey));
       final mirrors = collisions.where((row) => row.logicalEntityKeyHash == logicalKey);
-      if (proofAdapter is! CloudDirectChatServiceRouteTransitionProofAdapter ||
+      if (proofAdapter is! CloudChatServiceRouteTransitionProofAdapter ||
           prior == null || prior.serverRecordIdHash != _context.entry.change.recordIdHash) {
         throw CloudSyncFailure(category: CloudFailureCategory.conflict,
           safeCode: 'semantic_record_mapping_conflict');
@@ -2814,8 +2814,8 @@ final class _ObjectBoxCloudSemanticStoreTransaction
         }
       } finally { outboxQuery.close(); }
       _requireChatRouteSource(prior);
-      (proofAdapter as CloudDirectChatServiceRouteTransitionProofAdapter)
-          .validateDirectChatServiceRouteTransition(
+      (proofAdapter as CloudChatServiceRouteTransitionProofAdapter)
+          .validateChatServiceRouteTransition(
         scope: scope, generation: _context.entry.generation, payload: payload,
         previousLogicalEntityKeyHash: prior.logicalEntityKeyHash,
       );
