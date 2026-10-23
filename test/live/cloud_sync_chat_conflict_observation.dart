@@ -11,12 +11,15 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_persistent_k
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_protector.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_safe_failure.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_semantic_diagnostics.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_operation_interlock.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/objectbox_canonical_semantic_entity_adapter.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/objectbox_cloud_semantic_store_gateway.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/objectbox_cloud_sync_store.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/rust_cloud_semantic_decoder.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/transient_cloud_canonical_identity_registry.dart';
 import 'package:crypto/crypto.dart';
+import 'package:flat_buffers/flat_buffers.dart' as fb;
+import 'package:objectbox/internal.dart' show EntityDefinition;
 
 const _snapshotRoot =
     'C:/Codex/OpenBubblesReview/worktrees/cloudkit-v2-update-seam-live-bbfa/'
@@ -31,6 +34,72 @@ void _require(bool condition) {
   if (!condition)
     throw StateError('quarantined_chat_observation_binding_failed');
 }
+
+// ObjectBox updates its file pages for the normal operation-fence heartbeat.
+// Compare every persisted entity and relationship, exempting ONLY that exact
+// sentinel lease. A message, cursor, replay, alias or unrelated lease change
+// remains a hard failure. None of these private digests is printed.
+String quarantinedChatObservationPreservedState(
+  Store store,
+) => store.runInTransaction(TxMode.read, () {
+  final model = getObjectBoxModel();
+  final entities = <String, Object?>{};
+  void take<T>() {
+    final binding = model.bindings[T]! as EntityDefinition<T>;
+    final rows = store.box<T>().getAll()
+      ..sort((a, b) => binding.getId(a)!.compareTo(binding.getId(b)!));
+    entities[T.toString()] = [
+      for (final row in rows)
+        if (!(row is CloudSyncLeaseEntity &&
+            row.scopeKey == CloudKitOperationInterlock.fenceScopeKey))
+          [
+            binding.getId(row),
+            (() {
+              final builder = fb.Builder(initialSize: 1024);
+              binding.objectToFB(row, builder);
+              return sha256.convert(builder.buffer).toString();
+            })(),
+            if (row is Chat) (row.handles.map((h) => h.id).toList()..sort()),
+            if (row is Chat) (row.messages.map((m) => m.id).toList()..sort()),
+            if (row is Message)
+              (row.dbAttachments.map((a) => a.id).toList()..sort()),
+          ],
+    ];
+  }
+
+  take<Attachment>();
+  take<Chat>();
+  take<FCMData>();
+  take<Handle>();
+  take<ThemeEntry>();
+  take<Message>();
+  take<ThemeObject>();
+  take<ThemeStruct>();
+  take<Contact>();
+  take<CloudInboxChangeEntity>();
+  take<CloudOutboxOperationEntity>();
+  take<CloudRecordMapEntity>();
+  take<CloudSyncCheckpointEntity>();
+  take<CloudSyncRunEntity>();
+  take<CloudSyncLeaseEntity>();
+  take<CloudAttachmentMaterializationEntity>();
+  take<CloudSemanticReplayEntity>();
+  take<CloudSemanticSnapshotEntity>();
+  take<CloudProtectedPageLeaseEntity>();
+  take<CloudKitWriterAuthorityEntity>();
+  take<CloudKitDeletionIntentEntity>();
+  take<CloudKitDeletionQuarantineEntity>();
+  take<CloudKitV2QuarantineRepairReceiptEntity>();
+  take<CloudSemanticChatAliasEntity>();
+  take<CloudSyncLocalSendIntentEntity>();
+  take<CloudAttachmentUploadEntity>();
+  take<CloudSyncLocalMutationIntentEntity>();
+  take<CloudSyncReceivedArchiveIntentEntity>();
+  take<CloudSyncReceivedMutationIntentEntity>();
+  take<CloudSyncHistoricalArchiveIntentEntity>();
+  _require(entities.length == model.bindings.length);
+  return sha256.convert(utf8.encode(jsonEncode(entities))).toString();
+});
 
 // Used only in memory to prove the exact captured row. Never returned/logged.
 String _rowBinding(CloudInboxChangeEntity row) => jsonEncode([
@@ -130,6 +199,7 @@ Future<Map<String, Object?>> observeQuarantinedChatConflict({
   _require(Platform.environment['OPENBUBBLES_INSPECT_QUARANTINED_CHAT'] == '1');
   final originalFile = File('${profile.path}/objectbox/data.mdb');
   final originalHash = await _hash(originalFile);
+  final beforeState = quarantinedChatObservationPreservedState(store);
   final snapshotFile = File('$_snapshotRoot/data.mdb');
   _require(await _hash(snapshotFile) == _snapshotHash);
   final scope = CloudSyncScope(
@@ -262,7 +332,7 @@ Future<Map<String, Object?>> observeQuarantinedChatConflict({
       await durable.releaseCoordinatorLease(scope, leaseFence: fence!);
     }
     _require(
-      await _hash(originalFile) == originalHash &&
+      quarantinedChatObservationPreservedState(store) == beforeState &&
           _rowBinding(store.box<CloudInboxChangeEntity>().get(row.id)!) ==
               originalBinding &&
           await _hash(snapshotFile) == _snapshotHash,
@@ -270,6 +340,9 @@ Future<Map<String, Object?>> observeQuarantinedChatConflict({
     return {
       'decode': 'ready',
       'durable_state_unchanged': true,
+      'all_non_fence_entities_and_edges_unchanged': true,
+      'original_database_byte_exact': await _hash(originalFile) == originalHash,
+      'exact_operation_fence_lease_excluded': true,
       'snapshot_source_unchanged': true,
       'copy_only_pre_failure_reconstruction': true,
       'generation': row.generation,
@@ -298,7 +371,7 @@ Future<Map<String, Object?>> observeQuarantinedChatConflict({
     _require(resolved.startsWith('$scratchRoot/chat-conflict-reproduce-'));
     await scratch.delete(recursive: true);
     _require(
-      await _hash(originalFile) == originalHash &&
+      quarantinedChatObservationPreservedState(store) == beforeState &&
           await _hash(snapshotFile) == _snapshotHash,
     );
   }
