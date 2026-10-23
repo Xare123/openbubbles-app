@@ -1,3 +1,5 @@
+import 'cloud_sync_objectbox_failure_codes.dart';
+
 typedef CloudSyncSemanticDiagnosticRecorder = void Function(String safeCode);
 
 /// Closed, content-free vocabulary accepted at the persisted report boundary.
@@ -40,6 +42,7 @@ abstract final class CloudSyncSemanticDiagnosticCodes {
     'canonical_chat_service_conflict',
     'canonical_chat_shape_invalid',
     'canonical_chat_style_conflict',
+    'canonical_extension_descendants_repaired',
     'canonical_dependency_scope_conflict',
     'canonical_dependency_scope_stale',
     'canonical_extension_descendant_content_conflict',
@@ -405,7 +408,10 @@ abstract final class CloudSyncSemanticDiagnosticCodes {
   };
 
   static bool isReviewed(String code) {
-    if (_exact.contains(code)) return true;
+    if (_exact.contains(code) ||
+        CloudSyncObjectBoxFailureCodes.all.contains(code)) {
+      return true;
+    }
     if (_matchesAnyPrefix(
       code,
       _failureCategoryPrefixes,

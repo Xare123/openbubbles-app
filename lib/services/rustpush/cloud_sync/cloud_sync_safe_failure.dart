@@ -1,5 +1,6 @@
 import 'cloud_sync_shadow_report_file.dart';
 import 'cloud_sync_models.dart';
+import 'cloud_sync_objectbox_failure_codes.dart';
 import 'cloud_sync_semantic_pull_report_file.dart';
 import 'cloudkit_operation_interlock.dart';
 import 'cloudkit_writer_authority.dart';
@@ -1001,7 +1002,8 @@ String cloudSyncV2SafeFailureCode(Object error) {
 /// This is intentionally closed: a syntactically valid string is not enough
 /// to reach a persisted report, log, or user-visible surface.
 String cloudSyncV2SafeFailureCodeForCandidate(String? candidate) =>
-    _cloudSyncV2SafeFailureCodes.contains(candidate)
+    (_cloudSyncV2SafeFailureCodes.contains(candidate) ||
+        CloudSyncObjectBoxFailureCodes.all.contains(candidate))
     ? candidate!
     : 'cloud_sync_unknown_failure';
 
