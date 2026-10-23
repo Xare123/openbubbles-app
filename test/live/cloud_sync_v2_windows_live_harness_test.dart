@@ -17,6 +17,7 @@ import 'package:path/path.dart' as path;
 import 'cloud_sync_edit_echo_verification.dart';
 import 'cloud_sync_chat1_discovery.dart';
 import 'cloud_sync_parent_coverage.dart';
+import 'cloud_sync_chat_conflict_observation.dart';
 
 const int kChat1FailureMatrixSchema = 2;
 const int kChat1FailureMatrixBaseLen = 88;
@@ -238,9 +239,16 @@ void main() {
       }
       if (Platform.environment['OPENBUBBLES_INSPECT_CHAT_PARENTS'] == '1') {
         expect(operation, 'inspect-chat-parents');
+        final inspectConflict =
+            Platform.environment['OPENBUBBLES_INSPECT_QUARANTINED_CHAT'] == '1';
         final observed = await tester.runAsync(
           () => harnessKey.currentState!.observeChatParentsForTestHost(
-            (auth, pause) => observeCachedParentCoverage(
+            (auth, pause) => inspectConflict ? observeQuarantinedChatConflict(
+              store: Database.store,
+              profile: profile,
+              auth: auth,
+              pauseToken: pause as BigInt,
+            ) : observeCachedParentCoverage(
               store: Database.store,
               profile: profile,
               auth: auth,
@@ -248,7 +256,9 @@ void main() {
             ),
           ),
         );
-        debugPrint('windows_parent_coverage=${jsonEncode(observed)}');
+        final marker = inspectConflict
+            ? 'windows_quarantined_chat_observation' : 'windows_parent_coverage';
+        debugPrint('$marker=${jsonEncode(observed)}');
         expect(observed?['durable_state_unchanged'], isTrue);
       }
       if (Platform.environment['OPENBUBBLES_INSPECT_CHAT1_DISCOVERY'] == '1') {
