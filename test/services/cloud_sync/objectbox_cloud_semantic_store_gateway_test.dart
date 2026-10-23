@@ -3406,15 +3406,15 @@ void main() {
         logicalEntityKeyHash: _indexedDigest('group-route-${service.name}-$routeIdentifier'),
         canonicalGuid: '${service == CloudSemanticService.sms ? 'SMS' : 'iMessage'};+;$routeIdentifier',
         chatIdentifier: routeIdentifier, displayName: null,
-        groupId: failure == 'different group' ? 'different-group' : 'same-group',
-        participantHandles: failure == 'changed participant'
-            ? [peers.first, 'mailto:other@example.invalid'] : peers,
+        groupId: failure.startsWith('different group') ? 'different-group' : 'same-group',
+        participantHandles: failure.contains('member added')
+            ? [...peers, 'mailto:added@example.invalid'] : peers,
         service: service, style: CloudSemanticChatStyle.group,
         aliases: [
           CloudSemanticChatAlias(kind: CloudSemanticChatAliasKind.serviceIdentifier,
             keyHash: _indexedDigest('group-route-service-alias-$routeIdentifier')),
           CloudSemanticChatAlias(kind: CloudSemanticChatAliasKind.groupId,
-            keyHash: _indexedDigest(failure == 'different group' ? 'different-group' : 'same-group')),
+            keyHash: _indexedDigest(failure.startsWith('different group') ? 'different-group' : 'same-group')),
         ],
       );
 
@@ -3439,7 +3439,8 @@ void main() {
         activeScopeRevalidator: () async => true,
       );
 
-    for (final failure in ['none', 'shared group alias', 'missing durable group', 'different group', 'changed participant']) {
+    for (final failure in ['none', 'shared group alias', 'member added',
+        'missing durable group', 'different group', 'different group with member added']) {
       test('recovery $failure preserves the prior group', () async {
         chatScope = _scope(zone: 'chatManateeZone', persistenceLane: CloudSyncPersistenceLane.semantic);
         registry = TransientCloudCanonicalIdentityRegistry();
@@ -3508,9 +3509,9 @@ void main() {
         expect(routeGateway().allowDirectChatRecordConvergence, isFalse);
         final incoming = payload(CloudSemanticService.iMessage, failure: failure);
         final recovery = applier(second, incoming);
-        expect(await recovery.requeueChatServiceRouteBarrier(chatScope, leaseFence: leaseFence),
-          failure == 'none' || sharedAlias);
-        if (failure != 'none' && !sharedAlias) {
+        final recoverable = failure == 'none' || sharedAlias || failure == 'member added';
+        expect(await recovery.requeueChatServiceRouteBarrier(chatScope, leaseFence: leaseFence), recoverable);
+        if (!recoverable) {
           expect(_durableSyncControlFingerprint(objectBox), before);
         } else {
           expect(await recovery.requeueChatServiceRouteBarrier(chatScope, leaseFence: leaseFence), isFalse);
@@ -3523,7 +3524,8 @@ void main() {
           expect(restored.guid, incoming.canonicalGuid);
           expect(restored.cloudGuid, incoming.groupId);
           expect(restored.handles.map((handle) => handle.address).toSet(),
-            {'+15555550101', 'group-peer@example.invalid'});
+            {'+15555550101', 'group-peer@example.invalid',
+              if (failure == 'member added') 'added@example.invalid'});
           expect(objectBox.box<CloudSemanticReplayEntity>().count(), sharedAlias ? 3 : 2);
           expect(objectBox.box<CloudSemanticReplayEntity>().get(oldReplay.id)!.replayKey, oldReplay.replayKey);
         }

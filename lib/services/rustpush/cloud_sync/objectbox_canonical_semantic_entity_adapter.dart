@@ -1192,14 +1192,11 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
         final normalized = _normalizeHandle(raw, allowOpaqueParticipant: true);
         if (normalized == null || !participants.add(normalized.address)) reject();
       }
-      final previousParticipants = previous.handles.map((handle) => handle.address).toSet();
-      if (previous.handles.length != previousParticipants.length ||
-          previousParticipants.length != participants.length ||
-          previous.handles.any((handle) =>
-            handle.service != _serviceName(previousService) ||
-            !participants.contains(handle.address))) {
-        reject();
-      }
+      // Membership is mutable group metadata, not group identity. The exact
+      // physical-source lineage, canonical owner and groupId binding above
+      // prove the group; a newer authenticated record may add/remove members.
+      // Keep the old route and its members/history unchanged. Normal apply
+      // projects the incoming members onto the distinct new service route.
     } else {
       final participant = _normalizeHandle(payload.participantHandles.single,
         allowOpaqueParticipant: true);
