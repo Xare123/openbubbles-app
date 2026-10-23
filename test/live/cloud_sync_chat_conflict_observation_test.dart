@@ -104,8 +104,10 @@ void main() {
         );
 
         final originalIds = <String, Set<int>>{};
+        final originalHashes = <String, String>{};
         final originalRows = quarantinedChatObservationPreservedState(store,
-          collectIds: originalIds);
+          collectIds: originalIds, collectRowHashes: originalHashes);
+        expect(originalHashes, contains('Message:${message.id}'));
         final added = Message(guid: 'synthetic-new-observation-message');
         added.id = messages.put(added);
         expect(quarantinedChatObservationPreservedState(store,

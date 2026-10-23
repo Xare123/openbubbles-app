@@ -90,6 +90,7 @@ String quarantinedChatObservationPreservedState(
   Store store, {
   Map<String, Set<int>>? collectIds,
   Map<String, Set<int>>? restrictIds,
+  Map<String, String>? collectRowHashes,
   Set<String> ignoredRows = const {},
 }
 ) => store.runInTransaction(TxMode.read, () {
@@ -120,6 +121,12 @@ String quarantinedChatObservationPreservedState(
               (row.dbAttachments.map((a) => a.id).toList()..sort()),
           ],
     ];
+    if (collectRowHashes != null) {
+      for (final value in entities[T.toString()]! as List) {
+        collectRowHashes['${T.toString()}:${value[0]}'] =
+          sha256.convert(utf8.encode(jsonEncode(value))).toString();
+      }
+    }
   }
 
   take<Attachment>();
@@ -440,8 +447,10 @@ Future<Map<String, Object?>> observeQuarantinedChatConflict({
         .query(Chat_.guid.equals(chatPayload.canonicalGuid))
         .build();
     final int canonicalChatCount;
+    final Chat? canonicalChatBefore;
     try {
       canonicalChatCount = canonicalChats.count();
+      canonicalChatBefore = canonicalChatCount == 1 ? canonicalChats.findUnique() : null;
     } finally {
       canonicalChats.close();
     }
@@ -475,8 +484,9 @@ Future<Map<String, Object?>> observeQuarantinedChatConflict({
         remember(alias, alias.id);
       }
     }
+    final beforeRowHashes = <String, String>{};
     final priorData = quarantinedChatObservationPreservedState(copy,
-      collectIds: priorIds, ignoredRows: copyMutableRows);
+      collectIds: priorIds, ignoredRows: copyMutableRows, collectRowHashes: beforeRowHashes);
     final outboxCount = copy.box<CloudOutboxOperationEntity>().count();
 
     if (!productionRecovery) {
@@ -566,10 +576,34 @@ Future<Map<String, Object?>> observeQuarantinedChatConflict({
     }
     final sourcePreserved = _immutableInboxSource(row) == _immutableInboxSource(
       copy.box<CloudInboxChangeEntity>().get(copiedRow.id)!);
+    final afterRowHashes = <String, String>{};
     final priorDataPreserved = priorData ==
         quarantinedChatObservationPreservedState(copy,
           collectIds: afterIds, restrictIds: priorIds,
-          ignoredRows: copyMutableRows);
+          ignoredRows: copyMutableRows, collectRowHashes: afterRowHashes);
+    final changedRowTypes = <String, int>{};
+    for (final entry in beforeRowHashes.entries) {
+      if (afterRowHashes[entry.key] != entry.value) {
+        final type = entry.key.split(':').first;
+        changedRowTypes[type] = (changedRowTypes[type] ?? 0) + 1;
+      }
+    }
+    Map<String, Object?> adapterFields(Chat value) => {
+      'guid': value.guid, 'chatIdentifier': value.chatIdentifier,
+      'style': value.style, 'isRpSms': value.isRpSms, 'displayName': value.displayName,
+      'usingHandle': value.usingHandle, 'groupVersion': value.groupVersion,
+      'lastReadMessageGuid': value.lastReadMessageGuid, 'cloudGuid': value.cloudGuid,
+      'dateDeleted': value.dateDeleted?.millisecondsSinceEpoch,
+      'isRoutingStub': value.isRoutingStub,
+    };
+    final changedChatFields = <String>[];
+    if (canonicalChatBefore != null) {
+      final after = copy.box<Chat>().get(canonicalChatBefore.id!);
+      if (after != null) {
+        final old = adapterFields(canonicalChatBefore), current = adapterFields(after);
+        changedChatFields.addAll(old.keys.where((key) => old[key] != current[key]));
+      }
+    }
     const permittedNewTypes = {
       'Chat', 'Handle', 'CloudRecordMapEntity', 'CloudSemanticSnapshotEntity',
       'CloudSemanticReplayEntity', 'CloudSemanticChatAliasEntity',
@@ -613,6 +647,8 @@ Future<Map<String, Object?>> observeQuarantinedChatConflict({
       'copy_production_recovery_reserved': recoveryReserved,
       'copy_repeated_recovery_reserved': repeatedRecoveryReserved,
       'copy_original_data_rows_preserved': priorDataPreserved,
+      'copy_changed_existing_row_types': changedRowTypes,
+      'copy_changed_existing_chat_fields': changedChatFields,
       'copy_target_route_metadata_rotation_verified': targetMetadataVerified,
       'copy_conflict_source_preserved': sourcePreserved,
       'copy_unexpected_new_rows': unexpectedNewRows,
