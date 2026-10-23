@@ -10,6 +10,21 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_models.dart'
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_persistent_keys.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/rust_cloud_semantic_decoder.dart';
 
+const parentCoverageChatJournalLimit = 4096;
+
+// Diagnostic selection only. The caller supplies the descending, same-scope
+// journal read. Keep the latest physical tombstone as well as saves; an older
+// save must not become a live chat simply because it can still be decoded.
+List<CloudInboxChangeEntity> latestParentCoverageChatRows(
+  List<CloudInboxChangeEntity> rows,
+) {
+  final latest = <String, CloudInboxChangeEntity>{};
+  for (final row in rows.take(parentCoverageChatJournalLimit)) {
+    latest.putIfAbsent(row.serverRecordIdHash, () => row);
+  }
+  return latest.values.toList(growable: false);
+}
+
 Future<Map<String, Object?>> observeCachedParentCoverage({
   required Store store,
   required Directory profile,
@@ -125,23 +140,20 @@ Future<Map<String, Object?>> observeCachedParentCoverage({
             flags: Order.descending,
           ))
           .build()
-        ..limit = 1001;
+        ..limit = parentCoverageChatJournalLimit + 1;
   late final List<CloudInboxChangeEntity> chatRows;
   try {
     chatRows = chatQuery.find();
   } finally {
     chatQuery.close();
   }
-  final latest = <String, CloudInboxChangeEntity>{};
-  for (final row in chatRows.take(1000)) {
-    latest.putIfAbsent(row.serverRecordIdHash, () => row);
-  }
+  final latest = latestParentCoverageChatRows(chatRows);
   final chats = <(CloudInboxChangeEntity, CloudChatEntityPayload)>[];
   var tombstones = 0;
   final decodeFailures = <String, int>{};
   void failure(String key) =>
       decodeFailures.update(key, (count) => count + 1, ifAbsent: () => 1);
-  for (final row in latest.values) {
+  for (final row in latest) {
     if (row.isTombstone || row.changeType != 'save') {
       tombstones++;
       continue;
@@ -405,7 +417,7 @@ Future<Map<String, Object?>> observeCachedParentCoverage({
   return {
     'durable_state_unchanged': unchanged,
     'chat_journal_rows_read': chatRows.length,
-    'chat_journal_capped': chatRows.length > 1000,
+    'chat_journal_capped': chatRows.length > parentCoverageChatJournalLimit,
     'latest_chat_records': latest.length,
     'latest_chat_tombstones': tombstones,
     'decoded_chat_records': chats.length,
