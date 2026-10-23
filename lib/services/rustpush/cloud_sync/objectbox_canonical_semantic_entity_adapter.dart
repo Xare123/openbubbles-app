@@ -1177,7 +1177,10 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
       final owners = _resolveChatOwnersByAlias(scope: scope, generation: generation,
         service: previousService, kind: CloudSemanticChatAliasKind.groupId,
         aliasKeyHash: groupAliases.single.keyHash);
-      if (owners.length != 1 || owners[previous.id]?.chat.guid != previousGuid ||
+      // Group IDs are lineage aliases and can have other valid owners. The
+      // exact prior physical source and canonical identity select this owner;
+      // global alias uniqueness is neither required nor permission to merge.
+      if (owners[previous.id]?.chat.guid != previousGuid ||
           owners[previous.id]?.logicalEntityKeyHash != previousLogicalEntityKeyHash) {
         reject();
       }

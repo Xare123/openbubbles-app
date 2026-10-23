@@ -3299,6 +3299,154 @@ void main() {
     }
   });
 
+  group('group Chat service route transition', () {
+    const identifier = 'synthetic-service-group';
+    const peers = ['tel:+15555550101', 'mailto:group-peer@example.invalid'];
+    late CloudSyncScope chatScope;
+    late TransientCloudCanonicalIdentityRegistry registry;
+    late DateTime routeNow;
+
+    CloudChatEntityPayload payload(CloudSemanticService service, {
+      String failure = 'none', String routeIdentifier = identifier,
+    }) =>
+      CloudChatEntityPayload(
+        logicalEntityKeyHash: _indexedDigest('group-route-${service.name}-$routeIdentifier'),
+        canonicalGuid: '${service == CloudSemanticService.sms ? 'SMS' : 'iMessage'};+;$routeIdentifier',
+        chatIdentifier: routeIdentifier, displayName: null,
+        groupId: failure == 'different group' ? 'different-group' : 'same-group',
+        participantHandles: failure == 'changed participant'
+            ? [peers.first, 'mailto:other@example.invalid'] : peers,
+        service: service, style: CloudSemanticChatStyle.group,
+        aliases: [
+          CloudSemanticChatAlias(kind: CloudSemanticChatAliasKind.serviceIdentifier,
+            keyHash: _indexedDigest('group-route-service-alias-$routeIdentifier')),
+          CloudSemanticChatAlias(kind: CloudSemanticChatAliasKind.groupId,
+            keyHash: _indexedDigest(failure == 'different group' ? 'different-group' : 'same-group')),
+        ],
+      );
+
+    ObjectBoxCloudSemanticStoreGateway routeGateway() => ObjectBoxCloudSemanticStoreGateway(
+      store: objectBox, clock: () => routeNow,
+      canonicalAdapter: ObjectBoxCanonicalSemanticEntityAdapter(
+        store: objectBox, identityResolver: registry,
+        activeScopeProvider: () => CloudCanonicalActiveScope(
+          scope: chatScope, generation: leaseFence.generation),
+        semanticApplyEnabled: true, allowChatUpserts: true,
+      ),
+    );
+
+    TransactionalCloudInboxApplier applier(CloudInboxEntry entry, CloudChatEntityPayload chat) =>
+      TransactionalCloudInboxApplier(
+        decoder: _FixedDecoder(CloudDecodedMutation.upsert(
+          scope: chatScope, generation: entry.generation, changeId: entry.change.changeId,
+          payload: chat, snapshot: _chatSnapshot(logicalEntityKeyHash: chat.logicalEntityKeyHash,
+            etagHash: entry.change.etagHash!,
+            encryptedRawRecordReference: entry.change.encryptedPayloadReference!),
+        )), store: routeGateway(), identityRegistrar: registry,
+        activeScopeRevalidator: () async => true,
+      );
+
+    for (final failure in ['none', 'shared group alias', 'missing durable group', 'different group', 'changed participant']) {
+      test('recovery $failure preserves the prior group', () async {
+        chatScope = _scope(zone: 'chatManateeZone', persistenceLane: CloudSyncPersistenceLane.semantic);
+        registry = TransientCloudCanonicalIdentityRegistry();
+        routeNow = now;
+        final first = _entry(scope: chatScope, serverModifiedAt: now,
+          changeId: _indexedDigest('group-route-first'));
+        _seedDurableFence(objectBox, entry: first, leaseFence: leaseFence, now: now);
+        final checkpoints = objectBox.box<CloudSyncCheckpointEntity>();
+        checkpoints.put(checkpoints.getAll().single..persistenceLane = chatScope.persistenceLane.name);
+        final oldPayload = payload(CloudSemanticService.sms);
+        expect((await applier(first, oldPayload).apply(first, leaseFence: leaseFence)).disposition,
+          CloudInboxApplyDisposition.applied);
+        final oldChat = objectBox.box<Chat>().getAll().single;
+        final oldHandles = oldChat.handles.map((handle) => handle.id).toSet();
+        final historyId = objectBox.box<Message>().put(Message(
+          guid: 'preserved-group-route-history', text: 'Synthetic group history')
+          ..chat.targetId = oldChat.id!);
+        final oldMap = cloudSyncFindRecordMap(store: objectBox, scope: chatScope,
+          generation: first.generation, logicalEntityKeyHash: oldPayload.logicalEntityKeyHash)!;
+        final oldReplay = objectBox.box<CloudSemanticReplayEntity>().getAll().single;
+        final sharedAlias = failure == 'shared group alias';
+        if (sharedAlias) {
+          // Both claimants are real committed projections, not forged aliases.
+          final other = _entry(scope: chatScope, sequence: 2, batchId: 'other-group-route',
+            changeId: _indexedDigest('other-group-change'),
+            recordIdHash: _indexedDigest('other-group-record'),
+            encryptedServerRecordId: _indexedProtectedReference('other-group-record'),
+            etagHash: _indexedDigest('other-group-etag'),
+            encryptedPayloadReference: _indexedProtectedReference('other-group-raw'),
+            payloadSha256: _sha256('other-group-bytes'), serverModifiedAt: now);
+          checkpoints.put(checkpoints.getAll().single..fetchedSequence = 2..lastBatchId = other.batchId);
+          _putPendingInboxEntry(objectBox, entry: other, now: now);
+          expect((await applier(other, payload(CloudSemanticService.sms,
+            routeIdentifier: 'another-synthetic-group')).apply(other, leaseFence: leaseFence)).disposition,
+            CloudInboxApplyDisposition.applied);
+        }
+        final sequence = sharedAlias ? 3 : 2;
+        final second = _entry(scope: chatScope, sequence: sequence, batchId: 'group-route-second',
+          changeId: _indexedDigest('group-route-second'),
+          recordIdHash: first.change.recordIdHash,
+          encryptedServerRecordId: first.change.encryptedServerRecordId,
+          etagHash: _indexedDigest('group-route-next-etag'),
+          encryptedPayloadReference: _indexedProtectedReference('group-route-next-raw'),
+          payloadSha256: _sha256('group-route-next-bytes'),
+          serverModifiedAt: now.add(const Duration(seconds: 2)));
+        checkpoints.put(checkpoints.getAll().single
+          ..fetchedSequence = sequence..lastBatchId = second.batchId..pendingBatchId = second.batchId
+          ..pendingFetchedTokenCiphertext = 'protected-group-route-cursor');
+        _putPendingInboxEntry(objectBox, entry: second, now: now);
+        final inbox = objectBox.box<CloudInboxChangeEntity>();
+        inbox.put(inbox.getAll().singleWhere((row) => row.fetchSequence == sequence)
+          ..status = CloudInboxStatus.quarantined.index
+          ..failureCategory = CloudFailureCategory.conflict.name..retryCount = 1
+          ..completedAtMs = now.add(const Duration(seconds: 1)).millisecondsSinceEpoch
+          ..updatedAtMs = now.add(const Duration(seconds: 1)).millisecondsSinceEpoch);
+        if (failure == 'missing durable group') {
+          final aliases = objectBox.box<CloudSemanticChatAliasEntity>();
+          aliases.removeMany(aliases.getAll().where((alias) => alias.aliasKind == 'groupId')
+            .map((alias) => alias.id).toList());
+        }
+        objectBox.close();
+        objectBox = await openStore(directory: directory.path);
+        registry = TransientCloudCanonicalIdentityRegistry();
+        routeNow = now.add(const Duration(seconds: 10));
+        final before = _durableSyncControlFingerprint(objectBox);
+        expect(routeGateway().allowDirectChatRecordConvergence, isFalse);
+        final incoming = payload(CloudSemanticService.iMessage, failure: failure);
+        final recovery = applier(second, incoming);
+        expect(await recovery.requeueChatServiceRouteBarrier(chatScope, leaseFence: leaseFence),
+          failure == 'none' || sharedAlias);
+        if (failure != 'none' && !sharedAlias) {
+          expect(_durableSyncControlFingerprint(objectBox), before);
+        } else {
+          expect(await recovery.requeueChatServiceRouteBarrier(chatScope, leaseFence: leaseFence), isFalse);
+          objectBox.close();
+          objectBox = await openStore(directory: directory.path);
+          registry = TransientCloudCanonicalIdentityRegistry();
+          expect((await applier(second, incoming).apply(second, leaseFence: leaseFence)).disposition,
+            CloudInboxApplyDisposition.applied);
+          final restored = objectBox.box<Chat>().getAll().singleWhere((chat) => !chat.isRpSms);
+          expect(restored.guid, incoming.canonicalGuid);
+          expect(restored.cloudGuid, incoming.groupId);
+          expect(restored.handles.map((handle) => handle.address).toSet(),
+            {'+15555550101', 'group-peer@example.invalid'});
+          expect(objectBox.box<CloudSemanticReplayEntity>().count(), sharedAlias ? 3 : 2);
+          expect(objectBox.box<CloudSemanticReplayEntity>().get(oldReplay.id)!.replayKey, oldReplay.replayKey);
+        }
+        final preservedChat = objectBox.box<Chat>().get(oldChat.id!)!;
+        expect(preservedChat.guid, oldPayload.canonicalGuid);
+        expect(preservedChat.handles.map((handle) => handle.id).toSet(), oldHandles);
+        expect(objectBox.box<Message>().get(historyId)!.chat.targetId, oldChat.id);
+        expect(objectBox.box<Message>().get(historyId)!.text, 'Synthetic group history');
+        expect(cloudSyncRecordMapProvenanceMatches(cloudSyncFindRecordMap(store: objectBox,
+          scope: chatScope, generation: first.generation,
+          logicalEntityKeyHash: oldPayload.logicalEntityKeyHash)!, oldMap), isTrue);
+        expect(objectBox.box<CloudOutboxOperationEntity>().count(), 0);
+      });
+    }
+  });
+
   for (final reopen in [false, true]) {
     for (final scenario in [
       'same record update',
