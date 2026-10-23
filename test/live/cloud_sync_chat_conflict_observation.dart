@@ -736,7 +736,10 @@ Future<Map<String, Object?>> observeQuarantinedChatConflict({
         newChats.single.chatIdentifier == chatPayload.chatIdentifier &&
         (groupRoute
           ? expectedParticipants.length >= 2 &&
-            newChats.single.cloudGuid == chatPayload.groupId &&
+            (smsRoute
+              ? canonicalChatBefore != null &&
+                newChats.single.cloudGuid == canonicalChatBefore.cloudGuid
+              : newChats.single.cloudGuid == chatPayload.groupId) &&
             newChats.single.handles.length == expectedParticipants.length &&
             newChats.single.handles.map((handle) => handle.address).toSet().length ==
                 expectedParticipants.length &&
@@ -749,9 +752,8 @@ Future<Map<String, Object?>> observeQuarantinedChatConflict({
     // The launcher enforces every copy-preservation predicate. Return its
     // content-free negatives too so a held qualification retains its cause.
     // Live state and immutable snapshot tripwires below remain hard failures.
-    if (routeApplied) {
-      _require(newRouteMatches);
-    }
+    // copy_new_route_matches remains a required launcher acceptance predicate;
+    // return a negative here instead of hiding all preservation metadata.
     _require(
       quarantinedChatObservationPreservedState(store) == beforeState &&
           _rowBinding(store.box<CloudInboxChangeEntity>().get(row.id)!) ==

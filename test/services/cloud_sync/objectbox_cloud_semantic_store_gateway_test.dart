@@ -3648,6 +3648,8 @@ void main() {
           expect(objectBox.box<CloudSemanticReplayEntity>().get(oldReplay.id)!.replayKey, oldReplay.replayKey);
         }
         expect(objectBox.box<Chat>().count(), 1);
+        expect(objectBox.box<Chat>().get(originalChat.id!)!.cloudGuid,
+          scenario.service == CloudSemanticService.sms ? originalChat.cloudGuid : originalPayload.groupId);
         expect(objectBox.box<Chat>().get(originalChat.id!)!.handles.map((handle) => handle.id).toSet(), handles);
         expect(objectBox.box<Message>().get(historyId)!.chat.targetId, originalChat.id);
         expect(objectBox.box<Message>().get(historyId)!.text, 'Keep group history');
