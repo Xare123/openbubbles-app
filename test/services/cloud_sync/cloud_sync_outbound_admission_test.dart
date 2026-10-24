@@ -15,6 +15,7 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_mutati
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_create_queue_drain.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_operation_interlock.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_persistent_keys.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_testing.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/objectbox_cloud_sync_store.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/objectbox_confirmed_message_dependency_reader.dart';
 import 'package:bluebubbles/src/rust/api/api.dart' as frb_api;
@@ -2985,7 +2986,7 @@ void main() {
 
       Future<({CloudInboxEntry entry, CloudCoordinatorLeaseFence fence,
           CloudDecodedMutation decoded})> journalOwnAttachmentEcho(
-        CloudOutboxOperation parent, {String? parentLogicalKey}
+        CloudOutboxOperation parent, {String? parentLogicalKey, bool independentTombstone = false}
       ) async {
         final childScope = siblingScope('attachmentManateeZone');
         final checkpoint = await store.readCheckpoint(childScope);
@@ -3002,7 +3003,14 @@ void main() {
           payloadSha256: testSha256('f'),
         );
         await store.journalFetchedBatch(
-          CloudFetchBatch(scope: childScope, changes: [change],
+          CloudFetchBatch(scope: childScope, changes: [change,
+            if (independentTombstone) CloudFetchedChange(
+              changeId: 'G' * 43, recordIdHash: 'H' * 43,
+              type: CloudChangeType.delete, isTombstone: true,
+              encryptedServerRecordId: testProtectedReference('U'),
+              protectedSystemFieldsReference: testProtectedReference('V'),
+            ),
+          ],
             batchId: 'own-attachment-echo-page', generation: checkpoint.generation,
             nextToken: 'own-attachment-echo-token', hasMore: false),
           now: testEpoch, leaseFence: fence,
@@ -3144,6 +3152,114 @@ void main() {
         expectExactParentProof(parent);
         expect(objectBox.box<Attachment>().getAll().single.id, childId);
       });
+
+      test('own attachment echo retains unavailable Chat proof and drains independent history', () async {
+        final parent = await verifyAttachmentParent();
+        final echo = await journalOwnAttachmentEcho(parent, independentTombstone: true);
+        final childScope = echo.entry.scope;
+        final snapshots = objectBox.box<CloudSemanticSnapshotEntity>();
+        final missing = snapshots.getAll().singleWhere((row) =>
+          row.zone == 'chatManateeZone' && row.entityKind == 'chat');
+        expect(snapshots.remove(missing.id), isTrue);
+        final before = parentProofReadState();
+        final beforeTimeline = List<String>.of(timeline);
+        final childId = objectBox.box<Attachment>().getAll().single.id!;
+        await store.releaseCoordinatorLease(childScope, leaseFence: echo.fence);
+        final engine = CloudSyncEngine(scope: childScope, coordinatorId: 'missing-chat-proof-reader',
+          store: store, transport: FakeCloudSyncTransport(),
+          inboxApplier: attachmentEchoApplier(echo.decoded), clock: () => testEpoch,
+          config: CloudSyncEngineConfig(maximumInboxEntriesPerRun: 2,
+            flags: const CloudSyncFeatureFlags(readOnlyFetch: true, semanticApply: true),
+            retainKnownDependencyDeferralsForReadOnlySemanticCanary: true));
+        final result = await engine.synchronize(trigger: CloudSyncTrigger.manual);
+        expect(result.status, CloudSyncRunStatus.degraded);
+        expect(result.failureSafeCode, 'retained_projection_incomplete');
+        expect(result.counters.retried, 0);
+        expect(result.counters.tombstoneReadOnlyAcknowledged, 1);
+        final checkpoint = await store.readCheckpoint(childScope);
+        expect(checkpoint.pendingBatchId, isNull);
+        expect(checkpoint.fetchedToken, 'own-attachment-echo-token');
+        expect(checkpoint.lastAppliedSequence, 0);
+        final rows = objectBox.box<CloudInboxChangeEntity>().getAll()
+          .where((row) => row.scopeKey == cloudSyncPersistentScopeKey(childScope)).toList();
+        expect(rows, hasLength(2));
+        expect(rows.every((row) => row.status == CloudInboxStatus.retainedUnprojected.index), isTrue);
+        final blocked = rows.singleWhere((row) => row.changeIdHash == echo.entry.change.changeId);
+        expect(blocked.encryptedPayloadRef, echo.entry.change.encryptedPayloadReference);
+        expect(parentProofReadState(), before);
+        expect(timeline, beforeTimeline);
+        expect(objectBox.box<CloudSemanticSnapshotEntity>().getAll()
+          .where((row) => row.zone == childScope.zone), isEmpty);
+        expect(nativeBridge.idsSendCalls, 0);
+
+        // Restore the exact synthetic Chat proof, then resume from retained
+        // source after reopening. No positive receipt or canonical parent is
+        // invented by the reader to get past the missing evidence.
+        snapshots.put(missing..id = 0);
+        objectBox.close();
+        objectBox = await openStore(directory: directory.path);
+        bindJournal();
+        bindParentChildReadback();
+        store = ObjectBoxCloudSyncStore(store: objectBox, protector: _Protector(), clock: () => testEpoch);
+        final fence = (await store.tryAcquireCoordinatorLease(childScope,
+          ownerId: 'recovered-chat-proof-reader', now: testEpoch,
+          leaseDuration: const Duration(minutes: 1)))!;
+        final applier = attachmentEchoApplier(echo.decoded);
+        final recovered = await applier.reprojectRetainedUnprojected(scope: childScope,
+          generation: echo.entry.generation, leaseFence: fence, limit: 2);
+        expect(recovered.reprojected, 1);
+        final repeated = await applier.reprojectRetainedUnprojected(scope: childScope,
+          generation: echo.entry.generation, leaseFence: fence, limit: 2);
+        expect(repeated.reprojected, 0);
+        expect(objectBox.box<Attachment>().getAll(), hasLength(1));
+        expect(objectBox.box<Attachment>().getAll().single.id, childId);
+        expectExactParentProof(parent);
+        expect(timeline, beforeTimeline);
+        expect(nativeBridge.idsSendCalls, 0);
+        await store.releaseCoordinatorLease(childScope, leaseFence: fence);
+      });
+
+      for (final barrier in ['loaded identity changed', 'owner epoch changed', 'parent outcome unknown']) {
+        test('own attachment echo keeps the page blocked for $barrier', () async {
+          final parent = await verifyAttachmentParent();
+          final echo = await journalOwnAttachmentEcho(parent);
+          final childScope = echo.entry.scope;
+          final applier = attachmentEchoApplier(echo.decoded,
+            loadedIdentityCurrent: barrier != 'loaded identity changed');
+          if (barrier == 'owner epoch changed') {
+            final box = objectBox.box<CloudKitWriterAuthorityEntity>();
+            box.put(box.getAll().single..epoch += 1);
+          } else if (barrier == 'parent outcome unknown') {
+            final box = objectBox.box<CloudOutboxOperationEntity>();
+            box.put(box.getAll().singleWhere((row) => row.operationId == parent.operationId)
+              ..state = CloudOutboxStatus.unknownOutcome.index);
+          }
+          final before = parentProofReadState();
+          final beforeTimeline = List<String>.of(timeline);
+          await store.releaseCoordinatorLease(childScope, leaseFence: echo.fence);
+          final engine = CloudSyncEngine(scope: childScope, coordinatorId: 'unsafe-parent-reader',
+            store: store, transport: FakeCloudSyncTransport(), inboxApplier: applier,
+            clock: () => testEpoch,
+            config: CloudSyncEngineConfig(maximumInboxEntriesPerRun: 1,
+              flags: const CloudSyncFeatureFlags(readOnlyFetch: true, semanticApply: true),
+              retainKnownDependencyDeferralsForReadOnlySemanticCanary: true));
+          final result = await engine.synchronize(trigger: CloudSyncTrigger.manual);
+          expect(result.counters.retainedUnprojected, 0);
+          final checkpoint = await store.readCheckpoint(childScope);
+          expect(checkpoint.pendingBatchId, 'own-attachment-echo-page');
+          expect(checkpoint.fetchedToken, isNot('own-attachment-echo-token'));
+          final row = objectBox.box<CloudInboxChangeEntity>().getAll().singleWhere(
+            (row) => row.changeIdHash == echo.entry.change.changeId);
+          expect(row.status, isNot(CloudInboxStatus.applied.index));
+          expect(row.status, isNot(CloudInboxStatus.retainedUnprojected.index));
+          expect(row.encryptedPayloadRef, echo.entry.change.encryptedPayloadReference);
+          expect(parentProofReadState(), before);
+          expect(timeline, beforeTimeline);
+          expect(objectBox.box<CloudSemanticSnapshotEntity>().getAll()
+            .where((row) => row.zone == childScope.zone), isEmpty);
+          expect(nativeBridge.idsSendCalls, 0);
+        });
+      }
 
       for (final rejection in ['reader disabled', 'loaded identity changed',
         'parent generation changed', 'readback marker changed',

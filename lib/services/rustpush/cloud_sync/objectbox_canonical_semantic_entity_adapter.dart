@@ -2770,7 +2770,23 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
         _findChat(canonicalGuid) != null || _findAttachment(canonicalGuid) != null) {
       return false;
     }
-    final proof = reader(scope, parent);
+    final List<Object>? proof;
+    try {
+      proof = reader(scope, parent);
+    } on CloudSyncFailure catch (failure) {
+      if (failure.category != CloudFailureCategory.dependency ||
+          failure.safeCode != 'cloud_sync_local_send_chat_not_ready') {
+        rethrow;
+      }
+      // This optional cross-zone proof did not establish an Attachment's
+      // parent. Preserve that record under the existing unavailable-parent
+      // policy, without granting ownership or aborting independent history.
+      // Account, authority and other proof failures keep their own boundary.
+      throw CloudSyncFailure(
+        category: CloudFailureCategory.dependency,
+        safeCode: 'canonical_attachment_owner_unavailable',
+      );
+    }
     return proof != null && proof.length == 10 && proof[0] == 2 &&
         proof[1] == cloudSyncPersistentScopeKey(scope) &&
         proof[2] == generation && proof[3] == parent.id &&

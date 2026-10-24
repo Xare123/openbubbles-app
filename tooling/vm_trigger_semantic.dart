@@ -11,6 +11,7 @@ Future<void> invokeSemanticAndWait({
   required String libraryId,
   required String targetId,
   required String selector,
+  bool readOnlySinglePass = false,
   Duration timeout = const Duration(seconds: 210),
 }) async {
   if (!const {
@@ -19,6 +20,12 @@ Future<void> invokeSemanticAndWait({
   }.contains(selector)) {
     throw ArgumentError('semantic_selector_invalid');
   }
+  if (readOnlySinglePass && selector != 'runCloudSyncV2ManualSemanticPullConfirmed') {
+    throw ArgumentError('semantic_read_only_single_selector_invalid');
+  }
+  final invocationArguments = readOnlySinglePass
+      ? 'maximumPasses: 1, resumeAutomaticUploads: false, sweepRetainedAtHead: false'
+      : '';
   final observer = await service.evaluate(
     isolateId,
     libraryId,
@@ -27,7 +34,7 @@ Future<void> invokeSemanticAndWait({
       final observation = <List<String>>[<String>['pending', '']];
       Future<void> run() async {
         try {
-          await semanticTarget.$selector();
+          await semanticTarget.$selector($invocationArguments);
           observation[0] = <String>['completed', ''];
         } catch (error) {
           final candidate = error is StateError ? error.message.toString() : '';
@@ -36,12 +43,12 @@ Future<void> invokeSemanticAndWait({
           observation[0] = <String>['failed', code];
         }
       }
-      // Schedule after evaluation returns. The real-VM regression reproduces
-      // a missing immediate async error when run() is invoked inline here.
+      /* Schedule after evaluation returns: an immediate async failure must
+         remain observable across the resident compiler protocol. */
       Future<void>(run);
       return observation;
     })()
-  ''',
+  '''.split('\n').map((line) => line.trim()).join(' '),
     scope: {'semanticTarget': targetId},
     disableBreakpoints: true,
   );
