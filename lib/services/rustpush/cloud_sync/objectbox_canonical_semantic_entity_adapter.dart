@@ -619,14 +619,32 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
             currentScope: scope,
             currentGeneration: generation,
           );
-          _requireLegacyDependencyOwnership(
-            mutationScope: scope,
-            mutationGeneration: generation,
-            durableOwnershipScope: messageDependency,
-            kind: CloudEntityKind.message,
-            logicalEntityKeyHash: value.ownerLogicalKeyHash!,
-            canonicalGuid: value.ownerCanonicalGuid!,
-          );
+          try {
+            _requireLegacyDependencyOwnership(
+              mutationScope: scope,
+              mutationGeneration: generation,
+              durableOwnershipScope: messageDependency,
+              kind: CloudEntityKind.message,
+              logicalEntityKeyHash: value.ownerLogicalKeyHash!,
+              canonicalGuid: value.ownerCanonicalGuid!,
+            );
+          } on CloudSyncFailure catch (failure) {
+            // Unavailable received-parent proof is not ownership. Validate the
+            // complete local relation before using this repairable retention
+            // class; every stale, conflicting or unknown claim stays blocked.
+            if (failure.category != CloudFailureCategory.dependency ||
+                failure.safeCode != 'canonical_identity_owner_unproven' ||
+                !_isUnavailableReceivedAttachmentParent(
+                  scope: scope, generation: generation, dependency: messageDependency,
+                  attachment: attachment, payload: value,
+                )) {
+              rethrow;
+            }
+            throw CloudSyncFailure(
+              category: CloudFailureCategory.dependency,
+              safeCode: 'canonical_attachment_owner_unavailable',
+            );
+          }
           owner = _findUniqueLegacyOwnershipMessage(value.ownerCanonicalGuid!);
         }
         if (attachment == null ||
@@ -2727,6 +2745,84 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
         category: CloudFailureCategory.dependency,
         safeCode: 'canonical_identity_owner_unproven',
       );
+    }
+  }
+
+  bool _isUnavailableReceivedAttachmentParent({
+    required CloudSyncScope scope,
+    required int generation,
+    required CloudCanonicalActiveScope dependency,
+    required Attachment? attachment,
+    required CloudAttachmentEntityPayload payload,
+  }) {
+    final parentGuid = payload.ownerCanonicalGuid;
+    final logicalKey = payload.ownerLogicalKeyHash;
+    if (!_matchesActiveScope(scope, generation) ||
+        scope.zone != 'attachmentManateeZone' || parentGuid == null || logicalKey == null ||
+        dependency.scope.zone != 'messageManateeZone' || dependency.generation <= 0 ||
+        _messageDependencyScope?.scope != dependency.scope ||
+        _messageDependencyScope?.generation != dependency.generation ||
+        attachment == null || attachment.id == null || attachment.id! <= 0 ||
+        attachment.guid != payload.canonicalGuid ||
+        payload.canonicalGuid != '${parentGuid}_${payload.ownerPart}' ||
+        _findChat(payload.canonicalGuid) != null || _findMessage(payload.canonicalGuid) != null) {
+      return false;
+    }
+    final parents = _messages.query(Message_.guid.equals(parentGuid)).build()..limit = 2;
+    try {
+      final rows = parents.find();
+      if (rows.length != 1) return false;
+      final parent = rows.single;
+      if (parent.id == null || parent.id! <= 0 || parent.isFromMe != false ||
+          parent.dateDeleted != null || parent.associatedMessageGuid != null ||
+          parent.associatedMessagePart != null || parent.associatedMessageType != null ||
+          parent.associatedMessageEmoji != null || !parent.hasAttachments ||
+          parent.chat.targetId <= 0 || _chats.get(parent.chat.targetId) == null ||
+          attachment.message.targetId != parent.id ||
+          _findChat(parentGuid) != null || _findAttachment(parentGuid) != null) {
+        return false;
+      }
+      final key = _scopeGenerationKey(dependency.scope, dependency.generation);
+      final lookup = CloudCanonicalIdentityDigest.forCanonicalGuidLookup(
+        scope: dependency.scope, generation: dependency.generation, canonicalGuid: parentGuid,
+      );
+      final markers = _snapshots.query(CloudSemanticSnapshotEntity_.scopeGenerationKey.equals(key)
+        .and(CloudSemanticSnapshotEntity_.canonicalGuidLookupHash.isNull()
+          .or(CloudSemanticSnapshotEntity_.canonicalGuidHash.isNull()))).build()..limit = 1;
+      final childKey = _scopeGenerationKey(scope, generation);
+      final childLookup = CloudCanonicalIdentityDigest.forCanonicalGuidLookup(
+        scope: scope, generation: generation, canonicalGuid: payload.canonicalGuid,
+      );
+      final childMarkers = _snapshots.query(CloudSemanticSnapshotEntity_.scopeGenerationKey.equals(childKey)
+        .and(CloudSemanticSnapshotEntity_.canonicalGuidLookupHash.isNull()
+          .or(CloudSemanticSnapshotEntity_.canonicalGuidHash.isNull()))).build()..limit = 1;
+      final childLogical = _snapshots.query(CloudSemanticSnapshotEntity_.logicalEntityKeyHash
+        .equals(payload.logicalEntityKeyHash)).build()..limit = 1;
+      final childGuid = _snapshots.query(CloudSemanticSnapshotEntity_.scopeGenerationKey.equals(childKey)
+        .and(CloudSemanticSnapshotEntity_.canonicalGuidLookupHash.equals(childLookup))).build()..limit = 1;
+      // A logical claimant in another scope is still contrary evidence; no
+      // receipt, raw local row or missing GUID lookup may override it.
+      final logical = _snapshots.query(
+        CloudSemanticSnapshotEntity_.logicalEntityKeyHash.equals(logicalKey)).build()..limit = 1;
+      final guid = _snapshots.query(CloudSemanticSnapshotEntity_.scopeGenerationKey.equals(key)
+        .and(CloudSemanticSnapshotEntity_.canonicalGuidLookupHash.equals(lookup))).build()..limit = 1;
+      final intents = store.box<CloudSyncLocalSendIntentEntity>().query(
+        CloudSyncLocalSendIntentEntity_.localMessageId.equals(parent.id!)).build()..limit = 1;
+      final maps = store.box<CloudRecordMapEntity>().query(
+        CloudRecordMapEntity_.logicalEntityKeyHash.equals(logicalKey)).build()..limit = 1;
+      final replays = store.box<CloudSemanticReplayEntity>().query(
+        CloudSemanticReplayEntity_.logicalEntityKeyHash.equals(logicalKey)).build()..limit = 1;
+      try {
+        return markers.findFirst() == null && childMarkers.findFirst() == null &&
+          childLogical.findFirst() == null && childGuid.findFirst() == null && logical.findFirst() == null &&
+          guid.findFirst() == null && intents.findFirst() == null &&
+          maps.findFirst() == null && replays.findFirst() == null;
+      } finally {
+        markers.close(); childMarkers.close(); childLogical.close(); childGuid.close();
+        logical.close(); guid.close(); intents.close(); maps.close(); replays.close();
+      }
+    } finally {
+      parents.close();
     }
   }
 

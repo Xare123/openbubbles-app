@@ -7,11 +7,16 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_inbox_applier.dar
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_attachment_provenance.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_merge_policy.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_models.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_observability.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_engine.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_protector.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_testing.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_prepared_extension.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_store.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_semantic_diagnostics.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/objectbox_canonical_semantic_entity_adapter.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/objectbox_cloud_semantic_store_gateway.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/objectbox_cloud_sync_store.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/transient_cloud_canonical_identity_registry.dart';
 import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -5283,6 +5288,296 @@ void main() {
     );
   });
 
+  test('received attachment with unavailable parent proof retains source and recovers exactly once', () async {
+    var now = testEpoch;
+    final childScope = CloudSyncScope(accountFingerprint: testAccountFingerprintA,
+      container: 'com.apple.messages.cloud', database: 'private', zone: 'attachmentManateeZone',
+      persistenceLane: CloudSyncPersistenceLane.semanticV2);
+    final parentScope = CloudSyncScope(accountFingerprint: childScope.accountFingerprint,
+      container: childScope.container, database: childScope.database, zone: 'messageManateeZone',
+      persistenceLane: childScope.persistenceLane);
+    const parentGuid = 'received-parent-without-v2-proof';
+    const part = 1;
+    const childGuid = '${parentGuid}_$part';
+    final parentLogical = 'P' * 43;
+    final childLogical = 'A' * 43;
+    final chatId = store.box<Chat>().put(Chat(guid: 'received-parent-local-chat'));
+    final parentId = store.box<Message>().put(Message(guid: parentGuid, dateCreated: testEpoch,
+      isFromMe: false, hasAttachments: true)..chat.targetId = chatId);
+    final childId = store.box<Attachment>().put(Attachment(guid: childGuid)..message.targetId = parentId);
+    _seedCheckpoint(store, scope: parentScope, generation: generation);
+    _seedCheckpoint(store, scope: childScope, generation: generation);
+    _seedExactOwnershipProof(store, scope: parentScope, generation: generation,
+      kind: CloudEntityKind.message, logicalEntityKeyHash: 'Z' * 43, canonicalGuid: 'unrelated-received-parent');
+    final change = CloudFetchedChange(changeId: 'C' * 43, recordIdHash: 'R' * 43,
+      etagHash: 'E' * 43, type: CloudChangeType.save,
+      encryptedServerRecordId: testProtectedReference('I'),
+      protectedSystemFieldsReference: testProtectedReference('S'),
+      encryptedPayloadReference: testProtectedReference('P'), payloadSha256: testSha256('a'));
+    final payload = _attachmentPayload(logicalEntityKeyHash: childLogical, canonicalGuid: childGuid,
+      ownerLogicalKeyHash: parentLogical, ownerCanonicalGuid: parentGuid, ownerPart: part,
+      protectedLocalReference: change.encryptedPayloadReference);
+    final decoded = CloudDecodedMutation.upsert(scope: childScope, generation: generation,
+      changeId: change.changeId, payload: payload,
+      snapshot: CloudSemanticSnapshot(kind: CloudEntityKind.attachment, logicalEntityKeyHash: childLogical,
+        parentLogicalKeyHash: parentLogical, immutableContentDigest: testSha256('a'),
+        etagHash: change.etagHash, encryptedRawRecordReference: change.encryptedPayloadReference));
+    final proofRegistry = TransientCloudCanonicalIdentityRegistry();
+    final proofLease = proofRegistry.bind(decoded);
+    try {
+      final canonical = _newAdapter(store: store,
+        activeScopeProvider: () => CloudCanonicalActiveScope(scope: childScope, generation: generation),
+        resolver: proofRegistry,
+        messageDependencyScope: CloudCanonicalActiveScope(scope: parentScope, generation: generation),
+        semanticApplyEnabled: true, allowAttachmentMetadataUpserts: true);
+      try {
+        canonical.provePreexistingCanonicalOwnership(scope: childScope, generation: generation,
+          payload: payload, snapshot: decoded.snapshot!);
+        fail('Unavailable parent must never grant Attachment ownership');
+      } on CloudSyncFailure catch (failure, stack) {
+        expect(failure.safeCode, 'canonical_attachment_owner_unavailable', reason: stack.toString());
+      }
+    } finally {
+      proofLease.release();
+    }
+    TransactionalCloudInboxApplier applier() {
+      final registry = TransientCloudCanonicalIdentityRegistry();
+      return TransactionalCloudInboxApplier(decoder: _TransitionDecoder(decoded), identityRegistrar: registry,
+        activeScopeRevalidator: () async => true,
+        store: ObjectBoxCloudSemanticStoreGateway(store: store, clock: () => now,
+          canonicalAdapter: _newAdapter(store: store,
+            activeScopeProvider: () => CloudCanonicalActiveScope(scope: childScope, generation: generation),
+            resolver: registry,
+            messageDependencyScope: CloudCanonicalActiveScope(scope: parentScope, generation: generation),
+            semanticApplyEnabled: true, allowAttachmentMetadataUpserts: true)));
+    }
+    var durable = ObjectBoxCloudSyncStore(store: store, protector: _RetentionProtector(), clock: () => now);
+    final fence = (await durable.tryAcquireCoordinatorLease(childScope, ownerId: 'received-parent-fixture',
+      now: testEpoch, leaseDuration: const Duration(minutes: 1)))!;
+    await durable.journalFetchedBatch(CloudFetchBatch(scope: childScope, generation: generation,
+      batchId: 'received-parent-page', changes: [change,
+        CloudFetchedChange(changeId: 'T' * 43, recordIdHash: 'D' * 43,
+          type: CloudChangeType.delete, isTombstone: true,
+          encryptedServerRecordId: testProtectedReference('J'),
+          protectedSystemFieldsReference: testProtectedReference('K'))],
+      nextToken: 'received-parent-head', hasMore: false), expectedFetchedToken: null,
+      expectedGeneration: generation, now: testEpoch, leaseFence: fence);
+    await durable.releaseCoordinatorLease(childScope, leaseFence: fence);
+    final transport = FakeCloudSyncTransport();
+    final engine = CloudSyncEngine(scope: childScope, coordinatorId: 'received-parent-reader',
+      store: durable, transport: transport, inboxApplier: applier(), clock: () => now,
+      config: CloudSyncEngineConfig(maximumInboxEntriesPerRun: 2,
+        flags: const CloudSyncFeatureFlags(readOnlyFetch: true, semanticApply: true),
+        retainKnownDependencyDeferralsForReadOnlySemanticCanary: true));
+    final snapshots = store.box<CloudSemanticSnapshotEntity>();
+    final unrelated = snapshots.getAll().single;
+    final exactUnrelatedLookup = unrelated.canonicalGuidLookupHash;
+    snapshots.put(unrelated..canonicalGuidLookupHash = null);
+    final blocked = await engine.synchronize(trigger: CloudSyncTrigger.manual);
+    expect(blocked.failureSafeCode, 'canonical_identity_owner_unproven');
+    expect(blocked.counters.retainedUnprojected, 0);
+    expect((await durable.readCheckpoint(childScope)).pendingBatchId, 'received-parent-page');
+    expect(store.box<CloudInboxChangeEntity>().getAll().every(
+      (row) => row.status == CloudInboxStatus.pending.index), isTrue);
+    expect(store.box<Attachment>().get(childId)!.message.targetId, parentId);
+    // Restore this unrelated synthetic proof. The target parent still has no
+    // authority; elapsed fixture time remains below the generic three-day rule.
+    snapshots.put(unrelated..canonicalGuidLookupHash = exactUnrelatedLookup);
+    now = testEpoch.add(const Duration(hours: 1));
+    final result = await engine.synchronize(trigger: CloudSyncTrigger.manual);
+    expect(result.status, CloudSyncRunStatus.degraded);
+    expect(result.failureSafeCode, 'retained_projection_incomplete');
+    expect(result.counters.retried, 0);
+    expect(result.counters.tombstoneReadOnlyAcknowledged, 1);
+    final checkpoint = await durable.readCheckpoint(childScope);
+    expect(checkpoint.pendingBatchId, isNull);
+    expect(checkpoint.fetchedToken, 'received-parent-head');
+    expect(checkpoint.lastAppliedSequence, 0);
+    final rows = store.box<CloudInboxChangeEntity>().getAll();
+    expect(rows, hasLength(2));
+    expect(rows.every((row) => row.status == CloudInboxStatus.retainedUnprojected.index), isTrue);
+    expect(rows.singleWhere((row) => row.changeIdHash == change.changeId).encryptedPayloadRef,
+      change.encryptedPayloadReference);
+    expect(store.box<Attachment>().get(childId)!.message.targetId, parentId);
+    expect(store.box<Message>().get(parentId)!.isFromMe, isFalse);
+    expect(store.box<CloudSemanticSnapshotEntity>().count(), 1);
+    expect(store.box<CloudOutboxOperationEntity>().count(), 0);
+    expect(store.box<CloudSyncLocalSendIntentEntity>().count(), 0);
+    expect(transport.pushCallCount, 0);
+    expect(transport.prepareSubmissionCallCount, 0);
+
+    // A later exact synthetic parent proof enables ordinary retained reprojection.
+    // Reopening cannot turn the original unavailable local row into authority.
+    _seedExactOwnershipProof(store, scope: parentScope, generation: generation,
+      kind: CloudEntityKind.message, logicalEntityKeyHash: parentLogical, canonicalGuid: parentGuid);
+    store.close();
+    store = await openStore(directory: directory.path);
+    durable = ObjectBoxCloudSyncStore(store: store, protector: _RetentionProtector(), clock: () => now);
+    final recoveredFence = (await durable.tryAcquireCoordinatorLease(childScope, ownerId: 'received-parent-recovery',
+      now: now, leaseDuration: const Duration(minutes: 1)))!;
+    final recovery = applier();
+    expect((await recovery.reprojectRetainedUnprojected(scope: childScope, generation: generation,
+      leaseFence: recoveredFence, limit: 2)).reprojected, 1);
+    expect((await recovery.reprojectRetainedUnprojected(scope: childScope, generation: generation,
+      leaseFence: recoveredFence, limit: 2)).reprojected, 0);
+    expect(store.box<Attachment>().count(), 1);
+    expect(store.box<Attachment>().get(childId)!.message.targetId, parentId);
+    expect(store.box<CloudOutboxOperationEntity>().count(), 0);
+    expect(store.box<CloudSyncLocalSendIntentEntity>().count(), 0);
+    await durable.releaseCoordinatorLease(childScope, leaseFence: recoveredFence);
+  });
+
+  for (final barrier in ['logical claimant', 'GUID claimant', 'duplicate GUID claimants',
+    'stale logical claimant', 'foreign logical claimant', 'mismatched ownership metadata',
+    'null parent lookup marker', 'null parent bound marker', 'null child lookup marker', 'null child bound marker',
+    'child logical claimant', 'child GUID claimant', 'parent record map', 'parent replay',
+    'missing parent', 'duplicate parent rejected by schema', 'deleted parent',
+    'own-sent parent', 'unknown direction', 'local-send intent', 'wrong relation',
+    'wrong part', 'missing chat', 'parent has no attachments', 'child row collision',
+    'stale dependency generation', 'foreign dependency scope', 'loaded identity changed']) {
+    test('received attachment keeps unavailable-parent classification closed for $barrier', () {
+      final childScope = CloudSyncScope(accountFingerprint: testAccountFingerprintA,
+        container: 'com.apple.messages.cloud', database: 'private', zone: 'attachmentManateeZone',
+        persistenceLane: CloudSyncPersistenceLane.semanticV2);
+      final parentScope = CloudSyncScope(accountFingerprint: childScope.accountFingerprint,
+        container: childScope.container, database: childScope.database, zone: 'messageManateeZone',
+        persistenceLane: childScope.persistenceLane);
+      const parentGuid = 'received-parent-negative';
+      const childGuid = '${parentGuid}_1';
+      final parentLogical = 'P' * 43;
+      final childLogical = 'A' * 43;
+      final chatId = store.box<Chat>().put(Chat(guid: 'received-negative-chat'));
+      final parentId = store.box<Message>().put(Message(guid: parentGuid, dateCreated: testEpoch,
+        isFromMe: false, hasAttachments: true)..chat.targetId = chatId);
+      final childId = store.box<Attachment>().put(Attachment(guid: childGuid)..message.targetId = parentId);
+      _seedCheckpoint(store, scope: parentScope, generation: generation);
+      var configured = CloudCanonicalActiveScope(scope: parentScope, generation: generation);
+      void seed({String? logical, String guid = parentGuid, CloudSyncScope? target, int gen = generation}) =>
+        _seedExactOwnershipProof(store, scope: target ?? parentScope, generation: gen,
+          kind: CloudEntityKind.message, logicalEntityKeyHash: logical ?? parentLogical, canonicalGuid: guid);
+      switch (barrier) {
+        case 'logical claimant': seed(guid: 'different-parent-guid');
+        case 'GUID claimant': seed(logical: 'Q' * 43);
+        case 'duplicate GUID claimants': seed(logical: 'Q' * 43); seed(logical: 'R' * 43);
+        case 'stale logical claimant': seed(gen: generation - 1);
+        case 'foreign logical claimant':
+          seed(target: CloudSyncScope(accountFingerprint: testAccountFingerprintB,
+            container: parentScope.container, database: parentScope.database, zone: parentScope.zone,
+            persistenceLane: parentScope.persistenceLane));
+        case 'mismatched ownership metadata':
+          seed();
+          store.box<CloudSemanticSnapshotEntity>().put(store.box<CloudSemanticSnapshotEntity>().getAll().single
+            ..accountFingerprint = testAccountFingerprintB);
+        case 'null parent lookup marker':
+          seed(logical: 'Z' * 43, guid: 'unrelated-parent');
+          store.box<CloudSemanticSnapshotEntity>().put(store.box<CloudSemanticSnapshotEntity>().getAll().single
+            ..canonicalGuidLookupHash = null);
+        case 'null parent bound marker':
+          seed(logical: 'Z' * 43, guid: 'unrelated-parent');
+          store.box<CloudSemanticSnapshotEntity>().put(store.box<CloudSemanticSnapshotEntity>().getAll().single
+            ..canonicalGuidHash = null);
+        case 'null child lookup marker' || 'null child bound marker':
+          _seedExactOwnershipProof(store, scope: childScope, generation: generation,
+            kind: CloudEntityKind.attachment, logicalEntityKeyHash: 'Z' * 43, canonicalGuid: 'unrelated-child');
+          final marker = store.box<CloudSemanticSnapshotEntity>().getAll().single;
+          if (barrier == 'null child lookup marker') {marker.canonicalGuidLookupHash = null;}
+          else {marker.canonicalGuidHash = null;}
+          store.box<CloudSemanticSnapshotEntity>().put(marker);
+        case 'child logical claimant':
+          _seedExactOwnershipProof(store, scope: childScope, generation: generation,
+            kind: CloudEntityKind.attachment, logicalEntityKeyHash: childLogical, canonicalGuid: 'different-child');
+        case 'child GUID claimant':
+          _seedExactOwnershipProof(store, scope: childScope, generation: generation,
+            kind: CloudEntityKind.attachment, logicalEntityKeyHash: 'Z' * 43, canonicalGuid: childGuid);
+        case 'parent record map':
+          store.box<CloudRecordMapEntity>().put(CloudRecordMapEntity(mapKey: 'contrary-parent-map',
+            scopeKey: _semanticScopeKey(parentScope), accountFingerprint: parentScope.accountFingerprint,
+            zone: parentScope.zone, logicalEntityKeyHash: parentLogical, serverRecordIdHash: 'R' * 43,
+            generation: generation, encryptedServerRecordId: testProtectedReference('I'),
+            updatedAtMs: testEpoch.millisecondsSinceEpoch));
+        case 'parent replay':
+          store.box<CloudSemanticReplayEntity>().put(CloudSemanticReplayEntity(replayKey: 'contrary-parent-replay',
+            scopeGenerationKey: _semanticScopeGenerationKey(parentScope, generation),
+            scopeKey: _semanticScopeKey(parentScope), accountFingerprint: parentScope.accountFingerprint,
+            container: parentScope.container, database: parentScope.database, zone: parentScope.zone,
+            streamKind: parentScope.streamKind.name, schemaVersion: parentScope.schemaVersion,
+            generation: generation, logicalEntityKeyHash: parentLogical, changeIdHash: 'C' * 43,
+            serverRecordIdHash: 'R' * 43, inboxSequence: 1, changeType: 'save', terminalOutcome: 'quarantined',
+            terminalSafeCode: 'canonical_message_chat_unavailable', updatedAtMs: testEpoch.millisecondsSinceEpoch));
+        case 'missing parent': store.box<Message>().remove(parentId);
+        case 'duplicate parent rejected by schema':
+          expect(() => store.box<Message>().put(Message(guid: parentGuid, dateCreated: testEpoch, isFromMe: false)),
+            throwsA(isA<ObjectBoxException>()));
+          expect(store.box<Message>().count(), 1);
+          expect(store.box<Attachment>().get(childId)!.message.targetId, parentId);
+          expect(store.box<CloudSemanticSnapshotEntity>().count(), 0);
+          return;
+        case 'deleted parent':
+          store.box<Message>().put(store.box<Message>().get(parentId)!..dateDeleted = testEpoch);
+        case 'own-sent parent':
+          store.box<Message>().put(store.box<Message>().get(parentId)!..isFromMe = true);
+        case 'unknown direction':
+          store.box<Message>().put(store.box<Message>().get(parentId)!..isFromMe = null);
+        case 'local-send intent':
+          store.box<CloudSyncLocalSendIntentEntity>().put(CloudSyncLocalSendIntentEntity(
+            intentKey: 'contrary-received-origin', accountFingerprint: childScope.accountFingerprint,
+            writerEpoch: 1, localMessageId: parentId, messageGuidHash: 'M' * 43,
+            sourceSha256: testSha256('a'), createdAtMs: testEpoch.millisecondsSinceEpoch,
+            updatedAtMs: testEpoch.millisecondsSinceEpoch));
+        case 'wrong relation':
+          store.box<Attachment>().put(store.box<Attachment>().get(childId)!..message.targetId = 0);
+        case 'missing chat': store.box<Chat>().remove(chatId);
+        case 'parent has no attachments':
+          store.box<Message>().put(store.box<Message>().get(parentId)!..hasAttachments = false);
+        case 'child row collision':
+          store.box<Message>().put(Message(guid: childGuid, dateCreated: testEpoch, isFromMe: false));
+        case 'stale dependency generation':
+          configured = CloudCanonicalActiveScope(scope: parentScope, generation: generation - 1);
+        case 'foreign dependency scope':
+          configured = CloudCanonicalActiveScope(scope: CloudSyncScope(accountFingerprint: testAccountFingerprintB,
+            container: parentScope.container, database: parentScope.database, zone: parentScope.zone,
+            persistenceLane: parentScope.persistenceLane), generation: generation);
+      }
+      final payload = _attachmentPayload(logicalEntityKeyHash: childLogical, canonicalGuid: childGuid,
+        ownerLogicalKeyHash: parentLogical, ownerCanonicalGuid: parentGuid,
+        ownerPart: barrier == 'wrong part' ? 2 : 1, protectedLocalReference: testProtectedReference('P'));
+      final snapshot = _snapshot(CloudEntityKind.attachment, childLogical, parentLogicalKeyHash: parentLogical);
+      final registry = TransientCloudCanonicalIdentityRegistry();
+      final lease = registry.bind(CloudDecodedMutation.upsert(scope: childScope, generation: generation,
+        changeId: 'C' * 43, payload: payload, snapshot: snapshot));
+      final canonical = _newAdapter(store: store,
+        activeScopeProvider: () => barrier == 'loaded identity changed' ? null :
+          CloudCanonicalActiveScope(scope: childScope, generation: generation),
+        resolver: registry, messageDependencyScope: configured, semanticApplyEnabled: true,
+        allowAttachmentMetadataUpserts: true);
+      List<Object?> preservedState() => [
+        store.box<Message>().getAll().map((row) => [row.id, row.guid, row.isFromMe,
+          row.dateDeleted?.millisecondsSinceEpoch, row.chat.targetId, row.hasAttachments]).toList(),
+        store.box<Attachment>().getAll().map((row) => [row.id, row.guid, row.message.targetId]).toList(),
+        store.box<CloudSemanticSnapshotEntity>().getAll().map((row) => [row.id, row.scopeKey,
+          row.logicalEntityKeyHash, row.canonicalGuidHash, row.canonicalGuidLookupHash]).toList(),
+        store.box<CloudSyncLocalSendIntentEntity>().getAll().map((row) => [row.id, row.state, row.sourceSha256]).toList(),
+        store.box<CloudRecordMapEntity>().getAll().map((row) => [row.id, row.mapKey, row.logicalEntityKeyHash]).toList(),
+        store.box<CloudSemanticReplayEntity>().getAll().map((row) => [row.id, row.replayKey, row.terminalOutcome]).toList(),
+      ];
+      final before = preservedState();
+      try {
+        final proof = canonical.provePreexistingCanonicalOwnership(scope: childScope, generation: generation,
+          payload: payload, snapshot: snapshot);
+        expect(proof, isNull, reason: barrier);
+      } on CloudSyncFailure catch (failure) {
+        expect(failure.safeCode, isNot('canonical_attachment_owner_unavailable'), reason: barrier);
+      } finally {
+        lease.release();
+      }
+      expect(preservedState(), before);
+      expect(store.box<CloudOutboxOperationEntity>().count(), 0);
+      // Remove only this synthetic contrary-evidence fixture before the suite's
+      // no-fabricated-local-origin teardown assertion.
+      store.box<CloudSyncLocalSendIntentEntity>().removeAll();
+    });
+  }
+
   test('rejects legacy attachment owner proof from another account scope', () {
     final messageScope = CloudSyncScope(
       accountFingerprint: scope.accountFingerprint,
@@ -10007,6 +10302,18 @@ String _semanticScopeGenerationKey(CloudSyncScope scope, int generation) =>
 
 String _protectedReference(String value) =>
     'obcs2.ref.${base64Url.encode(sha256.convert(utf8.encode(value)).bytes).replaceAll('=', '')}';
+
+final class _RetentionProtector implements CloudSyncProtector {
+  @override
+  Future<String> fingerprintAccount(String rawAccountIdentifier) async =>
+    sha256.convert(utf8.encode(rawAccountIdentifier)).toString();
+  @override
+  Future<String> protect({required CloudSyncScope scope, required CloudSyncProtectedValueKind kind,
+    required String plaintext}) async => 'protected:$plaintext';
+  @override
+  Future<String> unprotect({required CloudSyncScope scope, required CloudSyncProtectedValueKind kind,
+    required String ciphertext}) async => ciphertext.substring('protected:'.length);
+}
 
 final class _TransitionDecoder implements CloudSemanticDecoder {
   _TransitionDecoder(this.mutation);

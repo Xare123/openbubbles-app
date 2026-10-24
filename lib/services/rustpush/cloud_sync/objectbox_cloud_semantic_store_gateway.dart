@@ -2246,6 +2246,7 @@ final class _SemanticTransactionContext {
 final class _ObjectBoxCloudSemanticStoreTransaction
     implements
         CloudSemanticStoreTransaction,
+        CloudAttachmentParentProofTransaction,
         CloudMessageContentTransitionTransaction,
         CloudChatServiceRouteBindingTransaction {
   _ObjectBoxCloudSemanticStoreTransaction({
@@ -2341,6 +2342,26 @@ final class _ObjectBoxCloudSemanticStoreTransaction
       logicalEntityKeyHash: logicalEntityKeyHash,
     );
     return _snapshotFromEntity(entity);
+  }
+
+  @override
+  void checkPreexistingAttachmentParent({
+    required CloudAttachmentEntityPayload payload,
+    required CloudSemanticSnapshot snapshot,
+  }) {
+    _ensureActive();
+    _validateEntityKindForStream(CloudEntityKind.attachment);
+    _validateSnapshot(snapshot);
+    if (_findSnapshot(_context.snapshotKey(snapshot.kind, snapshot.logicalEntityKeyHash)) != null ||
+        _canonicalAdapter is! CloudLegacyCanonicalOwnershipProofAdapter) {
+      return;
+    }
+    // Reuse the pure legacy proof path before generic parent-existence checks.
+    // A successful proof is deliberately not installed here; ordinary upsert
+    // must still validate and atomically commit every ownership/map/replay row.
+    (_canonicalAdapter as CloudLegacyCanonicalOwnershipProofAdapter)
+        .provePreexistingCanonicalOwnership(scope: _context.entry.scope,
+          generation: _context.entry.generation, payload: payload, snapshot: snapshot);
   }
 
   @override

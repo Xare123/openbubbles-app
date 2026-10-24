@@ -1107,6 +1107,15 @@ bool cloudSyncIsHistoricalChatMetadataScope(CloudSyncScope scope) =>
     scope.streamKind == CloudSyncStreamKind.messages &&
     scope.persistenceLane == CloudSyncPersistenceLane.semantic;
 
+/// Optional read-only preflight for a legacy Attachment's unavailable parent.
+/// It may reject projection, but must not install ownership or mutate a row.
+abstract interface class CloudAttachmentParentProofTransaction {
+  void checkPreexistingAttachmentParent({
+    required CloudAttachmentEntityPayload payload,
+    required CloudSemanticSnapshot snapshot,
+  });
+}
+
 class TransactionalCloudInboxApplier
     implements
         CloudInboxApplier,
@@ -2016,6 +2025,12 @@ class TransactionalCloudInboxApplier
     var mergeIncoming = incoming;
     CloudMessageContentTransition? contentTransition;
     final payload = decoded.payload;
+    if (payload is CloudAttachmentEntityPayload &&
+        incoming.parentLogicalKeyHash != null &&
+        transaction is CloudAttachmentParentProofTransaction) {
+      (transaction as CloudAttachmentParentProofTransaction)
+          .checkPreexistingAttachmentParent(payload: payload, snapshot: incoming);
+    }
     if (local != null &&
         local.immutableContentDigest != null &&
         incoming.immutableContentDigest != null &&
