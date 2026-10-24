@@ -75,6 +75,9 @@ class CloudSyncProgress extends ChangeNotifier
   int quarantined = 0;
   bool projectionComplete = false;
   bool hasReport = false;
+  CloudSyncSemanticPullReport? _latestReport;
+  /// Current run only; callers must still verify its immutable build stamp.
+  CloudSyncSemanticPullReport? get latestReport => _latestReport;
   bool refreshFailed = false;
   final Map<String, int> zonePages = {};
   final Map<String, int> zoneFetched = {};
@@ -173,6 +176,7 @@ class CloudSyncProgress extends ChangeNotifier
 
   void report(CloudSyncSemanticPullReport report) {
     if (!active) return;
+    _latestReport = report;
     hasReport = true;
     retained = report.zones.fold(0, (n, z) => n + z.retainedUnprojected);
     deferred = report.zones.fold(0, (n, z) => n + z.deferred);
@@ -237,6 +241,7 @@ class CloudSyncProgress extends ChangeNotifier
     retained = deferred = quarantined = 0;
     projectionComplete = false;
     hasReport = refreshFailed = false;
+    _latestReport = null;
     zonePages.clear();
     zoneFetched.clear();
     zone = null;

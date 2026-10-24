@@ -1,16 +1,18 @@
 package com.bluebubbles.messaging.services.rustpush
 
 import android.content.Context
+import android.content.pm.ApplicationInfo
 import java.util.UUID
 
 /**
- * Durable, content-free authorization for the read-only Canary worker.
+ * Durable, content-free authorization for the read-only test worker.
  *
  * Only the scope hash, monotonic counters and opaque WorkRequest ID persist.
  * Alpha, Beta, and production package names cannot configure or use it.
  */
 internal object CloudSyncV2WorkRegistration {
     const val CANARY_PACKAGE = "com.bluebubbles.messaging.cloudkitcanary"
+    const val BACKEND_AGENT_PACKAGE = "com.bluebubbles.messaging.backendtest"
     private const val PREFS_NAME = "cloud_sync_v2_background"
     private const val PREF_SCOPE_HASH = "scope_hash"
     private const val PREF_EPOCH = "registration_epoch"
@@ -18,11 +20,24 @@ internal object CloudSyncV2WorkRegistration {
     private const val PREF_WORK_ID = "active_work_id"
     @Volatile private var wakeCoordinator: CloudSyncV2WakeCoordinator? = null
 
+    // Preserve Canary admission. The separate backend app must be installed as
+    // debuggable; neither a caller-supplied argument nor its package name proves it.
+    internal fun isAllowedPackage(packageName: String, applicationFlags: Int): Boolean =
+        packageName == CANARY_PACKAGE ||
+            (packageName == BACKEND_AGENT_PACKAGE &&
+                applicationFlags and ApplicationInfo.FLAG_DEBUGGABLE != 0)
+
+    fun isAllowed(context: Context): Boolean =
+        if (context.packageName == CANARY_PACKAGE) true
+        else context.packageName == BACKEND_AGENT_PACKAGE && runCatching {
+            isAllowedPackage(context.packageName, context.applicationInfo.flags)
+        }.getOrDefault(false)
+
     fun isCanonicalScopeHash(value: String?): Boolean =
         CloudSyncV2WakeRecord.isCanonicalScopeHash(value)
 
     fun current(context: Context): CloudSyncV2WorkRegistrationSnapshot? {
-        if (context.packageName != CANARY_PACKAGE) return null
+        if (!isAllowed(context)) return null
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         val scopeHash = prefs.getString(PREF_SCOPE_HASH, null)
         val epoch = prefs.getLong(PREF_EPOCH, 0)
@@ -75,7 +90,7 @@ internal object CloudSyncV2WorkRegistration {
     }
 
     suspend fun configure(context: Context, scopeHash: String): Boolean {
-        if (context.packageName != CANARY_PACKAGE || !isCanonicalScopeHash(scopeHash)) {
+        if (!isAllowed(context) || !isCanonicalScopeHash(scopeHash)) {
             return false
         }
         return coordinator(context.applicationContext).configure(scopeHash)
@@ -86,12 +101,12 @@ internal object CloudSyncV2WorkRegistration {
         kind: CloudSyncV2WorkKind,
         expected: CloudSyncV2WorkRegistrationSnapshot,
     ): Boolean {
-        if (context.packageName != CANARY_PACKAGE || kind != CloudSyncV2WorkKind.METADATA) return false
+        if (!isAllowed(context) || kind != CloudSyncV2WorkKind.METADATA) return false
         return coordinator(context.applicationContext).hint(expected)
     }
 
     suspend fun disable(context: Context): Boolean {
-        if (context.packageName != CANARY_PACKAGE) return false
+        if (!isAllowed(context)) return false
         return coordinator(context.applicationContext).disable()
     }
 
@@ -99,10 +114,10 @@ internal object CloudSyncV2WorkRegistration {
         current(context) == expected
 
     suspend fun begin(context: Context, expected: CloudSyncV2WorkRegistrationSnapshot, workId: UUID):
-        CloudSyncV2WakeAttempt? = if (context.packageName == CANARY_PACKAGE) {
+        CloudSyncV2WakeAttempt? = if (isAllowed(context)) {
             coordinator(context.applicationContext).begin(expected, workId)
         } else null
 
     suspend fun seal(context: Context, attempt: CloudSyncV2WakeAttempt): Boolean =
-        context.packageName == CANARY_PACKAGE && coordinator(context.applicationContext).seal(attempt)
+        isAllowed(context) && coordinator(context.applicationContext).seal(attempt)
 }

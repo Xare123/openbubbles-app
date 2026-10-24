@@ -1,0 +1,568 @@
+import 'dart:async';
+import 'dart:convert';
+import 'dart:math';
+
+import 'package:crypto/crypto.dart';
+
+const backendHarnessProtocol = 1;
+const backendHarnessExtension = 'ext.openbubbles.backend';
+const backendHarnessActions = <String>{
+  'hello',
+  'status',
+  'job.status',
+  'sync.start',
+  'sync.pause',
+  'relay.configure',
+  'auth.login',
+  'auth.code',
+  'auth.restore',
+  'auth.status',
+  'protector.check',
+  'pcs.devices',
+  'pcs.unlock',
+  'archive.scope',
+  'archive.prepare',
+  'archive.status',
+  'fixture.inspect',
+  'fixture.materialize',
+  'report.snapshot',
+  'fixture.send',
+  'fixture.edit',
+  'fixture.unsend',
+  'fixture.status',
+};
+const backendHarnessCodes = <String>{
+  'backend_ready',
+  'backend_disabled',
+  'backend_not_ready',
+  'backend_invalid_request',
+  'backend_invalid_action',
+  'backend_invalid_arguments',
+  'backend_busy',
+  'backend_job_accepted',
+  'backend_job_running',
+  'backend_job_completed',
+  'backend_job_failed',
+  'backend_job_unknown',
+  'backend_request_reused',
+  'backend_internal_error',
+  'backend_job_limit',
+  'backend_stale_session',
+  'backend_source_mismatch',
+  'backend_identity_changed',
+  'backend_not_supported',
+  'backend_auth_challenge',
+};
+
+abstract final class BackendHarnessGate {
+  static const compiledIn = bool.fromEnvironment('OPENBUBBLES_AGENT_BACKEND');
+  static const source = String.fromEnvironment('OPENBUBBLES_BACKEND_SOURCE');
+  static bool allowed({
+    required bool compiled,
+    required bool debug,
+    required String platform,
+    required String package,
+    bool isolatedWindowsProfile = false,
+  }) =>
+      compiled &&
+      debug &&
+      ((platform == 'android' &&
+              package == 'com.bluebubbles.messaging.backendtest') ||
+          (platform == 'windows' && isolatedWindowsProfile));
+}
+
+enum BackendHarnessPhase {
+  idle,
+  configuring,
+  needs_credentials,
+  needs_2fa,
+  needs_sms_2fa,
+  authenticated,
+  registering,
+  needs_trusted_device,
+  needs_passcode,
+  ready,
+  syncing,
+  pausing,
+  paused,
+  remote_head,
+  blocked,
+  error,
+}
+
+enum BackendHarnessChallengeKind {
+  trustedDevice,
+  smsDestination,
+  verificationCode,
+  archiveConsent,
+  passcode,
+  pin;
+
+  bool get isChoice => this == trustedDevice || this == smsDestination;
+}
+
+/// Opaque interaction metadata. Device names, passwords and account labels
+/// remain in the adapter; only this short-lived handle crosses public status.
+final class BackendHarnessChallenge {
+  const BackendHarnessChallenge(this.id, this.kind, {this.options = 0});
+  final String id;
+  final BackendHarnessChallengeKind kind;
+  final int options;
+  Map<String, Object> toJson() {
+    if (!RegExp(r'^[a-f0-9]{32}$').hasMatch(id) ||
+        (kind.isChoice ? options < 1 || options > 64 : options != 0)) {
+      throw const FormatException('backend_invalid_challenge');
+    }
+    return {'id': id, 'kind': kind.name, 'options': options};
+  }
+}
+
+/// Private fixture correlation for the batch controller. Contains fixed
+/// identifiers/digests only; the CLI must omit this object from public output.
+final class BackendHarnessFixtureReceipt {
+  const BackendHarnessFixtureReceipt({
+    required this.fixtureId,
+    required this.messageGuid,
+    required this.visibleTextSha256,
+    this.participantsSha256,
+    this.editHistorySha256,
+  });
+  final String fixtureId;
+  final String messageGuid;
+  final String visibleTextSha256;
+  final String? participantsSha256;
+  final String? editHistorySha256;
+  static final uuid = RegExp(
+    r'^[A-Fa-f0-9]{8}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{12}$',
+  );
+  static bool validJson(Object? raw) =>
+      raw is Map &&
+      (raw.length == 3 || raw.length == 5) &&
+      raw.keys.every(
+        const {'fixtureId', 'messageGuid', 'visibleTextSha256',
+          'participantsSha256', 'editHistorySha256'}.contains,
+      ) &&
+      raw['fixtureId'] is String &&
+      uuid.hasMatch(raw['fixtureId'] as String) &&
+      raw['messageGuid'] is String &&
+      uuid.hasMatch(raw['messageGuid'] as String) &&
+      raw['visibleTextSha256'] is String &&
+      RegExp(r'^[a-f0-9]{64}$').hasMatch(raw['visibleTextSha256'] as String) &&
+      (raw.length == 3 ||
+          raw['participantsSha256'] is String &&
+          RegExp(r'^[a-f0-9]{64}$').hasMatch(raw['participantsSha256'] as String) &&
+          raw['editHistorySha256'] is String &&
+          RegExp(r'^[a-f0-9]{64}$').hasMatch(raw['editHistorySha256'] as String));
+  Map<String, Object> toJson() {
+    final value = <String, Object>{
+      'fixtureId': fixtureId,
+      'messageGuid': messageGuid,
+      'visibleTextSha256': visibleTextSha256,
+      if (participantsSha256 != null) 'participantsSha256': participantsSha256!,
+      if (editHistorySha256 != null) 'editHistorySha256': editHistorySha256!,
+    };
+    if (!validJson(value)) {
+      throw const FormatException('backend_invalid_fixture');
+    }
+    return value;
+  }
+}
+
+/// Public command results contain typed facts, never arbitrary native strings.
+final class BackendHarnessPayload {
+  const BackendHarnessPayload({
+    this.phase = BackendHarnessPhase.idle,
+    this.flags = const {},
+    this.counts = const {},
+    this.challenge,
+    this.fixture,
+  });
+  static const flagNames = {
+    'setup_finished',
+    'auth_ready',
+    'native_client_present',
+    'native_identity_available',
+    'registration_ready',
+    'protector_ready',
+    'account_matches',
+    'relay_ready',
+    'encryption_ready',
+    'sync_active',
+    'sync_quiescing',
+    'projection_complete',
+    'has_report',
+    'failure_present',
+    'outbox_settled',
+    'archive_enabled',
+    'received_text_enabled',
+    'received_media_enabled',
+    'readback_verified',
+    'outcome_uncertain',
+    'fixture_content_matches',
+    'fixture_edit_matches',
+    'fixture_retraction_matches',
+    'fixture_matches',
+    'fixture_parent_matches',
+    'fixture_participants_match',
+    'fixture_history_matches',
+    'cloud_projection_present',
+    'attachment_bytes_match',
+    'report_source_matches',
+    'report_tripwires_intact',
+    'report_safe',
+    'remote_head',
+    'ids_evidence_present',
+  };
+  static const countNames = {
+    'pages',
+    'fetched',
+    'reprojected',
+    'retained',
+    'unavailable',
+    'messages',
+    'attachments',
+    'devices',
+    'ready_intents',
+    'held_intents',
+    'unresolved_operations',
+    'edits',
+    'retracted_parts',
+    'bytes',
+    'deferred',
+    'quarantined',
+    'outbox_before',
+    'outbox_after',
+  };
+  final BackendHarnessPhase phase;
+  final Map<String, bool> flags;
+  final Map<String, int> counts;
+  final BackendHarnessChallenge? challenge;
+  final BackendHarnessFixtureReceipt? fixture;
+  Map<String, Object> toJson() {
+    if (!flagNames.containsAll(flags.keys) ||
+        !countNames.containsAll(counts.keys) ||
+        counts.values.any((count) => count < 0 || count > 1000000000)) {
+      throw const FormatException('backend_invalid_payload');
+    }
+    return {
+      'phase': phase.name,
+      'flags': Map<String, bool>.of(flags),
+      'counts': Map<String, int>.of(counts),
+      if (challenge != null) 'challenge': challenge!.toJson(),
+      if (fixture != null) 'fixture': fixture!.toJson(),
+    };
+  }
+}
+
+typedef BackendHarnessHandler =
+    Future<BackendHarnessPayload> Function(Map<String, Object?> arguments);
+
+final class BackendHarnessOperation {
+  const BackendHarnessOperation({
+    required this.handler,
+    required this.validate,
+    this.background = false,
+    this.uncertainOnFailure = false,
+    this.snapshot,
+  });
+  final BackendHarnessHandler handler;
+  final bool Function(Map<String, Object?>) validate;
+  final bool background;
+  // A command fault cannot prove that an entered external operation did not
+  // happen. Its durable owner must inspect/reconcile rather than resubmit.
+  final bool uncertainOnFailure;
+  final BackendHarnessPayload Function()? snapshot;
+}
+
+final class BackendHarnessFailure implements Exception {
+  BackendHarnessFailure(this.code) {
+    if (!backendHarnessCodes.contains(code)) {
+      throw const FormatException('backend_invalid_failure');
+    }
+  }
+  final String code;
+}
+
+/// One engine per app boot. Repeated submissions return the SAME operation;
+/// neither a host timeout nor polling creates another backend invocation.
+final class BackendHarnessEngine {
+  BackendHarnessEngine({
+    required this.enabled,
+    required this.source,
+    required this.package,
+    required this.platform,
+    required Map<String, BackendHarnessOperation> operations,
+    this.maximumJobs = 128,
+    Random? random,
+  }) : _operations = Map.unmodifiable(operations),
+       _random = random ?? Random.secure() {
+    if (maximumJobs < 1 ||
+        maximumJobs > 1024 ||
+        !backendHarnessActions.containsAll(operations.keys) ||
+        operations.keys.any((key) => key == 'hello' || key == 'job.status')) {
+      throw const FormatException('backend_invalid_registry');
+    }
+    sessionId = _token();
+  }
+  final bool enabled;
+  final String source;
+  final String package;
+  final String platform;
+  final int maximumJobs;
+  final Map<String, BackendHarnessOperation> _operations;
+  final Random _random;
+  late final String sessionId;
+  final _jobs = <String, _BackendHarnessJob>{};
+  final _requests = <String, _BackendHarnessJob>{};
+  _BackendHarnessJob? _active;
+  static final _tokenPattern = RegExp(r'^[A-Za-z0-9_-]{1,64}$');
+
+  String _token() => List.generate(
+    16,
+    (_) => _random.nextInt(256).toRadixString(16).padLeft(2, '0'),
+  ).join();
+
+  Map<String, Object?> _reply(
+    String id,
+    String action,
+    String code, {
+    String state = 'completed',
+    String? jobId,
+    Map<String, Object> data = const {},
+  }) => {
+    'protocol': backendHarnessProtocol,
+    'requestId': id,
+    'action': action,
+    'ok': !const {'failed', 'blocked'}.contains(state),
+    'code': code,
+    'state': state,
+    'jobId': jobId,
+    'data': data,
+  };
+
+  Future<Map<String, Object?>> execute(
+    Object? raw, {
+    String? expectedSessionId,
+  }) async {
+    var id = 'invalid';
+    var action = 'hello';
+    try {
+      if (raw is! Map ||
+          raw.length != 4 ||
+          !raw.keys.toSet().containsAll({
+            'protocol',
+            'requestId',
+            'action',
+            'arguments',
+          }) ||
+          raw['protocol'] is! int ||
+          raw['protocol'] != backendHarnessProtocol ||
+          raw['requestId'] is! String ||
+          !_tokenPattern.hasMatch(raw['requestId'] as String) ||
+          raw['action'] is! String ||
+          raw['arguments'] is! Map) {
+        return _reply(id, action, 'backend_invalid_request', state: 'blocked');
+      }
+      id = raw['requestId'] as String;
+      final candidateAction = raw['action'] as String;
+      if (!backendHarnessActions.contains(candidateAction)) {
+        return _reply(id, action, 'backend_invalid_action', state: 'blocked');
+      }
+      action = candidateAction;
+      final arguments = Map<String, Object?>.from(raw['arguments'] as Map);
+      if (!_boundedJson(arguments) || jsonEncode(raw).length > 65536) {
+        return _reply(
+          id,
+          action,
+          'backend_invalid_arguments',
+          state: 'blocked',
+        );
+      }
+      if (!enabled) {
+        return _reply(id, action, 'backend_disabled', state: 'blocked');
+      }
+      if (expectedSessionId != null && expectedSessionId != sessionId) {
+        return _reply(id, action, 'backend_stale_session', state: 'blocked');
+      }
+      if (!RegExp(r'^[0-9a-f]{40}$').hasMatch(source)) {
+        return _reply(id, action, 'backend_source_mismatch', state: 'blocked');
+      }
+      if (action == 'hello') {
+        if (arguments.isNotEmpty) {
+          return _reply(
+            id,
+            action,
+            'backend_invalid_arguments',
+            state: 'blocked',
+          );
+        }
+        return _reply(
+          id,
+          action,
+          'backend_ready',
+          data: {
+            'source': source,
+            'package': package,
+            'platform': platform,
+            'sessionId': sessionId,
+            'mode': 'backend',
+            'actions': <String>['hello', 'job.status', ..._operations.keys]
+              ..sort(),
+          },
+        );
+      }
+      if (action == 'job.status') {
+        if (arguments.length != 1 ||
+            arguments['jobId'] is! String ||
+            !_tokenPattern.hasMatch(arguments['jobId'] as String)) {
+          return _reply(
+            id,
+            action,
+            'backend_invalid_arguments',
+            state: 'blocked',
+          );
+        }
+        final job = _jobs[arguments['jobId']];
+        return job == null
+            ? _reply(id, action, 'backend_job_unknown', state: 'blocked')
+            : _jobReply(id, action, job);
+      }
+      final operation = _operations[action];
+      if (operation == null) {
+        return _reply(id, action, 'backend_not_supported', state: 'blocked');
+      }
+      if (!operation.validate(arguments)) {
+        return _reply(
+          id,
+          action,
+          'backend_invalid_arguments',
+          state: 'blocked',
+        );
+      }
+      if (!operation.background) {
+        final payload = await operation.handler(arguments);
+        return _reply(id, action, 'backend_ready', data: payload.toJson());
+      }
+      final digest = sha256
+          .convert(
+            utf8.encode(
+              jsonEncode({
+                'action': action,
+                'arguments': _canonical(arguments),
+              }),
+            ),
+          )
+          .toString();
+      final previous = _requests[id];
+      if (previous != null) {
+        return previous.digest == digest
+            ? _jobReply(id, action, previous)
+            : _reply(id, action, 'backend_request_reused', state: 'blocked');
+      }
+      if (_active != null) {
+        return _reply(id, action, 'backend_busy', state: 'blocked');
+      }
+      if (_jobs.length >= maximumJobs) {
+        return _reply(id, action, 'backend_job_limit', state: 'blocked');
+      }
+      final job = _BackendHarnessJob(_token(), digest, operation.snapshot);
+      _jobs[job.id] = job;
+      _requests[id] = job;
+      _active = job;
+      unawaited(
+        Future<void>(() async {
+          job.state = 'running';
+          try {
+            job.payload = (await operation.handler(arguments)).toJson();
+            job.state = 'completed';
+            job.code = 'backend_job_completed';
+          } on BackendHarnessFailure catch (error) {
+            job.state = 'blocked';
+            job.code = error.code;
+            job.payload = BackendHarnessPayload(
+              phase: BackendHarnessPhase.error,
+              flags: {'outcome_uncertain': operation.uncertainOnFailure},
+            ).toJson();
+          } catch (_) {
+            job.state = 'failed';
+            job.code = 'backend_job_failed';
+            job.payload = BackendHarnessPayload(
+              phase: BackendHarnessPhase.error,
+              flags: {'outcome_uncertain': operation.uncertainOnFailure},
+            ).toJson();
+          } finally {
+            if (identical(_active, job)) _active = null;
+          }
+        }),
+      );
+      return _jobReply(id, action, job);
+    } on BackendHarnessFailure catch (error) {
+      return _reply(id, action, error.code, state: 'blocked');
+    } catch (_) {
+      return _reply(id, action, 'backend_internal_error', state: 'failed');
+    }
+  }
+
+  Map<String, Object?> _jobReply(
+    String id,
+    String action,
+    _BackendHarnessJob job,
+  ) {
+    var payload = job.payload;
+    if (const {'accepted', 'running'}.contains(job.state) &&
+        job.snapshot != null) {
+      try {
+        payload = job.snapshot!.call().toJson();
+      } catch (_) {
+        // Observation failure cannot erase an accepted operation's handle or
+        // make the host believe that its backend invocation never happened.
+      }
+    }
+    return _reply(
+      id,
+      action,
+      payload.containsKey('challenge') ? 'backend_auth_challenge' : job.code,
+      state: job.state,
+      jobId: job.id,
+      data: payload,
+    );
+  }
+
+  static bool _boundedJson(Object? value, [int depth = 0]) {
+    if (depth > 8) return false;
+    if (value == null || value is bool || value is String || value is int) {
+      return true;
+    }
+    if (value is List) {
+      return value.length <= 128 &&
+          value.every((entry) => _boundedJson(entry, depth + 1));
+    }
+    if (value is Map) {
+      return value.length <= 32 &&
+          value.entries.every(
+            (entry) =>
+                entry.key is String && _boundedJson(entry.value, depth + 1),
+          );
+    }
+    return false;
+  }
+
+  static Object? _canonical(Object? value) {
+    if (value is Map) {
+      final keys = value.keys.cast<String>().toList()..sort();
+      return {for (final key in keys) key: _canonical(value[key])};
+    }
+    if (value is List) return value.map(_canonical).toList();
+    return value;
+  }
+}
+
+final class _BackendHarnessJob {
+  _BackendHarnessJob(this.id, this.digest, this.snapshot);
+  final String id;
+  final String digest;
+  final BackendHarnessPayload Function()? snapshot;
+  String state = 'accepted';
+  String code = 'backend_job_accepted';
+  Map<String, Object> payload = const {};
+}

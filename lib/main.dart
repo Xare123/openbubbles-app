@@ -5,6 +5,7 @@ import 'dart:ui';
 
 import 'package:adaptive_theme/adaptive_theme.dart';
 import 'package:bitsdojo_window/bitsdojo_window.dart';
+import 'package:bluebubbles/backend_harness/backend_harness_app.dart';
 import 'package:bluebubbles/app/components/custom/custom_error_box.dart';
 import 'package:bluebubbles/helpers/backend/startup_tasks.dart';
 import 'package:bluebubbles/helpers/helpers.dart';
@@ -100,6 +101,7 @@ Future<Null> initApp(bool bubble, List<String> arguments) async {
       };
 
       try {
+        if (!bubble && runBackendHarnessApp()) return;
         // Once all the services are initialized, we need to perform some
         // startup tasks to ensure that the app has the information it needs.
         StartupTasks.onStartup().then((_) {

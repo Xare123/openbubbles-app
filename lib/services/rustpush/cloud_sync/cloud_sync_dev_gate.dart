@@ -5,6 +5,21 @@
 abstract final class CloudSyncDevGate {
   static const String androidCanaryPackageName =
       'com.bluebubbles.messaging.cloudkitcanary';
+  static const String androidBackendTestPackageName =
+      'com.bluebubbles.messaging.backendtest';
+  static const bool agentBackendEnabled =
+      bool.fromEnvironment('OPENBUBBLES_AGENT_BACKEND', defaultValue: false) &&
+      !bool.fromEnvironment('dart.vm.product') &&
+      !bool.fromEnvironment('dart.vm.profile');
+
+  static bool isAgentBackendRuntime({
+    required bool isAndroid,
+    required bool isWindows,
+    required String packageName,
+    required bool isolatedWindowsProfile,
+  }) => agentBackendEnabled &&
+      ((isAndroid && packageName == androidBackendTestPackageName) ||
+       (isWindows && isolatedWindowsProfile));
 
   static const bool manualShadowSamplerEnabled = bool.fromEnvironment(
     'OPENBUBBLES_CLOUD_SYNC_V2_SAMPLER',
@@ -93,6 +108,9 @@ abstract final class CloudSyncDevGate {
     required bool isAndroid,
     required String packageName,
   }) {
-    return isAndroid && packageName == androidCanaryPackageName;
+    return isAndroid &&
+        (packageName == androidCanaryPackageName ||
+            (agentBackendEnabled &&
+                packageName == androidBackendTestPackageName));
   }
 }

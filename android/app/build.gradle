@@ -106,6 +106,13 @@ android {
             resValue "string", "file_provider", "com.bluebubbles.messaging.cloudkitcanary.fileprovider"
             applicationId "com.bluebubbles.messaging.cloudkitcanary"
         }
+        agent {
+            dimension "app"
+            resValue "string", "app_name_en", "OpenBubbles Backend Lab"
+            resValue "color", "ic_launcher_background", "#455a64"
+            resValue "string", "file_provider", "com.bluebubbles.messaging.backendtest.fileprovider"
+            applicationId "com.bluebubbles.messaging.backendtest"
+        }
         prod {
             getIsDefault().set(true)
             dimension "app"
@@ -128,6 +135,7 @@ android {
             productFlavors.alpha.signingConfig signingConfigs.debug
             productFlavors.beta.signingConfig signingConfigs.release
             productFlavors.canary.signingConfig signingConfigs.release
+            productFlavors.agent.signingConfig signingConfigs.release
             productFlavors.prod.signingConfig signingConfigs.release
             productFlavors.alpha.signingConfig signingConfigs.release
             minifyEnabled false

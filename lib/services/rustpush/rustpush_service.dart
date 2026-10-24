@@ -81,6 +81,7 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_models.dart'
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_message_update_executor.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_observability.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_progress.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_recovery_input.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_historical_import_controller.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_historical_import_runtime.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_background_progress.dart';
@@ -8042,40 +8043,49 @@ class RustPushService extends GetxService {
           doPoll(data.$2, pollState);
         }
       }
+      final agentBackend = CloudSyncDevGate.isAgentBackendRuntime(
+        isAndroid: Platform.isAndroid, isWindows: Platform.isWindows,
+        packageName: fs.packageInfo.packageName,
+        isolatedWindowsProfile: fs.cloudSyncV2WindowsDevProfileActive,
+      );
       if (state == null && ss.settings.finishedSetup.value) {
         ss.settings.finishedSetup.value = false;
         ss.saveSettings();
-        try {
-          Get.offAll(
-              () => PopScope(
-                    canPop: false,
-                    child: TitleBarWrapper(child: SetupView()),
-                  ),
-              duration: Duration.zero,
-              transition: Transition.noTransition);
-        } catch (e, s) {
-          Logger.warn(
-              "Failed to return to setup after registration state changed",
-              error: e,
-              trace: s);
+        if (!agentBackend) {
+          try {
+            Get.offAll(
+                () => PopScope(
+                      canPop: false,
+                      child: TitleBarWrapper(child: SetupView()),
+                    ),
+                duration: Duration.zero,
+                transition: Transition.noTransition);
+          } catch (e, s) {
+            Logger.warn(
+                "Failed to return to setup after registration state changed",
+                error: e,
+                trace: s);
+          }
         }
       }
       if (state != null && !ss.settings.finishedSetup.value) {
         ss.settings.finishedSetup.value = true;
         ss.saveSettings();
-        try {
-          Get.offAll(
-              () => ConversationList(
-                    showArchivedChats: false,
-                    showUnknownSenders: false,
-                  ),
-              routeName: "",
-              duration: Duration.zero,
-              transition: Transition.noTransition);
-          Get.delete<SetupViewController>(force: true);
-        } catch (e, s) {
-          Logger.warn("Failed to show the conversation list after registration",
-              error: e, trace: s);
+        if (!agentBackend) {
+          try {
+            Get.offAll(
+                () => ConversationList(
+                      showArchivedChats: false,
+                      showUnknownSenders: false,
+                    ),
+                routeName: "",
+                duration: Duration.zero,
+                transition: Transition.noTransition);
+            Get.delete<SetupViewController>(force: true);
+          } catch (e, s) {
+            Logger.warn("Failed to show the conversation list after registration",
+                error: e, trace: s);
+          }
         }
       }
     })();
@@ -10955,7 +10965,12 @@ class RustPushService extends GetxService {
   /// Shared encryption flow for Profile. It uses the same existing trusted
   /// device prompt without enabling legacy sync or any diagnostic controls.
   Future<CloudSyncV2PcsPreparationOutcome>
-  _prepareCloudSyncV2ProfilePcs({void Function()? validateContinuation}) {
+  _prepareCloudSyncV2ProfilePcs({void Function()? validateContinuation,
+    CloudSyncRecoveryInput? recoveryInput}) {
+    if (recoveryInput != null && (!CloudSyncDevGate.agentBackendEnabled ||
+        fs.packageInfo.packageName != CloudSyncDevGate.androidBackendTestPackageName)) {
+      throw StateError('cloud_sync_canary_package_required');
+    }
     if (!CloudSyncDevGate.manualSemanticPullEnabled) {
       throw StateError('cloud_sync_semantic_pull_disabled');
     }
@@ -10984,6 +10999,7 @@ class RustPushService extends GetxService {
       action: () => _prepareCloudSyncV2Pcs(
         interlock: interlock,
         validateContinuation: validateContinuation,
+        recoveryInput: recoveryInput,
       ),
     );
     _cloudSyncV2PcsPreparationInFlight = future;
@@ -10997,6 +11013,7 @@ class RustPushService extends GetxService {
   Future<CloudSyncV2PcsPreparationOutcome> _prepareCloudSyncV2Pcs({
     required CloudKitOperationInterlock interlock,
     void Function()? validateContinuation,
+    CloudSyncRecoveryInput? recoveryInput,
   }) async {
     final preparedState = state;
     final services = preparedState?.icloudServices;
@@ -11020,6 +11037,12 @@ class RustPushService extends GetxService {
       validateContinuation?.call();
     }
 
+    bool inputStillCurrent() {
+      try { ensureAccountStillActive(); return true; } catch (_) { return false; }
+    }
+    Future<T> guardedInput<T>(Future<T> Function() input) async {
+      try { return await input(); } finally { ensureAccountStillActive(); }
+    }
     ensureAccountStillActive();
     bool ready;
     try {
@@ -11054,17 +11077,31 @@ class RustPushService extends GetxService {
       throw StateError('cloud_sync_v2_pcs_recovery_required');
     }
 
-    api.ViableBottle? bottle = bottles.first;
+    Future<api.ViableBottle?> chooseBottle() async {
+      if (recoveryInput == null) return _promptCloudSyncV2BottleChoice(bottles);
+      final index = await guardedInput(() => recoveryInput.chooseDevice(
+        List.unmodifiable(bottles.map((b) => b.deviceName)), inputStillCurrent));
+      if (index == null) return null;
+      if (index < 0 || index >= bottles.length) {
+        throw StateError('cloud_sync_v2_pcs_recovery_required');
+      }
+      return bottles[index];
+    }
+    api.ViableBottle? bottle = recoveryInput == null ? bottles.first : await chooseBottle();
+    ensureAccountStillActive();
     String description =
         "Your device's password is required to access end-to-end encrypted data in iCloud.";
     String? localDevicePassword;
     while (bottle != null) {
+      final selectedBottle = bottle;
       ensureAccountStillActive();
-      final (changeDevice, credential) =
-          await promptPassword(bottle, description);
+      final (changeDevice, credential) = recoveryInput == null
+          ? await promptPassword(selectedBottle, description)
+          : (false, await guardedInput(() => recoveryInput.password(
+              selectedBottle.deviceName, inputStillCurrent)));
       ensureAccountStillActive();
       if (changeDevice) {
-        bottle = await _promptCloudSyncV2BottleChoice(bottles);
+        bottle = await chooseBottle();
         ensureAccountStillActive();
         description =
             "Your device's password is required to access end-to-end encrypted data in iCloud.";
@@ -11083,7 +11120,7 @@ class RustPushService extends GetxService {
         await awaitCloudSyncPcsOperation(
           api.joinCliqueWithBottle(
               keychain: keychain,
-              bottle: bottle.escrow,
+              bottle: selectedBottle.escrow,
               password: credential,
               devicePassword: localDevicePassword,
             ), _cloudSyncV2PcsOperationTimeout,
@@ -11543,7 +11580,9 @@ class RustPushService extends GetxService {
     }
   }
 
-  Future<void> startCloudSyncV2Progress(CloudSyncSpeed speed) {
+  Future<void> startCloudSyncV2Progress(CloudSyncSpeed speed, {
+    CloudSyncRecoveryInput? recoveryInput,
+  }) {
     final expectedClient = state?.icloudServices?.cloudMessagesClient;
     final expectedStorage = statePath;
     void validate() {
@@ -11566,7 +11605,7 @@ class RustPushService extends GetxService {
           throw StateError(readiness.safeCode);
         }
         return await _prepareCloudSyncV2ProfilePcs(
-          validateContinuation: validate) != CloudSyncV2PcsPreparationOutcome.cancelled;
+          validateContinuation: validate, recoveryInput: recoveryInput) != CloudSyncV2PcsPreparationOutcome.cancelled;
       },
       readOnlyCatchUp: () async {
         final result = await _runCloudSyncV2ProfileCatchUpReadOnly(

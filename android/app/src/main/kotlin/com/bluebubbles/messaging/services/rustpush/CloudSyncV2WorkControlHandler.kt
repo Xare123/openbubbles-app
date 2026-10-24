@@ -22,7 +22,7 @@ class CloudSyncV2WorkControlHandler : MethodCallHandlerImpl() {
         result: MethodChannel.Result,
         context: Context,
     ) {
-        if (context.packageName != CloudSyncV2WorkRegistration.CANARY_PACKAGE) {
+        if (!CloudSyncV2WorkRegistration.isAllowed(context)) {
             result.success(false)
             return
         }

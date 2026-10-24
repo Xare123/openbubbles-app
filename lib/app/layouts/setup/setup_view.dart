@@ -24,6 +24,7 @@ import 'package:bluebubbles/app/layouts/setup/pages/welcome/welcome_page.dart';
 import 'package:bluebubbles/app/wrappers/stateful_boilerplate.dart';
 import 'package:bluebubbles/main.dart';
 import 'package:bluebubbles/services/rustpush/rustpush_service.dart';
+import 'package:bluebubbles/services/rustpush/setup_interaction_port.dart';
 import 'package:bluebubbles/services/services.dart';
 import 'package:bluebubbles/src/rust/frb_generated.dart';
 import 'package:bluebubbles/src/rust/lib.dart';
@@ -70,6 +71,8 @@ class StaleLoginAttemptException implements Exception {
 }
 
 class SetupViewController extends StatefulController {
+  SetupViewController({this.interactionPort});
+  final SetupInteractionPort? interactionPort;
   static const int _maxIdsAliasRetries = 1;
   static const Duration _idsAliasRetryDelay = Duration(seconds: 5);
 
@@ -673,7 +676,16 @@ class SetupViewController extends StatefulController {
         requestedSms = true;
       } else {
         int selectedRadio = -1;
-        await showDialog(
+        final input = interactionPort;
+        if (input != null) {
+          final index = await input.chooseSmsDestination(
+            List.unmodifiable(options.$1.map((option) => option.numberWithDialCode)),
+            stillCurrent: () => ownsSmsResult(null));
+          if (index != null && index >= 0 && index < options.$1.length) {
+            selectedRadio = options.$1[index].id;
+          }
+        } else {
+          await showDialog(
           context: Get.context!,
           builder: (context) => AlertDialog(
             title: const Text('Choose number'),
@@ -709,6 +721,7 @@ class SetupViewController extends StatefulController {
             ],
           ),
         );
+        }
         if (!ownsSmsResult(null) || selectedRadio == -1) {
           return ret;
         }
@@ -746,6 +759,8 @@ class SetupViewController extends StatefulController {
   }
 
   Future<T> wrapPromise<T>(Future<T> inner, String text) async {
+    final input = interactionPort;
+    if (input != null) return input.wait(inner);
     showDialog(
       context: Get.context!,
       builder: (BuildContext context) {
@@ -798,6 +813,11 @@ class SetupViewController extends StatefulController {
     }
       var (newUsers, response) = await _registerIdsWithRetry(users);
       if (response != null) {
+        final input = interactionPort;
+        if (input != null) {
+          await input.registrationSupportRequired();
+          return;
+        }
         var devInfo = await api.getDeviceInfo(config: config!);
         await showDialog(
           context: Get.context!,
@@ -1380,7 +1400,8 @@ class SetupViewController extends StatefulController {
     updateWidgets<ErrorText>(message);
   }
 
-  @visibleForTesting
+  /// Restores retained hardware through the same native ownership guards for
+  /// both the setup screen and the backend test runner.
   Future<void> restoreSavedHardware(
     api.SavedHardwareState restored, {
     api.IdsngmIdentity Function(List<int>)? decodeIdentity,
@@ -1417,7 +1438,7 @@ class SetupViewController extends StatefulController {
     }
   }
 
-  @visibleForTesting
+  /// Validates saved phone users without discarding unconfirmed credentials.
   Future<void> restoreCachedPhoneUsers({
     Iterable<MapEntry<String, String>>? cachedCodes,
     Future<void> Function(String key, String encoded)? restoreAndValidate,

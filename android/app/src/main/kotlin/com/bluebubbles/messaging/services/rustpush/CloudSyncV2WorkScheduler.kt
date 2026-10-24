@@ -25,7 +25,7 @@ internal object CloudSyncV2WorkScheduler {
     private const val UNIQUE_WORK_PREFIX = "cloud-sync-v2/"
 
     suspend fun enqueue(context: Context, record: CloudSyncV2WakeRecord) {
-        require(context.packageName == CloudSyncV2WorkRegistration.CANARY_PACKAGE)
+        require(CloudSyncV2WorkRegistration.isAllowed(context))
         val scopeHash = requireNotNull(record.scopeHash)
         val workId = requireNotNull(record.workId)
         require(CloudSyncV2WorkRegistration.isCanonicalScopeHash(scopeHash) && record.epoch > 0)
@@ -65,11 +65,14 @@ internal object CloudSyncV2WorkScheduler {
         ).result.await()
     }
 
-    suspend fun unfinished(context: Context, workId: UUID): Boolean? =
-        WorkManager.getInstance(context.applicationContext)
+    suspend fun unfinished(context: Context, workId: UUID): Boolean? {
+        require(CloudSyncV2WorkRegistration.isAllowed(context))
+        return WorkManager.getInstance(context.applicationContext)
             .getWorkInfoById(workId).await()?.state?.let { !it.isFinished }
+    }
 
     suspend fun cancel(context: Context, workId: UUID) {
+        require(CloudSyncV2WorkRegistration.isAllowed(context))
         WorkManager.getInstance(context.applicationContext).cancelWorkById(workId).result.await()
     }
 
