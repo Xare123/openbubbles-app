@@ -55,6 +55,7 @@ on:
         options:
           - beta
           - canary
+          - agent
       validation_mode:
         description: Validation scope for this ephemeral source-only run
         required: true
@@ -92,17 +93,17 @@ on:
           - iphone-aps-identity-only
           - iphone-aps-auth-only
       outbound_writer:
-        description: Build the isolated Android Canary with one-message V2 writer controls
+        description: Build isolated Canary or agentDebug with V2 writer availability
         required: true
         default: false
         type: boolean
       automatic_uploads:
-        description: Enable Canary's ordinary-send worker, including earlier eligible journaled sends
+        description: Enable the isolated app's ordinary-send worker, including eligible journaled sends
         required: true
         default: false
         type: boolean
       received_archive:
-        description: Qualify received archival in one controlled full Canary; runtime consent still required
+        description: Qualify received archival in full Canary or agentDebug; runtime consent still required
         required: false
         default: false
         type: boolean
@@ -201,8 +202,14 @@ jobs:
             echo 'provisioning_model must be spot or standard.' >&2
             exit 1
           fi
-          if [[ "$OUTBOUND_WRITER" == 'true' && "$BUILD_FLAVOR" != 'canary' ]]; then
-            echo 'outbound_writer requires flavor=canary.' >&2
+          if [[ "$BUILD_FLAVOR" == 'agent' &&
+                ( "$VALIDATION_MODE" != 'full' || "$RUNNER_LANE" != 'primary' ) ]]; then
+            echo 'agentDebug requires full validation on the primary lane.' >&2
+            exit 1
+          fi
+          if [[ "$OUTBOUND_WRITER" == 'true' &&
+                "$BUILD_FLAVOR" != 'canary' && "$BUILD_FLAVOR" != 'agent' ]]; then
+            echo 'outbound_writer requires flavor=canary or agent.' >&2
             exit 1
           fi
           if [[ "$OUTBOUND_WRITER" == 'true' && "$VALIDATION_MODE" != 'full' ]]; then
@@ -210,14 +217,14 @@ jobs:
             exit 1
           fi
           if [[ "$AUTOMATIC_UPLOADS" == 'true' && "$OUTBOUND_WRITER" != 'true' ]]; then
-            echo 'automatic_uploads requires outbound_writer=true (full Canary qualification).' >&2
+            echo 'automatic_uploads requires outbound_writer=true (full isolated-app qualification).' >&2
             exit 1
           fi
           if [[ "$RECEIVED_ARCHIVE" == 'true' &&
-                ( "$BUILD_FLAVOR" != 'canary' || "$VALIDATION_MODE" != 'full' ||
+                ( ( "$BUILD_FLAVOR" != 'canary' && "$BUILD_FLAVOR" != 'agent' ) || "$VALIDATION_MODE" != 'full' ||
                   "$OUTBOUND_WRITER" != 'true' || "$AUTOMATIC_UPLOADS" != 'true' ||
                   "$TRUSTED_SOURCE_BRANCH" != 'agent/native-relay-client-20261020' ) ]]; then
-            echo 'received_archive requires full native-relay Canary with both writer availability flags.' >&2
+            echo 'received_archive requires full native-relay Canary or agentDebug with both writer availability flags.' >&2
             exit 1
           fi
           if [[ "$VALIDATION_MODE" == 'production-transport-only' || "$VALIDATION_MODE" == 'production-android-build-only' ]]; then
@@ -776,6 +783,14 @@ jobs:
             --dart-define=TEST_EXPECT_CLOUDKIT_WRITER=true
             --dart-define=TEST_EXPECT_AUTOMATIC_UPLOADS=true
           )
+          if [[ "$BUILD_FLAVOR" == 'agent' ]]; then
+            [[ "$SOURCE_REF" =~ ^[0-9a-f]{40}$ ]]
+            flag_args+=(
+              --dart-define=OPENBUBBLES_AGENT_BACKEND=true
+              "--dart-define=OPENBUBBLES_BACKEND_SOURCE=$SOURCE_REF"
+              "--dart-define=OPENBUBBLES_BUILD_COMMIT=$SOURCE_REF"
+            )
+          fi
           if [[ "$RECEIVED_ARCHIVE" == 'true' ]]; then
             flag_args+=(
               --dart-define=OPENBUBBLES_CLOUD_SYNC_V2_SEMANTIC_PULL=true
@@ -899,6 +914,10 @@ jobs:
         run: |
           set -euo pipefail
           started="$(date +%s)"
+          build_source="$(git rev-parse HEAD)"
+          if [[ "$BUILD_FLAVOR" == 'agent' ]]; then
+            [[ "$SOURCE_REF" =~ ^[0-9a-f]{40}$ && "$build_source" == "$SOURCE_REF" ]]
+          fi
           build_args=(
             build apk
             --flavor "$BUILD_FLAVOR"
@@ -906,17 +925,27 @@ jobs:
             --target-platform android-arm64
             --dart-define=OPENBUBBLES_CLOUD_SYNC_V2_SAMPLER=true
             --dart-define=OPENBUBBLES_CLOUD_SYNC_V2_SEMANTIC_PULL=true
-            --dart-define=OPENBUBBLES_BUILD_COMMIT="$(git rev-parse HEAD)"
+            "--dart-define=OPENBUBBLES_BUILD_COMMIT=$build_source"
           )
           android_background_read=false
           if [[ "$BUILD_FLAVOR" == 'canary' ]]; then
             test -n "$REGISTRATION_RELAY_ACCESS_TOKEN"
+            build_args+=(
+              --dart-define=OPENBUBBLES_CANARY_ADB_CONTROL=true
+              "--dart-define=OPENBUBBLES_REGISTRATION_RELAY_ACCESS_TOKEN=$REGISTRATION_RELAY_ACCESS_TOKEN"
+            )
+          fi
+          if [[ "$BUILD_FLAVOR" == 'canary' || "$BUILD_FLAVOR" == 'agent' ]]; then
             android_background_read=true
             build_args+=(
               --dart-define=OPENBUBBLES_CLOUD_SYNC_V2_ANDROID_BACKGROUND_READ=true
               --dart-define=OPENBUBBLES_CLOUD_SYNC_V2_EVIDENCE=true
-              --dart-define=OPENBUBBLES_CANARY_ADB_CONTROL=true
-              "--dart-define=OPENBUBBLES_REGISTRATION_RELAY_ACCESS_TOKEN=$REGISTRATION_RELAY_ACCESS_TOKEN"
+            )
+          fi
+          if [[ "$BUILD_FLAVOR" == 'agent' ]]; then
+            build_args+=(
+              --dart-define=OPENBUBBLES_AGENT_BACKEND=true
+              "--dart-define=OPENBUBBLES_BACKEND_SOURCE=$SOURCE_REF"
             )
           fi
           if [[ "$OUTBOUND_WRITER" == 'true' ]]; then
@@ -985,13 +1014,14 @@ jobs:
           sdk_root="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
           aapt="$(find "$sdk_root/build-tools" -type f -name aapt -print | sort -V | tail -n 1)"
           test -x "$aapt"
-          application_id="$(
-            "$aapt" dump badging "$apk" \
-              | sed -n "s/^package: name='\([^']*\)'.*/\1/p"
-          )"
+          badging="$("$aapt" dump badging "$apk")"
+          application_id="$(sed -n "s/^package: name='\([^']*\)'.*/\1/p" <<< "$badging")"
           expected_application_id='com.bluebubbles.messaging.beta'
           if [[ "$BUILD_FLAVOR" == 'canary' ]]; then
             expected_application_id='com.bluebubbles.messaging.cloudkitcanary'
+          elif [[ "$BUILD_FLAVOR" == 'agent' ]]; then
+            expected_application_id='com.bluebubbles.messaging.backendtest'
+            grep -Fxq 'application-debuggable' <<< "$badging"
           fi
           if [[ "$application_id" != "$expected_application_id" ]]; then
             echo "Unexpected $BUILD_FLAVOR application ID: $application_id" >&2
@@ -1039,6 +1069,7 @@ jobs:
           case "$BUILD_FLAVOR" in
             beta) flavor=Beta ;;
             canary) flavor=Canary ;;
+            agent) flavor=Agent ;;
             *) echo "Unexpected flavor: $BUILD_FLAVOR" >&2; exit 1 ;;
           esac
           gradle --no-daemon --max-workers=8 --console=plain ":app:test${flavor}DebugUnitTest" -x ":app:compileFlutterBuild${flavor}Debug" -Ptarget-platform=android-arm64
@@ -1993,12 +2024,12 @@ jobs:
           retention-days: 7
 
   finalize-canary:
-    name: Sign and verify Canary on GitHub-hosted runner
+    name: Sign and verify isolated Android APK on GitHub-hosted runner
     needs: benchmark-build
     if: >-
       ${{
         needs.benchmark-build.result == 'success' &&
-        (inputs.flavor || 'beta') == 'canary' &&
+        (inputs.flavor == 'canary' || inputs.flavor == 'agent') &&
         (inputs.validation_mode || 'full') != 'bindings-only' &&
         (inputs.validation_mode || 'full') != 'rustpush-only' &&
         (inputs.validation_mode || 'full') != 'app-rust-only' &&
@@ -2026,7 +2057,7 @@ jobs:
       - name: Download GCE producer APK
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: GCE producer canary APK ${{ env.SOURCE_REF }} writer-${{ inputs.outbound_writer || false }} automatic-${{ inputs.automatic_uploads || false }}${{ inputs.received_archive && ' received-true' || '' }}
+          name: GCE producer ${{ inputs.flavor || 'beta' }} APK ${{ env.SOURCE_REF }} writer-${{ inputs.outbound_writer || false }} automatic-${{ inputs.automatic_uploads || false }}${{ inputs.received_archive && ' received-true' || '' }}
           path: producer
 
       - name: Sign and verify Canary
@@ -2038,9 +2069,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          apk='producer/app-canary-debug.apk'
+          apk="producer/app-${BUILD_FLAVOR}-debug.apk"
           keystore="$RUNNER_TEMP/cloudkit-canary.p12"
-          signed_apk="$RUNNER_TEMP/app-canary-debug-signed.apk"
+          signed_apk="$RUNNER_TEMP/app-${BUILD_FLAVOR}-debug-signed.apk"
           sdk_root="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
           aapt="$(find "$sdk_root/build-tools" -type f -name aapt -print | sort -V | tail -n 1)"
           apksigner="$(find "$sdk_root/build-tools" -type f -name apksigner -print | sort -V | tail -n 1)"
@@ -2053,11 +2084,17 @@ jobs:
           test -n "$CANARY_KEY_PASSWORD"
           test -n "$CANARY_KEY_ALIAS"
 
-          application_id="$(
-            "$aapt" dump badging "$apk" \
-              | sed -n "s/^package: name='\([^']*\)'.*/\1/p"
-          )"
-          if [[ "$application_id" != 'com.bluebubbles.messaging.cloudkitcanary' ]]; then
+          badging="$("$aapt" dump badging "$apk")"
+          application_id="$(sed -n "s/^package: name='\([^']*\)'.*/\1/p" <<< "$badging")"
+          case "$BUILD_FLAVOR" in
+            canary) expected_application_id='com.bluebubbles.messaging.cloudkitcanary' ;;
+            agent)
+              expected_application_id='com.bluebubbles.messaging.backendtest'
+              grep -Fxq 'application-debuggable' <<< "$badging"
+              ;;
+            *) echo "Unexpected signing flavor: $BUILD_FLAVOR" >&2; exit 1 ;;
+          esac
+          if [[ "$application_id" != "$expected_application_id" ]]; then
             echo "Unexpected producer application ID: $application_id" >&2
             exit 1
           fi
@@ -2100,8 +2137,8 @@ jobs:
       - name: Upload signed Canary APK
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: GCE CloudKit V2 Canary APK ${{ env.SOURCE_REF }} writer-${{ inputs.outbound_writer || false }} automatic-${{ inputs.automatic_uploads || false }}${{ inputs.received_archive && ' received-true' || '' }}
-          path: producer/app-canary-debug.apk
+          name: GCE CloudKit V2 ${{ inputs.flavor == 'agent' && 'Backend Agent' || 'Canary' }} APK ${{ env.SOURCE_REF }} writer-${{ inputs.outbound_writer || false }} automatic-${{ inputs.automatic_uploads || false }}${{ inputs.received_archive && ' received-true' || '' }}
+          path: producer/app-${{ inputs.flavor || 'beta' }}-debug.apk
           if-no-files-found: error
 
   delete-runner:

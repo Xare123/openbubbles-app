@@ -34,8 +34,21 @@ classify_suite_receipt() {
   fi
 }
 run_dart_suite() {
-  flutter test &&
-    pwsh -NoProfile -File tooling/windows/test_cloudkit_semantic_outbox_contract.ps1
+  if [[ "${BUILD_FLAVOR:-beta}" == 'agent' ]]; then
+    if [[ ! "${SOURCE_REF:-}" =~ ^[0-9a-f]{40}$ ]]; then
+      echo 'agentDebug gate tests require the exact source SHA.' >&2
+      return 1
+    fi
+  fi
+  flutter test || return $?
+  if [[ "${BUILD_FLAVOR:-beta}" == 'agent' ]]; then
+    flutter test --no-pub \
+      --dart-define=OPENBUBBLES_AGENT_BACKEND=true \
+      "--dart-define=OPENBUBBLES_BACKEND_SOURCE=$SOURCE_REF" \
+      "--dart-define=OPENBUBBLES_BUILD_COMMIT=$SOURCE_REF" \
+      test/backend_harness/backend_harness_agent_gate_test.dart || return $?
+  fi
+  pwsh -NoProfile -File tooling/windows/test_cloudkit_semantic_outbox_contract.ps1
 }
 
 run_app_rust_suite() {
