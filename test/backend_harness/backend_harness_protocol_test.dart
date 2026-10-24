@@ -41,6 +41,47 @@ BackendHarnessOperation operation(
 );
 
 void main() {
+  test('VM routing metadata must match and cannot replace the boot session', () async {
+    var calls = 0;
+    final runner = engine({
+      'status': operation((_) async {
+        calls++;
+        return const BackendHarnessPayload();
+      }, background: false),
+    });
+    const isolate = 'isolates/synthetic';
+    final hello = jsonEncode(request('routed_hello', 'hello'));
+    expect((await handleBackendHarnessExtension(runner, {
+      'isolateId': isolate,
+      'request': hello,
+    }, expectedIsolateId: isolate))['ok'], true);
+    for (final parameters in [
+      {'isolateId': 'isolates/foreign', 'request': hello},
+      {'isolateId': isolate, 'request': hello, 'extra': 'unknown'},
+      {'isolateId': isolate, 'request': jsonEncode(request('missing_session', 'status'))},
+    ]) {
+      expect((await handleBackendHarnessExtension(runner, parameters,
+        expectedIsolateId: isolate))['code'], 'backend_invalid_request');
+    }
+    expect((await handleBackendHarnessExtension(runner, {
+      'isolateId': isolate,
+      'request': jsonEncode(request('unbound_isolate', 'hello')),
+    }))['code'], 'backend_invalid_request');
+    expect(calls, 0);
+    expect((await handleBackendHarnessExtension(runner, {
+      'isolateId': isolate,
+      'sessionId': List.filled(32, '0').join(),
+      'request': jsonEncode(request('stale_routed_session', 'status')),
+    }, expectedIsolateId: isolate))['code'], 'backend_stale_session');
+    expect(calls, 0);
+    expect((await handleBackendHarnessExtension(runner, {
+      'isolateId': isolate,
+      'sessionId': runner.sessionId,
+      'request': jsonEncode(request('valid_routed_status', 'status')),
+    }, expectedIsolateId: isolate))['ok'], true);
+    expect(calls, 1);
+  });
+
   test(
     'compiled extension accepts only the single bounded request parameter',
     () async {

@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:developer' as developer;
+import 'dart:isolate';
 
 import 'package:flutter/foundation.dart';
 
@@ -24,8 +25,14 @@ bool registerBackendHarnessExtension(
       _registered) {
     return false;
   }
+  final isolateId = developer.Service.getIsolateId(Isolate.current);
+  if (isolateId == null) return false;
   developer.registerExtension(backendHarnessExtension, (_, parameters) async {
-    final result = await handleBackendHarnessExtension(engine, parameters);
+    final result = await handleBackendHarnessExtension(
+      engine,
+      parameters,
+      expectedIsolateId: isolateId,
+    );
     return developer.ServiceExtensionResponse.result(jsonEncode(result));
   });
   _registered = true;
@@ -35,8 +42,16 @@ bool registerBackendHarnessExtension(
 @visibleForTesting
 Future<Map<String, Object?>> handleBackendHarnessExtension(
   BackendHarnessEngine engine,
-  Map<String, String> parameters,
-) async {
+  Map<String, String> parameters, {
+  String? expectedIsolateId,
+}) async {
+  if (parameters.containsKey('isolateId')) {
+    if (expectedIsolateId == null ||
+        parameters['isolateId'] != expectedIsolateId) {
+      return _invalidRequest();
+    }
+    parameters = Map<String, String>.of(parameters)..remove('isolateId');
+  }
   if (parameters.containsKey('request') && parameters.length <= 2) {
     final encoded = parameters['request']!;
     if (encoded.length <= 65536) {
@@ -58,14 +73,16 @@ Future<Map<String, Object?>> handleBackendHarnessExtension(
       }
     }
   }
-  return {
-    'protocol': 1,
-    'requestId': 'invalid',
-    'action': 'hello',
-    'ok': false,
-    'code': 'backend_invalid_request',
-    'state': 'blocked',
-    'jobId': null,
-    'data': <String, Object>{},
-  };
+  return _invalidRequest();
 }
+
+Map<String, Object?> _invalidRequest() => {
+  'protocol': 1,
+  'requestId': 'invalid',
+  'action': 'hello',
+  'ok': false,
+  'code': 'backend_invalid_request',
+  'state': 'blocked',
+  'jobId': null,
+  'data': <String, Object>{},
+};
