@@ -87,6 +87,62 @@ pub(crate) fn participant(value: &str) -> Option<String> {
     (phone || email).then_some(value)
 }
 
+/// A retained source can contain SMS short codes, alphanumeric peers, and
+/// business participants already supported by the canonical app projection.
+/// This is comparison-only validation, never an outbound recipient validator.
+/// Keep the known-scheme and opaque bounds aligned with _normalizeHandle in
+/// objectbox_canonical_semantic_entity_adapter.dart (allowOpaqueParticipant).
+fn source_participant(value: &str) -> Option<String> {
+    let normalized = identifier(value)?;
+    if value.encode_utf16().count() > 512
+        || value
+            .chars()
+            .any(|character| character.is_whitespace() || character == '\u{feff}')
+    {
+        return None;
+    }
+    let phone = |address: &str| {
+        let digits = address.strip_prefix('+').unwrap_or(address);
+        (3..=20).contains(&digits.len()) && digits.bytes().all(|byte| byte.is_ascii_digit())
+    };
+    let email = |address: &str| {
+        address.split_once('@').is_some_and(|(local, domain)| {
+            !local.is_empty()
+                && !domain.contains('@')
+                && !address.contains(':')
+                && domain
+                    .bytes()
+                    .enumerate()
+                    .any(|(index, byte)| byte == b'.' && index > 0 && index + 1 < domain.len())
+        })
+    };
+    let business = value.strip_prefix("urn:biz:").is_some_and(|suffix| {
+        let mut groups = suffix.split('-');
+        [8, 4, 4, 4, 12].into_iter().all(|length| {
+            groups.next().is_some_and(|group| {
+                group.len() == length && group.bytes().all(|byte| byte.is_ascii_hexdigit())
+            })
+        }) && groups.next().is_none()
+    });
+    let lower = value.to_lowercase();
+    let valid = if lower.starts_with("tel:") {
+        phone(&normalized)
+    } else if lower.starts_with("mailto:") {
+        email(&normalized)
+    } else if business {
+        true
+    } else if value.contains(':') {
+        false
+    } else if value.contains('@') {
+        email(&normalized)
+    } else {
+        // The app deliberately retains bounded bare opaque participants.
+        // Do not add a tel: prefix, infer a country code, or rewrite the source.
+        true
+    };
+    valid.then_some(normalized)
+}
+
 pub(crate) fn validate_chat_identity_candidate(candidate: &CloudChat) -> Result<(), ()> {
     match candidate.style {
         45 => {
@@ -228,7 +284,7 @@ pub(crate) fn observe_chat_identity(
         }
     }
     for entry in &source.participants {
-        let Some(value) = participant(&entry.uri) else {
+        let Some(value) = source_participant(&entry.uri) else {
             return observed(CloudChatIdentityComparison::Incomplete);
         };
         // Two independent group conversations may have the same members and
@@ -288,6 +344,66 @@ mod tests {
             }],
             ..candidate()
         }
+    }
+
+    #[test]
+    fn supported_source_members_do_not_expand_outbound_candidate_validation() {
+        for member in [
+            "12345",
+            "BANK-ALERT",
+            "tel:1234567890",
+            "tel:+12345678901234567890",
+            "urn:biz:AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE",
+        ] {
+            assert!(source_participant(member).is_some(), "{member}");
+            assert!(participant(member).is_none(), "{member}");
+            let direct = CloudChat {
+                chat_identifier: member.into(),
+                ..candidate()
+            };
+            assert!(validate_chat_identity_candidate(&direct).is_err());
+            let group = CloudChat {
+                last_addressed_handle: member.into(),
+                ..group_candidate()
+            };
+            assert!(validate_chat_identity_candidate(&group).is_err());
+        }
+        for member in ["tel:+15555550101", "MAILTO:User@Example.INVALID"] {
+            assert!(source_participant(member).is_some());
+            assert!(participant(member).is_some());
+        }
+    }
+
+    #[test]
+    fn source_members_keep_known_scheme_shape_whitespace_and_size_guards() {
+        for member in [
+            "",
+            " leading",
+            "trailing ",
+            "embedded space",
+            "control\u{1}value",
+            "control\u{7f}value",
+            "control\u{85}value",
+            "embedded\u{feff}value",
+            "future:opaque",
+            "URN:BIZ:AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE",
+            "urn:biz:not-a-uuid",
+            "tel:",
+            "tel:ALERT",
+            "tel:12",
+            "tel:+123456789012345678901",
+            "mailto:",
+            "mailto:user@host",
+            "user@host",
+            "user@@example.invalid",
+            "mailto:user@future:host.invalid",
+        ] {
+            assert!(source_participant(member).is_none(), "{member:?}");
+        }
+        assert!(source_participant(&"x".repeat(512)).is_some());
+        assert!(source_participant(&"x".repeat(513)).is_none());
+        assert!(source_participant(&"\u{1f600}".repeat(256)).is_some());
+        assert!(source_participant(&"\u{1f600}".repeat(257)).is_none());
     }
     fn presence(omit: Option<&str>, props: bool) -> CloudRawRecordPresence {
         let mut names = vec!["guid", "cid", "gid", "ogid", "svc", "stl", "ptcpts"];
@@ -517,6 +633,42 @@ mod tests {
             ),
             CloudChatIdentityComparison::Disjoint
         );
+    }
+
+    #[test]
+    fn historical_sms_opaque_peer_preserves_every_group_identity_collision() {
+        for member in ["12345", "BANK-ALERT", "tel:1234567890"] {
+            let distinct = CloudChat {
+                style: 45,
+                service_name: "SMS".into(),
+                guid: format!("SMS;-;{member}"),
+                chat_identifier: member.into(),
+                participants: vec![CloudParticipant { uri: member.into() }],
+                ..distinct_group()
+            };
+            assert_eq!(
+                compare_group(&distinct, &presence(None, false)),
+                CloudChatIdentityComparison::Disjoint
+            );
+            for field in ["guid", "cid", "gid", "ogid"] {
+                let mut overlap = distinct.clone();
+                match field {
+                    "guid" => overlap.guid = group_candidate().guid,
+                    "cid" => overlap.chat_identifier = group_candidate().chat_identifier,
+                    "gid" => overlap.group_id = group_candidate().group_id,
+                    _ => overlap.original_group_id = group_candidate().original_group_id,
+                }
+                assert_eq!(
+                    compare_group(&overlap, &presence(None, false)),
+                    CloudChatIdentityComparison::Overlaps,
+                    "{member}/{field}"
+                );
+            }
+            assert_eq!(
+                compare_group(&distinct, &presence(Some("guid"), false)),
+                CloudChatIdentityComparison::Incomplete
+            );
+        }
     }
 
     #[test]
