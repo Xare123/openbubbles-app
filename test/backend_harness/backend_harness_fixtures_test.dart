@@ -1,9 +1,12 @@
+import 'dart:io';
 import 'dart:ui' as ui;
 
 import 'package:bluebubbles/backend_harness/backend_harness_fixture_assets.dart';
 import 'package:bluebubbles/backend_harness/backend_harness_fixtures.dart';
 import 'package:bluebubbles/backend_harness/backend_harness_protocol.dart';
+import 'package:bluebubbles/database/database.dart';
 import 'package:bluebubbles/database/models.dart';
+import 'package:bluebubbles/services/backend/action_handler.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 const fixtureId = '01234567-89AB-CDEF-0123-456789ABCDEF';
@@ -12,6 +15,106 @@ const ownerId = '21234567-89AB-CDEF-0123-456789ABCDEF';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  group('normal merged fixture result', () {
+    late Directory directory;
+    late Chat chat;
+
+    setUpAll(() async {
+      directory = await Directory.systemTemp.createTemp('fixture-merged-result-');
+      Database.store = await openStore(directory: directory.path);
+      Database.messages = Database.store.box<Message>();
+      Database.chats = Database.store.box<Chat>();
+      Database.handles = Database.store.box<Handle>();
+    });
+    setUp(() {
+      Database.messages.removeAll(); // This group's disposable store only.
+      Database.chats.removeAll();
+      chat = Chat(guid: 'iMessage;-;+16177106179', style: 45,
+        chatIdentifier: '+16177106179', usingHandle: 'mailto:self@example.invalid');
+      Database.chats.put(chat);
+    });
+    tearDownAll(() async {
+      Database.store.close();
+      final resolved = Directory(await directory.resolveSymbolicLinks());
+      expect(resolved.parent.path, await Directory.systemTemp.resolveSymbolicLinks());
+      expect(resolved.uri.pathSegments.where((part) => part.isNotEmpty).last,
+        startsWith('fixture-merged-result-'));
+      expect(await FileSystemEntity.type(directory.path, followLinks: false),
+        FileSystemEntityType.directory);
+      await directory.delete(recursive: true);
+    });
+
+    Message requireMerged(String? guid) => BackendHarnessFixtures.requireMergedMessage(
+      store: Database.store, chat: chat, fixtureId: fixtureId, messageGuid: guid,
+    );
+
+    for (final normalized in [false, true]) {
+      test('detached reflection validates the persisted merge, normalized=$normalized', () async {
+        final pending = Message(
+          guid: normalized ? messageGuid : 'temp-pending',
+          text: BackendHarnessFixtures.marker(fixtureId), isFromMe: true,
+        )..chat.target = chat;
+        Database.messages.put(pending);
+        final reflected = Message(guid: messageGuid, isFromMe: true,
+          dateDelivered: DateTime.utc(2026, 10, 25));
+
+        await ActionHandler().matchMessageWithExisting(
+          chat, pending.guid!, reflected, existing: pending,
+        );
+
+        // The old post-send check rejected this detached object even though
+        // the normal merger kept the fixture body and Chat on the saved row.
+        expect(reflected.chat.target, isNull);
+        expect(reflected.text, isNull);
+        expect(BackendHarnessFixtures.ownsMessage(reflected, fixtureId,
+          exactMessageGuid: messageGuid), isFalse);
+        final canonical = requireMerged(reflected.guid);
+        expect(canonical.id, pending.id);
+        expect(canonical.guid, messageGuid);
+        expect(canonical.chat.targetId, chat.id);
+        expect(canonical.text, BackendHarnessFixtures.marker(fixtureId));
+        expect(canonical.isFromMe, isTrue);
+        expect(canonical.dateDelivered!.toUtc(), reflected.dateDelivered!.toUtc());
+        expect(Database.messages.count(), 1);
+      });
+    }
+
+    test('readback refuses wrong GUID, staging-only or missing results', () {
+      final pending = Message(guid: 'temp-pending', stagingGuid: messageGuid,
+        text: BackendHarnessFixtures.marker(fixtureId), isFromMe: true)
+        ..chat.target = chat;
+      Database.messages.put(pending);
+      for (final guid in [null, 'temp-pending', messageGuid, ownerId]) {
+        expect(() => requireMerged(guid), throwsA(isA<BackendHarnessFailure>()));
+      }
+      expect(Database.messages.get(pending.id!)!.guid, 'temp-pending');
+      expect(Database.messages.count(), 1);
+    });
+
+    test('readback refuses wrong marker, direction or unrelated Chat', () {
+      final otherChat = Chat(guid: 'iMessage;-;other@example.invalid');
+      Database.chats.put(otherChat);
+      final message = Message(guid: messageGuid,
+        text: BackendHarnessFixtures.marker(fixtureId), isFromMe: true)
+        ..chat.target = chat;
+      Database.messages.put(message);
+      for (final change in <void Function()>[
+        () => message.text = BackendHarnessFixtures.marker(ownerId),
+        () { message.text = BackendHarnessFixtures.marker(fixtureId); message.isFromMe = false; },
+        () { message.isFromMe = true; message.chat.target = otherChat; },
+        () => message.chat.target = null,
+        () { message.chat.target = chat; message.dateScheduled = DateTime.utc(2026, 10, 25); },
+        () { message.dateScheduled = null; message.dateDeleted = DateTime.utc(2026, 10, 25); },
+      ]) {
+        change();
+        Database.messages.put(message);
+        expect(() => requireMerged(messageGuid), throwsA(isA<BackendHarnessFailure>()));
+      }
+      expect(Database.messages.count(), 1);
+      expect(Database.chats.count(), 2);
+    });
+  });
+
   test(
     'the synthetic image is decodable without a personal media file',
     () async {

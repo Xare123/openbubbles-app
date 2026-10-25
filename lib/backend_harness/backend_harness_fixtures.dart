@@ -432,14 +432,40 @@ final class BackendHarnessFixtures {
         storage != pushService.statePath) {
       throw BackendHarnessFailure('backend_identity_changed');
     }
-    final guid = reflected.guid;
-    if (guid == null ||
-        !_uuid.hasMatch(guid) ||
-        !ownsMessage(reflected, id, exactMessageGuid: guid)) {
+    final canonical = requireMergedMessage(
+      store: store, chat: chat, fixtureId: id, messageGuid: reflected.guid,
+    );
+    claims.commit(claim, canonical.guid!);
+    return _status(auth, id, completedAction: 'create');
+  }
+
+  /// The normal merger persists an existing row without attaching the returned
+  /// reflection to its Chat. Validate that exact persisted result, not the
+  /// detached response, and never fall back to a pending/staging GUID.
+  static Message requireMergedMessage({
+    required Store store,
+    required Chat chat,
+    required String fixtureId,
+    required String? messageGuid,
+  }) {
+    if (store.isClosed() || chat.id == null || chat.id! <= 0 ||
+        messageGuid == null || !_uuid.hasMatch(messageGuid)) {
       throw BackendHarnessFailure('backend_not_ready');
     }
-    claims.commit(claim, guid);
-    return _status(auth, id, completedAction: 'create');
+    return store.runInTransaction(TxMode.read, () {
+      final query = store.box<Message>().query(
+        Message_.guid.equals(messageGuid),
+      ).build()..limit = 2;
+      late final List<Message> found;
+      try { found = query.find(); } finally { query.close(); }
+      if (found.length != 1 ||
+          found.single.chat.targetId != chat.id ||
+          found.single.chat.target?.guid != chat.guid ||
+          !ownsMessage(found.single, fixtureId, exactMessageGuid: messageGuid)) {
+        throw BackendHarnessFailure('backend_not_ready');
+      }
+      return found.single;
+    });
   }
 
   Future<BackendHarnessPayload> edit(Map<String, Object?> args) =>
