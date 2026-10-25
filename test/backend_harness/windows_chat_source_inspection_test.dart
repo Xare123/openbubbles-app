@@ -6,6 +6,64 @@ import 'package:flutter_test/flutter_test.dart';
 import 'windows_chat_source_inspection.dart';
 
 void main() {
+  test('cold restored client is prepared before identity capture', () async {
+    final client = Object();
+    var warm = false;
+    final order = <String>[];
+    final result = await prepareWindowsChatSourceAuthentication<String>(
+      client: client,
+      readActiveClient: () => client,
+      ensure: () async {
+        order.add('ensure');
+        warm = true;
+      },
+      capture: () async {
+        order.add('capture');
+        if (!warm) throw StateError('cold identity is not validated');
+        return 'bound';
+      },
+    );
+    expect(result, 'bound');
+    expect(order, ['ensure', 'capture']);
+  });
+
+  test(
+    'client replacement during preparation refuses before capture',
+    () async {
+      final original = Object();
+      Object current = original;
+      var captured = false;
+      await expectLater(
+        prepareWindowsChatSourceAuthentication<String>(
+          client: original,
+          readActiveClient: () => current,
+          ensure: () async {
+            current = Object();
+          },
+          capture: () async {
+            captured = true;
+            return 'wrong binding';
+          },
+        ),
+        throwsStateError,
+      );
+      expect(captured, isFalse);
+    },
+  );
+
+  test('failure receipt never reflects arbitrary native or state text', () {
+    expect(
+      safeWindowsChatSourceFailure(StateError('PRIVATE-ACCOUNT-DATA')),
+      'backend_windows_chat_source_observation_failed',
+    );
+    expect(
+      safeWindowsChatSourceFailure(
+        StateError('backend_windows_chat_source_binding_changed'),
+      ),
+      'backend_windows_chat_source_binding_changed',
+    );
+  });
+
   test('transient content never enters the closed source summary', () {
     const chat = api.CloudSyncTransientChatPayload(
       logicalEntityKeyHash: 'PRIVATE-LOGICAL',

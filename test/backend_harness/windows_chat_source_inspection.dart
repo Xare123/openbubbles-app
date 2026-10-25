@@ -59,6 +59,51 @@ bool validWindowsChatSourceRequest(Map<String, Object?> request) {
 
 String _sha(String value) => sha256.convert(utf8.encode(value)).toString();
 
+const windowsChatSourceInspectionStages = {
+  'auth-prepare',
+  'auth-bound',
+  'read-window',
+  'decode-started',
+  'decode-finished',
+  'read-released',
+};
+
+/// A restored native client is cold until read authentication establishes its
+/// account binding. Do not ask capture() to prove that binding first.
+Future<T> prepareWindowsChatSourceAuthentication<T>({
+  required Object client,
+  required Object? Function() readActiveClient,
+  required Future<void> Function() ensure,
+  required Future<T?> Function() capture,
+}) async {
+  if (!identical(client, readActiveClient())) {
+    throw StateError('backend_windows_chat_source_binding_changed');
+  }
+  await ensure();
+  if (!identical(client, readActiveClient())) {
+    throw StateError('backend_windows_chat_source_binding_changed');
+  }
+  final auth = await capture();
+  if (auth == null || !identical(client, readActiveClient())) {
+    throw StateError('backend_windows_chat_source_auth_missing');
+  }
+  return auth;
+}
+
+String safeWindowsChatSourceFailure(Object error) {
+  const safe = {
+    'backend_windows_chat_source_request_invalid',
+    'backend_windows_chat_source_auth_missing',
+    'backend_windows_chat_source_binding_changed',
+    'backend_windows_chat_source_result_mismatch',
+    'backend_windows_chat_source_projection_changed',
+    'backend_windows_chat_source_requires_idle',
+  };
+  return error is StateError && safe.contains(error.message)
+      ? error.message
+      : 'backend_windows_chat_source_observation_failed';
+}
+
 /// Closed classifications only. No identities, handles or plaintext are
 /// returned, even when the canonical payload contains them in transient memory.
 Map<String, Object?> summarizeWindowsChatSource(
@@ -128,6 +173,7 @@ Future<Map<String, Object?>> inspectWindowsChatSource({
   required Map<String, Object?> request,
   required Object? Function() readActiveClient,
   required Future<void> Function() requireIdle,
+  required void Function(String stage) onStage,
 }) async {
   if (!validWindowsChatSourceRequest(request)) {
     throw StateError('backend_windows_chat_source_request_invalid');
@@ -137,58 +183,10 @@ Future<Map<String, Object?>> inspectWindowsChatSource({
     nativeAuthBinding: FrbCloudSyncNativeAuthBinding(),
     privateStorageDirectory: profile,
   );
-  final auth = await provider.capture();
-  if (auth == null ||
-      auth.cloudMessagesClient
-          is! rustlib.ArcCloudMessagesClientDefaultAnisetteProvider) {
+  final client = readActiveClient();
+  if (client is! rustlib.ArcCloudMessagesClientDefaultAnisetteProvider) {
     throw StateError('backend_windows_chat_source_auth_missing');
   }
-  final scope = CloudSyncScope(
-    accountFingerprint: auth.accountFingerprint,
-    container: 'com.apple.messages.cloud',
-    database: 'private',
-    zone: 'chatManateeZone',
-    persistenceLane: CloudSyncPersistenceLane.semantic,
-  );
-  CloudInboxChangeEntity source() {
-    final row = store.box<CloudInboxChangeEntity>().get(
-      request['rowId']! as int,
-    );
-    if (row == null ||
-        row.scopeKey != cloudSyncPersistentScopeKey(scope) ||
-        row.accountFingerprint != auth.accountFingerprint ||
-        row.zone != scope.zone ||
-        row.generation != request['generation'] ||
-        row.fetchSequence != request['sequence'] ||
-        row.changeIdHash != request['changeIdHash'] ||
-        row.serverRecordIdHash != request['recordIdHash'] ||
-        row.etagHash != request['etagHash'] ||
-        row.payloadSha256 != request['payloadSha256'] ||
-        row.encryptedPayloadRef == null ||
-        _sha(row.encryptedPayloadRef!) != request['referenceSha256'] ||
-        row.changeType != 'save' ||
-        row.isTombstone) {
-      throw StateError('backend_windows_chat_source_binding_changed');
-    }
-    return row;
-  }
-
-  final original = jsonEncode(source().toMapForChatSourceInspection());
-  final counts = [
-    store.box<Chat>().count(),
-    store.box<Message>().count(),
-    store.box<Attachment>().count(),
-    store.box<CloudOutboxOperationEntity>().count(),
-  ];
-  Future<void> validate() async {
-    await requireIdle();
-    if (store.isClosed() ||
-        !auth.sameIdentity(await provider.capture()) ||
-        jsonEncode(source().toMapForChatSourceInspection()) != original) {
-      throw StateError('backend_windows_chat_source_binding_changed');
-    }
-  }
-
   final binding = FrbCloudSyncNativeAuthBinding();
   final interlock = CloudKitOperationInterlock(
     privateStorageDirectory: profile,
@@ -197,11 +195,71 @@ Future<Map<String, Object?>> inspectWindowsChatSource({
       protector: RustCloudSyncProtector(storageDirectory: profile),
     ),
   );
-  // The existing identity session tolerates a preserved queued outbox. Its
-  // v2ReadWrite lock is exclusion only; this callback has no write operation.
+  // This is the existing account-bound identity-read exclusion, with no save,
+  // upload, staging or IDS operation supplied to the callback.
   return interlock.runExclusive(
     kind: CloudKitOperationKind.v2ReadWrite,
     action: () async {
+      onStage('auth-prepare');
+      final auth = await prepareWindowsChatSourceAuthentication(
+        client: client,
+        readActiveClient: readActiveClient,
+        ensure: () => binding.ensureReadAuthentication(
+          cloudMessagesClient: client,
+          privateStorageDirectory: profile,
+        ),
+        capture: provider.capture,
+      );
+      onStage('auth-bound');
+      final scope = CloudSyncScope(
+        accountFingerprint: auth.accountFingerprint,
+        container: 'com.apple.messages.cloud',
+        database: 'private',
+        zone: 'chatManateeZone',
+        persistenceLane: CloudSyncPersistenceLane.semantic,
+      );
+      CloudInboxChangeEntity source() {
+        final row = store.box<CloudInboxChangeEntity>().get(
+          request['rowId']! as int,
+        );
+        if (row == null ||
+            row.scopeKey != cloudSyncPersistentScopeKey(scope) ||
+            row.accountFingerprint != auth.accountFingerprint ||
+            row.zone != scope.zone ||
+            row.generation != request['generation'] ||
+            row.fetchSequence != request['sequence'] ||
+            row.changeIdHash != request['changeIdHash'] ||
+            row.serverRecordIdHash != request['recordIdHash'] ||
+            row.etagHash != request['etagHash'] ||
+            row.payloadSha256 != request['payloadSha256'] ||
+            row.encryptedPayloadRef == null ||
+            _sha(row.encryptedPayloadRef!) != request['referenceSha256'] ||
+            row.changeType != 'save' ||
+            row.isTombstone) {
+          throw StateError('backend_windows_chat_source_binding_changed');
+        }
+        return row;
+      }
+
+      final original = jsonEncode(source().toMapForChatSourceInspection());
+      final counts = [
+        store.box<Chat>().count(),
+        store.box<Message>().count(),
+        store.box<Attachment>().count(),
+        store.box<CloudOutboxOperationEntity>().count(),
+      ];
+      Future<void> validate() async {
+        await requireIdle();
+        if (store.isClosed() ||
+            !auth.sameIdentity(await provider.capture()) ||
+            jsonEncode(source().toMapForChatSourceInspection()) != original) {
+          throw StateError('backend_windows_chat_source_binding_changed');
+        }
+      }
+
+      // The existing identity session tolerates a preserved queued outbox. Its
+      // v2ReadWrite lock is exclusion only; this callback has no write operation.
+      onStage('read-window');
       final session = CloudSyncWriteChatIdentitySession(
         exclusion: interlock,
         nativePause: FrbCloudSyncNativeWriterPause(),
@@ -218,6 +276,7 @@ Future<Map<String, Object?>> inspectWindowsChatSource({
       );
       final result = await session.run((token) async {
         final row = source();
+        onStage('decode-started');
         final decoded = await api.cloudSyncDecodeProtectedChange(
           cloudMessagesClient:
               auth.cloudMessagesClient
@@ -255,8 +314,11 @@ Future<Map<String, Object?>> inspectWindowsChatSource({
                         api.CloudSyncTransientMutationKind.upsert)) {
           throw StateError('backend_windows_chat_source_result_mismatch');
         }
-        return summarizeWindowsChatSource(decoded);
+        final summary = summarizeWindowsChatSource(decoded);
+        onStage('decode-finished');
+        return summary;
       });
+      onStage('read-released');
       await validate();
       final after = [
         store.box<Chat>().count(),
@@ -269,6 +331,7 @@ Future<Map<String, Object?>> inspectWindowsChatSource({
       }
       return {
         'schema': 1,
+        'completed': true,
         'rowId': request['rowId'],
         'generation': request['generation'],
         'sequence': request['sequence'],

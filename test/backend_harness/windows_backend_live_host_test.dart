@@ -79,7 +79,8 @@ final class WindowsBackendHostFiles {
 
   void requireFreshLaunch() {
     for (final suffix in ['json', 'stop', 'closed.json', 'recovery.json',
-      'chat-source.json', 'chat-source-started.json', 'chat-source-result.json']) {
+      'chat-source.json', 'chat-source-started.json', 'chat-source-result.json',
+      for (final stage in windowsChatSourceInspectionStages) 'chat-source-$stage.json']) {
       if (FileSystemEntity.typeSync(_file(suffix).path, followLinks: false) !=
           FileSystemEntityType.notFound) {
         throw StateError('backend_windows_launch_consumed');
@@ -198,6 +199,18 @@ final class WindowsBackendHostFiles {
     }
     _writeNew('chat-source-result.json', {
       'launchId': launchId, 'source': source, 'pid': ownerPid, ...result,
+    });
+  }
+
+  void publishChatSourceStage(String source, int ownerPid, String stage) {
+    _requireReadyOwner(source, ownerPid);
+    if (!_chatSourceInspectionConsumed ||
+        !windowsChatSourceInspectionStages.contains(stage)) {
+      throw StateError('backend_windows_chat_source_stage_invalid');
+    }
+    _writeNew('chat-source-$stage.json', {
+      'schema': 1, 'launchId': launchId, 'source': source, 'pid': ownerPid,
+      'stage': stage, 'rawContentExposed': false,
     });
   }
 
@@ -504,11 +517,26 @@ void main() {
                 throw StateError('backend_windows_chat_source_requires_idle');
               }
             }
-            final result = await inspectWindowsChatSource(
-              store: Database.store, profile: profile.path, request: sourceRequest,
-              readActiveClient: () => service.state?.icloudServices?.cloudMessagesClient,
-              requireIdle: requireIdle);
-            files.publishChatSourceInspection(BackendHarnessGate.source, pid, result);
+            var stage = 'requested';
+            try {
+              final result = await inspectWindowsChatSource(
+                store: Database.store, profile: profile.path, request: sourceRequest,
+                readActiveClient: () => service.state?.icloudServices?.cloudMessagesClient,
+                requireIdle: requireIdle,
+                onStage: (next) {
+                  files.publishChatSourceStage(BackendHarnessGate.source, pid, next);
+                  stage = next;
+                });
+              files.publishChatSourceInspection(BackendHarnessGate.source, pid, result);
+            } catch (error) {
+              files.publishChatSourceInspection(BackendHarnessGate.source, pid, {
+                'schema': 1, 'completed': false, 'rowId': sourceRequest['rowId'],
+                'generation': sourceRequest['generation'], 'sequence': sourceRequest['sequence'],
+                'lastStage': stage, 'failure': safeWindowsChatSourceFailure(error),
+                'rawContentExposed': false,
+              });
+              rethrow; // Preserve native ownership; failure is not a close grant.
+            }
           }
           await Future<void>.delayed(const Duration(milliseconds: 250));
         }

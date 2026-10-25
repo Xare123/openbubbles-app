@@ -81,6 +81,12 @@ void main() {
     expect(controls.takeChatSourceInspection(source, 42), sourceRequest());
     expect(control('chat-source-started.json').existsSync(), isTrue);
     expect(controls.takeChatSourceInspection(source, 42), isNull);
+    expect(() => controls.publishChatSourceStage(source, 42, 'arbitrary-private-data'),
+      throwsStateError);
+    controls.publishChatSourceStage(source, 42, 'auth-prepare');
+    expect(control('chat-source-auth-prepare.json').existsSync(), isTrue);
+    expect(() => controls.publishChatSourceStage(source, 42, 'auth-prepare'),
+      throwsA(isA<FileSystemException>()));
     controls.publishChatSourceInspection(source, 42, {'completed': true});
     expect(() => controls.publishChatSourceInspection(source, 42, {'completed': true}),
       throwsA(isA<FileSystemException>()));
