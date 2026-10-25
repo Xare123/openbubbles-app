@@ -18,6 +18,40 @@ api.CloudSyncNativeAuthMetadata identity({
 
 void main() {
   test(
+    'resource status exposes fixed rejection and retry facts without its native error',
+    () {
+      final rejected = BackendHarnessAccount.registrationObservation(
+        const api.RegisterState.failed(
+          error: 'Registration Error Bad authentication (6005) private-account',
+        ),
+      );
+      expect(rejected, {
+        'registration_ready': false,
+        'registration_resource_failed': true,
+        'registration_rejected': true,
+        'registration_retry_available': false,
+      });
+      final retryable = BackendHarnessAccount.registrationObservation(
+        api.RegisterState.failed(
+          error: 'private transport details',
+          retryWait: BigInt.from(30),
+        ),
+      );
+      expect(retryable['registration_retry_available'], true);
+      expect(retryable['registration_rejected'], false);
+      expect(
+        BackendHarnessPayload(flags: rejected).toJson().toString(),
+        isNot(contains('private-account')),
+      );
+      expect(
+        BackendHarnessAccount.registrationObservation(
+          const api.RegisterState.registering(),
+        )['registration_resource_failed'],
+        false,
+      );
+    },
+  );
+  test(
     'registration rejection is a fixed diagnostic with retained uncertainty',
     () {
       final error = BackendHarnessAccount.classifyRegistrationFailure(

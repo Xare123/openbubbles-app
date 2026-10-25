@@ -409,12 +409,20 @@ final class BackendHarnessAccount implements SetupInteractionPort {
       phase: phase,
       flags: {
         'native_client_present': true,
-        'registration_ready': registered,
+        ...registrationObservation(registration),
         'native_identity_available': validIdentity,
         'setup_finished': ss.settings.finishedSetup.value,
       },
     );
   }
+
+  static Map<String, bool> registrationObservation(api.RegisterState state) => {
+    'registration_ready': state is api.RegisterState_Registered,
+    'registration_resource_failed': state is api.RegisterState_Failed,
+    'registration_rejected': state is api.RegisterState_Failed &&
+        classifyRegistrationFailure(state.error)?.code == 'backend_registration_rejected',
+    'registration_retry_available': state is api.RegisterState_Failed && state.retryWait != null,
+  };
 
   static bool validCachedIdentity(api.CloudSyncNativeAuthMetadata identity) =>
       RegExp(r'^[A-Za-z0-9_-]{43}$').hasMatch(identity.nativeSessionId) &&
