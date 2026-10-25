@@ -14,11 +14,15 @@ final class CloudSyncFreshGroupRecoveryCoordinator {
     required this.store,
     required this.transport,
     required this.ensureProtectedStoreRecovered,
+    required this.verifyRecoveredReceipts,
   });
 
   final ObjectBoxCloudSyncStore store;
   final CloudSyncFreshGroupRecoveryStagingTransport transport;
   final Future<void> Function() ensureProtectedStoreRecovered;
+  /// Strict native recovery after exact restoration and durable lease adoption.
+  /// Failure preserves the adopted audit/leases and grants no remote dispatch.
+  final Future<void> Function() verifyRecoveredReceipts;
 
   Future<CloudOutboxOperation> recover(
     CloudSyncScope scope, {
@@ -40,7 +44,10 @@ final class CloudSyncFreshGroupRecoveryCoordinator {
       ),
       accountFingerprint: scope.accountFingerprint,
     );
-    if (existing != null) return existing;
+    if (existing != null) {
+      await verifyRecoveredReceipts();
+      return existing;
+    }
     final claim = await authFence.run(
       () => store.captureFreshGroupChatRecovery(
         scope,
@@ -79,6 +86,7 @@ final class CloudSyncFreshGroupRecoveryCoordinator {
         stage.leaseReference,
         stage.protectedEnvelopeReference,
       );
+      await verifyRecoveredReceipts();
       return operation;
     } catch (_) {
       if (!adopted) {

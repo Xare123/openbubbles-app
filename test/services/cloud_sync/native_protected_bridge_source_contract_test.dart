@@ -936,6 +936,8 @@ void main() {
       '_cloudSyncV2LocalSourceOperations.run(validate: validate',
       'kind: CloudKitOperationKind.v2ReadWrite', 'CloudSyncLocalSendAuthFence(',
       'owner.owner != CloudKitWriterOwner.v2', 'CloudSyncWriteChatIdentitySession(',
+      'await lifecycle.ensureRecoveredBeforeFetch()',
+      'verifyRecoveredReceipts: () async',
       'await lifecycle.ensureRecoveredBeforeWrite()',
       'await session.run<void>((_) async {})',
       'CloudSyncFreshGroupRecoveryCoordinator(',

@@ -152,14 +152,20 @@ final class BackendHarnessController {
               backendHarnessValidFreshGroupRecovery(args) &&
               args['retainedRecoveryOwner'] == retainedRecoveryOwner,
           handler: (args) async {
-            final operation = await pushService.recoverCloudSyncV2BackendFreshGroupChat(
-              operationId: args['operationId']! as String,
-              chatId: args['chatId']! as int, intentId: args['intentId']! as int,
-            );
-            return BackendHarnessPayload(flags: {
-              'group_recovery_ready': operation.status == CloudOutboxStatus.pending,
-              'group_recovery_record_retained': true,
-            });
+            try {
+              final operation = await pushService.recoverCloudSyncV2BackendFreshGroupChat(
+                operationId: args['operationId']! as String,
+                chatId: args['chatId']! as int, intentId: args['intentId']! as int,
+              );
+              return BackendHarnessPayload(flags: {
+                'group_recovery_ready': operation.status == CloudOutboxStatus.pending,
+                'group_recovery_record_retained': true,
+              });
+            } catch (error) {
+              // Keep uncertainOnFailure: diagnostic categories never authorize
+              // a retry or assert that the original operation was unmodified.
+              throw BackendHarnessFailure(backendHarnessFreshGroupRecoveryFailureCode(error));
+            }
           },
         ),
         'fixture.inspect': BackendHarnessOperation(

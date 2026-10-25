@@ -194,10 +194,6 @@ pub(crate) fn stage_recovered_fresh_group_chat_exact(
     if original.protected_server_record_reference != original.protected_payload_reference {
         return Err(Failure::BindingMismatch);
     }
-    crate::cloud_sync_native_fetch::cloud_sync_verify_committed_lease_exact(
-        storage_directory.clone(), &original.lease_reference,
-        std::slice::from_ref(&original.protected_payload_reference),
-    ).map_err(|_| Failure::ProtectedStorage)?;
     let (chat, record_name) = open_staged_outbound_chat(
         storage_directory.clone(), account_fingerprint.clone(),
         &original.protected_payload_reference, &original.payload_sha256,
@@ -218,6 +214,13 @@ pub(crate) fn stage_recovered_fresh_group_chat_exact(
     {
         return Err(Failure::BindingMismatch);
     }
+    // Authenticate every payload/record/logical binding before repairing local
+    // receipt metadata. The retained file's content-addressed owner header
+    // independently proves that this is its original lease ID.
+    crate::cloud_sync_native_fetch::cloud_sync_restore_exact_outbound_chat_lease_receipt(
+        storage_directory.clone(), &account_fingerprint, &original.lease_reference,
+        &original.protected_payload_reference, &URL_SAFE_NO_PAD.encode(&encoded),
+    ).map_err(|_| Failure::ProtectedStorage)?;
     stage_encoded_chat(
         storage_directory, account_fingerprint, &chat.guid, &record_name, &encoded,
         ChatEnvelopePurpose::FreshGroup,
@@ -970,6 +973,143 @@ mod tests {
         assert!(matches!(stage_recovered_fresh_group_chat_exact(
             directory.path().into(), "B".repeat(43), &old, &source,
         ), Err(Failure::ProtectedStorage)));
+    }
+
+    fn committed_legacy_group(
+        directory: &std::path::Path, account: &str, source: &CloudChat,
+    ) -> NativeProtectedOutboundStage {
+        let old = stage_outbound_historical_group_chat(
+            directory.into(), account.to_owned(), source.clone(),
+        ).unwrap();
+        crate::cloud_sync_native_fetch::cloud_sync_commit_protected_page_lease(
+            directory.into(), &old.lease_reference,
+            std::slice::from_ref(&old.protected_payload_reference),
+        ).unwrap();
+        old
+    }
+
+    fn receipt_path(directory: &std::path::Path, lease: &str) -> PathBuf {
+        directory.join("cloud_sync_v2_native_store").join(".committed-leases")
+            .join(format!(".lease-{}.receipt", lease.strip_prefix("obcs2.lease.").unwrap()))
+    }
+
+    #[test]
+    fn exact_fresh_group_recovery_restores_missing_original_receipt_without_replacing_payload() {
+        let directory = tempfile::tempdir().unwrap();
+        let account = "A".repeat(43);
+        let source = group_fixture();
+        let old = committed_legacy_group(directory.path(), &account, &source);
+        let blob = directory.path().join("cloud_sync_v2_native_store").join(format!(
+            "{}.protected", old.protected_payload_reference.strip_prefix("obcs2.ref.").unwrap()));
+        let original_bytes = std::fs::read(&blob).unwrap();
+        let (_, original_record) = open_staged_outbound_chat(
+            directory.path().into(), account.clone(), &old.protected_payload_reference,
+            &old.payload_sha256, &old.server_record_id_hash,
+        ).unwrap();
+        crate::cloud_sync_native_fetch::cloud_sync_acknowledge_committed_page_lease(
+            directory.path().into(), &old.lease_reference,
+        ).unwrap();
+        assert!(!receipt_path(directory.path(), &old.lease_reference).exists());
+        let recovered = stage_recovered_fresh_group_chat_exact(
+            directory.path().into(), account.clone(), &old, &source,
+        ).unwrap();
+        assert_eq!(std::fs::read(&blob).unwrap(), original_bytes);
+        assert_eq!(recovered.payload_sha256, old.payload_sha256);
+        assert_eq!(recovered.server_record_id_hash, old.server_record_id_hash);
+        assert_eq!(recovered.logical_entity_key_hash, old.logical_entity_key_hash);
+        assert_ne!(recovered.lease_reference, old.lease_reference);
+        crate::cloud_sync_native_fetch::cloud_sync_verify_committed_lease_exact(
+            directory.path().into(), &old.lease_reference,
+            std::slice::from_ref(&old.protected_payload_reference),
+        ).unwrap();
+        crate::cloud_sync_native_fetch::cloud_sync_commit_protected_page_lease(
+            directory.path().into(), &recovered.lease_reference,
+            std::slice::from_ref(&recovered.protected_payload_reference),
+        ).unwrap();
+        crate::cloud_sync_native_fetch::cloud_sync_verify_committed_lease_exact(
+            directory.path().into(), &recovered.lease_reference,
+            std::slice::from_ref(&recovered.protected_payload_reference),
+        ).unwrap();
+        let (_, same_record) = open_staged_fresh_group_chat(
+            directory.path().into(), account, &recovered.protected_payload_reference,
+            &recovered.payload_sha256, &recovered.server_record_id_hash,
+        ).unwrap();
+        assert_eq!(same_record, original_record);
+    }
+
+    #[test]
+    fn exact_fresh_group_recovery_missing_receipt_rejects_changed_source_before_restoration() {
+        let directory = tempfile::tempdir().unwrap();
+        let account = "A".repeat(43);
+        let source = group_fixture();
+        let mut old = committed_legacy_group(directory.path(), &account, &source);
+        crate::cloud_sync_native_fetch::cloud_sync_acknowledge_committed_page_lease(
+            directory.path().into(), &old.lease_reference,
+        ).unwrap();
+        let receipt = receipt_path(directory.path(), &old.lease_reference);
+        let mut changed = source.clone();
+        changed.display_name = Some("changed".into());
+        assert!(matches!(stage_recovered_fresh_group_chat_exact(
+            directory.path().into(), account.clone(), &old, &changed,
+        ), Err(Failure::BindingMismatch)));
+        assert!(!receipt.exists());
+        old.payload_length += 1;
+        assert!(matches!(stage_recovered_fresh_group_chat_exact(
+            directory.path().into(), account.clone(), &old, &source,
+        ), Err(Failure::BindingMismatch)));
+        old.payload_length -= 1;
+        assert!(!receipt.exists());
+        old.logical_entity_key_hash = "X".repeat(43);
+        assert!(matches!(stage_recovered_fresh_group_chat_exact(
+            directory.path().into(), account.clone(), &old, &source,
+        ), Err(Failure::BindingMismatch)));
+        assert!(!receipt.exists());
+        assert!(stage_recovered_fresh_group_chat_exact(
+            directory.path().into(), "B".repeat(43), &old, &source,
+        ).is_err());
+        assert!(!receipt.exists());
+    }
+
+    #[test]
+    fn exact_fresh_group_recovery_cannot_rebind_the_owner_in_the_protected_file() {
+        let directory = tempfile::tempdir().unwrap();
+        let account = "A".repeat(43);
+        let source = group_fixture();
+        let mut old = committed_legacy_group(directory.path(), &account, &source);
+        let original_lease = old.lease_reference.clone();
+        crate::cloud_sync_native_fetch::cloud_sync_acknowledge_committed_page_lease(
+            directory.path().into(), &original_lease,
+        ).unwrap();
+        let other = if original_lease == format!("obcs2.lease.{}", "f".repeat(32)) { "e" } else { "f" };
+        old.lease_reference = format!("obcs2.lease.{}", other.repeat(32));
+        assert!(matches!(stage_recovered_fresh_group_chat_exact(
+            directory.path().into(), account, &old, &source,
+        ), Err(Failure::ProtectedStorage)));
+        assert!(!receipt_path(directory.path(), &original_lease).exists());
+        assert!(!receipt_path(directory.path(), &old.lease_reference).exists());
+    }
+
+    #[test]
+    fn exact_fresh_group_recovery_never_overwrites_partial_or_rebound_receipts() {
+        let directory = tempfile::tempdir().unwrap();
+        let account = "A".repeat(43);
+        let source = group_fixture();
+        let old = committed_legacy_group(directory.path(), &account, &source);
+        let receipt = receipt_path(directory.path(), &old.lease_reference);
+        // Only synthetic fixtures are changed. Production restoration never
+        // removes, replaces, or repairs an extant ambiguous receipt.
+        std::fs::write(&receipt, b"partial receipt").unwrap();
+        assert!(matches!(stage_recovered_fresh_group_chat_exact(
+            directory.path().into(), account.clone(), &old, &source,
+        ), Err(Failure::ProtectedStorage)));
+        assert_eq!(std::fs::read(&receipt).unwrap().as_slice(), b"partial receipt");
+        let other = committed_legacy_group(directory.path(), &account, &source);
+        let other_bytes = std::fs::read(receipt_path(directory.path(), &other.lease_reference)).unwrap();
+        std::fs::write(&receipt, &other_bytes).unwrap();
+        assert!(matches!(stage_recovered_fresh_group_chat_exact(
+            directory.path().into(), account, &old, &source,
+        ), Err(Failure::ProtectedStorage)));
+        assert_eq!(std::fs::read(&receipt).unwrap(), other_bytes);
     }
 
     #[test]

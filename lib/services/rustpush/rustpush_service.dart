@@ -8931,8 +8931,16 @@ class RustPushService extends GetxService {
           return await CloudSyncFreshGroupRecoveryCoordinator(store: durable, transport: transport,
             ensureProtectedStoreRecovered: () async {
               await validateAuth();
-              await lifecycle.ensureRecoveredBeforeWrite();
+              // Local exact restoration must be able to inspect the missing
+              // legacy receipt. Remote dispatch still requires strict recovery
+              // after both original and replacement receipts are durable.
+              await lifecycle.ensureRecoveredBeforeFetch();
               await session.run<void>((_) async {});
+              await validateAuth();
+            },
+            verifyRecoveredReceipts: () async {
+              await validateAuth();
+              await lifecycle.ensureRecoveredBeforeWrite();
               await validateAuth();
             },
           ).recover(scope, operationId: operationId, chatId: chatId, intentId: intentId,

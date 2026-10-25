@@ -1198,6 +1198,87 @@ impl PlatformCloudNativeProtectedStore {
         self.verify_committed_lease_exact_unlocked(lease, retained_references)
     }
 
+    /// Restore local crash metadata only after the caller has proved the exact
+    /// legacy group payload. The content-addressed protected file itself binds
+    /// its original lease owner, even though mutable Dart lease fields do not.
+    fn restore_exact_outbound_chat_lease_receipt(
+        &self,
+        account_fingerprint: &str,
+        lease: &CloudNativePageLease,
+        reference: &CloudCanonicalProtectedReference,
+        expected_value: &str,
+    ) -> Result<(), CloudNativeStoreFailure> {
+        if !is_bare_digest(account_fingerprint) || expected_value.is_empty() {
+            return Err(CloudNativeStoreFailure::InvalidReference);
+        }
+        let _guard = Self::operation_guard()?;
+        if self.lease_path(lease)?.try_exists().map_err(|_| CloudNativeStoreFailure::Io)? {
+            return Err(CloudNativeStoreFailure::InvalidReference);
+        }
+        let path = self.reference_path(reference)?;
+        let bytes = fs::read(&path).map_err(|_| CloudNativeStoreFailure::InvalidReference)?;
+        if bytes.is_empty() || bytes.len() > MAX_PROTECTED_FILE_BYTES
+            || !Self::reference_file_matches(reference, &bytes)
+        {
+            return Err(CloudNativeStoreFailure::InvalidReference);
+        }
+        let newline = bytes.iter().position(|b| *b == b'\n')
+            .ok_or(CloudNativeStoreFailure::InvalidReference)?;
+        let owner = std::str::from_utf8(&bytes[..newline])
+            .map_err(|_| CloudNativeStoreFailure::InvalidReference)?;
+        let token = lease.value().strip_prefix("obcs2.lease.")
+            .ok_or(CloudNativeStoreFailure::InvalidReference)?;
+        if owner != format!("OBCS2-LEASE:{token}") {
+            return Err(CloudNativeStoreFailure::InvalidReference);
+        }
+        let ciphertext = std::str::from_utf8(&bytes[newline + 1..])
+            .map_err(|_| CloudNativeStoreFailure::InvalidReference)?;
+        let scope = CloudNativeProtectionScope::new(account_fingerprint.to_owned(), CloudNativeStream::Chats)
+            .map_err(|_| CloudNativeStoreFailure::InvalidReference)?;
+        let value = cloud_sync_protector::unprotect(
+            self.storage_directory.to_string_lossy().into_owned(),
+            scope.account_fingerprint, scope.container, scope.database, scope.zone,
+            scope.stream_kind, scope.schema_version,
+            CloudNativeProtectionPurpose::OutboundChat.value().to_owned(), ciphertext.to_owned(),
+        ).map_err(Self::map_protection_error)?;
+        if value != expected_value {
+            return Err(CloudNativeStoreFailure::InvalidReference);
+        }
+        let retained = HashSet::from([reference.value().to_owned()]);
+        let receipt_path = self.committed_lease_path(lease)?;
+        if receipt_path.try_exists().map_err(|_| CloudNativeStoreFailure::Io)? {
+            // A corrupt, partial or differently bound receipt is never replaced.
+            return self.verify_committed_lease_exact_unlocked(lease, &retained);
+        }
+        if fs::read(&path).map_err(|_| CloudNativeStoreFailure::InvalidReference)? != bytes
+            || self.lease_path(lease)?.try_exists().map_err(|_| CloudNativeStoreFailure::Io)?
+        {
+            return Err(CloudNativeStoreFailure::InvalidReference);
+        }
+        let committed_directory = self.committed_lease_directory()?;
+        let temporary_directory = self.temporary_directory()?;
+        fs::create_dir_all(&committed_directory).map_err(|_| CloudNativeStoreFailure::Io)?;
+        fs::create_dir_all(&temporary_directory).map_err(|_| CloudNativeStoreFailure::Io)?;
+        let body = format!("OBCS2-COMMITTED-LEASE|1\n{}|{}\n",
+            reference.value().trim_start_matches("obcs2.ref."), sha256_hex(&bytes));
+        let temporary = temporary_directory.join(format!(".tmp-commit-{}.receipt", Uuid::new_v4()));
+        OpenOptions::new().create_new(true).write(true).open(&temporary)
+            .and_then(|mut file| { file.write_all(body.as_bytes())?; file.sync_all() })
+            .map_err(|_| CloudNativeStoreFailure::Io)?;
+        // Publish a complete receipt atomically without replacing an extant
+        // path. Rename can overwrite on Unix, so restoration uses create-only
+        // hard-link publication on the same protected-store filesystem.
+        match fs::hard_link(&temporary, &receipt_path) {
+            Ok(()) => {},
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {},
+            Err(_) => return Err(CloudNativeStoreFailure::Io),
+        }
+        Self::sync_directory(&committed_directory)?;
+        fs::remove_file(&temporary).map_err(|_| CloudNativeStoreFailure::Io)?;
+        Self::sync_directory(&temporary_directory)?;
+        self.verify_committed_lease_exact_unlocked(lease, &retained)
+    }
+
     fn repair_committed_mutation_source_lease_receipt(
         &self,
         claim: &CloudNativeMutationLeaseRepairClaim,
@@ -4879,6 +4960,23 @@ pub(crate) fn cloud_sync_verify_committed_lease_exact(
     let retained = parse_protected_reference_set(retained_references)?;
     PlatformCloudNativeProtectedStore::new(storage_directory)
         .verify_committed_lease_exact(&lease, &retained)
+        .map_err(map_store_failure)
+}
+
+/// Private local receipt restoration; the group converter authenticates the
+/// full expected payload before calling. No account/save authority is granted.
+pub(crate) fn cloud_sync_restore_exact_outbound_chat_lease_receipt(
+    storage_directory: PathBuf,
+    account_fingerprint: &str,
+    lease_reference: &str,
+    protected_reference: &str,
+    expected_value: &str,
+) -> Result<(), CloudNativeFetchFailure> {
+    let lease = CloudNativePageLease::parse(lease_reference)?;
+    let reference = CloudCanonicalProtectedReference::new(protected_reference.to_owned())
+        .map_err(|_| map_store_failure(CloudNativeStoreFailure::InvalidReference))?;
+    PlatformCloudNativeProtectedStore::new(storage_directory)
+        .restore_exact_outbound_chat_lease_receipt(account_fingerprint, &lease, &reference, expected_value)
         .map_err(map_store_failure)
 }
 

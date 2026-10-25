@@ -1,4 +1,25 @@
 import 'package:bluebubbles/database/models.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_models.dart';
+
+/// A fixed private diagnostic vocabulary. Raw native errors never enter replies;
+/// classification does not establish whether a local recovery was adopted.
+String backendHarnessFreshGroupRecoveryFailureCode(Object error) {
+  final safeCode = error is CloudSyncFailure ? error.safeCode :
+      error is StateError ? error.message : null;
+  return const {
+    'protected_outbound_lease_missing': 'backend_group_recovery_receipt_missing',
+    'cloud_sync_fresh_group_recovery_changed': 'backend_group_recovery_binding_changed',
+    'cloud_sync_local_send_chat_binding_changed': 'backend_group_recovery_binding_changed',
+    'cloud_sync_outbound_binding_mismatch': 'backend_group_recovery_binding_changed',
+    'cloud_sync_outbound_invalid_scope': 'backend_group_recovery_binding_changed',
+    'cloud_sync_outbound_native_auth_unavailable': 'backend_group_recovery_auth_unavailable',
+    'cloud_sync_fresh_group_recovery_not_eligible': 'backend_group_recovery_ineligible',
+    'cloud_sync_fresh_group_recovery_origin_invalid': 'backend_group_recovery_ineligible',
+    'cloud_sync_outbound_unsupported_message': 'backend_group_recovery_ineligible',
+    'cloud_sync_fresh_group_recovery_unavailable': 'backend_group_recovery_not_ready',
+    'cloud_sync_outbound_protected_storage': 'backend_group_recovery_protected_storage_failed',
+  }[safeCode] ?? 'backend_job_failed';
+}
 
 /// Explicit Windows writer admission is separate from the read-only host.
 /// This policy grants no native permit or archive consent.

@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_fresh_group_recovery.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_fresh_group_recovery_binding.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_fresh_group_recovery_origin.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_fresh_group_recovery_snapshot.dart';
@@ -15,6 +16,7 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_outbound_gro
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_outbound_staging.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/objectbox_cloud_sync_store.dart';
 import 'package:bluebubbles/src/rust/api/api.dart' as api;
+import 'package:bluebubbles/src/rust/frb_generated.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 // ObjectBox/journal integration using synthetic local data. Native conversion,
@@ -60,6 +62,8 @@ CloudSyncProtectedOutboundStageData _converted({
 final _refusal = throwsA(anyOf(isA<StateError>(), isA<CloudSyncFailure>()));
 
 void main() {
+  setUpAll(() => RustLib.initMock(api: _ChatProtoBridge()));
+  tearDownAll(RustLib.dispose);
   late Directory scratch;
   late Store db;
   late Chat chat;
@@ -137,6 +141,16 @@ void main() {
   CloudOutboxOperation? readRecovered() => durable.readRecoveredFreshGroupChat(
     _scope, operationId: operationId, chatId: chat.id!, intentId: intentId,
   );
+
+  Future<CloudOutboxOperation> recoverWith(
+    _RecoveryStaging transport, {
+    required Future<void> Function() prepare,
+    required Future<void> Function() verify,
+  }) => CloudSyncFreshGroupRecoveryCoordinator(
+    store: durable, transport: transport,
+    ensureProtectedStoreRecovered: prepare, verifyRecoveredReceipts: verify,
+  ).recover(_scope, operationId: operationId, chatId: chat.id!, intentId: intentId,
+    currentAuth: auth, authFence: fence, now: _time(10));
 
   void validateProof(CloudOutboxOperation operation) {
     final recovery = CloudSyncFreshGroupRecoveryOrigin.decode(row().localChatOrigin!);
@@ -228,6 +242,106 @@ void main() {
       const {'data.mdb', 'lock.mdb'}.contains(file.path.replaceAll('\\', '/').split('/').last)), isTrue);
     for (final file in files) { await file.delete(); }
     await scratch.delete();
+  });
+
+  test('coordinator verifies strict receipts after exact restoration and commit', () async {
+    final original = await legacy();
+    var oldReceiptPresent = false;
+    var newReceiptCommitted = false;
+    final events = <String>[];
+    final transport = _RecoveryStaging(
+      onStage: () { events.add('restore'); oldReceiptPresent = true; },
+      onCommit: () {
+        expect(readRecovered(), isNotNull);
+        expect(row().protectedLeaseReference, _newLease);
+        events.add('commit'); newReceiptCommitted = true;
+      },
+    );
+    final result = await recoverWith(transport,
+      prepare: () async { expect(oldReceiptPresent, false); events.add('inspect'); },
+      verify: () async {
+        expect(oldReceiptPresent && newReceiptCommitted, true);
+        validateProof(readRecovered()!);
+        events.add('strict');
+      });
+    expect(result.operationId, original.operationId);
+    expect(result.status, CloudOutboxStatus.pending);
+    expect(events, ['inspect', 'restore', 'commit', 'strict']);
+    expect(transport.rollbacks, 0);
+  });
+
+  test('changed source refuses before any native restoration or strict check', () async {
+    await legacy();
+    final before = persistedState();
+    final transport = _RecoveryStaging();
+    var strictCalls = 0;
+    await expectLater(recoverWith(transport, prepare: () async {
+      message.text = 'changed';
+      message.attributedBody = [AttributedBody.raw('changed')];
+      db.box<Message>().put(message);
+    }, verify: () async { strictCalls++; }), _refusal);
+    expect(transport.stages, 0);
+    expect(transport.commits, 0);
+    expect(transport.rollbacks, 0);
+    expect(strictCalls, 0);
+    expect(persistedState(), before);
+  });
+
+  test('strict failure retains adoption and next observation never restages', () async {
+    await legacy();
+    final transport = _RecoveryStaging();
+    var strictMayPass = false;
+    var strictCalls = 0;
+    Future<void> verify() async {
+      strictCalls++;
+      if (!strictMayPass) {
+        throw CloudSyncFailure(category: CloudFailureCategory.localStorage,
+          safeCode: 'protected_outbound_lease_missing');
+      }
+    }
+    await expectLater(recoverWith(transport, prepare: () async {}, verify: verify), _refusal);
+    expect(readRecovered(), isNotNull);
+    expect(row().state, CloudOutboxStatus.pending.index);
+    expect(transport.commits, 1);
+    expect(transport.rollbacks, 0);
+    final held = persistedState();
+    strictMayPass = true;
+    final observed = await recoverWith(transport, prepare: () async {}, verify: verify);
+    expect(observed.operationId, operationId);
+    expect(transport.stages, 1);
+    expect(transport.commits, 1);
+    expect(transport.rollbacks, 0);
+    expect(strictCalls, 2);
+    expect(persistedState(), held);
+  });
+
+  test('native conversion failure never adopts or checks a replacement receipt', () async {
+    await legacy();
+    final before = persistedState();
+    final transport = _RecoveryStaging(stageFailure: StateError('synthetic_conversion_failure'));
+    var strictCalls = 0;
+    await expectLater(recoverWith(transport, prepare: () async {},
+      verify: () async { strictCalls++; }), _refusal);
+    expect(transport.stages, 1);
+    expect(transport.commits, 0);
+    expect(transport.rollbacks, 0);
+    expect(strictCalls, 0);
+    expect(persistedState(), before);
+  });
+
+  test('commit failure retains adopted audit and never rolls back either owner', () async {
+    await legacy();
+    final transport = _RecoveryStaging(commitFailure: StateError('synthetic_commit_failure'));
+    var strictCalls = 0;
+    await expectLater(recoverWith(transport, prepare: () async {},
+      verify: () async { strictCalls++; }), _refusal);
+    expect(readRecovered(), isNotNull);
+    expect(row().state, CloudOutboxStatus.pending.index);
+    expect(row().protectedLeaseReference, _newLease);
+    expect(transport.commits, 1);
+    expect(transport.rollbacks, 0);
+    expect(strictCalls, 0);
+    validateProof(readRecovered()!);
   });
 
   test('eligible journal-owned legacy6 is atomically recovered without a new identity', () async {
@@ -571,6 +685,59 @@ void main() {
       expect(db.box<CloudOutboxOperationEntity>().count(), 1);
     });
   }
+}
+
+final class _RecoveryStaging implements CloudSyncFreshGroupRecoveryStagingTransport {
+  _RecoveryStaging({this.onStage, this.onCommit, this.stageFailure, this.commitFailure});
+  final void Function()? onStage;
+  final void Function()? onCommit;
+  final Object? stageFailure;
+  final Object? commitFailure;
+  int stages = 0;
+  int commits = 0;
+  int rollbacks = 0;
+  @override
+  Future<T> runOutboundAdmissionExclusive<T>(Future<T> Function() action) => action();
+  @override
+  Future<CloudSyncProtectedOutboundStageData> stageExactFreshGroupChatRecovery(
+    CloudSyncScope scope, {required CloudOutboxOperation previous,
+    required api.CloudSyncNativeAuthMetadata expectedAuth, required api.CloudChat expectedChat}
+  ) async {
+    stages++;
+    expect(previous.status, CloudOutboxStatus.quarantined);
+    expect(previous.encryptedPayloadReference, _oldRef);
+    expect(expectedAuth.accountFingerprint, _scope.accountFingerprint);
+    expect(expectedChat.style, 43);
+    if (stageFailure case final error?) throw error;
+    onStage?.call();
+    return _converted();
+  }
+  @override
+  Future<void> commitOutboundLease(String lease, String reference) async {
+    commits++;
+    expect(lease, _newLease);
+    expect(reference, _newRef);
+    if (commitFailure case final error?) throw error;
+    onCommit?.call();
+  }
+  @override
+  Future<void> rollbackOutboundLease(String lease) async { rollbacks++; }
+  @override
+  Future<CloudSyncProtectedOutboundStageData> stageOutboundMessage(
+    CloudSyncScope scope, {required api.CloudMessage message}
+  ) => throw StateError('no send in exact recovery tests');
+}
+
+final class _ChatProtoBridge implements RustLibApi {
+  @override
+  api.GZipWrapperChatProto crateApiApiEncodeChatproto({required api.ChatProto chat}) => _OpaqueProto();
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+final class _OpaqueProto implements api.GZipWrapperChatProto {
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
 final class _GroupStaging implements CloudSyncOutboundGroupChatStagingTransport {
