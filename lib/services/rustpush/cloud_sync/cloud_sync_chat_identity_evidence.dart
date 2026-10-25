@@ -56,6 +56,7 @@ final class CloudSyncChatIdentityEvidence {
     required CloudSyncNativeAuthSnapshot auth,
     required CloudSyncLocalSendAuthFence authFence,
     required CloudSyncChatIdentityObserver<T> observer,
+    void Function(Map<String, Object?> diagnostic)? onRefused,
   }) async {
     authFence.requireCurrentBinding(auth);
     if (origin.scope.accountFingerprint != auth.accountFingerprint ||
@@ -86,6 +87,7 @@ final class CloudSyncChatIdentityEvidence {
       await authFence.run(validate);
       final result = await observer(readSet, source, stage, origin);
       await authFence.run(validate);
+      final sourceBindingSeen = sourceBindings.contains(result.sourceBindingHash);
       if (result.failureCode != null ||
           result.comparison !=
               native.CloudSyncChatIdentityComparison.disjoint ||
@@ -98,6 +100,28 @@ final class CloudSyncChatIdentityEvidence {
               candidateBinding != result.candidateBindingHash) ||
           (stagedBinding != null &&
               stagedBinding != result.stagedCandidateBindingHash)) {
+        // Closed enums, local row/sequence numbers and equality booleans only.
+        // Reporting failure must never alter the original refusal or coverage.
+        try {
+          onRefused?.call(Map<String, Object?>.unmodifiable({
+            'candidate_kind': origin is CloudSyncOutboundGroupOrigin ? 'fresh_group' : 'other',
+            'candidate_chat_row': origin is CloudSyncLocalChatCreateOrigin ? origin.chatId : null,
+            'source_generation': source.generation,
+            'read_set_generation': readSet.generation,
+            'source_sequence': source.sequence,
+            'comparison': result.comparison?.name,
+            'native_failure': result.failureCode?.name,
+            'native_session_matches': result.nativeSessionId == auth.nativeSessionId,
+            'candidate_binding_valid': _nativeDigest.hasMatch(result.candidateBindingHash ?? ''),
+            'stage_binding_valid': _nativeDigest.hasMatch(result.stagedCandidateBindingHash ?? ''),
+            'source_binding_valid': _nativeDigest.hasMatch(result.sourceBindingHash ?? ''),
+            'source_binding_unique': !sourceBindingSeen,
+            'candidate_binding_consistent': candidateBinding == null || candidateBinding == result.candidateBindingHash,
+            'stage_binding_consistent': stagedBinding == null || stagedBinding == result.stagedCandidateBindingHash,
+          }));
+        } catch (_) {
+          // The diagnostic sink has no authority over this failed observation.
+        }
         throw StateError('cloud_sync_chat_identity_not_disjoint');
       }
       candidateBinding = result.candidateBindingHash;

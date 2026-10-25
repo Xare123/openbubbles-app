@@ -1297,6 +1297,10 @@ final class CloudSyncProductionLocalSendAdapter {
       CloudSyncProtectedOutboundStageData stage,
     ) => identitySession.run((token) => CloudSyncChatIdentityEvidence.observe(
       store: objectBox, origin: origin, stage: stage, auth: auth, authFence: fence,
+      onRefused: (diagnostic) => Logger.info(
+        'Cloud Sync V2 Chat identity refusal ${jsonEncode({
+          ...diagnostic, 'request_generation': diagnostic['source_generation'],
+        })}'),
       observer: (readSet, source, staged, candidateOrigin) async {
         final client = auth.cloudMessagesClient;
         if (client is! frb_lib.ArcCloudMessagesClientDefaultAnisetteProvider) {
@@ -1307,7 +1311,7 @@ final class CloudSyncProductionLocalSendAdapter {
           storageDirectory: _privateStorageDirectory,
           expectedAccountFingerprint: auth.accountFingerprint,
           expectedProtectedStoreIdentity: auth.protectedStoreIdentity,
-          generation: BigInt.from(readSet.generation),
+          generation: BigInt.from(source.generation),
           readSetFenceSha256: readSet.fenceSha256,
           candidate: CloudSyncOutboundChatAdmissionCoordinator.encodeOrigin(candidateOrigin),
           source: identity_api.CloudSyncChatIdentitySourceInput(

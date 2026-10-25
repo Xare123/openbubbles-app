@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:bluebubbles/database/models.dart';
@@ -142,12 +143,14 @@ void main() {
     );
     Future<CloudSyncChatIdentityEvidence?> observe({
       CloudSyncStagedChatIdentityObserver? observer,
+      void Function(Map<String, Object?> diagnostic)? onRefused,
     }) => CloudSyncChatIdentityEvidence.observe(
       store: store,
       origin: origin,
       stage: stage,
       auth: auth,
       authFence: authFence,
+      onRefused: onRefused,
       observer:
           observer ??
           (readSet, source, candidate, local) async => result(source),
@@ -179,14 +182,54 @@ void main() {
     test(
       'complete coverage is ephemeral and does not apply or write anything',
       () async {
-        final evidence = (await observe())!;
+        final diagnostics = <Map<String, Object?>>[];
+        final evidence = (await observe(onRefused: diagnostics.add))!;
         check(evidence);
+        expect(diagnostics, isEmpty);
         expect(evidence.toString(), 'CloudSyncChatIdentityEvidence(redacted)');
         expect(saved().status, CloudInboxStatus.retainedUnprojected.index);
         expect(checkpoint().appliedSequence, 1);
         expect(store.box<CloudOutboxOperationEntity>().count(), 0);
       },
     );
+    test('refusal reports bounded source context without identity or binding values', () async {
+      final diagnostics = <Map<String, Object?>>[];
+      await expectLater(observe(
+        observer: (_, source, __, ___) async => native.CloudSyncChatIdentityResult(
+          comparison: native.CloudSyncChatIdentityComparison.incomplete,
+          failureCode: api.CloudSyncTransientFailureCode.invalidRequest,
+          nativeSessionId: auth.nativeSessionId,
+          candidateBindingHash: hash(950), stagedCandidateBindingHash: hash(951),
+          sourceBindingHash: source.changeIdHash),
+        onRefused: diagnostics.add,
+      ), throwsA(isA<StateError>().having((e) => e.message, 'safe refusal',
+        'cloud_sync_chat_identity_not_disjoint')));
+      final detail = diagnostics.single;
+      expect(detail['source_generation'], saved().generation);
+      expect(detail['read_set_generation'], checkpoint().generation);
+      expect(detail['source_sequence'], saved().fetchSequence);
+      expect(detail['comparison'], 'incomplete');
+      expect(detail['native_failure'], 'invalidRequest');
+      expect(detail['native_session_matches'], true);
+      expect(detail['source_binding_unique'], true);
+      for (final privateValue in [auth.nativeSessionId, auth.accountFingerprint,
+          auth.protectedStoreIdentity, stage.protectedEnvelopeReference,
+          hash(950), hash(951), saved().changeIdHash]) {
+        expect(jsonEncode(detail), isNot(contains(privateValue)));
+      }
+      expect(() => detail.clear(), throwsUnsupportedError);
+      expect(store.box<CloudOutboxOperationEntity>().count(), 0);
+    });
+    test('a failed diagnostic sink cannot change the original identity refusal', () async {
+      await expectLater(observe(
+        observer: (_, __, ___, ____) async => const native.CloudSyncChatIdentityResult(
+          comparison: native.CloudSyncChatIdentityComparison.overlaps),
+        onRefused: (_) => throw StateError('private diagnostic failure'),
+      ), throwsA(isA<StateError>().having((e) => e.message, 'safe refusal',
+        'cloud_sync_chat_identity_not_disjoint')));
+      expect(store.box<CloudOutboxOperationEntity>().count(), 0);
+      expect(checkpoint().appliedSequence, 1);
+    });
     test(
       'an empty saved set needs no exception to applied-save admission',
       () async {
