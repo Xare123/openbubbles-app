@@ -562,6 +562,16 @@ abstract interface class NativeProtectedCloudSyncGroupChatWriteBindings
   });
 }
 
+abstract interface class NativeProtectedCloudSyncFreshGroupRecoveryBindings {
+  Future<frb_api.CloudSyncProtectedOutboundStageResult> stageExactFreshGroupChatRecovery({
+    required Object cloudMessagesClient,
+    required String storageDirectory,
+    required frb_api.CloudSyncNativeAuthMetadata expectedAuth,
+    required frb_api.CloudSyncLegacyGroupChatStage previousStage,
+    required frb_api.CloudChat expectedChat,
+  });
+}
+
 /// Explicit opt-in: existing Message- and Chat-only bindings do not acquire
 /// Attachment authority.
 ///
@@ -828,6 +838,7 @@ final class NativeProtectedCloudSyncTransport
         CloudProtectedMutationLeaseRepairTransport,
         CloudSyncOutboundChatStagingTransport,
         CloudSyncOutboundGroupChatStagingTransport,
+        CloudSyncFreshGroupRecoveryStagingTransport,
         CloudSyncOutboundAttachmentParentStagingTransport,
         CloudSyncMessageUpdateTransport,
         CloudSyncReceivedMessageUpdateTransport,
@@ -1344,6 +1355,62 @@ final class NativeProtectedCloudSyncTransport
         chat: chat,
       ),
     );
+    return _toChatSizedOutboundStageData(result);
+  }
+
+  @override
+  Future<CloudSyncProtectedOutboundStageData> stageExactFreshGroupChatRecovery(
+    CloudSyncScope scope, {
+    required CloudOutboxOperation previous,
+    required frb_api.CloudSyncNativeAuthMetadata expectedAuth,
+    required frb_api.CloudChat expectedChat,
+  }) async {
+    _requireV2WriterInterlock();
+    _validateOutboundChatScope(scope);
+    final bindings = _bindings;
+    if (bindings is! NativeProtectedCloudSyncFreshGroupRecoveryBindings) {
+      throw _readOnlyFailure();
+    }
+    if (previous.scope != scope ||
+        expectedAuth.accountFingerprint != scope.accountFingerprint ||
+        expectedAuth.protectedStoreIdentity != _protectedStoreIdentity ||
+        !_nativeDigestPattern.hasMatch(expectedAuth.nativeSessionId) ||
+        previous.status != CloudOutboxStatus.quarantined ||
+        previous.lastFailure != CloudFailureCategory.cancelled ||
+        previous.appleRequestUuid != null || previous.appleOperationUuid != null ||
+        previous.confirmedAt != null || previous.leaseId != null ||
+        previous.leaseExpiresAt != null || expectedChat.style != 43) {
+      throw _localStorage('cloud_sync_fresh_group_recovery_changed');
+    }
+    final result = await _runProtectedStoreOperation(
+      () => (bindings as NativeProtectedCloudSyncFreshGroupRecoveryBindings)
+          .stageExactFreshGroupChatRecovery(
+        cloudMessagesClient: _cloudMessagesClient, storageDirectory: _storageDirectory,
+        expectedAuth: expectedAuth, expectedChat: expectedChat,
+        previousStage: frb_api.CloudSyncLegacyGroupChatStage(
+          logicalEntityKeyHash: previous.logicalEntityKeyHash,
+          protectedPayloadReference: previous.encryptedPayloadReference!,
+          payloadSha256: previous.payloadSha256!,
+          protectedServerRecordReference: previous.encryptedPayloadReference!,
+          serverRecordIdHash: previous.serverRecordIdHash!,
+          leaseReference: previous.protectedLeaseReference!,
+        ),
+      ),
+    );
+    final stage = _toChatSizedOutboundStageData(result);
+    if (stage.logicalEntityKeyHash != previous.logicalEntityKeyHash ||
+        stage.payloadSha256 != previous.payloadSha256 ||
+        stage.serverRecordIdHash != previous.serverRecordIdHash ||
+        stage.protectedEnvelopeReference == previous.encryptedPayloadReference ||
+        stage.leaseReference == previous.protectedLeaseReference) {
+      throw _localStorage('cloud_sync_fresh_group_recovery_changed');
+    }
+    return stage;
+  }
+
+  CloudSyncProtectedOutboundStageData _toChatSizedOutboundStageData(
+    frb_api.CloudSyncProtectedOutboundStageResult result,
+  ) {
     if ((result.stage == null) == (result.failure == null)) {
       throw _localStorage('cloud_sync_outbound_stage_envelope_invalid');
     }
@@ -4198,6 +4265,7 @@ final class FrbNativeProtectedCloudSyncBindings
         CloudKitWriterChatReconciliationBinding,
         NativeProtectedCloudSyncChatWriteBindings,
         NativeProtectedCloudSyncGroupChatWriteBindings,
+        NativeProtectedCloudSyncFreshGroupRecoveryBindings,
         NativeProtectedCloudSyncAttachmentParentWriteBindings,
         NativeProtectedCloudSyncAttachmentWriteBindings,
         NativeProtectedPreparedReleaseBindings,
@@ -4637,6 +4705,19 @@ final class FrbNativeProtectedCloudSyncBindings
     expectedAccountFingerprint: expectedAccountFingerprint,
     expectedProtectedStoreIdentity: expectedProtectedStoreIdentity,
     chat: chat,
+  );
+
+  @override
+  Future<frb_api.CloudSyncProtectedOutboundStageResult> stageExactFreshGroupChatRecovery({
+    required Object cloudMessagesClient,
+    required String storageDirectory,
+    required frb_api.CloudSyncNativeAuthMetadata expectedAuth,
+    required frb_api.CloudSyncLegacyGroupChatStage previousStage,
+    required frb_api.CloudChat expectedChat,
+  }) => _api.crateApiApiCloudSyncStageExactFreshGroupChatRecovery(
+    cloudMessagesClient: _requireCloudMessagesClient(cloudMessagesClient),
+    storageDirectory: storageDirectory, expectedAuth: expectedAuth,
+    previousStage: previousStage, expectedChat: expectedChat,
   );
 
   @override

@@ -89,6 +89,7 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_background_p
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_background_status.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_profile_readiness.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_source_operations.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_fresh_group_recovery.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_upload_retry_action.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_read_budget.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_pcs_operation.dart';
@@ -8848,6 +8849,104 @@ class RustPushService extends GetxService {
         storage != statePath || _serviceClosing || loggingOut) {
       throw StateError('cloud_sync_automatic_archive_identity_changed');
     }
+  }
+
+  /// Developer host repair of one exact never-submitted group stage. Archive
+  /// stays off. A later writer pass gets new selection and identity evidence.
+  Future<CloudOutboxOperation> recoverCloudSyncV2BackendFreshGroupChat({
+    required String operationId,
+    required int chatId,
+    required int intentId,
+  }) async {
+    final expectedState = state;
+    final client = expectedState?.icloudServices?.cloudMessagesClient;
+    final storage = statePath;
+    final objectBox = Database.store;
+    bool current() => _isolatedWindowsBackendHost && cloudSyncV2AutomaticArchiveVisible &&
+        !backendRegistrationRestartRequired && ss.settings.finishedSetup.value &&
+        client != null && storage.isNotEmpty && !objectBox.isClosed() &&
+        identical(expectedState, state) && identical(objectBox, Database.store) &&
+        identical(client, state?.icloudServices?.cloudMessagesClient) && storage == statePath &&
+        !_serviceClosing && !loggingOut && !_cloudSyncV2OutboundQuiescing &&
+        !cloudSyncV2HistoryReadActive && !cloudSyncV2Progress.active &&
+        !_cloudSyncV2AutomaticArchiveActive && _cloudSyncV2AutomaticArchiveSetting == null &&
+        _cloudSyncV2AutomaticArchiveAdmission == null &&
+        _cloudSyncV2OutboundProvisioningInFlight == null && _cloudSyncV2OutboundInFlight == null &&
+        !ss.settings.cloudSyncingEnabled.value && isSyncing.value == null;
+    void validate() {
+      if (!current()) throw StateError('cloud_sync_fresh_group_recovery_unavailable');
+    }
+    validate();
+    return _cloudSyncV2LocalSourceOperations.run(validate: validate, action: () async {
+      final preference = await readCloudSyncV2AutomaticArchivePreference();
+      validate();
+      if (preference.enabled) throw StateError('cloud_sync_fresh_group_recovery_archive_enabled');
+      final exclusion = _createCloudKitOperationInterlock();
+      return exclusion.runExclusive(kind: CloudKitOperationKind.v2ReadWrite, action: () async {
+        validate();
+        final provider = CloudSyncProductionAuthSnapshotProvider(
+          readActiveClient: () => state?.icloudServices?.cloudMessagesClient,
+          nativeAuthBinding: FrbCloudSyncNativeAuthBinding(), privateStorageDirectory: storage,
+        );
+        final auth = await provider.capture();
+        validate();
+        if (auth == null) throw StateError('cloud_sync_local_send_identity_changed');
+        final authority = ObjectBoxCloudKitWriterAuthority(store: objectBox);
+        final writerScope = CloudKitWriterScope(accountFingerprint: auth.accountFingerprint);
+        final owner = authority.read(writerScope);
+        if (owner == null || owner.owner != CloudKitWriterOwner.v2) {
+          throw StateError('cloud_sync_local_send_owner_required');
+        }
+        final fence = CloudSyncLocalSendAuthFence(expected: auth, capture: provider.capture,
+          stillCurrent: () => current() && authority.read(writerScope)?.epoch == owner.epoch);
+        Future<void> validateAuth() async {
+          await fence.run(() {}, accountFingerprint: auth.accountFingerprint);
+          final saved = await readCloudSyncV2AutomaticArchivePreference();
+          validate();
+          if (saved.enabled) throw StateError('cloud_sync_fresh_group_recovery_archive_enabled');
+        }
+        final journal = CloudSyncLocalSendJournal(store: objectBox, authority: authority,
+          authoritySnapshot: owner, currentAuth: auth);
+        final durable = ObjectBoxCloudSyncStore(store: objectBox, localSendJournal: journal,
+          protector: RustCloudSyncProtector(storageDirectory: storage));
+        final transport = NativeProtectedCloudSyncTransport(
+          cloudMessagesClient: auth.cloudMessagesClient, storageDirectory: storage,
+          protectedStoreIdentity: auth.protectedStoreIdentity,
+          validateMutationAdmission: () => fence.requireCurrentBinding(auth),
+        );
+        final lifecycle = CloudProtectedPageLeaseLifecycle(store: durable, transport: transport);
+        final session = CloudSyncWriteChatIdentitySession(exclusion: exclusion,
+          nativePause: FrbCloudSyncNativeWriterPause(), validate: validateAuth,
+          ensureReadAuthentication: () => FrbCloudSyncNativeAuthBinding().ensureReadAuthentication(
+            cloudMessagesClient: auth.cloudMessagesClient, privateStorageDirectory: storage),
+          warmReadAuthentication: (token) => FrbCloudSyncNativeAuthBinding()
+            .warmReadAuthenticationUnderWriterPause(cloudMessagesClient: auth.cloudMessagesClient,
+              pauseToken: token),
+        );
+        final scope = CloudSyncScope(accountFingerprint: auth.accountFingerprint,
+          container: 'com.apple.messages.cloud', database: 'private', zone: 'chatManateeZone',
+          streamKind: CloudSyncStreamKind.messages, schemaVersion: cloudSyncSchemaVersion,
+          persistenceLane: CloudSyncPersistenceLane.semantic);
+        try {
+          return await CloudSyncFreshGroupRecoveryCoordinator(store: durable, transport: transport,
+            ensureProtectedStoreRecovered: () async {
+              await validateAuth();
+              await lifecycle.ensureRecoveredBeforeWrite();
+              await session.run<void>((_) async {});
+              await validateAuth();
+            },
+          ).recover(scope, operationId: operationId, chatId: chatId, intentId: intentId,
+            currentAuth: auth, authFence: fence, now: DateTime.now().toUtc());
+        } finally {
+          try {
+            await _cloudSyncV2LocalSourceOperations.release(transport.quiesceNativeOperations);
+          } catch (_) {
+            exclusion.poisonUntilProcessRestart();
+            rethrow;
+          }
+        }
+      });
+    });
   }
 
   bool get _cloudSyncV2AutomaticArchiveActive =>

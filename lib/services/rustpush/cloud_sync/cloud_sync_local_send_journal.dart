@@ -15,6 +15,10 @@ import 'cloud_sync_local_mutation_journal.dart'
 import 'cloud_sync_models.dart';
 import 'cloud_sync_outbound_message_dependency.dart';
 import 'cloud_sync_outbound_chat_origin.dart';
+import 'cloud_sync_outbound_group_origin.dart';
+import 'cloud_sync_fresh_group_recovery_origin.dart';
+import 'cloud_sync_fresh_group_recovery_snapshot.dart';
+import 'cloud_sync_fresh_group_recovery_binding.dart';
 import 'cloud_sync_outbound_group_binding.dart';
 import 'cloud_sync_group_send_route.dart';
 import 'cloud_sync_reaction_send_identity.dart';
@@ -2347,6 +2351,75 @@ final class CloudSyncLocalSendJournal {
     ]),
   ]);
 
+  Map<String, Object?> captureFreshGroupRecoverySource(
+    Store transactionStore,
+    CloudOutboxOperation operation,
+    int chatId,
+    String originIdentity,
+    String originalProof,
+  ) {
+    final source = _readChatCreateBindingSource(
+      transactionStore, operation, chatId, originIdentity, originalProof,
+    );
+    validateChatCreateSource(transactionStore, operation.scope, chatId, source);
+    final intent = _readCreateIntent(source.intentId);
+    _requireIdsConfirmation(intent);
+    if (intent.state != 1 || intent.admittedOperationId != null ||
+        intent.confirmedReadbackBindingSha256 != null) {
+      throw StateError('cloud_sync_local_send_chat_binding_changed');
+    }
+    return freshGroupRecoverySourceSnapshot(intent);
+  }
+
+  /// Called only inside exact-row adoption. Authenticate the original proof
+  /// against the original envelope first, then bind the replacement and audit.
+  CloudSyncFreshGroupRecoveryOrigin bindFreshGroupChatRecoverySource(
+    Store transactionStore,
+    CloudSyncFreshGroupRecoveryClaim claim,
+    CloudOutboxOperation replacement,
+    Map<String, Object?> receipt,
+  ) {
+    final old = freshGroupRecoveryOperationFromSnapshot(claim.operationSnapshot);
+    final legacy = decodeCloudSyncOutboundGroupOrigin(old.localChatOrigin!);
+    if (legacy[0] != 6 || !cloudSyncIsNeverSubmittedChatCreate(old)) {
+      throw StateError('cloud_sync_local_send_chat_binding_changed');
+    }
+    final source = _readChatCreateBindingSource(transactionStore,
+      claim.operation, claim.chatId, claim.identity, legacy[8] as String);
+    final actual = captureFreshGroupRecoverySource(transactionStore,
+      claim.operation, claim.chatId, claim.identity, legacy[8] as String);
+    if (source.intentId != claim.intentId ||
+        freshGroupRecoverySnapshotFingerprint(actual) !=
+          freshGroupRecoverySnapshotFingerprint(claim.sourceSnapshot)) {
+      throw StateError('cloud_sync_local_send_chat_binding_changed');
+    }
+    final provisional = CloudSyncFreshGroupRecoveryOrigin.create(
+      identity: claim.identity, receipt: receipt,
+      proof: jsonEncode([2, source.intentId, '0' * 64]),
+    );
+    freshGroupRecoveryPreviousOperation(provisional, replacement);
+    return CloudSyncFreshGroupRecoveryOrigin.create(
+      identity: claim.identity, receipt: receipt,
+      proof: _freshGroupRecoveryProof(replacement, claim.chatId,
+        provisional, source),
+    );
+  }
+
+  String _freshGroupRecoveryProof(
+    CloudOutboxOperation operation,
+    int chatId,
+    CloudSyncFreshGroupRecoveryOrigin recovery,
+    CloudSyncLocalSendAdmissionSource source,
+  ) {
+    final conversion = freshGroupRecoveryReceiptMap(recovery, 'conversion');
+    return jsonEncode([2, source.intentId, CloudSyncLocalSendIdentity._digest([
+      'cloud-sync-local-send-fresh-group-recovery-v1',
+      _chatCreateBinding(operation, chatId, recovery.identity, source),
+      recovery.receiptSha256,
+      conversion['previousLeaseReference']!, conversion['leaseReference']!,
+    ])]);
+  }
+
   /// Re-read after restart and again immediately before submission. A callback
   /// or an outgoing Message row alone is never a durable create capability.
   void validateChatCreateBinding(
@@ -2412,7 +2485,7 @@ final class CloudSyncLocalSendJournal {
     }
     if (value is! List ||
         value.length != 3 ||
-        value[0] != 1 ||
+        !{1, 2}.contains(value[0]) ||
         value[1] is! int ||
         value[1] <= 0 ||
         value[2] is! String ||
@@ -2421,6 +2494,36 @@ final class CloudSyncLocalSendJournal {
     }
     final intent = _readCreateIntent(value[1] as int);
     final source = CloudSyncLocalSendAdmissionSource._(intent, null);
+    if (value[0] == 2) {
+      final query = transactionStore.box<CloudOutboxOperationEntity>().query(
+        CloudOutboxOperationEntity_.operationId.equals(operation.operationId),
+      ).build();
+      final CloudOutboxOperationEntity? row;
+      try { row = query.findUnique(); } finally { query.close(); }
+      final encoded = row?.localChatOrigin;
+      if (encoded == null || !CloudSyncFreshGroupRecoveryOrigin.isEncoded(encoded)) reject();
+      final recovery = CloudSyncFreshGroupRecoveryOrigin.decode(encoded);
+      final old = validateFreshGroupRecoveryEntity(recovery, row!);
+      final oldOperation = freshGroupRecoveryPreviousOperation(recovery, operation);
+      final legacy = decodeCloudSyncOutboundGroupOrigin(old.localChatOrigin!);
+      final captured = freshGroupRecoveryReceiptMap(recovery, 'source');
+      final actual = freshGroupRecoverySourceSnapshot(intent);
+      if (legacy[0] != 6 || !cloudSyncIsNeverSubmittedChatCreate(old) ||
+          old.scopeKey != cloudSyncPersistentScopeKey(operation.scope) ||
+          intent.state != 1 || intent.idsConfirmationVersion != cloudSyncIdsConfirmationVersion ||
+          recovery.phase == CloudSyncFreshGroupRecoveryPhase.retired ||
+          recovery.identity != originIdentity || recovery.identityParts[2] != chatId ||
+          recovery.proof != binding || captured['id'] != intent.id ||
+          ['id', 'intentKey', 'accountFingerprint', 'writerEpoch', 'localMessageId',
+            'messageGuidHash', 'sourceSha256', 'idsConfirmationVersion',
+            'protectedSourceBinding', 'createdAtMs']
+              .any((key) => captured[key] != actual[key]) ||
+          _chatCreateBinding(oldOperation, chatId, originIdentity, source) != legacy[8] ||
+          _freshGroupRecoveryProof(operation, chatId, recovery, source) != binding) {
+        reject();
+      }
+      return source;
+    }
     if (intent.state != 1 ||
         _chatCreateBinding(operation, chatId, originIdentity, source) !=
             binding) {

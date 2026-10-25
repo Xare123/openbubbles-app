@@ -28,6 +28,9 @@ import 'cloud_sync_outbound_message_dependency.dart';
 import 'cloud_sync_outbound_chat_origin.dart';
 import 'cloud_sync_chat_identity_origin.dart';
 import 'cloud_sync_outbound_group_origin.dart';
+import 'cloud_sync_fresh_group_recovery_origin.dart';
+import 'cloud_sync_fresh_group_recovery_snapshot.dart';
+import 'cloud_sync_fresh_group_recovery_binding.dart';
 import 'cloud_sync_persistent_keys.dart';
 import 'cloud_sync_record_maps.dart';
 import 'cloud_sync_protector.dart';
@@ -706,6 +709,21 @@ class ObjectBoxCloudSyncStore
     return _store.runInTransaction(TxMode.read, () {
       final references = <String>{};
       for (final entity in _outbox.getAll()) {
+        if (entity.localChatOrigin case final String encoded
+            when CloudSyncFreshGroupRecoveryOrigin.isEncoded(encoded)) {
+          // The failed original lease remains an audit owner permanently. The
+          // replacement follows normal exact-readback acknowledgment; its ID
+          // and both blobs remain in the immutable receipt after that cleanup.
+          if (entity.protectedLeaseReference == null &&
+              entity.state != CloudOutboxStatus.confirmed.index) {
+            throw _storageFailure('protected_outbound_lease_corrupt');
+          }
+          references.addAll(freshGroupRecoveryAuditLeaseReferences(encoded,
+            retainReplacementLease: entity.protectedLeaseReference != null));
+          if (references.length > maximumCount) {
+            throw _storageFailure('protected_outbound_lease_recovery_bound_exceeded');
+          }
+        }
         final status = _outboxStatusFromInt(entity.state);
         if (!_isBlockingOutboxStatus(status) &&
             status != CloudOutboxStatus.confirmed &&
@@ -1316,7 +1334,15 @@ class ObjectBoxCloudSyncStore
       });
       scanPaged(
         (_outbox.query()..order(CloudOutboxOperationEntity_.id)).build(),
-        (entry) => capture(entry.encryptedPayloadRef),
+        (entry) {
+          capture(entry.encryptedPayloadRef);
+          if (entry.localChatOrigin case final String encoded
+              when CloudSyncFreshGroupRecoveryOrigin.isEncoded(encoded)) {
+            for (final reference in freshGroupRecoveryAuditProtectedReferences(encoded)) {
+              capture(reference);
+            }
+          }
+        },
       );
       scanPaged(
         (_recordMaps.query()..order(CloudRecordMapEntity_.id)).build(),
@@ -2717,6 +2743,139 @@ class ObjectBoxCloudSyncStore
     return _outboxFromEntity(scope, row);
   });
 
+  /// Read-only idempotence before allocating a recovery stage. A prior receipt
+  /// is never used to reactivate submitted, confirmed or retired work.
+  CloudOutboxOperation? readRecoveredFreshGroupChat(
+    CloudSyncScope scope, {
+    required String operationId,
+    required int chatId,
+    required int intentId,
+  }) => _store.runInTransaction(TxMode.read, () {
+    final row = _findOutboxByOperationIdLocked(operationId);
+    if (row == null || row.localChatOrigin == null ||
+        !CloudSyncFreshGroupRecoveryOrigin.isEncoded(row.localChatOrigin!)) {
+      return null;
+    }
+    final recovery = CloudSyncFreshGroupRecoveryOrigin.decode(row.localChatOrigin!);
+    validateFreshGroupRecoveryEntity(recovery, row);
+    final operation = _outboxFromEntity(scope, row);
+    freshGroupRecoveryPreviousOperation(recovery, operation);
+    if (row.scopeKey != _scopeKey(scope) ||
+        recovery.identityParts[2] != chatId ||
+        freshGroupRecoveryReceiptMap(recovery, 'source')['id'] != intentId) {
+      throw _storageFailure('cloud_sync_fresh_group_recovery_changed');
+    }
+    return operation;
+  });
+
+  CloudSyncFreshGroupRecoveryClaim captureFreshGroupChatRecovery(
+    CloudSyncScope scope, {
+    required String operationId,
+    required int chatId,
+    required int intentId,
+  }) => _store.runInTransaction(TxMode.read, () {
+    final row = _findOutboxByOperationIdLocked(operationId);
+    if (row == null || row.localChatOrigin == null ||
+        !isCloudSyncOutboundGroupOrigin(row.localChatOrigin!) ||
+        decodeCloudSyncOutboundGroupOrigin(row.localChatOrigin!)[0] != 6 ||
+        !cloudSyncIsNeverSubmittedChatCreate(row) ||
+        row.state != CloudOutboxStatus.quarantined.index ||
+        row.lastErrorCategory != CloudFailureCategory.cancelled.name ||
+        row.leaseIdHash != null || row.leaseExpiresAtMs != 0 ||
+        row.nextEligibleAtMs != 0) {
+      throw _storageFailure('cloud_sync_fresh_group_recovery_not_eligible');
+    }
+    final operation = readOutboundChatCreateForLocalRow(scope, chatId);
+    if (operation == null || operation.operationId != operationId) {
+      throw _storageFailure('cloud_sync_fresh_group_recovery_changed');
+    }
+    final chat = _store.box<Chat>().get(chatId);
+    if (chat == null) throw _storageFailure('cloud_sync_outbound_chat_origin_missing');
+    final origin = CloudSyncOutboundGroupOrigin.capture(scope: scope, chat: chat);
+    final identity = cloudSyncOutboundChatOriginIdentity(row.localChatOrigin!);
+    if (origin.binding(row.checkpointGeneration) != identity) {
+      throw _storageFailure('cloud_sync_outbound_chat_origin_changed');
+    }
+    final source = _requireChatCreateJournal().captureFreshGroupRecoverySource(
+      _store, operation, chatId, identity,
+      cloudSyncOutboundChatOriginSendProof(row.localChatOrigin!)!,
+    );
+    final mapping = cloudSyncFindRecordMap(store: _store, scope: scope,
+      generation: row.checkpointGeneration, logicalEntityKeyHash: row.logicalEntityKeyHash,
+      serverRecordIdHash: row.serverRecordIdHash);
+    if (source['id'] != intentId || mapping == null ||
+        mapping.encryptedServerRecordId != row.encryptedPayloadRef ||
+        mapping.etagHash != null || mapping.encryptedRawRecordRef != null ||
+        mapping.rawRecordGeneration != 0 || mapping.protectedReadbackLeaseReference != null ||
+        mapping.pendingUpdateOperationId != null || mapping.pendingUpdatePredecessorEtagHash != null) {
+      throw _storageFailure('cloud_sync_fresh_group_recovery_changed');
+    }
+    return CloudSyncFreshGroupRecoveryClaim(
+      operation: operation, operationSnapshot: freshGroupRecoveryOperationSnapshot(row),
+      recordMapSnapshot: freshGroupRecoveryMapSnapshot(mapping), sourceSnapshot: source,
+      identity: identity, chatId: chatId, intentId: intentId, origin: origin,
+    );
+  });
+
+  /// Exact audited repair, not an ordinary retry. The old failed row, mapping
+  /// and source survive in the origin receipt; both native leases stay live.
+  CloudOutboxOperation adoptFreshGroupChatRecovery({
+    required CloudSyncFreshGroupRecoveryClaim claim,
+    required CloudSyncProtectedOutboundStageData stage,
+    required String nativeSessionId,
+    required String protectedStoreIdentity,
+    required DateTime now,
+  }) => _store.runInTransaction(TxMode.write, () {
+    final scope = claim.operation.scope;
+    final actual = captureFreshGroupChatRecovery(scope,
+      operationId: claim.operation.operationId, chatId: claim.chatId, intentId: claim.intentId);
+    if (actual.identity != claim.identity ||
+        !actual.operation.sameDurableSnapshotAs(claim.operation) ||
+        freshGroupRecoverySnapshotFingerprint(actual.operationSnapshot) !=
+          freshGroupRecoverySnapshotFingerprint(claim.operationSnapshot) ||
+        freshGroupRecoverySnapshotFingerprint(actual.recordMapSnapshot) !=
+          freshGroupRecoverySnapshotFingerprint(claim.recordMapSnapshot) ||
+        freshGroupRecoverySnapshotFingerprint(actual.sourceSnapshot) !=
+          freshGroupRecoverySnapshotFingerprint(claim.sourceSnapshot) ||
+        stage.logicalEntityKeyHash != claim.operation.logicalEntityKeyHash ||
+        stage.payloadSha256 != claim.operation.payloadSha256 ||
+        stage.serverRecordIdHash != claim.operation.serverRecordIdHash) {
+      throw _storageFailure('cloud_sync_fresh_group_recovery_changed');
+    }
+    final replacement = claim.operation.copyWith(
+      status: CloudOutboxStatus.pending, clearLastFailure: true,
+      clearNextEligibleAt: true, encryptedPayloadReference: stage.protectedEnvelopeReference,
+      protectedLeaseReference: stage.leaseReference,
+    );
+    final receipt = freshGroupRecoveryBuildReceipt(claim: claim, stage: stage,
+      nativeSessionId: nativeSessionId, protectedStoreIdentity: protectedStoreIdentity, now: now);
+    final recovery = _requireChatCreateJournal().bindFreshGroupChatRecoverySource(
+      _store, claim, replacement, receipt);
+    final row = _findOutboxByOperationIdLocked(claim.operation.operationId)!;
+    final mapping = _recordMaps.get(claim.recordMapSnapshot['id']! as int)!;
+    row
+      ..encryptedPayloadRef = stage.protectedEnvelopeReference
+      ..protectedLeaseReference = stage.leaseReference
+      ..localChatOrigin = recovery.encode()
+      ..state = CloudOutboxStatus.pending.index
+      ..lastErrorCategory = null
+      ..nextEligibleAtMs = 0
+      ..updatedAtMs = now.toUtc().millisecondsSinceEpoch;
+    mapping
+      ..encryptedServerRecordId = stage.protectedEnvelopeReference
+      ..updatedAtMs = row.updatedAtMs;
+    if (!cloudSyncIsNeverSubmittedChatCreate(row)) {
+      throw _storageFailure('cloud_sync_fresh_group_recovery_changed');
+    }
+    _outbox.put(row);
+    _recordMaps.put(mapping);
+    final origin = _captureJournalBoundChatOriginLocked(scope, row);
+    if (origin is! CloudSyncOutboundGroupOrigin) {
+      throw _storageFailure('cloud_sync_fresh_group_recovery_changed');
+    }
+    return _outboxFromEntity(scope, row);
+  });
+
   /// Cancel only proven, never-submitted Chat dependencies whose original
   /// Message was removed/edited. All immutable evidence and the adopted native
   /// lease remain. This transaction must finish before selection validation,
@@ -2740,6 +2899,8 @@ class ObjectBoxCloudSyncStore
                       '[2,',
                     ).or(CloudOutboxOperationEntity_.localChatOrigin.startsWith(
                       '[6,',
+                    )).or(CloudOutboxOperationEntity_.localChatOrigin.startsWith(
+                      '[9,',
                     )),
                   )
                   .and(
@@ -6272,7 +6433,7 @@ class ObjectBoxCloudSyncStore
         ? null
         : cloudSyncOutboundChatOriginSendProof(chatBinding);
     if (chatBinding != null &&
-        isCloudSyncOutboundGroupOrigin(chatBinding) && chatProof == null) {
+        cloudSyncIsGroupChatOrigin(chatBinding) && chatProof == null) {
       throw _storageFailure('cloud_sync_outbound_chat_recovery_changed');
     }
     if (chatProof != null) {
@@ -6296,7 +6457,7 @@ class ObjectBoxCloudSyncStore
       final origin = captureCloudSyncLocalChatCreateOrigin(
         scope: scope,
         chat: chat,
-        allowGroup: isCloudSyncOutboundGroupOrigin(chatBinding),
+        allowGroup: cloudSyncIsGroupChatOrigin(chatBinding),
       );
       if (origin.binding(operation.checkpointGeneration) != identity) {
         throw _storageFailure('cloud_sync_outbound_chat_origin_changed');

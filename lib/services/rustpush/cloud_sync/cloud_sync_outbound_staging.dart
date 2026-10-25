@@ -56,6 +56,18 @@ abstract interface class CloudSyncOutboundGroupChatStagingTransport
   });
 }
 
+/// Explicit local conversion of one committed legacy stage. It retains the
+/// record name and payload and grants no save or ordinary retry capability.
+abstract interface class CloudSyncFreshGroupRecoveryStagingTransport
+    implements CloudSyncOutboundStagingTransport {
+  Future<CloudSyncProtectedOutboundStageData> stageExactFreshGroupChatRecovery(
+    CloudSyncScope scope, {
+    required CloudOutboxOperation previous,
+    required frb_api.CloudSyncNativeAuthMetadata expectedAuth,
+    required frb_api.CloudChat expectedChat,
+  });
+}
+
 /// Attachment-parent staging is an explicit capability; implementing the
 /// existing Message transport alone cannot admit an attachment-parent
 /// message. This covers only the parent message envelope staged under the

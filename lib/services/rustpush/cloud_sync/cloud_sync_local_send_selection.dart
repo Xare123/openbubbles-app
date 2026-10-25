@@ -199,7 +199,7 @@ final class CloudSyncLocalSendExactSelection {
         }
         if (isProvisionalGroup &&
             (row.localChatOrigin == null ||
-              !isCloudSyncOutboundGroupOrigin(row.localChatOrigin!))) {
+              !cloudSyncIsGroupChatOrigin(row.localChatOrigin!))) {
           throw StateError('cloud_sync_local_send_unrelated_outbox');
         }
         final chatScope = CloudSyncScope(

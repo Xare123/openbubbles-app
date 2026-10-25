@@ -30,6 +30,17 @@ bool backendHarnessRecoveryOwnerValid(String value) => RegExp(
   r'^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$',
 ).hasMatch(value);
 
+bool backendHarnessValidFreshGroupRecovery(Map<String, Object?> args) =>
+    args.length == 4 && args.keys.every(const {
+      'operationId', 'chatId', 'intentId', 'retainedRecoveryOwner',
+    }.contains) &&
+    args['operationId'] is String &&
+    RegExp(r'^op1:[a-f0-9]{64}$').hasMatch(args['operationId'] as String) &&
+    args['chatId'] is int && (args['chatId'] as int) > 0 &&
+    args['intentId'] is int && (args['intentId'] as int) > 0 &&
+    args['retainedRecoveryOwner'] is String &&
+    backendHarnessRecoveryOwnerValid(args['retainedRecoveryOwner'] as String);
+
 bool backendHarnessRetainedFixtureAllowed({
   required bool isWindows,
   required String? admittedOwner,

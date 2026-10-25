@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:bluebubbles/services/services.dart';
 import 'package:bluebubbles/services/rustpush/rustpush_service.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_progress.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_models.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_protector.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_protector_health.dart';
 import 'package:bluebubbles/database/database.dart';
@@ -143,6 +144,23 @@ final class BackendHarnessController {
           background: true,
           validate: (args) => args.isEmpty,
           handler: (_) => archive.status(),
+        ),
+        'archive.recover-group': BackendHarnessOperation(
+          background: true,
+          uncertainOnFailure: true,
+          validate: (args) => Platform.isWindows && retainedRecoveryOwner != null &&
+              backendHarnessValidFreshGroupRecovery(args) &&
+              args['retainedRecoveryOwner'] == retainedRecoveryOwner,
+          handler: (args) async {
+            final operation = await pushService.recoverCloudSyncV2BackendFreshGroupChat(
+              operationId: args['operationId']! as String,
+              chatId: args['chatId']! as int, intentId: args['intentId']! as int,
+            );
+            return BackendHarnessPayload(flags: {
+              'group_recovery_ready': operation.status == CloudOutboxStatus.pending,
+              'group_recovery_record_retained': true,
+            });
+          },
         ),
         'fixture.inspect': BackendHarnessOperation(
           background: true,

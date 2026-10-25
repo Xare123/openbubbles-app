@@ -1730,6 +1730,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   dco_decode_box_autoadd_cloud_sync_historical_attachment_context(dynamic raw);
 
   @protected
+  CloudSyncLegacyGroupChatStage
+  dco_decode_box_autoadd_cloud_sync_legacy_group_chat_stage(dynamic raw);
+
+  @protected
   CloudSyncMessageUpdatePrepareInput
   dco_decode_box_autoadd_cloud_sync_message_update_prepare_input(dynamic raw);
 
@@ -2337,6 +2341,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   CloudSyncHistoricalAttachmentContext
   dco_decode_cloud_sync_historical_attachment_context(dynamic raw);
+
+  @protected
+  CloudSyncLegacyGroupChatStage dco_decode_cloud_sync_legacy_group_chat_stage(
+    dynamic raw,
+  );
 
   @protected
   CloudSyncMessageUpdatePrepareInput
@@ -5760,6 +5769,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  CloudSyncLegacyGroupChatStage
+  sse_decode_box_autoadd_cloud_sync_legacy_group_chat_stage(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   CloudSyncMessageUpdatePrepareInput
   sse_decode_box_autoadd_cloud_sync_message_update_prepare_input(
     SseDeserializer deserializer,
@@ -6547,6 +6562,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   CloudSyncHistoricalAttachmentContext
   sse_decode_cloud_sync_historical_attachment_context(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  CloudSyncLegacyGroupChatStage sse_decode_cloud_sync_legacy_group_chat_stage(
     SseDeserializer deserializer,
   );
 
@@ -10596,6 +10616,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_box_autoadd_cloud_sync_legacy_group_chat_stage(
+    CloudSyncLegacyGroupChatStage self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_box_autoadd_cloud_sync_message_update_prepare_input(
     CloudSyncMessageUpdatePrepareInput self,
     SseSerializer serializer,
@@ -11518,6 +11544,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_cloud_sync_historical_attachment_context(
     CloudSyncHistoricalAttachmentContext self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_cloud_sync_legacy_group_chat_stage(
+    CloudSyncLegacyGroupChatStage self,
     SseSerializer serializer,
   );
 

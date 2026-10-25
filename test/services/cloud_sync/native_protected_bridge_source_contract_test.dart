@@ -845,6 +845,9 @@ void main() {
     final received = _section(service,
         'Future<({bool more, bool deferred})> _materializeCloudSyncV2ReceivedSources()',
         'Future<Message> _captureCloudSyncV2ReceivedMessage(');
+    final groupRecovery = _section(service,
+        'Future<CloudOutboxOperation> recoverCloudSyncV2BackendFreshGroupChat(',
+        'bool get _cloudSyncV2AutomaticArchiveActive');
     final send = _section(
       service,
       'Future<Message> _sendPreparedMessage(',
@@ -917,6 +920,7 @@ void main() {
       'local receipt reflection': reflection,
       'guarded conditional update': updateTransport,
       'received seed materialization': received,
+      'exact legacy group recovery': groupRecovery,
     };
     final constructors = RegExp(r'NativeProtectedCloudSyncTransport\(');
     for (final composition in compositions.entries) {
@@ -925,6 +929,28 @@ void main() {
     }
     expect(constructors.allMatches(service), hasLength(compositions.length),
         reason: 'every runtime constructor must belong to an exact mapped scope');
+    for (final fence in [
+      '_isolatedWindowsBackendHost', 'cloudSyncV2AutomaticArchiveVisible',
+      '!backendRegistrationRestartRequired', '!_cloudSyncV2AutomaticArchiveActive',
+      'if (preference.enabled)', 'if (saved.enabled)',
+      '_cloudSyncV2LocalSourceOperations.run(validate: validate',
+      'kind: CloudKitOperationKind.v2ReadWrite', 'CloudSyncLocalSendAuthFence(',
+      'owner.owner != CloudKitWriterOwner.v2', 'CloudSyncWriteChatIdentitySession(',
+      'await lifecycle.ensureRecoveredBeforeWrite()',
+      'await session.run<void>((_) async {})',
+      'CloudSyncFreshGroupRecoveryCoordinator(',
+      'operationId: operationId, chatId: chatId, intentId: intentId',
+      '_cloudSyncV2LocalSourceOperations.release(transport.quiesceNativeOperations)',
+      'exclusion.poisonUntilProcessRestart()',
+    ]) {
+      expect(groupRecovery, contains(fence), reason: 'exact recovery must retain $fence');
+    }
+    for (final forbidden in [
+      'sendMsg(', 'sendMessage(', 'CloudSyncEngine(', 'flushOutbox(',
+      'prepareSubmission(', 'provisionInitialOwner(', 'setEnabled(',
+    ]) {
+      expect(groupRecovery, isNot(contains(forbidden)));
+    }
     for (final local in [mutation, prepare, restore, reflection]) {
       expect(local, isNot(contains('writerMutationGuard:')));
       expect(local, isNot(contains('readCheckpointGeneration:')));

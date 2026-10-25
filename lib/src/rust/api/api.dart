@@ -982,6 +982,28 @@ Future<CloudSyncProtectedOutboundStageResult> cloudSyncStageOutboundGroupChat({
   chat: chat,
 );
 
+/// Stage-only conversion for an explicitly validated never-submitted local
+/// group repair. It preserves the original server record and exact wire bytes.
+/// The caller must validate the saved local-send origin/source before and after
+/// this await, then atomically preserve the old audit and adopt the new lease.
+/// It does not requeue a quarantine, submit a save or infer freshness from the
+/// absence of historical provenance. Ordinary historical preparation never
+/// calls this entry point.
+Future<CloudSyncProtectedOutboundStageResult>
+cloudSyncStageExactFreshGroupChatRecovery({
+  required ArcCloudMessagesClientDefaultAnisetteProvider cloudMessagesClient,
+  required String storageDirectory,
+  required CloudSyncNativeAuthMetadata expectedAuth,
+  required CloudSyncLegacyGroupChatStage previousStage,
+  required CloudChat expectedChat,
+}) => RustLib.instance.api.crateApiApiCloudSyncStageExactFreshGroupChatRecovery(
+  cloudMessagesClient: cloudMessagesClient,
+  storageDirectory: storageDirectory,
+  expectedAuth: expectedAuth,
+  previousStage: previousStage,
+  expectedChat: expectedChat,
+);
+
 /// Stage a parent from one committed historical snapshot source. This does not
 /// admit the candidate, prove remote absence, or submit a CloudKit operation.
 /// The caller retains one stage in its historical origin before retrying.
@@ -4420,6 +4442,48 @@ class CloudSyncHistoricalAttachmentContext {
           storageDirectory == other.storageDirectory &&
           expectedAuth == other.expectedAuth &&
           source == other.source;
+}
+
+/// The immutable legacy stage selected by an explicit local-group repair.
+/// This is storage metadata, not proof that an operation was never submitted.
+class CloudSyncLegacyGroupChatStage {
+  final String logicalEntityKeyHash;
+  final String protectedPayloadReference;
+  final String payloadSha256;
+  final String protectedServerRecordReference;
+  final String serverRecordIdHash;
+  final String leaseReference;
+
+  const CloudSyncLegacyGroupChatStage({
+    required this.logicalEntityKeyHash,
+    required this.protectedPayloadReference,
+    required this.payloadSha256,
+    required this.protectedServerRecordReference,
+    required this.serverRecordIdHash,
+    required this.leaseReference,
+  });
+
+  @override
+  int get hashCode =>
+      logicalEntityKeyHash.hashCode ^
+      protectedPayloadReference.hashCode ^
+      payloadSha256.hashCode ^
+      protectedServerRecordReference.hashCode ^
+      serverRecordIdHash.hashCode ^
+      leaseReference.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is CloudSyncLegacyGroupChatStage &&
+          runtimeType == other.runtimeType &&
+          logicalEntityKeyHash == other.logicalEntityKeyHash &&
+          protectedPayloadReference == other.protectedPayloadReference &&
+          payloadSha256 == other.payloadSha256 &&
+          protectedServerRecordReference ==
+              other.protectedServerRecordReference &&
+          serverRecordIdHash == other.serverRecordIdHash &&
+          leaseReference == other.leaseReference;
 }
 
 /// Typed input for one conditional message update preparation. Every identity
