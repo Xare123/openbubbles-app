@@ -1,5 +1,6 @@
 import 'package:bluebubbles/app/layouts/setup/setup_view.dart';
 import 'package:bluebubbles/services/rustpush/rustpush_service.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_operation_interlock.dart';
 import 'package:bluebubbles/services/rustpush/setup_interaction_port.dart';
 import 'package:bluebubbles/services/services.dart';
 import 'package:bluebubbles/src/rust/api/api.dart' as api;
@@ -300,10 +301,31 @@ final class BackendHarnessAccount implements SetupInteractionPort {
       );
       phase = result.phase;
       return result;
-    } catch (_) {
+    } catch (error) {
       phase = BackendHarnessPhase.blocked;
+      final classified = classifyRegistrationFailure(error);
+      if (classified != null) throw classified;
       rethrow;
     }
+  }
+
+  /// Fixed diagnostics only. A recognized native registration rejection remains
+  /// uncertain and never authorizes retry, message delivery or a new identity.
+  static BackendHarnessFailure? classifyRegistrationFailure(Object error) {
+    if (error is BackendHarnessFailure) return null;
+    if (error is CloudKitOperationInterlockException) {
+      return BackendHarnessFailure(
+        error.safeCode == 'cloudkit_interlock_busy' ? 'backend_busy' : 'backend_not_ready',
+        effectNotEntered: const {
+          'cloudkit_interlock_busy', 'cloudkit_interlock_unavailable',
+          'cloudkit_interlock_profile_mismatch', 'cloudkit_interlock_mode_violation',
+        }.contains(error.safeCode),
+      );
+    }
+    if (RegExp(r'Registration Error[^\r\n]{0,220}\(6005\)').hasMatch(error.toString())) {
+      return BackendHarnessFailure('backend_registration_rejected');
+    }
+    return null;
   }
 
   /// Fresh registration is separate from a cached Registered observation.

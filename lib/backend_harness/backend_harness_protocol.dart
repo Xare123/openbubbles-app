@@ -45,6 +45,7 @@ const backendHarnessCodes = <String>{
   'backend_job_running',
   'backend_job_completed',
   'backend_job_failed',
+  'backend_registration_rejected',
   'backend_job_unknown',
   'backend_request_reused',
   'backend_internal_error',

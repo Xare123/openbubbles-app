@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:bluebubbles/backend_harness/backend_harness_account.dart';
 import 'package:bluebubbles/backend_harness/backend_harness_protocol.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_operation_interlock.dart';
 import 'package:bluebubbles/src/rust/api/api.dart' as api;
 import 'package:flutter_test/flutter_test.dart';
 
@@ -16,6 +17,44 @@ api.CloudSyncNativeAuthMetadata identity({
 );
 
 void main() {
+  test(
+    'registration rejection is a fixed diagnostic with retained uncertainty',
+    () {
+      final error = BackendHarnessAccount.classifyRegistrationFailure(
+        StateError(
+          'Registration Error Bad authentication (6005) private-account',
+        ),
+      );
+      expect(error?.code, 'backend_registration_rejected');
+      expect(error?.effectNotEntered, false);
+      expect(
+        BackendHarnessAccount.classifyRegistrationFailure(
+          StateError('unrelated 6005'),
+        ),
+        null,
+      );
+    },
+  );
+  test('only known interlock refusals establish no registration entry', () {
+    final busy = BackendHarnessAccount.classifyRegistrationFailure(
+      const CloudKitOperationInterlockException('cloudkit_interlock_busy'),
+    );
+    expect(busy?.code, 'backend_busy');
+    expect(busy?.effectNotEntered, true);
+    final lost = BackendHarnessAccount.classifyRegistrationFailure(
+      const CloudKitOperationInterlockException(
+        'cloudkit_interlock_fence_lost',
+      ),
+    );
+    expect(lost?.code, 'backend_not_ready');
+    expect(lost?.effectNotEntered, false);
+    expect(
+      BackendHarnessAccount.classifyRegistrationFailure(
+        BackendHarnessFailure('backend_identity_changed'),
+      ),
+      null,
+    );
+  });
   test(
     'fresh repair awaits the native refresh and never treats a cached state as completion',
     () async {
