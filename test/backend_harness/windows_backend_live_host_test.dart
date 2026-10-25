@@ -4,6 +4,7 @@ import 'dart:developer' as developer;
 import 'dart:io';
 
 import 'package:bluebubbles/backend_harness/backend_harness_controller.dart';
+import 'package:bluebubbles/backend_harness/backend_harness_fixtures.dart';
 import 'package:bluebubbles/backend_harness/backend_harness_protocol.dart';
 import 'package:bluebubbles/backend_harness/backend_harness_vm_service.dart';
 import 'package:bluebubbles/backend_harness/backend_harness_windows_writer.dart';
@@ -276,11 +277,35 @@ Future<void> shutdownWindowsBackendHost({
 /// send. A handoff is not a substitute for joining it. Keep the existing hold
 /// when the current process still marks a pending send, or a terminal fixture
 /// result cannot establish completion of a background mutation/send.
-void requireWindowsBackendNativeSendCompletion(
+Future<void> requireWindowsBackendNativeSendCompletion(
   BackendHarnessEngine engine,
   Store store,
-  String serviceId,
-) {
+  String serviceId, {
+  Future<BackendHarnessPayload> Function(Map<String, Object?> job)?
+      observeCurrentFixture,
+}) async {
+  _requireNoPendingNativeSend(store, serviceId);
+  for (final job
+      in (engine.drainedRecoverySnapshot()['jobs'] as List).cast<Map>()) {
+    if ((const {'fixture.edit', 'fixture.unsend'}.contains(job['action']) ||
+            job['action'] == 'fixture.send' && job['state'] == 'completed') &&
+        (job['flags'] as Map)['ids_evidence_present'] != true) {
+      final observe = observeCurrentFixture;
+      if (observe == null) {
+        throw StateError('backend_windows_native_completion_unconfirmed');
+      }
+      final original = Map<String, Object?>.from(job);
+      final current = await observe(original);
+      _requireNoPendingNativeSend(store, serviceId);
+      if (!BackendHarnessFixtures.nativeCompletionMatches(original, current)) {
+        throw StateError('backend_windows_native_completion_unconfirmed');
+      }
+    }
+  }
+  _requireNoPendingNativeSend(store, serviceId);
+}
+
+void _requireNoPendingNativeSend(Store store, String serviceId) {
   if (store.isClosed()) throw StateError('backend_windows_store_closed');
   final pending =
       store
@@ -294,14 +319,6 @@ void requireWindowsBackendNativeSendCompletion(
     }
   } finally {
     pending.close();
-  }
-  for (final job
-      in (engine.drainedRecoverySnapshot()['jobs'] as List).cast<Map>()) {
-    if ((const {'fixture.edit', 'fixture.unsend'}.contains(job['action']) ||
-            job['action'] == 'fixture.send' && job['state'] == 'completed') &&
-        (job['flags'] as Map)['ids_evidence_present'] != true) {
-      throw StateError('backend_windows_native_completion_unconfirmed');
-    }
   }
 }
 
@@ -439,10 +456,12 @@ void main() {
             controller.interactions.close();
           },
           closeNative: () async {
-            requireWindowsBackendNativeSendCompletion(
+            await requireWindowsBackendNativeSendCompletion(
               controller.engine,
               Database.store,
               service.serviceId,
+              observeCurrentFixture:
+                  controller.fixtures.observeNativeCompletionForShutdown,
             );
             final hadState = service.state != null;
             service.onClose();

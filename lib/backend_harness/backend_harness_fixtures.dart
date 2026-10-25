@@ -614,6 +614,73 @@ final class BackendHarnessFixtures {
     return result;
   }
 
+  /// Read-only completion observation after the command engine has drained.
+  /// The original job/claim stays immutable. This uses the original action's
+  /// native receipt, not archive settlement or a new dispatch.
+  Future<BackendHarnessPayload> observeNativeCompletionForShutdown(
+    Map<String, Object?> job,
+  ) async {
+    final expected = _shutdownFixture(job);
+    final auth = await _identity();
+    final store = Database.store;
+    final observed = _status(
+      auth, expected.fixtureId,
+      owner: expected.owner, completedAction: expected.completedAction,
+    );
+    if (!auth.sameIdentity(await _identity()) ||
+        !identical(store, Database.store) ||
+        !nativeCompletionMatches(job, observed)) {
+      throw BackendHarnessFailure('backend_identity_changed');
+    }
+    return observed;
+  }
+
+  static ({
+    String fixtureId, String messageGuid, String owner, String completedAction,
+  }) _shutdownFixture(Map<String, Object?> job) {
+    final action = switch (job['action']) {
+      'fixture.send' => 'create',
+      'fixture.edit' => 'edit',
+      'fixture.unsend' => 'undo',
+      _ => throw BackendHarnessFailure('backend_invalid_arguments'),
+    };
+    final receipt = job['fixture'];
+    final correlation = job['correlation'];
+    if (!BackendHarnessFixtureReceipt.validJson(receipt) ||
+        receipt is! Map || correlation is! Map ||
+        correlation['retainedRecoveryOwner'] is! String ||
+        !_uuid.hasMatch(correlation['retainedRecoveryOwner'] as String) ||
+        correlation['fixtureId'] is! String ||
+        (correlation['fixtureId'] as String).toUpperCase() !=
+            (receipt['fixtureId'] as String).toUpperCase() ||
+        (correlation['messageGuid'] != null &&
+          (correlation['messageGuid'] as String).toUpperCase() !=
+            (receipt['messageGuid'] as String).toUpperCase())) {
+      throw BackendHarnessFailure('backend_invalid_arguments');
+    }
+    return (
+      fixtureId: (receipt['fixtureId'] as String).toUpperCase(),
+      messageGuid: (receipt['messageGuid'] as String).toUpperCase(),
+      owner: correlation['retainedRecoveryOwner'] as String,
+      completedAction: action,
+    );
+  }
+
+  /// Exact fixture identity plus the requested action's positive native proof.
+  /// Creation proof alone cannot settle an uncertain edit/undo command.
+  static bool nativeCompletionMatches(
+    Map<String, Object?> job, BackendHarnessPayload observed,
+  ) {
+    final expected = _shutdownFixture(job);
+    final actual = observed.fixture;
+    return observed.flags['ids_evidence_present'] == true &&
+        observed.flags['outcome_uncertain'] == false &&
+        observed.counts['messages'] == 1 && actual != null &&
+        actual.fixtureId.toUpperCase() == expected.fixtureId &&
+        actual.messageGuid.toUpperCase() == expected.messageGuid &&
+        observed.flags['fixture_${expected.completedAction}_present'] == true;
+  }
+
   BackendHarnessPayload _status(
     CloudSyncNativeAuthSnapshot auth,
     String id, {

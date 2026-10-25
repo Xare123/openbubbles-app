@@ -386,7 +386,7 @@ void main() {
           var nativeCalls = 0;
           await expectLater(
             close(engine, () async {
-              requireWindowsBackendNativeSendCompletion(
+              await requireWindowsBackendNativeSendCompletion(
                 engine,
                 store,
                 'current',
@@ -407,13 +407,13 @@ void main() {
           // Emulate its terminal observation in the disposable store.
           message.sendingServiceId = null;
           store.box<Message>().put(message);
-          expect(
-            () => requireWindowsBackendNativeSendCompletion(
+          await expectLater(
+            requireWindowsBackendNativeSendCompletion(
               engine,
               store,
               'current',
             ),
-            returnsNormally,
+            completes,
           );
         } finally {
           store.close();
@@ -444,7 +444,7 @@ void main() {
           );
           await expectLater(
             close(engine, () async {
-              requireWindowsBackendNativeSendCompletion(
+              await requireWindowsBackendNativeSendCompletion(
                 engine,
                 store,
                 'current',
@@ -460,6 +460,100 @@ void main() {
         }
       },
     );
+
+    test('later exact send proof permits native completion without rewriting job',
+      () async {
+        final store = await openStore(
+          directory: '${directory.path}/synthetic-store');
+        const guid = '21234567-89AB-4DEF-8123-456789ABCDEF';
+        final fixture = BackendHarnessFixtureReceipt(
+          fixtureId: fixtureId, messageGuid: guid, visibleTextSha256: 'a' * 64);
+        final engine = runner({
+          'fixture.send': BackendHarnessOperation(
+            background: true, uncertainOnFailure: true, validate: (_) => true,
+            handler: (_) async => BackendHarnessPayload(
+              flags: {'ids_evidence_present': false, 'outcome_uncertain': true},
+              counts: {'messages': 1}, fixture: fixture),
+          ),
+        });
+        try {
+          await engine.execute(request('original', 'fixture.send', correlation));
+          await engine.closeAdmissionAndDrain();
+          final before = jsonEncode(engine.drainedRecoverySnapshot());
+          await expectLater(requireWindowsBackendNativeSendCompletion(
+            engine, store, 'current'), throwsStateError);
+          var observations = 0;
+          await requireWindowsBackendNativeSendCompletion(
+            engine, store, 'current', observeCurrentFixture: (original) async {
+              observations++;
+              expect(original['action'], 'fixture.send');
+              expect((original['correlation'] as Map)['retainedRecoveryOwner'],
+                recoveryOwner);
+              return BackendHarnessPayload(
+                flags: {'ids_evidence_present': true, 'outcome_uncertain': false,
+                  'fixture_create_present': true, 'fixture_create_pending': true},
+                counts: {'messages': 1}, fixture: fixture);
+            });
+          expect(observations, 1);
+          expect(jsonEncode(engine.drainedRecoverySnapshot()), before);
+          expect(engine.hasUncertainJobs, true);
+          // A new active native send during observation still prevents close.
+          await expectLater(requireWindowsBackendNativeSendCompletion(
+            engine, store, 'current', observeCurrentFixture: (_) async {
+              store.box<Message>().put(Message(
+                guid: 'temp-synthetic-active', sendingServiceId: 'current'));
+              return BackendHarnessPayload(
+                flags: {'ids_evidence_present': true, 'outcome_uncertain': false,
+                  'fixture_create_present': true},
+                counts: {'messages': 1}, fixture: fixture);
+            }), throwsStateError);
+        } finally {
+          store.close();
+        }
+      });
+
+    test('current proof must match the original fixture GUID and action',
+      () async {
+        final store = await openStore(
+          directory: '${directory.path}/synthetic-store');
+        const guid = '21234567-89AB-4DEF-8123-456789ABCDEF';
+        final originalFixture = BackendHarnessFixtureReceipt(
+          fixtureId: fixtureId, messageGuid: guid, visibleTextSha256: 'a' * 64);
+        final engine = runner({
+          'fixture.edit': BackendHarnessOperation(
+            background: true, uncertainOnFailure: true, validate: (_) => true,
+            handler: (_) async => BackendHarnessPayload(
+              flags: {'ids_evidence_present': false, 'outcome_uncertain': true},
+              counts: {'messages': 1}, fixture: originalFixture),
+          ),
+        });
+        try {
+          await engine.execute(request('original', 'fixture.edit',
+            {...correlation, 'messageGuid': guid}));
+          await engine.closeAdmissionAndDrain();
+          for (final invalid in ['wrong-guid', 'wrong-fixture', 'create-only',
+            'uncertain', 'extra-message']) {
+            final fixture = BackendHarnessFixtureReceipt(
+              fixtureId: invalid == 'wrong-fixture'
+                ? '31234567-89AB-4DEF-8123-456789ABCDEF' : fixtureId,
+              messageGuid: invalid == 'wrong-guid'
+                ? '41234567-89AB-4DEF-8123-456789ABCDEF' : guid,
+              visibleTextSha256: 'a' * 64);
+            await expectLater(requireWindowsBackendNativeSendCompletion(
+              engine, store, 'current', observeCurrentFixture: (_) async =>
+                BackendHarnessPayload(
+                  flags: {'ids_evidence_present': true,
+                    'outcome_uncertain': invalid == 'uncertain',
+                    'fixture_create_present': true,
+                    'fixture_edit_present': invalid != 'create-only'},
+                  counts: {'messages': invalid == 'extra-message' ? 2 : 1},
+                  fixture: fixture)),
+              throwsStateError, reason: invalid);
+          }
+        } finally {
+          store.close();
+        }
+      });
 
     test(
       'changed handoff is refused before publishing successful close',
