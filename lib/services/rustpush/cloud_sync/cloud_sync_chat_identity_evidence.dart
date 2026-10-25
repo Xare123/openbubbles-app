@@ -8,13 +8,13 @@ import 'cloud_sync_historical_parent_origin.dart';
 import 'cloud_sync_local_send_journal.dart';
 import 'cloud_sync_manual_shadow_sampler.dart';
 import 'cloud_sync_models.dart';
-import 'cloud_sync_outbound_chat_origin.dart';
+import 'cloud_sync_outbound_group_origin.dart';
 import 'cloud_sync_outbound_staging.dart';
 
 /// This edge must call the native observer with the exact staged candidate.
 /// A diagnostic comparison of an unstaged Chat cannot satisfy this contract.
 typedef CloudSyncStagedChatIdentityObserver =
-    CloudSyncChatIdentityObserver<CloudSyncOutboundChatOrigin>;
+    CloudSyncChatIdentityObserver<CloudSyncLocalChatCreateOrigin>;
 
 typedef CloudSyncChatIdentityObserver<T extends CloudSyncChatIdentityOrigin> =
     Future<native.CloudSyncChatIdentityResult> Function(
@@ -69,7 +69,8 @@ final class CloudSyncChatIdentityEvidence {
     final readSet = await authFence.run(() {
       origin.requireUnchanged(store);
       return CloudSyncChatIdentityReadSet.capture(store, origin.scope,
-        includeAppliedSaves: origin is CloudSyncHistoricalParentOrigin);
+        includeAppliedSaves: origin is CloudSyncHistoricalParentOrigin ||
+          origin is CloudSyncOutboundGroupOrigin);
     }, accountFingerprint: origin.scope.accountFingerprint);
     if (readSet.retainedSaves.isEmpty) return null;
     String? candidateBinding;
@@ -128,7 +129,9 @@ final class CloudSyncChatIdentityEvidence {
   }) {
     _authFence.requireCurrentBinding(_auth);
     if (origin.scope != _readSet.scope ||
-        (origin is CloudSyncHistoricalParentOrigin && !_readSet.includeAppliedSaves) ||
+        ((origin is CloudSyncHistoricalParentOrigin ||
+          origin is CloudSyncOutboundGroupOrigin) &&
+          !_readSet.includeAppliedSaves) ||
         origin.binding(_readSet.generation) != _originBinding ||
         logicalEntityKeyHash != _stage.logicalEntityKeyHash ||
         serverRecordIdHash != _stage.serverRecordIdHash ||

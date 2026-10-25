@@ -568,11 +568,19 @@ void main() {
       final recovery = source.substring(start, end);
       expect(
         source.lastIndexOf(
-          'await _replayCloudSyncV2NativeSendReceipts().timeout(',
+          'final receiptReplay = _replayCloudSyncV2NativeSendReceipts();',
           start,
         ),
         greaterThanOrEqualTo(0),
       );
+      final replayStart = source.lastIndexOf(
+        'final receiptReplay = _replayCloudSyncV2NativeSendReceipts();', start,
+      );
+      final replay = source.substring(replayStart, start);
+      _expectBefore(replay, 'if (_isolatedWindowsBackendHost)',
+        'await receiptReplay;');
+      _expectBefore(replay, 'await receiptReplay;',
+        'await receiptReplay.timeout(');
       expect(
         recovery.indexOf('claimUntrackedCrashedSend('),
         lessThan(recovery.indexOf('await markFailed(')),
@@ -1530,10 +1538,13 @@ void main() {
     expect('disposeState('.allMatches(helper), hasLength(1));
     expect(helper, isNot(contains('_cloudSyncV2LocalSourceOperations.reopen(')));
     _expectBefore(close, '_serviceClosing = true;',
-        'unawaited(_disposeStateAfterServiceClose(');
+        'final closing = _nativeCloseFuture ??=');
     _expectBefore(close, '_cloudSyncV2OutboundQuiescing = true;',
-        'unawaited(_disposeStateAfterServiceClose(');
-    expect(close, contains('unawaited(_disposeStateAfterServiceClose('));
+        'final closing = _nativeCloseFuture ??=');
+    _expectBefore(close, 'final closing = _nativeCloseFuture ??=',
+        '_disposeStateAfterServiceClose(closingState);');
+    _expectBefore(close, '_disposeStateAfterServiceClose(closingState);',
+        'unawaited(closing);');
     expect(close, isNot(contains('disposeState(')));
   });
 

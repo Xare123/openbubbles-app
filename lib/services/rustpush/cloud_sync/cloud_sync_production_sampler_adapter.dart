@@ -64,7 +64,7 @@ import 'cloud_sync_semantic_diagnostics.dart';
 import 'cloud_sync_outbound_admission.dart';
 import 'cloud_sync_outbound_group_binding.dart';
 import 'cloud_sync_outbound_chat_admission.dart';
-import 'cloud_sync_outbound_chat_origin.dart';
+import 'cloud_sync_chat_identity_origin.dart';
 import 'cloud_sync_outbound_staging.dart';
 import 'cloud_sync_chat_identity_evidence.dart';
 import 'cloud_sync_write_chat_identity_session.dart';
@@ -826,6 +826,34 @@ final class CloudSyncProductionLocalSendAdapter {
         .whenComplete(() => _running = null);
   }
 
+  /// Explicit fresh-group recovery, distinct from restored-group selection.
+  Future<CloudSyncLocalSendConsumerResult> runExactProvisionalGroupIntent({
+    required int intentId,
+    required String expectedOriginalGuid,
+    required List<String> expectedMembers,
+    required String expectedSender,
+    required String expectedSourceSha256,
+  }) {
+    if (_running != null || _historicalSelection != null) {
+      throw StateError('cloud_sync_local_send_consumer_busy');
+    }
+    final selection = _exactSelection;
+    if (selection != null && !selection.matchesProvisionalGroup(
+      intentId: intentId, expectedOriginalGuid: expectedOriginalGuid,
+      expectedMembers: expectedMembers, expectedSender: expectedSender,
+      expectedSourceSha256: expectedSourceSha256,
+    )) {
+      throw StateError('cloud_sync_local_send_selection_changed');
+    }
+    _exactSelection ??= CloudSyncLocalSendExactSelection.provisionalGroup(
+      intentId: intentId, expectedOriginalGuid: expectedOriginalGuid,
+      expectedMembers: expectedMembers, expectedSender: expectedSender,
+      expectedSourceSha256: expectedSourceSha256,
+    );
+    return _running = _run(selection: _exactSelection)
+        .whenComplete(() => _running = null);
+  }
+
   /// Explicit historical-source admission and readback using the same queue.
   /// Does not run the ordinary-send consumer or enable any automatic uploads.
   /// A caller must qualify/stage the source before constructing this selection.
@@ -1265,7 +1293,7 @@ final class CloudSyncProductionLocalSendAdapter {
       await validateSelection();
     }
     Future<CloudSyncChatIdentityEvidence?> observeChatIdentity(
-      CloudSyncOutboundChatOrigin origin,
+      CloudSyncLocalChatCreateOrigin origin,
       CloudSyncProtectedOutboundStageData stage,
     ) => identitySession.run((token) => CloudSyncChatIdentityEvidence.observe(
       store: objectBox, origin: origin, stage: stage, auth: auth, authFence: fence,

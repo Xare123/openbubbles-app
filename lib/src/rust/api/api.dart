@@ -965,6 +965,23 @@ Future<CloudSyncProtectedOutboundStageResult> cloudSyncStageOutboundChat({
   chat: chat,
 );
 
+/// Stages one fresh group iMessage Chat and its original random record name.
+/// The caller must durably bind its local group origin and native-send proof
+/// before admission. This grants no historical provenance or remote authority.
+Future<CloudSyncProtectedOutboundStageResult> cloudSyncStageOutboundGroupChat({
+  required ArcCloudMessagesClientDefaultAnisetteProvider cloudMessagesClient,
+  required String storageDirectory,
+  required String expectedAccountFingerprint,
+  required String expectedProtectedStoreIdentity,
+  required CloudChat chat,
+}) => RustLib.instance.api.crateApiApiCloudSyncStageOutboundGroupChat(
+  cloudMessagesClient: cloudMessagesClient,
+  storageDirectory: storageDirectory,
+  expectedAccountFingerprint: expectedAccountFingerprint,
+  expectedProtectedStoreIdentity: expectedProtectedStoreIdentity,
+  chat: chat,
+);
+
 /// Stage a parent from one committed historical snapshot source. This does not
 /// admit the candidate, prove remote absence, or submit a CloudKit operation.
 /// The caller retains one stage in its historical origin before retrying.

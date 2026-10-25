@@ -46,6 +46,16 @@ abstract interface class CloudSyncOutboundChatStagingTransport
   });
 }
 
+/// Explicit fresh-group staging capability. A direct Chat or historical-parent
+/// transport does not acquire this capability by implementing Message staging.
+abstract interface class CloudSyncOutboundGroupChatStagingTransport
+    implements CloudSyncOutboundChatStagingTransport {
+  Future<CloudSyncProtectedOutboundStageData> stageOutboundGroupChat(
+    CloudSyncScope scope, {
+    required frb_api.CloudChat chat,
+  });
+}
+
 /// Attachment-parent staging is an explicit capability; implementing the
 /// existing Message transport alone cannot admit an attachment-parent
 /// message. This covers only the parent message envelope staged under the

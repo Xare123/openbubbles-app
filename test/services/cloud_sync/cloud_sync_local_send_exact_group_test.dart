@@ -95,6 +95,34 @@ void main() {
     return store.box<CloudSyncLocalSendIntentEntity>().get(intentId)!;
   }
 
+  test('fresh group recovery is explicit and cannot use restored selection', () {
+    final group = _group()
+      ..guid = _originUuid
+      ..chatIdentifier = null
+      ..style = null;
+    _persistChat(store, group);
+    final selected = saveDeferredIdsSuccess(chat: group);
+    expect(() => journal.readExactGroupIntent(
+      intentId: selected.id, expectedChatGuid: _originUuid,
+      expectedMembers: ['first@example.com', '+15550000002'],
+      expectedSender: 'me@example.com',
+      expectedSourceSha256: selected.sourceSha256,
+    ), _stateFailure('cloud_sync_local_send_selection_changed'));
+    final selection = CloudSyncLocalSendExactSelection.provisionalGroup(
+      intentId: selected.id, expectedOriginalGuid: _originUuid,
+      expectedMembers: ['first@example.com', '+15550000002'],
+      expectedSender: 'me@example.com',
+      expectedSourceSha256: selected.sourceSha256,
+    );
+    expect(selection.validate(store: store, journal: journal,
+      durable: _durable(store), scope: _messageScope).intentId, selected.id);
+    expect(store.box<CloudSyncLocalSendIntentEntity>().get(selected.id)!.state, 3);
+    store.box<CloudOutboxOperationEntity>().put(_activeChatRow());
+    expect(() => selection.validate(store: store, journal: journal,
+      durable: _durable(store), scope: _messageScope),
+      _stateFailure('cloud_sync_local_send_unrelated_outbox'));
+  });
+
   test('group exact selection reads deferred IDS success without promoting',
       () {
     final group = _group();

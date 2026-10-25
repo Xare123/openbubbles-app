@@ -549,6 +549,19 @@ abstract interface class NativeProtectedCloudSyncChatWriteBindings
   });
 }
 
+/// Fresh groups require their own staging entry point, even when the same
+/// transport already supports ordinary direct Chats or historical parents.
+abstract interface class NativeProtectedCloudSyncGroupChatWriteBindings
+    implements NativeProtectedCloudSyncWriteBindings {
+  Future<frb_api.CloudSyncProtectedOutboundStageResult> stageOutboundGroupChat({
+    required Object cloudMessagesClient,
+    required String storageDirectory,
+    required String expectedAccountFingerprint,
+    required String expectedProtectedStoreIdentity,
+    required frb_api.CloudChat chat,
+  });
+}
+
 /// Explicit opt-in: existing Message- and Chat-only bindings do not acquire
 /// Attachment authority.
 ///
@@ -814,6 +827,7 @@ final class NativeProtectedCloudSyncTransport
         CloudProtectedLocalLifecycleTransport,
         CloudProtectedMutationLeaseRepairTransport,
         CloudSyncOutboundChatStagingTransport,
+        CloudSyncOutboundGroupChatStagingTransport,
         CloudSyncOutboundAttachmentParentStagingTransport,
         CloudSyncMessageUpdateTransport,
         CloudSyncReceivedMessageUpdateTransport,
@@ -1298,11 +1312,31 @@ final class NativeProtectedCloudSyncTransport
   Future<CloudSyncProtectedOutboundStageData> stageOutboundChat(
     CloudSyncScope scope, {
     required frb_api.CloudChat chat,
+  }) => _stageOutboundChat(scope, chat: chat, group: false);
+
+  @override
+  Future<CloudSyncProtectedOutboundStageData> stageOutboundGroupChat(
+    CloudSyncScope scope, {
+    required frb_api.CloudChat chat,
+  }) => _stageOutboundChat(scope, chat: chat, group: true);
+
+  Future<CloudSyncProtectedOutboundStageData> _stageOutboundChat(
+    CloudSyncScope scope, {
+    required frb_api.CloudChat chat,
+    required bool group,
   }) async {
     _requireV2WriterInterlock();
     _validateOutboundChatScope(scope);
+    final bindings = _bindings;
+    if (group && bindings is! NativeProtectedCloudSyncGroupChatWriteBindings) {
+      throw _readOnlyFailure();
+    }
+    final stageChat = group
+        ? (bindings as NativeProtectedCloudSyncGroupChatWriteBindings)
+            .stageOutboundGroupChat
+        : _requireChatWriteBindings().stageOutboundChat;
     final result = await _runProtectedStoreOperation(
-      () => _requireChatWriteBindings().stageOutboundChat(
+      () => stageChat(
         cloudMessagesClient: _cloudMessagesClient,
         storageDirectory: _storageDirectory,
         expectedAccountFingerprint: scope.accountFingerprint,
@@ -4163,6 +4197,7 @@ final class FrbNativeProtectedCloudSyncBindings
         NativeProtectedCloudSyncReceivedMessageUpdateBindings,
         CloudKitWriterChatReconciliationBinding,
         NativeProtectedCloudSyncChatWriteBindings,
+        NativeProtectedCloudSyncGroupChatWriteBindings,
         NativeProtectedCloudSyncAttachmentParentWriteBindings,
         NativeProtectedCloudSyncAttachmentWriteBindings,
         NativeProtectedPreparedReleaseBindings,
@@ -4582,6 +4617,21 @@ final class FrbNativeProtectedCloudSyncBindings
     required String expectedProtectedStoreIdentity,
     required frb_api.CloudChat chat,
   }) => _api.crateApiApiCloudSyncStageOutboundChat(
+    cloudMessagesClient: _requireCloudMessagesClient(cloudMessagesClient),
+    storageDirectory: storageDirectory,
+    expectedAccountFingerprint: expectedAccountFingerprint,
+    expectedProtectedStoreIdentity: expectedProtectedStoreIdentity,
+    chat: chat,
+  );
+
+  @override
+  Future<frb_api.CloudSyncProtectedOutboundStageResult> stageOutboundGroupChat({
+    required Object cloudMessagesClient,
+    required String storageDirectory,
+    required String expectedAccountFingerprint,
+    required String expectedProtectedStoreIdentity,
+    required frb_api.CloudChat chat,
+  }) => _api.crateApiApiCloudSyncStageOutboundGroupChat(
     cloudMessagesClient: _requireCloudMessagesClient(cloudMessagesClient),
     storageDirectory: storageDirectory,
     expectedAccountFingerprint: expectedAccountFingerprint,

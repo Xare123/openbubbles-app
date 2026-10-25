@@ -18,6 +18,7 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_chat_identit
 import 'package:bluebubbles/src/rust/api/cloud_sync_chat_identity.dart' as identity_api;
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_send_selection.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_outbound_chat_origin.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_chat_identity_origin.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_outbound_chat_admission.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_outbound_admission.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_writer_authority.dart';
@@ -666,7 +667,7 @@ void main() {
         final transport = _CombinedStaging();
         CloudSyncProtectedOutboundStageData? observedStage;
         Future<CloudSyncChatIdentityEvidence?> observeIdentity(
-          CloudSyncOutboundChatOrigin origin,
+          CloudSyncLocalChatCreateOrigin origin,
           CloudSyncProtectedOutboundStageData stage,
         ) async {
           observedStage = stage;

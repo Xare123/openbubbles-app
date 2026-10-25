@@ -6,6 +6,8 @@ import 'package:crypto/crypto.dart';
 import 'cloud_sync_local_send_journal.dart';
 import 'cloud_sync_models.dart';
 import 'cloud_sync_outbound_chat_origin.dart';
+import 'cloud_sync_outbound_group_origin.dart';
+import 'cloud_sync_chat_identity_origin.dart';
 import 'cloud_sync_attachment_upload_journal.dart';
 import 'cloud_sync_persistent_keys.dart';
 import 'objectbox_cloud_sync_store.dart';
@@ -20,7 +22,8 @@ final class CloudSyncLocalSendExactSelection {
     required this.intentId,
     required this.expectedRecipient,
     required this.expectedSourceSha256,
-  }) : expectedChatGuid = null, expectedMembers = null, expectedSender = null;
+  }) : expectedChatGuid = null, expectedMembers = null, expectedSender = null,
+       isProvisionalGroup = false;
 
   CloudSyncLocalSendExactSelection.group({
     required this.intentId,
@@ -29,7 +32,18 @@ final class CloudSyncLocalSendExactSelection {
     required String this.expectedSender,
     required this.expectedSourceSha256,
   }) : expectedRecipient = '',
-       expectedMembers = List.unmodifiable(expectedMembers.toList()..sort());
+       expectedMembers = List.unmodifiable(expectedMembers.toList()..sort()),
+       isProvisionalGroup = false;
+
+  CloudSyncLocalSendExactSelection.provisionalGroup({
+    required this.intentId,
+    required String expectedOriginalGuid,
+    required List<String> expectedMembers,
+    required String this.expectedSender,
+    required this.expectedSourceSha256,
+  }) : expectedRecipient = '', expectedChatGuid = expectedOriginalGuid,
+       expectedMembers = List.unmodifiable(expectedMembers.toList()..sort()),
+       isProvisionalGroup = true;
 
   final int intentId;
   final String expectedRecipient;
@@ -37,6 +51,7 @@ final class CloudSyncLocalSendExactSelection {
   final String? expectedChatGuid;
   final List<String>? expectedMembers;
   final String? expectedSender;
+  final bool isProvisionalGroup;
   bool get isGroup => expectedChatGuid != null;
   String? _sourceBinding;
   int? _state;
@@ -68,10 +83,21 @@ final class CloudSyncLocalSendExactSelection {
     required List<String> expectedMembers,
     required String expectedSender,
     required String expectedSourceSha256,
-  }) => isGroup && this.intentId == intentId &&
+  }) => isGroup && !isProvisionalGroup && this.intentId == intentId &&
       this.expectedChatGuid == expectedChatGuid &&
       this.expectedSender == expectedSender &&
       jsonEncode(this.expectedMembers) == jsonEncode(expectedMembers.toList()..sort()) &&
+      this.expectedSourceSha256 == expectedSourceSha256;
+
+  bool matchesProvisionalGroup({
+    required int intentId, required String expectedOriginalGuid,
+    required List<String> expectedMembers, required String expectedSender,
+    required String expectedSourceSha256,
+  }) => isProvisionalGroup && this.intentId == intentId &&
+      expectedChatGuid == expectedOriginalGuid &&
+      this.expectedSender == expectedSender &&
+      jsonEncode(this.expectedMembers) ==
+          jsonEncode(expectedMembers.toList()..sort()) &&
       this.expectedSourceSha256 == expectedSourceSha256;
 
   CloudSyncLocalSendAdmissionSource validate({
@@ -92,7 +118,11 @@ final class CloudSyncLocalSendExactSelection {
         !journal.isBoundToStore(store)) {
       throw StateError('cloud_sync_local_send_selection_changed');
     }
-    final source = isGroup ? journal.readExactGroupIntent(
+    final source = isProvisionalGroup ? journal.readExactProvisionalGroupIntent(
+      intentId: intentId, expectedOriginalGuid: expectedChatGuid!,
+      expectedMembers: expectedMembers!, expectedSender: expectedSender!,
+      expectedSourceSha256: expectedSourceSha256,
+    ) : isGroup ? journal.readExactGroupIntent(
       intentId: intentId,
       expectedChatGuid: expectedChatGuid!,
       expectedMembers: expectedMembers!,
@@ -164,7 +194,12 @@ final class CloudSyncLocalSendExactSelection {
         // Restored-group qualification may reuse a proven existing Chat, but
         // cannot authorize creating a different/provisional group or draining
         // an unrelated active direct-chat create.
-        if (isGroup) {
+        if (isGroup && !isProvisionalGroup) {
+          throw StateError('cloud_sync_local_send_unrelated_outbox');
+        }
+        if (isProvisionalGroup &&
+            (row.localChatOrigin == null ||
+              !isCloudSyncOutboundGroupOrigin(row.localChatOrigin!))) {
           throw StateError('cloud_sync_local_send_unrelated_outbox');
         }
         final chatScope = CloudSyncScope(
@@ -187,14 +222,15 @@ final class CloudSyncLocalSendExactSelection {
         final originView = Chat(
           id: chat.id,
           guid: originalGuid,
-          chatIdentifier: expectedRecipient,
+          chatIdentifier: isProvisionalGroup ? null : expectedRecipient,
           usingHandle: chat.usingHandle,
-          style: 45,
-        )..handles.addAll(chat.handles);
-        final origin = CloudSyncOutboundChatOrigin.capture(
-          scope: chatScope,
-          chat: originView,
-        );
+          style: isProvisionalGroup ? null : 45,
+          displayName: isProvisionalGroup ? chat.displayName : null,
+        )..groupVersion = isProvisionalGroup ? chat.groupVersion : null
+         ..handles.addAll(chat.handles);
+        final CloudSyncLocalChatCreateOrigin origin = isProvisionalGroup
+            ? CloudSyncOutboundGroupOrigin.capture(scope: chatScope, chat: originView)
+            : CloudSyncOutboundChatOrigin.capture(scope: chatScope, chat: originView);
         if (selectedChat != null ||
             row.accountFingerprint != scope.accountFingerprint ||
             row.localChatOrigin == null ||

@@ -2070,6 +2070,30 @@ final class CloudSyncLocalSendJournal {
     required List<String> expectedMembers,
     required String expectedSender,
     required String expectedSourceSha256,
+  }) => _readExactGroupIntent(intentId: intentId,
+    expectedChatGuid: expectedChatGuid, expectedMembers: expectedMembers,
+    expectedSender: expectedSender, expectedSourceSha256: expectedSourceSha256);
+
+  /// Explicit recovery of one original provisional group. A restored-group
+  /// selection never acquires permission to create this parent implicitly.
+  CloudSyncLocalSendAdmissionSource readExactProvisionalGroupIntent({
+    required int intentId,
+    required String expectedOriginalGuid,
+    required List<String> expectedMembers,
+    required String expectedSender,
+    required String expectedSourceSha256,
+  }) => _readExactGroupIntent(intentId: intentId,
+    expectedChatGuid: expectedOriginalGuid, expectedMembers: expectedMembers,
+    expectedSender: expectedSender, expectedSourceSha256: expectedSourceSha256,
+    provisionalOrigin: true);
+
+  CloudSyncLocalSendAdmissionSource _readExactGroupIntent({
+    required int intentId,
+    required String expectedChatGuid,
+    required List<String> expectedMembers,
+    required String expectedSender,
+    required String expectedSourceSha256,
+    bool provisionalOrigin = false,
   }) => _store.runInTransaction(TxMode.read, () {
     if (expectedChatGuid.isEmpty ||
         expectedSender.isEmpty ||
@@ -2091,9 +2115,15 @@ final class CloudSyncLocalSendJournal {
         ? _validatedExactAdoptedMessage(intent)
         : _validatedMessage(intent);
     final route = CloudSyncGroupSendRoute.capture(message.chat.target!);
+    final matchesOrigin = route != null && (provisionalOrigin
+        ? RegExp(r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$')
+            .hasMatch(expectedChatGuid) &&
+          (route.provisional ? route.guid == expectedChatGuid :
+            route.originalGuid == expectedChatGuid &&
+            route.guid == 'iMessage;+;chat${expectedChatGuid.replaceAll('-', '').toLowerCase()}')
+        : !route.provisional && route.guid == expectedChatGuid);
     if (route == null ||
-        route.provisional ||
-        route.guid != expectedChatGuid ||
+        !matchesOrigin ||
         route.sender != expectedSender ||
         route.members.length != wanted.length) {
       throw StateError('cloud_sync_local_send_selection_changed');

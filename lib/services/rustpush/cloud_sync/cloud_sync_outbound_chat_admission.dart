@@ -3,11 +3,14 @@ import 'package:bluebubbles/src/rust/api/api.dart' as api;
 import 'cloud_sync_local_send_journal.dart';
 import 'cloud_sync_chat_identity_evidence.dart';
 import 'cloud_sync_models.dart';
-import 'cloud_sync_outbound_chat_origin.dart';
+import 'cloud_sync_chat_identity_origin.dart';
+import 'cloud_sync_outbound_group_origin.dart';
 import 'cloud_sync_outbound_staging.dart';
 import 'objectbox_cloud_sync_store.dart';
 
-/// Local-only admission of a direct Chat dependency. The existing engine still
+/// Local-only admission of an explicitly journal-bound Chat dependency.
+/// Direct and fresh-group native capabilities and identity rules stay separate.
+/// The existing engine still
 /// owns leasing, remote permission, submission and uncertain-outcome recovery.
 final class CloudSyncOutboundChatAdmissionCoordinator {
   const CloudSyncOutboundChatAdmissionCoordinator({
@@ -21,7 +24,7 @@ final class CloudSyncOutboundChatAdmissionCoordinator {
   final CloudSyncOutboundChatStagingTransport _transport;
   final Future<void> Function() _ensureProtectedStoreRecovered;
   final Future<CloudSyncChatIdentityEvidence?> Function(
-    CloudSyncOutboundChatOrigin origin,
+    CloudSyncLocalChatCreateOrigin origin,
     CloudSyncProtectedOutboundStageData stage,
   )?
   _observeChatIdentity;
@@ -33,7 +36,7 @@ final class CloudSyncOutboundChatAdmissionCoordinator {
     required CloudSyncLocalSendAuthFence authFence,
     CloudSyncLocalSendAdmissionSource? localSendSource,
     void Function()? validateLocalOrigin,
-    api.CloudChat Function(CloudSyncOutboundChatOrigin)? encode,
+    api.CloudChat Function(CloudSyncLocalChatCreateOrigin)? encode,
   }) => _transport.runOutboundAdmissionExclusive(() async {
     await _ensureProtectedStoreRecovered();
     final existing = await authFence.run(() {
@@ -61,6 +64,11 @@ final class CloudSyncOutboundChatAdmissionCoordinator {
             ),
       accountFingerprint: scope.accountFingerprint,
     );
+    if (origin is CloudSyncOutboundGroupOrigin &&
+        (localSendSource == null ||
+         _transport is! CloudSyncOutboundGroupChatStagingTransport)) {
+      throw StateError('cloud_sync_outbound_group_staging_unavailable');
+    }
     final candidate = (encode ?? encodeOrigin)(origin);
     if (candidate.guid != origin.canonicalGuid ||
         candidate.chatIdentifier != origin.chatIdentifier ||
@@ -68,12 +76,17 @@ final class CloudSyncOutboundChatAdmissionCoordinator {
         candidate.originalGroupId != origin.originalGuid ||
         candidate.lastAddressedHandle != origin.usingHandle ||
         candidate.serviceName != 'iMessage' ||
-        candidate.style != 45 ||
-        candidate.participants.length != 1 ||
-        candidate.participants.single.uri != origin.chatIdentifier) {
+        (origin is CloudSyncOutboundGroupOrigin
+          ? !_matchesGroupCandidate(origin, candidate)
+          : candidate.style != 45 ||
+            candidate.participants.length != 1 ||
+            candidate.participants.single.uri != origin.chatIdentifier)) {
       throw StateError('cloud_sync_outbound_chat_encoded_identity_changed');
     }
-    final stage = await _transport.stageOutboundChat(scope, chat: candidate);
+    final stage = origin is CloudSyncOutboundGroupOrigin
+        ? await (_transport as CloudSyncOutboundGroupChatStagingTransport)
+            .stageOutboundGroupChat(scope, chat: candidate)
+        : await _transport.stageOutboundChat(scope, chat: candidate);
     var adopted = false;
     try {
       final identityEvidence = await _observeChatIdentity?.call(origin, stage);
@@ -126,9 +139,42 @@ final class CloudSyncOutboundChatAdmissionCoordinator {
 
   /// Use the shipping direct-chat shape without calling Chat.toCloud(), whose
   /// identifier mutations occur before remote confirmation.
-  static api.CloudChat encodeOrigin(CloudSyncOutboundChatOrigin origin) =>
-      encodeDirectIdentity(originalGuid: origin.originalGuid,
-        recipient: origin.chatIdentifier, sender: origin.usingHandle);
+  static api.CloudChat encodeOrigin(CloudSyncLocalChatCreateOrigin origin) =>
+      origin is CloudSyncOutboundGroupOrigin ? encodeGroupOrigin(origin) :
+        encodeDirectIdentity(originalGuid: origin.originalGuid,
+          recipient: origin.chatIdentifier, sender: origin.usingHandle);
+
+  static bool _matchesGroupCandidate(
+    CloudSyncOutboundGroupOrigin origin, api.CloudChat candidate,
+  ) {
+    final actual = candidate.participants.map((p) => p.uri).toList()..sort();
+    final expected = origin.members.toList()..sort();
+    return candidate.style == 43 &&
+      actual.length == expected.length &&
+      List.generate(actual.length, (i) => actual[i] == expected[i]).every((v) => v) &&
+      candidate.properties?.pv == origin.groupVersion &&
+      candidate.displayName == origin.displayName &&
+      candidate.groupPhoto == null && candidate.groupPhotoGuid == null;
+  }
+
+  static api.CloudChat encodeGroupOrigin(CloudSyncOutboundGroupOrigin origin) =>
+      api.CloudChat(
+        style: 43, isFiltered: 0, successfulQuery: 1, state: 3,
+        chatIdentifier: origin.chatIdentifier,
+        groupId: origin.originalGuid, originalGroupId: origin.originalGuid,
+        serviceName: 'iMessage',
+        participants: origin.members.map((uri) =>
+          api.CloudParticipant(uri: uri)).toList(),
+        lastAddressedHandle: origin.usingHandle, guid: origin.canonicalGuid,
+        displayName: origin.displayName, lastReadMessageTimestamp: 0,
+        properties: api.CloudProp(
+          pv: origin.groupVersion, numberOfTimesRespondedtoThread: 3,
+          shouldForceToSms: false, legacyGroupIdentifiers: [],
+          messageHandshakeState: 1,
+        ),
+        prop001: const api.CloudProp001(syndicationType: 0),
+        proto001: api.encodeChatproto(chat: const api.ChatProto(unk1: 0)),
+      );
 
   /// Shared wire shape for staging and the Windows protected-stage diagnostic.
   /// Construction is not admission, a native-send receipt, or write authority.

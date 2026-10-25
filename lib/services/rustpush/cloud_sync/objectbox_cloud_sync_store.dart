@@ -26,6 +26,8 @@ import 'cloud_sync_manual_shadow_sampler.dart';
 import 'cloud_sync_models.dart';
 import 'cloud_sync_outbound_message_dependency.dart';
 import 'cloud_sync_outbound_chat_origin.dart';
+import 'cloud_sync_chat_identity_origin.dart';
+import 'cloud_sync_outbound_group_origin.dart';
 import 'cloud_sync_persistent_keys.dart';
 import 'cloud_sync_record_maps.dart';
 import 'cloud_sync_protector.dart';
@@ -2736,7 +2738,9 @@ class ObjectBoxCloudSyncStore
                   .and(
                     CloudOutboxOperationEntity_.localChatOrigin.startsWith(
                       '[2,',
-                    ),
+                    ).or(CloudOutboxOperationEntity_.localChatOrigin.startsWith(
+                      '[6,',
+                    )),
                   )
                   .and(
                     CloudOutboxOperationEntity_.state.oneOf([
@@ -2876,7 +2880,7 @@ class ObjectBoxCloudSyncStore
   }
 
   /// Candidate capture only, never adoption or permission to create remotely.
-  CloudSyncOutboundChatOrigin captureOutboundChatObservationOrigin(
+  CloudSyncLocalChatCreateOrigin captureOutboundChatObservationOrigin(
     CloudSyncScope scope,
     int chatId, {
     required CloudSyncLocalSendAdmissionSource localSendSource,
@@ -2895,15 +2899,16 @@ class ObjectBoxCloudSyncStore
     if (chat == null) {
       throw _storageFailure('cloud_sync_outbound_chat_origin_missing');
     }
-    final origin = CloudSyncOutboundChatOrigin.capture(
+    final origin = captureCloudSyncLocalChatCreateOrigin(
       scope: scope,
       chat: chat,
+      allowGroup: true,
     );
     _requireNoPriorChatIdentityLocked(origin);
     return origin;
   });
 
-  CloudSyncOutboundChatOrigin captureFreshOutboundChatOrigin(
+  CloudSyncLocalChatCreateOrigin captureFreshOutboundChatOrigin(
     CloudSyncScope scope,
     int chatId, {
     CloudSyncLocalSendAdmissionSource? localSendSource,
@@ -2927,9 +2932,10 @@ class ObjectBoxCloudSyncStore
     if (chat == null) {
       throw _storageFailure('cloud_sync_outbound_chat_origin_missing');
     }
-    final origin = CloudSyncOutboundChatOrigin.capture(
+    final origin = captureCloudSyncLocalChatCreateOrigin(
       scope: scope,
       chat: chat,
+      allowGroup: localSendSource != null,
     );
     if (localSendSource != null) _requireNoPriorChatIdentityLocked(origin);
     return origin;
@@ -2940,7 +2946,7 @@ class ObjectBoxCloudSyncStore
   CloudOutboxOperation admitProtectedOutboundChatCreate({
     required CloudOutboxDraft draft,
     required CloudRecordMapEntry recordMapping,
-    required CloudSyncOutboundChatOrigin origin,
+    required CloudSyncLocalChatCreateOrigin origin,
     CloudSyncLocalSendAdmissionSource? localSendSource,
     void Function()? validateLocalOrigin,
     CloudSyncChatIdentityEvidence? identityEvidence,
@@ -3220,7 +3226,7 @@ class ObjectBoxCloudSyncStore
     void Function()? validateFreshDependency,
     CloudSyncReceivedArchiveAdmissionSource? receivedArchiveSource,
     CloudSyncHistoricalCreateSource? historicalArchiveSource,
-    CloudSyncOutboundChatOrigin? chatOrigin,
+    CloudSyncLocalChatCreateOrigin? chatOrigin,
     CloudSyncHistoricalParentOrigin? historicalChatOrigin,
     CloudSyncLocalSendAdmissionSource? chatLocalSendSource,
     CloudSyncChatIdentityEvidence? chatIdentityEvidence,
@@ -3230,6 +3236,8 @@ class ObjectBoxCloudSyncStore
     final isChatCreate = chatOrigin != null || historicalChatOrigin != null;
     if ([localSendSource, receivedArchiveSource, historicalArchiveSource]
             .where((source) => source != null).length > 1 ||
+        (chatOrigin is CloudSyncOutboundGroupOrigin &&
+          chatLocalSendSource == null) ||
         (historicalArchiveSource != null && (isChatCreate || isAttachmentCreate)) ||
         (historicalChatOrigin != null &&
           (chatOrigin != null || chatLocalSendSource != null ||
@@ -3389,6 +3397,21 @@ class ObjectBoxCloudSyncStore
           chatOrigin.chatId,
           chatLocalSendSource,
         );
+        if (chatOrigin is CloudSyncOutboundGroupOrigin &&
+            CloudSyncChatIdentityReadSet.capture(_store, draft.scope,
+              includeAppliedSaves: true).retainedSaves.isNotEmpty) {
+          if (chatIdentityEvidence == null) {
+            throw _storageFailure('cloud_sync_chat_identity_evidence_required');
+          }
+          chatIdentityEvidence.requireMatches(
+            store: _store, origin: chatOrigin,
+            logicalEntityKeyHash: draft.logicalEntityKeyHash,
+            serverRecordIdHash: draft.serverRecordIdHash,
+            payloadSha256: draft.payloadSha256,
+            protectedEnvelopeReference: draft.encryptedPayloadReference,
+            leaseReference: draft.protectedLeaseReference,
+          );
+        }
         _requireMessagesCloudAccountProjectionReadyLocked(
           draft.scope,
           allowRetainedForFreshCreate: true,
@@ -5994,7 +6017,7 @@ class ObjectBoxCloudSyncStore
   }
 
   void _requireNoPriorChatIdentityLocked(
-    CloudSyncOutboundChatOrigin origin, {
+    CloudSyncLocalChatCreateOrigin origin, {
     String? logicalEntityKeyHash,
     String? allowedOperationId,
     String? freshRecordIdHash,
@@ -6021,7 +6044,7 @@ class ObjectBoxCloudSyncStore
   }
 
   _ExistingChatHistoryMatches _existingChatHistoryMatchesLocked(
-    CloudSyncOutboundChatOrigin origin, {
+    CloudSyncLocalChatCreateOrigin origin, {
     String? logicalEntityKeyHash,
     String? allowedOperationId,
     String? freshRecordIdHash,
@@ -6046,7 +6069,11 @@ class ObjectBoxCloudSyncStore
       if (chat.id == origin.chatId) continue;
       final handles = chat.handles.toList(growable: false);
       if (chat.guid == origin.canonicalGuid ||
-          (!chat.isRpSms &&
+          (origin is CloudSyncOutboundGroupOrigin &&
+            (chat.guid == origin.originalGuid ||
+             chat.cloudGuid == origin.originalGuid)) ||
+          (origin is! CloudSyncOutboundGroupOrigin &&
+              !chat.isRpSms &&
               !chat.isRoutingStub &&
               handles.length == 1 &&
               handles.single.service == 'iMessage' &&
@@ -6214,7 +6241,7 @@ class ObjectBoxCloudSyncStore
 
   /// Recover the original queued Chat and its journal authorization, without
   /// staging another record or demanding evidence that is being refreshed.
-  CloudSyncOutboundChatOrigin? captureQueuedChatObservationOrigin(
+  CloudSyncLocalChatCreateOrigin? captureQueuedChatObservationOrigin(
     CloudOutboxOperation expected,
   ) => _store.runInTransaction(TxMode.read, () {
     final row = _findOutboxByOperationIdLocked(expected.operationId);
@@ -6231,7 +6258,7 @@ class ObjectBoxCloudSyncStore
     return _captureJournalBoundChatOriginLocked(scope, row);
   });
 
-  CloudSyncOutboundChatOrigin? _captureJournalBoundChatOriginLocked(
+  CloudSyncLocalChatCreateOrigin? _captureJournalBoundChatOriginLocked(
     CloudSyncScope scope,
     CloudOutboxOperationEntity entity,
   ) {
@@ -6262,9 +6289,10 @@ class ObjectBoxCloudSyncStore
       if (chat == null) {
         throw _storageFailure('cloud_sync_outbound_chat_origin_missing');
       }
-      final origin = CloudSyncOutboundChatOrigin.capture(
+      final origin = captureCloudSyncLocalChatCreateOrigin(
         scope: scope,
         chat: chat,
+        allowGroup: isCloudSyncOutboundGroupOrigin(chatBinding),
       );
       if (origin.binding(operation.checkpointGeneration) != identity) {
         throw _storageFailure('cloud_sync_outbound_chat_origin_changed');

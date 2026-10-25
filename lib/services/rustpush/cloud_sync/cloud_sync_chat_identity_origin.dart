@@ -9,3 +9,16 @@ abstract interface class CloudSyncChatIdentityOrigin {
   String binding(int generation);
   void requireUnchanged(Store store);
 }
+
+/// Local Chat creates share queue and readback mechanics while keeping their
+/// direct/group capture rules and durable proof formats distinct.
+abstract interface class CloudSyncLocalChatCreateOrigin
+    implements CloudSyncChatIdentityOrigin {
+  int get chatId;
+  String get originalGuid;
+  String get canonicalGuid;
+  String get chatIdentifier;
+  String get usingHandle;
+  @override
+  String binding(int generation, {String? localSendProof});
+}
