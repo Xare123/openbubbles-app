@@ -312,7 +312,10 @@ final class BackendHarnessController {
       challenge: challenge,
       flags: {
         ...availability.flags,
-        ...account.snapshot().flags,
+        ...account.snapshot(retainedRelayResources: service.state != null &&
+          !service.state!.osConfig.isDisposed &&
+          !service.state!.conn.isDisposed &&
+          !service.state!.anisette.isDisposed).flags,
         'sync_active': service.cloudSyncV2HistoryReadActive,
         'sync_quiescing': service.cloudSyncV2CanaryAdbSemanticPullQuiescing,
         'projection_complete': progress.projectionComplete,

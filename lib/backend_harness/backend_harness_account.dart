@@ -1,7 +1,6 @@
 import 'package:bluebubbles/app/layouts/setup/setup_view.dart';
 import 'package:bluebubbles/services/rustpush/rustpush_service.dart';
 import 'package:bluebubbles/services/rustpush/setup_interaction_port.dart';
-import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_production_sampler_adapter.dart';
 import 'package:bluebubbles/services/services.dart';
 import 'package:bluebubbles/src/rust/api/api.dart' as api;
 
@@ -123,8 +122,11 @@ final class BackendHarnessAccount implements SetupInteractionPort {
       if (!identical(config, c.config) || pushService.state != null) {
         throw BackendHarnessFailure('backend_identity_changed');
       }
-      c.supportsPhoneReg.value =
-          const ['iPhone', 'iPod', 'iPad'].any(info.name.contains);
+      c.supportsPhoneReg.value = const [
+        'iPhone',
+        'iPod',
+        'iPad',
+      ].any(info.name.contains);
     }
     phase = BackendHarnessPhase.needs_credentials;
     return snapshot();
@@ -177,7 +179,9 @@ final class BackendHarnessAccount implements SetupInteractionPort {
       phase = BackendHarnessPhase.needs_credentials;
       return snapshot();
     } finally {
-      if (!adopted && !identical(c.config, candidate) && !candidate.isDisposed) {
+      if (!adopted &&
+          !identical(c.config, candidate) &&
+          !candidate.isDisposed) {
         candidate.dispose();
       }
     }
@@ -277,20 +281,30 @@ final class BackendHarnessAccount implements SetupInteractionPort {
     if (!identical(current, pushService.state)) {
       throw BackendHarnessFailure('backend_identity_changed');
     }
-    final provider = CloudSyncProductionAuthSnapshotProvider(
-      readActiveClient: () =>
+    final client = current.icloudServices?.cloudMessagesClient;
+    final storage = pushService.statePath;
+    // This observation needs persisted composition identity. The writer
+    // snapshot requires refreshed GSA SPD and is unavailable on a cold boot.
+    // External operations still establish their normal fresh read/write permit.
+    final identity = client == null
+        ? null
+        : await api.cloudSyncCaptureReceivedIdentity(
+            cloudMessagesClient: client,
+            storageDirectory: storage,
+          );
+    if (!identical(current, pushService.state) ||
+        !identical(
+          client,
           pushService.state?.icloudServices?.cloudMessagesClient,
-      nativeAuthBinding: FrbCloudSyncNativeAuthBinding(),
-      privateStorageDirectory: pushService.statePath,
-    );
-    final auth = await provider.capture();
-    if (!identical(current, pushService.state)) {
+        ) ||
+        storage != pushService.statePath) {
       throw BackendHarnessFailure('backend_identity_changed');
     }
+    final validIdentity = identity != null && validCachedIdentity(identity);
     final registered = registration is api.RegisterState_Registered;
     // Native metadata binds identity; it does not prove fresh network auth.
     // The normal semantic read still owns read-auth refresh under its interlock.
-    phase = registered && auth != null
+    phase = registered && validIdentity
         ? BackendHarnessPhase.idle
         : BackendHarnessPhase.blocked;
     return BackendHarnessPayload(
@@ -298,19 +312,27 @@ final class BackendHarnessAccount implements SetupInteractionPort {
       flags: {
         'native_client_present': true,
         'registration_ready': registered,
-        'native_identity_available': auth != null,
+        'native_identity_available': validIdentity,
         'setup_finished': ss.settings.finishedSetup.value,
       },
     );
   }
 
-  BackendHarnessPayload snapshot() {
+  static bool validCachedIdentity(api.CloudSyncNativeAuthMetadata identity) =>
+      RegExp(r'^[A-Za-z0-9_-]{43}$').hasMatch(identity.nativeSessionId) &&
+      RegExp(r'^[A-Za-z0-9_-]{43}$').hasMatch(identity.accountFingerprint) &&
+      RegExp(
+        r'^obcs2\.store\.[A-Za-z0-9_-]{43}$',
+      ).hasMatch(identity.protectedStoreIdentity);
+
+  BackendHarnessPayload snapshot({bool retainedRelayResources = false}) {
     final c = setupController;
     return BackendHarnessPayload(
       phase: phase,
       flags: {
         'relay_ready':
-            c.config != null && c.connection != null && c.anisette != null,
+            (c.config != null && c.connection != null && c.anisette != null) ||
+            retainedRelayResources,
       },
       challenge: interactions.pending,
     );

@@ -4,11 +4,50 @@ import 'package:bluebubbles/backend_harness/backend_harness_account.dart';
 import 'package:bluebubbles/backend_harness/backend_harness_interactions.dart';
 import 'package:bluebubbles/backend_harness/backend_harness_protocol.dart';
 import 'package:bluebubbles/backend_harness/backend_harness_recovery_input.dart';
+import 'package:bluebubbles/src/rust/api/api.dart' as api;
 import 'package:flutter_test/flutter_test.dart';
 
 Matcher get refused => throwsA(isA<BackendHarnessFailure>());
 
 void main() {
+  test(
+    'cached identity observation validates native tags without fresh authentication',
+    () {
+      final tag = List.filled(43, 'a').join();
+      api.CloudSyncNativeAuthMetadata metadata({
+        String? account,
+        String? store,
+        String? session,
+      }) => api.CloudSyncNativeAuthMetadata(
+        accountFingerprint: account ?? tag,
+        protectedStoreIdentity: store ?? 'obcs2.store.$tag',
+        nativeSessionId: session ?? tag,
+      );
+      expect(BackendHarnessAccount.validCachedIdentity(metadata()), isTrue);
+      for (final invalid in [
+        metadata(account: 'private@example.invalid'),
+        metadata(store: tag),
+        metadata(session: ''),
+        metadata(session: '$tag\n'),
+      ]) {
+        expect(BackendHarnessAccount.validCachedIdentity(invalid), isFalse);
+      }
+    },
+  );
+
+  test(
+    'retained relay resources are availability without starting services',
+    () {
+      final adapter = BackendHarnessAccount(BackendHarnessInteractions());
+      expect(adapter.snapshot().flags['relay_ready'], isFalse);
+      final retained = adapter.snapshot(retainedRelayResources: true);
+      expect(retained.flags['relay_ready'], isTrue);
+      expect(retained.flags.containsKey('auth_ready'), isFalse);
+      expect(retained.flags.containsKey('registration_ready'), isFalse);
+      expect(retained.phase, BackendHarnessPhase.needs_credentials);
+    },
+  );
+
   test(
     'setup operation waits work without a mounted consumer screen',
     () async {
