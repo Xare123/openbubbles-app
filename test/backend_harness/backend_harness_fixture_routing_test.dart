@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:bluebubbles/backend_harness/backend_harness_fixture_routing.dart';
+import 'package:bluebubbles/backend_harness/backend_harness_fixtures.dart';
 import 'package:bluebubbles/backend_harness/backend_harness_protocol.dart';
 import 'package:bluebubbles/database/models.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -209,4 +210,18 @@ void main() {
       expect(store.box<Message>().count(), 0);
     },
   );
+
+  test('explicit first group accepts only its persisted fresh provisional route', () {
+    final fresh = chat(group: true)
+      ..guid = '01234567-89AB-4DEF-8123-456789ABCDEF'
+      ..chatIdentifier = null
+      ..cloudGuid = null;
+    store.box<Chat>().put(fresh);
+    expect(() => BackendHarnessFixtures.requireFreshGroup(fresh, [second, first]),
+      returnsNormally);
+    expect(() => BackendHarnessFixtures.requireFreshGroup(fresh, [first]), refused);
+    expect(() => BackendHarnessFixtures.requireFreshGroup(fresh, [first, '+15555550101']), refused);
+    expect(store.box<Chat>().count(), 1);
+    expect(store.box<Message>().count(), 0);
+  });
 }

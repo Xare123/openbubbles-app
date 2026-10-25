@@ -10228,6 +10228,12 @@ class RustPushService extends GetxService {
             receipt: nativeReceipt, capturedAuth: auth,
             stillCurrent: confirmationBindingCurrent, now: DateTime.now().toUtc(),
             replayBinding: replayBinding,
+            // The retained engineering profile may contain an older unknown
+            // edit. Reject its stale unadopted owner before recording a newly
+            // discovered receipt; leave that row and native receipt retained.
+            // Ordinary consumer recording and adopted recovery keep their paths.
+            requireAcceptedOwnerBeforeRecording:
+                _isolatedWindowsBackendHost && replayBinding != null,
           );
         } on StateError catch (error) {
           if (!const {

@@ -237,13 +237,16 @@ final class CloudSyncLocalMutationJournal {
   /// Records one exact positive mutation receipt and returns the journal row
   /// that owns it. The targeted identifier lets the production callback resume
   /// reflection without scanning or depending on a standalone Message row for
-  /// the mutation UUID.
+  /// the mutation UUID. Retained engineering replay may refuse an unadopted
+  /// source outside current ownership before recording any new receipt proof.
+  /// Adopted/terminal sources retain their existing exact recovery checks.
   int? recordNativeReceiptIntentIfTracked({
     required api.CloudSyncNativeSendReceipt receipt,
     required CloudSyncNativeAuthSnapshot capturedAuth,
     required bool Function() stillCurrent,
     required DateTime now,
     CloudSyncNativeReceiptReplayBinding? replayBinding,
+    bool requireAcceptedOwnerBeforeRecording = false,
   }) => _store.runInTransaction(TxMode.write, () {
     if (receipt.sourceBinding?.kind !=
         api.CloudSyncNativeSendSourceKind.mutation) {
@@ -251,6 +254,9 @@ final class CloudSyncLocalMutationJournal {
     }
     final row = _findByGuid(receipt.guidHash);
     if (row == null) return null;
+    if (requireAcceptedOwnerBeforeRecording && row.state < 4) {
+      _requireAcceptedOwner(_read(row.id));
+    }
     recordNativeReceipt(
       intentId: row.id,
       receipt: receipt,

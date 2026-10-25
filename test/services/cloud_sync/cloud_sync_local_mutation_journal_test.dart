@@ -1255,6 +1255,223 @@ void main() {
     return id;
   }
 
+  CloudSyncNativeReceiptReplayBinding engineeringReplay(
+    CloudSyncNativeAuthSnapshot auth,
+  ) => CloudSyncNativeReceiptReplayBinding(
+    expectedAuth: auth,
+    expectedState: store,
+    expectedStore: store,
+    expectedClient: auth.cloudMessagesClient,
+    expectedStoragePath: directory.path,
+    readState: () => store,
+    readStore: () => store,
+    readClient: () => auth.cloudMessagesClient,
+    readStoragePath: () => directory.path,
+    runtimeCurrent: () => true,
+  );
+
+  // Every durable mutation column, so a rejected replay cannot silently add
+  // receipt proof, advance a state/timestamp or rewrite retained source data.
+  String mutationSnapshot(int id) {
+    final value = row(id);
+    return jsonEncode([
+      value.id,
+      value.intentKey,
+      value.accountFingerprint,
+      value.writerEpoch,
+      value.localMessageId,
+      value.localChatId,
+      value.mutationGuidHash,
+      value.targetGuidHash,
+      value.targetPart,
+      value.kind,
+      value.sourceSha256,
+      value.targetSnapshotSha256,
+      value.protectedSourceBinding,
+      value.state,
+      value.submissionAuthBindingSha256,
+      value.idsReceiptBindingSha256,
+      value.reflectedSnapshotSha256,
+      value.admittedOperationId,
+      value.admittedBindingSha256,
+      value.createdAtMs,
+      value.updatedAtMs,
+    ]);
+  }
+
+  void setReplayOwner({int epoch = 18, int lineage = 0, bool rebind = true}) {
+    final owner = store.box<CloudKitWriterAuthorityEntity>().getAll().single
+      ..epoch = epoch
+      ..ownershipEpoch = lineage;
+    store.box<CloudKitWriterAuthorityEntity>().put(owner);
+    if (rebind) bind();
+  }
+
+  for (final state in [1, 3]) {
+    test(
+      'engineering replay refuses epoch-2 state-$state before receipt writes',
+      () async {
+        final id = adopt();
+        claim(id);
+        if (state == 3) {
+          confirm(id);
+          await reflectSource(id);
+        }
+        expect(row(id).writerEpoch, 2);
+        setReplayOwner();
+        final before = mutationSnapshot(id);
+        final visible = store.box<Message>().get(target.id!)!.text;
+        final auth = _auth(session: 'restarted-session');
+        expect(
+          () => journal.recordNativeReceiptIntentIfTracked(
+            receipt: _receipt(identity, source),
+            capturedAuth: auth,
+            stillCurrent: () => true,
+            now: _time(100),
+            replayBinding: engineeringReplay(auth),
+            requireAcceptedOwnerBeforeRecording: true,
+          ),
+          throwsA(_failure('owner_changed')),
+        );
+        expect(mutationSnapshot(id), before);
+        expect(row(id).state, state);
+        expect(store.box<Message>().get(target.id!)!.text, visible);
+        expect(store.box<CloudOutboxOperationEntity>().count(), 0);
+        expect(transport.acknowledgements, 0);
+      },
+    );
+  }
+
+  test(
+    'default receipt recording preserves consumer behavior for old claimed source',
+    () {
+      final id = adopt();
+      claim(id);
+      setReplayOwner();
+      final auth = _auth(session: 'restarted-session');
+      expect(
+        journal.recordNativeReceiptIntentIfTracked(
+          receipt: _receipt(identity, source),
+          capturedAuth: auth,
+          stillCurrent: () => true,
+          now: _time(100),
+          replayBinding: engineeringReplay(auth),
+        ),
+        id,
+      );
+      expect(row(id).state, 2);
+      expect(row(id).idsReceiptBindingSha256, isNotNull);
+      expect(transport.acknowledgements, 0);
+    },
+  );
+
+  for (final lineage in [false, true]) {
+    test(
+      'engineering replay accepts ${lineage ? 'positive ownership lineage' : 'current epoch'}',
+      () {
+        final id = adopt();
+        claim(id);
+        if (lineage) setReplayOwner(lineage: 2);
+        final auth = _auth(session: 'restarted-session');
+        expect(
+          journal.recordNativeReceiptIntentIfTracked(
+            receipt: _receipt(identity, source),
+            capturedAuth: auth,
+            stillCurrent: () => true,
+            now: _time(100),
+            replayBinding: engineeringReplay(auth),
+            requireAcceptedOwnerBeforeRecording: true,
+          ),
+          id,
+        );
+        expect(row(id).state, 2);
+        expect(row(id).idsReceiptBindingSha256, isNotNull);
+        expect(store.box<CloudOutboxOperationEntity>().count(), 0);
+        expect(transport.acknowledgements, 0);
+      },
+    );
+  }
+
+  for (final state in [4, 5]) {
+    test(
+      'engineering replay preserves existing exact recovery for state-$state',
+      () async {
+        final id = await seedConfirmedPredecessor();
+        store.box<CloudSyncLocalMutationIntentEntity>().put(
+          row(id)..state = state,
+        );
+        final owner = store.box<CloudKitWriterAuthorityEntity>().getAll().single
+          ..epoch = state == 4 ? 3 : 4
+          ..ownershipEpoch = 0
+          ..state = state == 4
+              ? CloudKitWriterAuthorityState.mutationUnknown.index
+              : CloudKitWriterAuthorityState.stable.index;
+        store.box<CloudKitWriterAuthorityEntity>().put(owner);
+        bind();
+        final before = mutationSnapshot(id);
+        final auth = _auth(session: 'restarted-session');
+        expect(
+          journal.recordNativeReceiptIntentIfTracked(
+            receipt: _receipt(identity, source),
+            capturedAuth: auth,
+            stillCurrent: () => true,
+            now: _time(100),
+            replayBinding: engineeringReplay(auth),
+            requireAcceptedOwnerBeforeRecording: true,
+          ),
+          id,
+        );
+        expect(mutationSnapshot(id), before);
+        expect(transport.acknowledgements, 0);
+        if (state == 5) {
+          expect(
+            journal.readTerminalSourceForCleanup(
+              intentId: id,
+              currentAuth: auth,
+              stillCurrent: () => true,
+            ),
+            isNotNull,
+          );
+        }
+      },
+    );
+  }
+
+  for (final fault in ['corrupt', 'wrong-account', 'owner-race']) {
+    test('engineering replay retains existing refusal for $fault', () {
+      final id = adopt();
+      claim(id);
+      switch (fault) {
+        case 'corrupt':
+          store.box<CloudSyncLocalMutationIntentEntity>().put(
+            row(id)..state = 3,
+          );
+        case 'wrong-account':
+          store.box<CloudSyncLocalMutationIntentEntity>().put(
+            row(id)..accountFingerprint = 'B' * 43,
+          );
+        case 'owner-race':
+          setReplayOwner(rebind: false);
+      }
+      final before = mutationSnapshot(id);
+      final auth = _auth(session: 'restarted-session');
+      expect(
+        () => journal.recordNativeReceiptIntentIfTracked(
+          receipt: _receipt(identity, source),
+          capturedAuth: auth,
+          stillCurrent: () => true,
+          now: _time(100),
+          replayBinding: engineeringReplay(auth),
+          requireAcceptedOwnerBeforeRecording: true,
+        ),
+        throwsStateError,
+      );
+      expect(mutationSnapshot(id), before);
+      expect(transport.acknowledgements, 0);
+      expect(store.box<CloudOutboxOperationEntity>().count(), 0);
+    });
+  }
+
   test(
     'confirmed predecessor survives restart and retained writer epoch without reopening authority',
     () async {

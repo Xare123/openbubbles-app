@@ -115,6 +115,45 @@ void main() {
     },
   );
 
+  test('fresh group creation is explicit, bounded and text-first', () {
+    final group = {...send,
+      'recipients': ['+16177106179', '+19079786948'], 'createGroup': true};
+    expect(BackendHarnessFixtures.validSend(group), true);
+    expect(BackendHarnessFixtures.validRoute({
+      'recipients': ['+16177106179', '+19079786948'], 'createGroup': true}), true);
+    expect(BackendHarnessFixtures.validRoute({
+      'recipients': ['+16177106179'], 'createGroup': true}), false);
+    expect(BackendHarnessFixtures.validRoute({
+      'recipients': ['+16177106179', '+19079786948'], 'createGroup': false}), false);
+    for (final override in <Map<String, Object?>>[
+      {'recipients': ['+16177106179']},
+      {'recipients': ['+16177106179', '+16177106179']},
+      {'recipients': ['+16177106179', '+15555550101']},
+      {'kind': 'image'}, {'kind': 'document'}, {'createGroup': false},
+      {'createGroup': 'true'}, {'existingGuid': fixtureId},
+    ]) {
+      expect(BackendHarnessFixtures.validSend({...group, ...override}), false);
+    }
+  });
+
+  test('fresh group validation refuses a canonical or retargeted route', () {
+    final chat = Chat(id: 1, guid: '01234567-89AB-4DEF-8123-456789ABCDEF',
+      usingHandle: 'mailto:sender@example.invalid', participants: [
+        Handle(address: '+16177106179', service: 'iMessage'),
+        Handle(address: '+19079786948', service: 'iMessage'),
+      ]);
+    // Unsaved participants are deliberately not sufficient; the backend must
+    // return its actual persisted handle relation before this check can pass.
+    expect(() => BackendHarnessFixtures.requireFreshGroup(chat,
+      ['+16177106179', '+19079786948']), throwsA(isA<BackendHarnessFailure>()));
+    chat.guid = 'iMessage;+;restored';
+    chat.chatIdentifier = 'restored';
+    chat.style = 43;
+    chat.cloudGuid = 'opaque-group';
+    expect(() => BackendHarnessFixtures.requireFreshGroup(chat,
+      ['+16177106179', '+19079786948']), throwsA(isA<BackendHarnessFailure>()));
+  });
+
   test(
     'mutation selection refuses a personal message or another conversation',
     () {

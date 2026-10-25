@@ -5,6 +5,7 @@ import 'package:bluebubbles/database/database.dart';
 import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/services/network/backend_service.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_dev_gate.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_group_send_route.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_manual_shadow_sampler.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_production_sampler_adapter.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_writer_ownership.dart';
@@ -38,7 +39,10 @@ final class BackendHarnessFixtures {
       _uuid.hasMatch(args['retainedRecoveryOwner'] as String);
   static bool validSend(Map<String, Object?> args) =>
       _admission(args) &&
-      args.length == 5 &&
+      (args.length == 5 ||
+          (args.length == 6 && args['createGroup'] == true &&
+              args['kind'] == 'text' && args['recipients'] is List &&
+              (args['recipients'] as List).length == 2)) &&
       args.keys.every(
         const {
           'fixtureId',
@@ -46,6 +50,7 @@ final class BackendHarnessFixtures {
           'retainedRecoveryOwner',
           'recipients',
           'kind',
+          'createGroup',
         }.contains,
       ) &&
       const {'text', 'image', 'document'}.contains(args['kind']) &&
@@ -74,7 +79,11 @@ final class BackendHarnessFixtures {
       _uuid.hasMatch(args['fixtureId'] as String);
 
   static bool validRoute(Map<String, Object?> args) =>
-      args.length == 1 &&
+      (args.length == 1 ||
+          (args.length == 2 && args['createGroup'] == true &&
+              args['recipients'] is List &&
+              (args['recipients'] as List).length == 2)) &&
+      args.keys.every(const {'recipients', 'createGroup'}.contains) &&
       args['recipients'] is List &&
       (args['recipients'] as List).isNotEmpty &&
       (args['recipients'] as List).length <= 2 &&
@@ -92,13 +101,16 @@ final class BackendHarnessFixtures {
     final auth = await _identity();
     final store = Database.store;
     final storage = pushService.statePath;
-    await resolveBackendHarnessFixtureChat(
-      store: store,
-      auth: auth,
-      recipients: (args['recipients'] as List).cast<String>(),
-      // Read-only selection has no fixture claim or message identity.
-      fixtureId: '00000000-0000-4000-8000-000000000000',
-    );
+    final requested = (args['recipients'] as List).cast<String>();
+    if (args['createGroup'] == true) {
+      await _preflightFreshGroupSender(requested);
+    } else {
+      await resolveBackendHarnessFixtureChat(
+        store: store, auth: auth, recipients: requested,
+        // Read-only selection has no fixture claim or message identity.
+        fixtureId: '00000000-0000-4000-8000-000000000000',
+      );
+    }
     if (!auth.sameIdentity(await _identity()) ||
         !identical(store, Database.store) ||
         storage != pushService.statePath) {
@@ -291,16 +303,31 @@ final class BackendHarnessFixtures {
     }
     final kind = args['kind'] as String;
     final body = marker(id);
-    final chat = await resolveBackendHarnessFixtureChat(
-      store: store,
-      auth: auth,
-      recipients: (args['recipients'] as List).cast<String>(),
-      fixtureId: id,
-    );
+    final requested = (args['recipients'] as List).cast<String>();
+    final createGroup = args['createGroup'] == true;
+    if (createGroup) {
+      await _preflightFreshGroupSender(requested);
+      if (!auth.sameIdentity(await _identity()) ||
+          !identical(store, Database.store) || storage != pushService.statePath) {
+        throw BackendHarnessFailure('backend_identity_changed', effectNotEntered: true);
+      }
+    }
+    // The one-use claim above precedes even local Chat creation. Let the normal
+    // backend choose its fresh group identity; fixture UUID is correlation only.
+    // This path exercises provisional Chat admission/readback in the ordinary
+    // archive worker, then subsequent media fixtures may use that restored Chat.
+    final chat = createGroup
+        ? await backend.createChat(requested, null, 'iMessage')
+        : await resolveBackendHarnessFixtureChat(
+            store: store, auth: auth, recipients: requested, fixtureId: id,
+          );
     if (!auth.sameIdentity(await _identity()) ||
         !identical(store, Database.store) ||
         storage != pushService.statePath) {
       throw BackendHarnessFailure('backend_identity_changed');
+    }
+    if (createGroup) {
+      requireFreshGroup(chat, requested);
     }
     late final Message reflected;
     if (kind == 'text') {
@@ -379,6 +406,34 @@ final class BackendHarnessFixtures {
 
   Future<BackendHarnessPayload> edit(Map<String, Object?> args) =>
       _mutate(args, false);
+
+  /// Validate the normal backend's newly generated local route before IDS.
+  /// This is not a CloudKit dependency or an already-archived group claim.
+  static void requireFreshGroup(Chat chat, List<String> requested) {
+    final route = CloudSyncGroupSendRoute.capture(chat);
+    final expected = [...requested]..sort();
+    if (requested.length != 2 || requested.toSet().length != 2 ||
+        !requested.every(recipients.contains) || route == null ||
+        !route.provisional || route.groupId != null ||
+        jsonEncode(route.members) != jsonEncode(expected)) {
+      throw BackendHarnessFailure('backend_not_ready', effectNotEntered: true);
+    }
+  }
+
+  Future<void> _preflightFreshGroupSender(List<String> requested) async {
+    final activeBackend = backend;
+    if (activeBackend is! RustPushBackend) {
+      throw BackendHarnessFailure('backend_not_ready', effectNotEntered: true);
+    }
+    // This ordinary backend method chooses from fresh native owned handles.
+    // Merely checking a route must not create a Handle or change a preference.
+    final sender = await activeBackend.getDefaultHandle();
+    final bare = sender.startsWith('tel:') ? sender.substring(4)
+        : sender.startsWith('mailto:') ? sender.substring(7) : sender;
+    if (bare.isEmpty || requested.contains(bare)) {
+      throw BackendHarnessFailure('backend_not_ready', effectNotEntered: true);
+    }
+  }
   Future<BackendHarnessPayload> unsend(Map<String, Object?> args) =>
       _mutate(args, true);
   Future<BackendHarnessPayload> _mutate(
