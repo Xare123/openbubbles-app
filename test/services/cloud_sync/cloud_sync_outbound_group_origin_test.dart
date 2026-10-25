@@ -3,13 +3,17 @@ import 'dart:io';
 
 import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_chat_identity_evidence.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_chat_identity_origin.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_send_journal.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_outbound_chat_admission.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_outbound_chat_origin.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_outbound_group_origin.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_persistent_keys.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/objectbox_cloud_sync_store.dart';
 import 'package:bluebubbles/src/rust/api/api.dart' as api;
+import 'package:bluebubbles/src/rust/api/cloud_sync_chat_identity.dart'
+    as native;
 import 'package:flutter_test/flutter_test.dart';
 
 const _uuid = 'AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA';
@@ -48,7 +52,10 @@ void main() {
     stillCurrent: () => true,
   );
 
-  void bindStore() {
+  void bindStore({
+    CloudSyncChatIdentityEvidence? Function(CloudOutboxOperation)?
+    readChatIdentityEvidence,
+  }) {
     final authority = ObjectBoxCloudKitWriterAuthority.forTest(
       store: db,
       buildDecision: CloudKitWriterOwnership.resolve('v2'),
@@ -80,6 +87,7 @@ void main() {
       protector: _Protector(),
       clock: () => _now,
       localSendJournal: journal,
+      readChatIdentityEvidence: readChatIdentityEvidence,
     );
   }
 
@@ -171,11 +179,17 @@ void main() {
   Future<CloudOutboxOperation> admit(
     CloudSyncOutboundChatStagingTransport transport, {
     api.CloudChat Function(CloudSyncLocalChatCreateOrigin)? encode,
+    Future<CloudSyncChatIdentityEvidence?> Function(
+      CloudSyncLocalChatCreateOrigin,
+      CloudSyncProtectedOutboundStageData,
+    )?
+    observeChatIdentity,
   }) =>
       CloudSyncOutboundChatAdmissionCoordinator(
         store: durable,
         transport: transport,
         ensureProtectedStoreRecovered: () async {},
+        observeChatIdentity: observeChatIdentity,
       ).admitChat(
         _scope,
         chatId: chat.id!,
@@ -186,6 +200,272 @@ void main() {
             encode ??
             (origin) => _WireGroup(origin as CloudSyncOutboundGroupOrigin),
       );
+
+  CloudOutboxOperationEntity queuedRow() =>
+      db.box<CloudOutboxOperationEntity>().getAll().single;
+
+  Future<List<CloudOutboxOperation>> leaseGroup() =>
+      durable.leaseEligibleOutbox(
+        _scope,
+        now: _now,
+        limit: 1,
+        leaseId: 'synthetic-group-lease',
+        leaseDuration: const Duration(minutes: 1),
+        allowedActions: const {CloudOutboxAction.save},
+      );
+
+  Future<List<CloudOutboxOperation>> submitGroup(String operationId) =>
+      durable.markOutboxSubmissionStarted(
+        _scope,
+        leaseId: 'synthetic-group-lease',
+        submissionIdentity: CloudOutboxSubmissionIdentity(
+          requestUuid: 'CCCCCCCC-CCCC-4CCC-8CCC-CCCCCCCCCCCC',
+          operationUuids: {operationId: 'DDDDDDDD-DDDD-4DDD-8DDD-DDDDDDDDDDDD'},
+        ),
+        now: _now,
+      );
+
+  void seedAppliedChatSave() {
+    final checkpoints = db.box<CloudSyncCheckpointEntity>();
+    final checkpoint =
+        checkpoints.getAll().singleWhere((row) => row.zone == _scope.zone)
+          ..fetchedSequence = 1
+          ..appliedSequence = 1
+          ..fetchedTokenCiphertext = 'synthetic-applied-chat-cursor'
+          ..lastBatchId = 'synthetic-applied-chat-batch';
+    checkpoints.put(checkpoint);
+    db.box<CloudInboxChangeEntity>().put(
+      CloudInboxChangeEntity(
+        changeKey: 'synthetic-applied-chat-identity',
+        changeIdHash: 'H' * 43,
+        scopeKey: cloudSyncPersistentScopeKey(_scope),
+        accountFingerprint: _scope.accountFingerprint,
+        zone: _scope.zone,
+        serverRecordIdHash: 'R' * 43,
+        etagHash: 'E' * 43,
+        changeType: 'save',
+        encryptedServerRecordId: 'synthetic-applied-chat-record',
+        encryptedPayloadRef: 'obcs2.ref.${'R' * 43}',
+        payloadSha256: 'c' * 64,
+        batchId: 'synthetic-applied-chat-batch',
+        generation: checkpoint.generation,
+        fetchSequence: 1,
+        status: CloudInboxStatus.applied.index,
+        createdAtMs: _now.millisecondsSinceEpoch,
+        updatedAtMs: _now.millisecondsSinceEpoch,
+      ),
+    );
+  }
+
+  for (final boundary in ['lease', 'submission']) {
+    for (final defect in ['missing', 'stale']) {
+      test('applied-only group evidence $defect blocks $boundary', () async {
+        CloudSyncChatIdentityEvidence? evidence;
+        bindStore(readChatIdentityEvidence: (_) => evidence);
+        seedAppliedChatSave();
+        late CloudSyncLocalChatCreateOrigin observedOrigin;
+        late CloudSyncProtectedOutboundStageData observedStage;
+        var observations = 0;
+        Future<CloudSyncChatIdentityEvidence?> observe(
+          CloudSyncLocalChatCreateOrigin origin,
+          CloudSyncProtectedOutboundStageData stage,
+        ) async {
+          observedOrigin = origin;
+          observedStage = stage;
+          evidence = await CloudSyncChatIdentityEvidence.observe(
+            store: db,
+            origin: origin,
+            stage: stage,
+            auth: auth,
+            authFence: fence,
+            observer: (readSet, retained, candidate, local) async {
+              observations++;
+              expect(readSet.includeAppliedSaves, isTrue);
+              expect(readSet.retainedSaves, hasLength(1));
+              expect(identical(candidate, stage), isTrue);
+              expect(
+                local.binding(readSet.generation),
+                origin.binding(readSet.generation),
+              );
+              return native.CloudSyncChatIdentityResult(
+                comparison: native.CloudSyncChatIdentityComparison.disjoint,
+                candidateBindingHash: 'I' * 43,
+                stagedCandidateBindingHash: 'J' * 43,
+                sourceBindingHash: retained.changeIdHash,
+                nativeSessionId: auth.nativeSessionId,
+              );
+            },
+          );
+          return evidence;
+        }
+
+        final transport = _Staging();
+        final operation = await admit(transport, observeChatIdentity: observe);
+        final originalOrigin = queuedRow().localChatOrigin;
+        expect(observations, 1);
+        // Admission changes the checkpoint revision, so obtain fresh coverage
+        // of the original stage before crossing either consuming boundary.
+        await observe(observedOrigin, observedStage);
+        if (boundary == 'submission') {
+          expect(
+            (await leaseGroup()).single.operationId,
+            operation.operationId,
+          );
+        }
+        if (defect == 'missing') {
+          evidence = null;
+        } else {
+          final history = db.box<CloudInboxChangeEntity>().getAll().single
+            ..etagHash = 'Z' * 43;
+          db.box<CloudInboxChangeEntity>().put(history);
+        }
+        // Every save is still applied. A generic projection barrier must not
+        // accidentally provide this test's refusal.
+        final checkpoint = db
+            .box<CloudSyncCheckpointEntity>()
+            .getAll()
+            .singleWhere((row) => row.zone == _scope.zone);
+        expect(checkpoint.appliedSequence, checkpoint.fetchedSequence);
+        expect(
+          db.box<CloudInboxChangeEntity>().getAll().single.status,
+          CloudInboxStatus.applied.index,
+        );
+        final refusal = defect == 'missing'
+            ? throwsA(
+                isA<CloudSyncFailure>().having(
+                  (error) => error.safeCode,
+                  'code',
+                  'cloud_sync_chat_identity_evidence_required',
+                ),
+              )
+            : throwsA(
+                isA<StateError>().having(
+                  (error) => error.message,
+                  'code',
+                  'cloud_sync_chat_identity_read_set_changed',
+                ),
+              );
+        await expectLater(
+          boundary == 'lease'
+              ? leaseGroup()
+              : submitGroup(operation.operationId),
+          refusal,
+        );
+        expect(
+          queuedRow().state,
+          boundary == 'lease'
+              ? CloudOutboxStatus.pending.index
+              : CloudOutboxStatus.leased.index,
+        );
+        expect(queuedRow().appleRequestUuid, isNull);
+        expect(queuedRow().appleOperationUuid, isNull);
+        expect(queuedRow().localChatOrigin, originalOrigin);
+
+        // Valid refreshed coverage advances this same operation; no new
+        // stage, replacement record or Message is needed.
+        await observe(observedOrigin, observedStage);
+        if (boundary == 'lease') {
+          expect(
+            (await leaseGroup()).single.operationId,
+            operation.operationId,
+          );
+        }
+        await submitGroup(operation.operationId);
+        expect(queuedRow().state, CloudOutboxStatus.unknownOutcome.index);
+        expect(jsonDecode(queuedRow().localChatOrigin!)[0], 7);
+        expect(
+          queuedRow().encryptedPayloadRef,
+          operation.encryptedPayloadReference,
+        );
+        expect(queuedRow().serverRecordIdHash, operation.serverRecordIdHash);
+        expect(transport.stages, 1);
+        expect(transport.rollbacks, 0);
+        expect(observations, 3);
+        expect(db.box<Message>().count(), 1);
+        expect(db.box<Message>().get(message.id!)!.guid, _guid);
+        expect(db.box<Message>().get(message.id!)!.chat.targetId, chat.id);
+      });
+    }
+  }
+
+  for (final boundary in ['lease', 'submission']) {
+    test(
+      'identity-only group queue cannot take legacy $boundary fallback',
+      () async {
+        final transport = _Staging();
+        final operation = await admit(transport);
+        final readyOrigin = queuedRow().localChatOrigin!;
+        if (boundary == 'submission') {
+          expect(
+            (await leaseGroup()).single.operationId,
+            operation.operationId,
+          );
+        }
+        final identityOnly = cloudSyncOutboundChatOriginIdentity(readyOrigin);
+        expect(decodeCloudSyncOutboundGroupOrigin(identityOnly)[0], 5);
+        expect(cloudSyncOutboundChatOriginSendProof(identityOnly), isNull);
+        db.box<CloudOutboxOperationEntity>().put(
+          queuedRow()..localChatOrigin = identityOnly,
+        );
+        await expectLater(
+          boundary == 'lease'
+              ? leaseGroup()
+              : submitGroup(operation.operationId),
+          throwsA(
+            isA<CloudSyncFailure>().having(
+              (error) => error.safeCode,
+              'code',
+              'cloud_sync_outbound_chat_recovery_changed',
+            ),
+          ),
+        );
+        expect(
+          queuedRow().state,
+          boundary == 'lease'
+              ? CloudOutboxStatus.pending.index
+              : CloudOutboxStatus.leased.index,
+        );
+        expect(queuedRow().localChatOrigin, identityOnly);
+        expect(queuedRow().appleRequestUuid, isNull);
+        expect(queuedRow().appleOperationUuid, isNull);
+        if (boundary == 'submission') {
+          expect(
+            () => cloudSyncSubmittedChatOrigin(identityOnly),
+            throwsA(
+              isA<CloudSyncFailure>().having(
+                (error) => error.safeCode,
+                'code',
+                'cloud_sync_outbound_chat_origin_not_submitted',
+              ),
+            ),
+          );
+        }
+
+        // Restore the test fixture's genuine admission proof as a positive
+        // control for the same protected operation and complete empty inbox.
+        db.box<CloudOutboxOperationEntity>().put(
+          queuedRow()..localChatOrigin = readyOrigin,
+        );
+        if (boundary == 'lease') {
+          expect(
+            (await leaseGroup()).single.operationId,
+            operation.operationId,
+          );
+        }
+        await submitGroup(operation.operationId);
+        expect(queuedRow().state, CloudOutboxStatus.unknownOutcome.index);
+        expect(jsonDecode(queuedRow().localChatOrigin!)[0], 7);
+        expect(
+          queuedRow().encryptedPayloadRef,
+          operation.encryptedPayloadReference,
+        );
+        expect(queuedRow().serverRecordIdHash, operation.serverRecordIdHash);
+        expect(transport.stages, 1);
+        expect(db.box<Message>().count(), 1);
+        expect(db.box<Message>().get(message.id!)!.guid, _guid);
+      },
+    );
+  }
 
   test('direct-only staging cannot acquire fresh-group authority', () async {
     await expectLater(

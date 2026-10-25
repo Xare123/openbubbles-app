@@ -454,6 +454,9 @@ String cloudSyncSubmittedChatOrigin(String encoded) {
   if (isCloudSyncOutboundGroupOrigin(encoded)) {
     final value = decodeCloudSyncOutboundGroupOrigin(encoded);
     if (value[0] == 8) _reject('cloud_sync_outbound_chat_source_retired');
+    if (value[0] == 5) {
+      _reject('cloud_sync_outbound_chat_origin_not_submitted');
+    }
     return value[0] == 6 ? jsonEncode([7, ...value.skip(1)]) : encoded;
   }
   final value = _decodeBinding(encoded);

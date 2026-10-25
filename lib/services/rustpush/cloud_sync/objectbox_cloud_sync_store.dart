@@ -6271,6 +6271,10 @@ class ObjectBoxCloudSyncStore
     final chatProof = chatBinding == null
         ? null
         : cloudSyncOutboundChatOriginSendProof(chatBinding);
+    if (chatBinding != null &&
+        isCloudSyncOutboundGroupOrigin(chatBinding) && chatProof == null) {
+      throw _storageFailure('cloud_sync_outbound_chat_recovery_changed');
+    }
     if (chatProof != null) {
       final chatId = cloudSyncOutboundChatOriginId(chatBinding!);
       final identity = cloudSyncOutboundChatOriginIdentity(chatBinding);
@@ -6466,6 +6470,20 @@ class ObjectBoxCloudSyncStore
     }
     final origin = _captureJournalBoundChatOriginLocked(scope, entity);
     if (origin != null) {
+      // Group lineage comparison includes applied sources as well as retained
+      // ones. Consume that exact ephemeral fence in every lease/submission
+      // transaction, even when the ordinary projection barrier is already clear.
+      if (origin is CloudSyncOutboundGroupOrigin &&
+          CloudSyncChatIdentityReadSet.capture(_store, scope,
+            includeAppliedSaves: true).retainedSaves.isNotEmpty) {
+        final evidence = _readChatIdentityEvidence?.call(operation);
+        if (evidence == null) {
+          throw _storageFailure('cloud_sync_chat_identity_evidence_required');
+        }
+        evidence.requireOperation(
+          store: _store, origin: origin, operation: operation,
+        );
+      }
       _requireMessagesCloudAccountProjectionReadyLocked(
         scope,
         allowRetainedForFreshCreate: true,
