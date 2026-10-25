@@ -17,6 +17,7 @@ const backendHarnessActions = <String>{
   'auth.code',
   'auth.restore',
   'auth.status',
+  'auth.repair',
   'protector.check',
   'pcs.devices',
   'pcs.unlock',
@@ -189,6 +190,8 @@ final class BackendHarnessPayload {
     'native_client_present',
     'native_identity_available',
     'registration_ready',
+    'registration_refreshed',
+    'send_resources_ready',
     'protector_ready',
     'account_matches',
     'relay_ready',
@@ -354,6 +357,94 @@ final class BackendHarnessEngine {
     return flags is Map && flags['outcome_uncertain'] == true;
   });
 
+  /// Terminal recovery evidence only. No admission, resubmission, receipt or
+  /// reconciliation authority is transferred, and the original jobs stay put.
+  Map<String, Object> drainedRecoverySnapshot() {
+    if (_accepting ||
+        _active != null ||
+        _enteredCalls != 0 ||
+        _drained?.isCompleted != true) {
+      throw StateError('backend_recovery_not_drained');
+    }
+    final jobs = <Map<String, Object>>[];
+    for (final job in _jobs.values) {
+      final flags = job.payload['flags'];
+      if (flags is! Map || flags['outcome_uncertain'] != true) continue;
+      if (!const {'completed', 'failed', 'blocked'}.contains(job.state) ||
+          !backendHarnessCodes.contains(job.code)) {
+        throw StateError('backend_recovery_not_terminal');
+      }
+      final correlation = job.recoveryCorrelation;
+      if (const {
+            'fixture.send',
+            'fixture.edit',
+            'fixture.unsend',
+          }.contains(job.action) &&
+          correlation == null) {
+        throw StateError('backend_recovery_fixture_invalid');
+      }
+      final fixture = job.payload['fixture'];
+      if (fixture != null &&
+          (!BackendHarnessFixtureReceipt.validJson(fixture) ||
+              correlation == null ||
+              fixture is! Map ||
+              (fixture['fixtureId'] as String).toUpperCase() !=
+                  correlation['fixtureId']!.toUpperCase() ||
+              (correlation.containsKey('messageGuid') &&
+                  (fixture['messageGuid'] as String).toUpperCase() !=
+                      correlation['messageGuid']!.toUpperCase()))) {
+        throw StateError('backend_recovery_fixture_invalid');
+      }
+      jobs.add({
+        'jobId': job.id,
+        'requestId': job.requestId,
+        'action': job.action,
+        'requestSha256': job.digest,
+        'state': job.state,
+        'code': job.code,
+        'flags': Map<String, bool>.from(flags),
+        if (correlation != null)
+          'correlation': Map<String, String>.from(correlation),
+        if (fixture != null)
+          'fixture': Map<String, Object>.from(fixture as Map),
+      });
+    }
+    return {
+      'schema': 1,
+      'source': source,
+      'package': package,
+      'platform': platform,
+      'sessionId': sessionId,
+      'jobs': jobs,
+    };
+  }
+
+  static Map<String, String>? _recoveryCorrelation(
+    String action,
+    Map<String, Object?> arguments,
+  ) {
+    if (!const {
+      'fixture.send',
+      'fixture.edit',
+      'fixture.unsend',
+    }.contains(action)) {
+      return null;
+    }
+    final value = <String, String>{};
+    for (final key in [
+      'fixtureId',
+      'retainedRecoveryOwner',
+      if (action != 'fixture.send') 'messageGuid',
+    ]) {
+      final id = arguments[key];
+      if (id is! String || !BackendHarnessFixtureReceipt.uuid.hasMatch(id)) {
+        return null;
+      }
+      value[key] = id;
+    }
+    return Map.unmodifiable(value);
+  }
+
   void _notifyDrained() {
     final completion = _drained;
     if (_active == null && _enteredCalls == 0 &&
@@ -514,7 +605,8 @@ final class BackendHarnessEngine {
       if (_jobs.length >= maximumJobs) {
         return _reply(id, action, 'backend_job_limit', state: 'blocked');
       }
-      final job = _BackendHarnessJob(_token(), digest, operation.snapshot);
+      final job = _BackendHarnessJob(_token(), digest, operation.snapshot,
+        id, action, _recoveryCorrelation(action, arguments));
       _jobs[job.id] = job;
       _requests[id] = job;
       _active = job;
@@ -612,10 +704,20 @@ final class BackendHarnessEngine {
 }
 
 final class _BackendHarnessJob {
-  _BackendHarnessJob(this.id, this.digest, this.snapshot);
+  _BackendHarnessJob(
+    this.id,
+    this.digest,
+    this.snapshot,
+    this.requestId,
+    this.action,
+    this.recoveryCorrelation,
+  );
   final String id;
   final String digest;
   final BackendHarnessPayload Function()? snapshot;
+  final String requestId;
+  final String action;
+  final Map<String, String>? recoveryCorrelation;
   String state = 'accepted';
   String code = 'backend_job_accepted';
   Map<String, Object> payload = const {};

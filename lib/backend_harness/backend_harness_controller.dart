@@ -77,6 +77,14 @@ final class BackendHarnessController {
           handler: account.inspect,
           snapshot: snapshot,
         ),
+        'auth.repair': BackendHarnessOperation(
+          background: true,
+          uncertainOnFailure: true,
+          validate: (args) => args.isEmpty &&
+              (!Platform.isWindows || retainedRecoveryOwner != null),
+          handler: account.repair,
+          snapshot: snapshot,
+        ),
         'auth.login': BackendHarnessOperation(
           background: true,
           uncertainOnFailure: true,

@@ -9,6 +9,7 @@ import 'package:bluebubbles/backend_harness/backend_harness_vm_service.dart';
 import 'package:bluebubbles/backend_harness/backend_harness_windows_writer.dart';
 import 'package:bluebubbles/cloud_sync_v2_windows_harness.dart' as harness;
 import 'package:bluebubbles/database/database.dart';
+import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/helpers/backend/startup_tasks.dart';
 import 'package:bluebubbles/services/backend/filesystem/cloud_sync_windows_dev_profile.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_operation_interlock.dart';
@@ -52,6 +53,7 @@ final class WindowsBackendHostFiles {
   int? _stopPublicationStarted;
   late final String expectedRoot;
   late final String expectedResolved;
+  String? _recoveryText;
 
   static int Function() _monotonicClock() {
     final watch = Stopwatch()..start();
@@ -73,7 +75,7 @@ final class WindowsBackendHostFiles {
       File(path.join(_root(), 'backend-host-$launchId.$suffix'));
 
   void requireFreshLaunch() {
-    for (final suffix in ['json', 'stop', 'closed.json']) {
+    for (final suffix in ['json', 'stop', 'closed.json', 'recovery.json']) {
       if (FileSystemEntity.typeSync(_file(suffix).path, followLinks: false) !=
           FileSystemEntityType.notFound) {
         throw StateError('backend_windows_launch_consumed');
@@ -94,7 +96,18 @@ final class WindowsBackendHostFiles {
   void _writeNew(String suffix, Map<String, Object?> value) {
     final file = _file(suffix)..createSync(exclusive: true);
     _requirePlainFile(file);
-    file.writeAsStringSync(jsonEncode(value), flush: true);
+    final handle = file.openSync(mode: FileMode.append);
+    try {
+      handle.lockSync(FileLock.exclusive);
+      if (handle.lengthSync() != 0) {
+        throw StateError('backend_windows_control_file_changed');
+      }
+      handle.writeStringSync(jsonEncode(value));
+      handle.flushSync();
+    } finally {
+      handle.closeSync();
+    }
+    _requirePlainFile(file);
   }
 
   void publishReady(Uri uri, String source, int ownerPid) {
@@ -141,7 +154,82 @@ final class WindowsBackendHostFiles {
     return true;
   }
 
+  void preserveRecovery(
+    BackendHarnessEngine engine,
+    String source,
+    int ownerPid,
+    String recoveryOwner,
+  ) {
+    if (!backendHarnessRecoveryOwnerValid(recoveryOwner)) {
+      throw StateError('backend_windows_recovery_owner_invalid');
+    }
+    final snapshot = engine.drainedRecoverySnapshot();
+    if (snapshot['source'] != source ||
+        !RegExp(r'^[a-f0-9]{40}$').hasMatch(source) ||
+        snapshot['package'] != 'com.bluebubbles.cloudsync.testhost' ||
+        snapshot['platform'] != 'windows' ||
+        !RegExp(r'^[a-f0-9]{32}$').hasMatch(snapshot['sessionId'] as String)) {
+      throw StateError('backend_windows_recovery_identity_changed');
+    }
+    final jobs = snapshot['jobs'] as List;
+    if (jobs.isEmpty || !engine.hasUncertainJobs) {
+      throw StateError('backend_windows_recovery_empty');
+    }
+    for (final job in jobs.cast<Map>()) {
+      final correlation = job['correlation'];
+      if (correlation is Map &&
+          correlation['retainedRecoveryOwner'] != recoveryOwner) {
+        throw StateError('backend_windows_recovery_owner_mismatch');
+      }
+    }
+    _requireReadyOwner(source, ownerPid);
+    final value = <String, Object>{
+      'schema': 1,
+      'launchId': launchId,
+      'source': source,
+      'pid': ownerPid,
+      'sessionId': engine.sessionId,
+      'recoveryOwner': recoveryOwner,
+      'outcome_uncertain': true,
+      'recovery': snapshot,
+    };
+    final encoded = jsonEncode(value);
+    if (utf8.encode(encoded).length > 1048576) {
+      throw StateError('backend_windows_recovery_too_large');
+    }
+    _writeNew('recovery.json', value);
+    _recoveryText = encoded;
+    verifyRecovery();
+  }
+
+  void verifyRecovery() {
+    final expected = _recoveryText;
+    if (expected == null) return;
+    final file = _file('recovery.json');
+    _requirePlainFile(file);
+    if (file.lengthSync() != utf8.encode(expected).length ||
+        file.readAsStringSync() != expected) {
+      throw StateError('backend_windows_recovery_changed');
+    }
+  }
+
+  void _requireReadyOwner(String source, int ownerPid) {
+    final ready = _file('json');
+    _requirePlainFile(ready);
+    if (ready.lengthSync() > 8192) {
+      throw StateError('backend_windows_ready_owner_mismatch');
+    }
+    final value = jsonDecode(ready.readAsStringSync()) as Map;
+    if (ownerPid <= 0 ||
+        value['launchId'] != launchId ||
+        value['source'] != source ||
+        value['pid'] != ownerPid) {
+      throw StateError('backend_windows_ready_owner_mismatch');
+    }
+  }
+
   void publishClosed(String source, int ownerPid) {
+    verifyRecovery();
     final ready = _file('json');
     _requirePlainFile(ready);
     final value = jsonDecode(ready.readAsStringSync()) as Map;
@@ -161,6 +249,59 @@ final class WindowsBackendHostFiles {
       'storeClosed': true,
       'rustDisposed': true,
     });
+  }
+}
+
+/// A persisted terminal uncertainty is distinct from active work. Failure of
+/// either preservation or the ordinary close sequence propagates to host hold.
+Future<void> shutdownWindowsBackendHost({
+  required BackendHarnessEngine engine,
+  required WindowsBackendHostFiles files,
+  required String source,
+  required int ownerPid,
+  required String recoveryOwner,
+  required void Function() pause,
+  required Future<void> Function() closeNative,
+}) async {
+  final drain = engine.closeAdmissionAndDrain();
+  pause();
+  await drain;
+  if (engine.hasUncertainJobs) {
+    files.preserveRecovery(engine, source, ownerPid, recoveryOwner);
+  }
+  await closeNative();
+}
+
+/// The native send bridge can return while its completion task still owns the
+/// send. A handoff is not a substitute for joining it. Keep the existing hold
+/// when the current process still marks a pending send, or a terminal fixture
+/// result cannot establish completion of a background mutation/send.
+void requireWindowsBackendNativeSendCompletion(
+  BackendHarnessEngine engine,
+  Store store,
+  String serviceId,
+) {
+  if (store.isClosed()) throw StateError('backend_windows_store_closed');
+  final pending =
+      store
+          .box<Message>()
+          .query(Message_.sendingServiceId.equals(serviceId))
+          .build()
+        ..limit = 1;
+  try {
+    if (pending.count() != 0) {
+      throw StateError('backend_windows_native_send_pending');
+    }
+  } finally {
+    pending.close();
+  }
+  for (final job
+      in (engine.drainedRecoverySnapshot()['jobs'] as List).cast<Map>()) {
+    if ((const {'fixture.edit', 'fixture.unsend'}.contains(job['action']) ||
+            job['action'] == 'fixture.send' && job['state'] == 'completed') &&
+        (job['flags'] as Map)['ids_evidence_present'] != true) {
+      throw StateError('backend_windows_native_completion_unconfirmed');
+    }
   }
 }
 
@@ -287,28 +428,39 @@ void main() {
         while (!files.stopRequested() && DateTime.now().isBefore(deadline)) {
           await Future<void>.delayed(const Duration(milliseconds: 250));
         }
-        final drain = controller.engine.closeAdmissionAndDrain();
-        service.cloudSyncV2Progress.pause();
-        controller.interactions.close();
-        await drain;
-        if (controller.engine.hasUncertainJobs) {
-          throw StateError('backend_windows_outcome_uncertain');
-        }
-        final hadState = service.state != null;
-        service.onClose();
-        await service.nativeCloseFuture;
-        if (service.state != null ||
-            (hadState && !service.nativeCloseCompleted)) {
-          throw StateError('backend_windows_native_release_unconfirmed');
-        }
-        await CloudKitOperationInterlock.drainForEngineExit();
-        ls.onClose();
-        Database.store.close();
-        RustLib.dispose();
-        files.publishClosed(BackendHarnessGate.source, pid);
-        nativeEntered = false;
-        lease.unlockSync();
-        lease.closeSync();
+        await shutdownWindowsBackendHost(
+          engine: controller.engine,
+          files: files,
+          source: BackendHarnessGate.source,
+          ownerPid: pid,
+          recoveryOwner: recoveryOwner,
+          pause: () {
+            service.cloudSyncV2Progress.pause();
+            controller.interactions.close();
+          },
+          closeNative: () async {
+            requireWindowsBackendNativeSendCompletion(
+              controller.engine,
+              Database.store,
+              service.serviceId,
+            );
+            final hadState = service.state != null;
+            service.onClose();
+            await service.nativeCloseFuture;
+            if (service.state != null ||
+                (hadState && !service.nativeCloseCompleted)) {
+              throw StateError('backend_windows_native_release_unconfirmed');
+            }
+            await CloudKitOperationInterlock.drainForEngineExit();
+            ls.onClose();
+            Database.store.close();
+            RustLib.dispose();
+            files.publishClosed(BackendHarnessGate.source, pid);
+            nativeEntered = false;
+            lease.unlockSync();
+            lease.closeSync();
+          },
+        );
       } catch (_) {
         if (nativeEntered) {
           final controller = activeController;

@@ -12,6 +12,7 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_writer_ownersh
 import 'package:bluebubbles/services/rustpush/imessage_initial_submission.dart';
 import 'package:bluebubbles/services/rustpush/rustpush_service.dart';
 import 'package:bluebubbles/services/services.dart';
+import 'package:bluebubbles/src/rust/api/api.dart' as api;
 import 'package:crypto/crypto.dart';
 import 'package:uuid/uuid.dart';
 
@@ -102,16 +103,31 @@ final class BackendHarnessFixtures {
     final store = Database.store;
     final storage = pushService.statePath;
     final requested = (args['recipients'] as List).cast<String>();
+    final current = pushService.state;
+    late final String sender;
     if (args['createGroup'] == true) {
-      await _preflightFreshGroupSender(requested);
+      sender = await _preflightFreshGroupSender(requested);
     } else {
-      await resolveBackendHarnessFixtureChat(
+      final chat = await resolveBackendHarnessFixtureChat(
         store: store, auth: auth, recipients: requested,
         // Read-only selection has no fixture claim or message identity.
         fixtureId: '00000000-0000-4000-8000-000000000000',
       );
+      sender = chat.usingHandle ?? '';
     }
+    if (current == null || !identical(current, pushService.state)) {
+      throw BackendHarnessFailure('backend_identity_changed', effectNotEntered: true);
+    }
+    // The ordinary directory lookup exercises the same registration resource
+    // and recipient-key cache as send, without a Message, claim or IDS packet.
+    await preflightTargets(
+      requested: requested,
+      sender: sender,
+      lookup: (targets, handle) => api.validateTargets(
+        state: current.client, targets: targets, sender: handle),
+    );
     if (!auth.sameIdentity(await _identity()) ||
+        !identical(current, pushService.state) ||
         !identical(store, Database.store) ||
         storage != pushService.statePath) {
       throw BackendHarnessFailure(
@@ -120,8 +136,29 @@ final class BackendHarnessFixtures {
       );
     }
     return const BackendHarnessPayload(
-      flags: {'fixture_route_available': true},
+      flags: {'fixture_route_available': true, 'send_resources_ready': true},
     );
+  }
+
+  static Future<void> preflightTargets({
+    required List<String> requested,
+    required String sender,
+    required Future<List<String>> Function(List<String>, String) lookup,
+  }) async {
+    final bareSender = sender.startsWith('tel:') ? sender.substring(4)
+        : sender.startsWith('mailto:') ? sender.substring(7) : '';
+    if (requested.isEmpty || requested.length > 2 ||
+        requested.toSet().length != requested.length ||
+        !requested.every(recipients.contains) || bareSender.isEmpty ||
+        requested.contains(bareSender)) {
+      throw BackendHarnessFailure('backend_not_ready', effectNotEntered: true);
+    }
+    final targets = [for(final value in requested) 'tel:$value'];
+    final valid = await lookup(List.unmodifiable(targets), sender);
+    if (valid.length != targets.length ||
+        valid.toSet().length != targets.length || !valid.every(targets.contains)) {
+      throw BackendHarnessFailure('backend_not_ready', effectNotEntered: true);
+    }
   }
 
   static bool hasRetainedFixture(Store store, String fixtureId) {
@@ -420,7 +457,7 @@ final class BackendHarnessFixtures {
     }
   }
 
-  Future<void> _preflightFreshGroupSender(List<String> requested) async {
+  Future<String> _preflightFreshGroupSender(List<String> requested) async {
     final activeBackend = backend;
     if (activeBackend is! RustPushBackend) {
       throw BackendHarnessFailure('backend_not_ready', effectNotEntered: true);
@@ -433,6 +470,7 @@ final class BackendHarnessFixtures {
     if (bare.isEmpty || requested.contains(bare)) {
       throw BackendHarnessFailure('backend_not_ready', effectNotEntered: true);
     }
+    return sender;
   }
   Future<BackendHarnessPayload> unsend(Map<String, Object?> args) =>
       _mutate(args, true);

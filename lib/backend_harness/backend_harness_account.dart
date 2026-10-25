@@ -273,6 +273,82 @@ final class BackendHarnessAccount implements SetupInteractionPort {
     }
   }
 
+  Future<BackendHarnessPayload> repair(Map<String, Object?> args) async {
+    if (args.isNotEmpty) {
+      throw BackendHarnessFailure('backend_invalid_arguments', effectNotEntered: true);
+    }
+    await pushService.initFuture;
+    final current = pushService.state;
+    final client = current?.icloudServices?.cloudMessagesClient;
+    final storage = pushService.statePath;
+    bool stillCurrent() => current != null && client != null &&
+        identical(current, pushService.state) &&
+        identical(client, pushService.state?.icloudServices?.cloudMessagesClient) &&
+        storage == pushService.statePath && ss.settings.finishedSetup.value;
+    phase = BackendHarnessPhase.registering;
+    try {
+      final result = await repairRetainedRegistration(
+        stillCurrent: stillCurrent,
+        captureIdentity: () async => client == null ? null :
+            await api.cloudSyncCaptureReceivedIdentity(
+              cloudMessagesClient: client, storageDirectory: storage),
+        // The ordinary Profile action owns the identity-maintenance interlock.
+        // No reset, cache invalidation, new identity, message or implicit retry.
+        refresh: pushService.reregisterIdentity,
+        isRegistered: () async => current != null &&
+            await api.getRegstate(state: current.client) is api.RegisterState_Registered,
+      );
+      phase = result.phase;
+      return result;
+    } catch (_) {
+      phase = BackendHarnessPhase.blocked;
+      rethrow;
+    }
+  }
+
+  /// Fresh registration is separate from a cached Registered observation.
+  /// The callbacks let the ordinary native operation keep its lifetime while
+  /// offline regressions cover stale identity and failed/unfinished refreshes.
+  static Future<BackendHarnessPayload> repairRetainedRegistration({
+    required bool Function() stillCurrent,
+    required Future<api.CloudSyncNativeAuthMetadata?> Function() captureIdentity,
+    required Future<void> Function() refresh,
+    required Future<bool> Function() isRegistered,
+  }) async {
+    var entered = false;
+    void requireCurrent() {
+      if (!stillCurrent()) {
+        throw BackendHarnessFailure('backend_identity_changed', effectNotEntered: !entered);
+      }
+    }
+    requireCurrent();
+    final before = await captureIdentity();
+    requireCurrent();
+    if (before == null || !validCachedIdentity(before)) {
+      throw BackendHarnessFailure('backend_not_ready', effectNotEntered: true);
+    }
+    entered = true;
+    await refresh();
+    requireCurrent();
+    final registered = await isRegistered();
+    requireCurrent();
+    final after = await captureIdentity();
+    requireCurrent();
+    if (after == null || !validCachedIdentity(after) ||
+        before.accountFingerprint != after.accountFingerprint ||
+        before.protectedStoreIdentity != after.protectedStoreIdentity ||
+        before.nativeSessionId != after.nativeSessionId) {
+      throw BackendHarnessFailure('backend_identity_changed');
+    }
+    if (!registered) throw BackendHarnessFailure('backend_not_ready');
+    return const BackendHarnessPayload(flags: {
+      'native_client_present': true,
+      'native_identity_available': true,
+      'registration_ready': true,
+      'registration_refreshed': true,
+    });
+  }
+
   Future<BackendHarnessPayload> inspect(Map<String, Object?> _) async {
     await pushService.initFuture;
     final current = pushService.state;
