@@ -119,7 +119,8 @@ final class BackendHarnessFixtures {
       throw BackendHarnessFailure('backend_identity_changed', effectNotEntered: true);
     }
     // The ordinary directory lookup exercises the same registration resource
-    // and recipient-key cache as send, without a Message, claim or IDS packet.
+    // and target-key cache as send, including own-device reflection, without a
+    // Message, claim or IDS packet. This does not validate key signatures.
     await preflightTargets(
       requested: requested,
       sender: sender,
@@ -153,7 +154,7 @@ final class BackendHarnessFixtures {
         requested.contains(bareSender)) {
       throw BackendHarnessFailure('backend_not_ready', effectNotEntered: true);
     }
-    final targets = [for(final value in requested) 'tel:$value'];
+    final targets = [for(final value in requested) 'tel:$value', sender];
     final valid = await lookup(List.unmodifiable(targets), sender);
     if (valid.length != targets.length ||
         valid.toSet().length != targets.length || !valid.every(targets.contains)) {

@@ -81,6 +81,51 @@ void main() {
     ),
   );
 
+  for (final group in [false, true]) {
+    test('${group ? 'group' : 'direct'} preflight includes the owned sender', () async {
+      chat(group: group);
+      final selected = select(group: group);
+      final requested = group ? [first, second] : [first];
+      final ownedSender = selected.usingHandle!;
+      var calls = 0;
+      await BackendHarnessFixtures.preflightTargets(
+        requested: requested,
+        sender: ownedSender,
+        lookup: (targets, handle) async {
+          calls++;
+          expect(targets, [for (final value in requested) 'tel:$value', ownedSender]);
+          expect(handle, ownedSender);
+          expect(() => targets.add('tel:other'), throwsUnsupportedError);
+          return targets.reversed.toList();
+        },
+      );
+      expect(calls, 1);
+    });
+
+    test('${group ? 'group' : 'direct'} preflight requires recipients and sender exactly', () async {
+      final requested = group ? [first, second] : [first];
+      final recipientTargets = [for (final value in requested) 'tel:$value'];
+      const ownedSender = 'mailto:$sender';
+      for (final response in <List<String>>[
+        recipientTargets, // All recipients, but no own-device reflection target.
+        [...recipientTargets.skip(1), ownedSender], // Missing recipient.
+        [...recipientTargets, 'mailto:other@example.invalid'], // Wrong sender.
+        [...recipientTargets, recipientTargets.first], // Duplicate, same count.
+        [...recipientTargets, ownedSender, ownedSender], // Extra duplicate.
+        [...recipientTargets, ownedSender, 'tel:other'], // Extra target.
+      ]) {
+        await expectLater(
+          BackendHarnessFixtures.preflightTargets(
+            requested: requested,
+            sender: ownedSender,
+            lookup: (_, _) async => response,
+          ),
+          refused,
+        );
+      }
+    });
+  }
+
   test(
     'direct selection reuses a proven conversation with unrelated messages',
     () {

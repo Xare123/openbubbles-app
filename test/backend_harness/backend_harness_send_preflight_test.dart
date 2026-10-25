@@ -8,13 +8,13 @@ const sender = 'mailto:sender@example.invalid';
 
 void main() {
   test(
-    'preflight uses ordinary directory lookup for the exact approved recipients',
+    'preflight looks up approved recipients and the owned sender',
     () async {
       await BackendHarnessFixtures.preflightTargets(
         requested: [first, second],
         sender: sender,
         lookup: (targets, handle) async {
-          expect(targets, ['tel:$first', 'tel:$second']);
+          expect(targets, ['tel:$first', 'tel:$second', sender]);
           expect(handle, sender);
           return targets.reversed.toList();
         },
