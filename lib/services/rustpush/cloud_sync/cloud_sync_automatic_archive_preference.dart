@@ -131,6 +131,29 @@ final class CloudSyncAutomaticArchivePreference {
   }
 }
 
+/// A retained engineering host must acknowledge the actual saved grant again
+/// each boot. Persisted consent alone cannot start that host's upload worker.
+/// Native identity, ownership, preference revalidation and permits still apply.
+final class CloudSyncArchiveSessionAcknowledgment {
+  CloudSyncAutomaticArchivePreference? _saved;
+  bool Function()? _stillGranted;
+  bool get ready => _saved != null && _stillGranted?.call() == true;
+
+  void saved(CloudSyncAutomaticArchivePreference value, {
+    required bool Function() stillGranted,
+  }) {
+    _saved = value.enabled ? value : null;
+    _stillGranted = value.enabled ? stillGranted : null;
+  }
+
+  bool allows(CloudSyncAutomaticArchivePreference value) {
+    final saved = _saved;
+    return ready && saved != null && value.enabled &&
+        saved.identity.sameIdentity(value.identity) &&
+        saved.storedValue == value.storedValue;
+  }
+}
+
 /// Account-bound opt-in for the existing automatic worker, never a new queue.
 /// Every enable requires explicit acknowledgment of pending uploads, including
 /// those rediscovered by recovery. No wall-clock cutoffs infer authorization.

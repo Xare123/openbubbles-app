@@ -39,6 +39,7 @@ final class BackendHarnessEvidence {
           'minimumEdits',
           'sinceUtcMs',
           'chatGuid',
+          'chatGuidSha256',
           'participantsSha256',
           'editHistorySha256',
         }.contains,
@@ -56,7 +57,11 @@ final class BackendHarnessEvidence {
       (args['sinceUtcMs'] as int) >= 0 &&
       (args['sinceUtcMs'] as int) <= 9999999999999 &&
       (args.length == 6 ||
-          args['chatGuid'] is String && guid.hasMatch(args['chatGuid'] as String) &&
+          ((args['chatGuid'] is String && guid.hasMatch(args['chatGuid'] as String) &&
+                !args.containsKey('chatGuidSha256')) ||
+              (args['chatGuidSha256'] is String &&
+                digest.hasMatch(args['chatGuidSha256'] as String) &&
+                !args.containsKey('chatGuid'))) &&
           args['participantsSha256'] is String && digest.hasMatch(args['participantsSha256'] as String) &&
           args['editHistorySha256'] is String && digest.hasMatch(args['editHistorySha256'] as String));
 
@@ -162,9 +167,11 @@ final class BackendHarnessEvidence {
       message.guid!,
       args['sinceUtcMs'] as int,
     );
-    if (args.containsKey('chatGuid')) {
+    if (args.containsKey('chatGuid') || args.containsKey('chatGuidSha256')) {
       final parent = message.chat.target;
-      flags['fixture_parent_matches'] = parent?.guid == args['chatGuid'];
+      flags['fixture_parent_matches'] = parent != null &&
+          (args.containsKey('chatGuid') ? parent.guid == args['chatGuid'] :
+              sha256.convert(utf8.encode(parent.guid)).toString() == args['chatGuidSha256']);
       flags['fixture_participants_match'] = parent != null &&
           backendFixtureParticipantsSha256(parent) == args['participantsSha256'];
       flags['fixture_history_matches'] =
@@ -175,7 +182,7 @@ final class BackendHarnessEvidence {
         flags['fixture_edit_matches']! &&
         flags['fixture_retraction_matches']! &&
         flags['cloud_projection_present']! &&
-        (!args.containsKey('chatGuid') ||
+        ((!args.containsKey('chatGuid') && !args.containsKey('chatGuidSha256')) ||
             flags['fixture_parent_matches']! &&
             flags['fixture_participants_match']! &&
             flags['fixture_history_matches']!);

@@ -126,21 +126,23 @@ final class BackendHarnessFixtureReceipt {
     required this.visibleTextSha256,
     this.participantsSha256,
     this.editHistorySha256,
+    this.chatGuidSha256,
   });
   final String fixtureId;
   final String messageGuid;
   final String visibleTextSha256;
   final String? participantsSha256;
   final String? editHistorySha256;
+  final String? chatGuidSha256;
   static final uuid = RegExp(
     r'^[A-Fa-f0-9]{8}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{12}$',
   );
   static bool validJson(Object? raw) =>
       raw is Map &&
-      (raw.length == 3 || raw.length == 5) &&
+      (raw.length == 3 || raw.length == 5 || raw.length == 6) &&
       raw.keys.every(
         const {'fixtureId', 'messageGuid', 'visibleTextSha256',
-          'participantsSha256', 'editHistorySha256'}.contains,
+          'participantsSha256', 'editHistorySha256', 'chatGuidSha256'}.contains,
       ) &&
       raw['fixtureId'] is String &&
       uuid.hasMatch(raw['fixtureId'] as String) &&
@@ -152,7 +154,9 @@ final class BackendHarnessFixtureReceipt {
           raw['participantsSha256'] is String &&
           RegExp(r'^[a-f0-9]{64}$').hasMatch(raw['participantsSha256'] as String) &&
           raw['editHistorySha256'] is String &&
-          RegExp(r'^[a-f0-9]{64}$').hasMatch(raw['editHistorySha256'] as String));
+          RegExp(r'^[a-f0-9]{64}$').hasMatch(raw['editHistorySha256'] as String)) &&
+      (raw.length != 6 || raw['chatGuidSha256'] is String &&
+          RegExp(r'^[a-f0-9]{64}$').hasMatch(raw['chatGuidSha256'] as String));
   Map<String, Object> toJson() {
     final value = <String, Object>{
       'fixtureId': fixtureId,
@@ -160,6 +164,7 @@ final class BackendHarnessFixtureReceipt {
       'visibleTextSha256': visibleTextSha256,
       if (participantsSha256 != null) 'participantsSha256': participantsSha256!,
       if (editHistorySha256 != null) 'editHistorySha256': editHistorySha256!,
+      if (chatGuidSha256 != null) 'chatGuidSha256': chatGuidSha256!,
     };
     if (!validJson(value)) {
       throw const FormatException('backend_invalid_fixture');
@@ -212,6 +217,16 @@ final class BackendHarnessPayload {
     'report_safe',
     'remote_head',
     'ids_evidence_present',
+    'fixture_create_present',
+    'fixture_create_pending',
+    'fixture_create_settled',
+    'fixture_edit_present',
+    'fixture_edit_pending',
+    'fixture_edit_settled',
+    'fixture_undo_present',
+    'fixture_undo_pending',
+    'fixture_undo_settled',
+    'fixture_attachment_archive_settled',
   };
   static const countNames = {
     'pages',

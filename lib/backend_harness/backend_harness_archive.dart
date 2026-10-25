@@ -19,12 +19,14 @@ final class BackendHarnessArchive {
   BackendHarnessArchive({
     required this.read,
     required this.write,
+    this.readCounts,
     DateTime Function()? now,
     Random? random,
   }) : _now = now ?? DateTime.now,
        _random = random ?? Random.secure();
   final Future<CloudSyncAutomaticArchivePreference> Function() read;
   final BackendArchiveWriter write;
+  final Map<String, int> Function(CloudSyncAutomaticArchivePreference)? readCounts;
   final DateTime Function() _now;
   final Random _random;
   CloudSyncAutomaticArchivePreference? _expected;
@@ -63,6 +65,7 @@ final class BackendHarnessArchive {
       'received_text_enabled': value.includesReceived,
       'received_media_enabled': value.includesReceivedMedia,
     },
+    counts: readCounts?.call(value) ?? const {},
     challenge: challenge,
   );
 

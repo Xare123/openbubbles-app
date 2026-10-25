@@ -282,6 +282,32 @@ void main() {
     },
   );
 
+  test('canonical parent route digest rejects a different parent or participant set', () async {
+    seedProjection();
+    const route = 'iMessage;+;canonical-group-route';
+    final handles = [Handle(address: '+15550000002'), Handle(address: '+15550000003')];
+    store.box<Handle>().putMany(handles);
+    final parent = Chat(guid: route, usingHandle: 'tel:+15550000001')
+      ..handles.addAll(handles);
+    store.box<Chat>().put(parent);
+    final message = store.box<Message>().getAll().single..chat.target = parent;
+    store.box<Message>().put(message);
+    final exact = {...request(), 'chatGuidSha256': hash(route),
+      'participantsSha256': hash(jsonEncode([
+        'tel:+15550000001', 'tel:+15550000002', 'tel:+15550000003'])),
+      'editHistorySha256': hash('[]')};
+    expect(BackendHarnessEvidence.validInspect(exact), isTrue);
+    expect((await adapter.inspect(exact)).flags['fixture_matches'], isTrue);
+    final wrong = await adapter.inspect({...exact, 'chatGuidSha256': hash('other')});
+    expect(wrong.flags['fixture_content_matches'], isTrue);
+    expect(wrong.flags['fixture_parent_matches'], isFalse);
+    expect(wrong.flags['fixture_matches'], isFalse);
+    final wrongMembers = await adapter.inspect({...exact, 'participantsSha256': hash('other')});
+    expect(wrongMembers.flags['fixture_matches'], isFalse);
+    expect(BackendHarnessEvidence.validInspect({...exact, 'chatGuid': messageGuid}), isFalse);
+    expect(BackendHarnessEvidence.validInspect({...exact, 'chatGuidSha256': route}), isFalse);
+  });
+
   test(
     'production part builder distinguishes edited and retracted versions',
     () async {

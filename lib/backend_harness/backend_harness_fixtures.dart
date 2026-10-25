@@ -16,6 +16,7 @@ import 'package:uuid/uuid.dart';
 import 'backend_harness_protocol.dart';
 import 'backend_harness_fixture_assets.dart';
 import 'backend_harness_fixture_proof.dart';
+import 'backend_harness_fixture_archive.dart';
 
 /// Fixed synthetic fixtures through the ordinary backend. This adds no queue,
 /// resend, reset or receipt authority. The host must retain its durable dispatch
@@ -69,14 +70,70 @@ final class BackendHarnessFixtures {
       args['fixtureId'] is String &&
       _uuid.hasMatch(args['fixtureId'] as String);
 
-  static bool ownsMessage(Message message, String fixtureId) =>
+  static bool hasRetainedFixture(Store store, String fixtureId) {
+    final query = store.box<Chat>().query(
+      Chat_.guid.equals(fixtureId).or(Chat_.cloudGuid.equals(fixtureId)),
+    ).build()..limit = 1;
+    try { return query.count() != 0; } finally { query.close(); }
+  }
+
+  static bool ownsMessage(Message message, String fixtureId, {
+    bool retainedChat = false,
+  }) =>
       message.isFromMe == true &&
-      message.chat.target?.guid == fixtureId &&
+      (message.chat.target?.guid == fixtureId ||
+          (retainedChat && message.chat.target?.cloudGuid == fixtureId)) &&
       message.dateScheduled == null &&
       message.dateDeleted == null &&
       (message.text == marker(fixtureId) ||
           message.text == marker(fixtureId, edited: true) ||
-          message.subject == marker(fixtureId));
+          message.subject == marker(fixtureId) ||
+          _ownsAttachmentBody(message, fixtureId));
+
+  static bool _ownsAttachmentBody(Message message, String id) {
+    if (!message.hasAttachments || message.attributedBody.length != 1 ||
+        message.subject?.isNotEmpty == true) {
+      return false;
+    }
+    final body = message.attributedBody.single;
+    final text = marker(id);
+    if (message.text != body.string || body.runs.length != 2 ||
+        (body.string != '$text\uFFFC' && body.string != '$text ')) {
+      return false;
+    }
+    final first = body.runs.first;
+    final last = body.runs.last;
+    return first.range.length == 2 && first.range[0] == 0 &&
+        first.range[1] == text.length &&
+        first.attributes?.messagePart == 0 &&
+        first.attributes?.attachmentGuid == null &&
+        last.range.length == 2 && last.range[0] == text.length &&
+        last.range[1] == 1 && last.attributes?.messagePart == 1 &&
+        last.attributes?.attachmentGuid?.isNotEmpty == true;
+  }
+
+  /// Same supported text/attachment body used for capture and local reflection.
+  /// The backend must preserve these ordered parts in its IDS wire payload.
+  static Message prepareAttachment(String id, Attachment attachment) {
+    final text = marker(id);
+    return Message(
+      text: '$text\uFFFC',
+      attributedBody: [AttributedBody(
+        string: '$text\uFFFC',
+        runs: [
+          Run(range: [0, text.length], attributes: Attributes(messagePart: 0)),
+          Run(range: [text.length, 1], attributes: Attributes(
+            messagePart: 1, attachmentGuid: attachment.guid,
+          )),
+        ],
+      )],
+      isFromMe: true,
+      handleId: 0,
+      dateCreated: DateTime.now(),
+      hasAttachments: true,
+      attachments: [attachment],
+    )..generateTempGuid();
+  }
 
   Future<CloudSyncNativeAuthSnapshot> _identity() async {
     await pushService.initFuture;
@@ -120,7 +177,8 @@ final class BackendHarnessFixtures {
         preference.identity.accountFingerprint != auth.accountFingerprint ||
         preference.identity.protectedStoreIdentity !=
             auth.protectedStoreIdentity ||
-        !auth.sameIdentity(await _identity())) {
+        !auth.sameIdentity(await _identity()) ||
+        !pushService.cloudSyncV2BackendArchiveScopeCurrent(preference)) {
       throw BackendHarnessFailure('backend_not_ready');
     }
     return auth;
@@ -133,16 +191,10 @@ final class BackendHarnessFixtures {
     final auth = await _admit();
     final id = args['fixtureId'] as String;
     final store = Database.store;
-    final existing = store.box<Chat>().query(Chat_.guid.equals(id)).build()
-      ..limit = 1;
-    try {
-      // A retained chat is a consumed fixture, even if its send outcome is
-      // unknown or the crash preceded message reflection. Never recreate it.
-      if (existing.count() != 0) {
-        throw BackendHarnessFailure('backend_request_reused');
-      }
-    } finally {
-      existing.close();
+    // Canonical adoption can move the UUID to cloudGuid. Either exact retained
+    // identity consumes this fixture, including after a crash before reflection.
+    if (hasRetainedFixture(store, id)) {
+      throw BackendHarnessFailure('backend_request_reused');
     }
     final unfinished =
         store
@@ -183,14 +235,7 @@ final class BackendHarnessFixtures {
         totalBytes: bytes.length,
         bytes: bytes,
       );
-      final pending = Message(
-        subject: body,
-        isFromMe: true,
-        handleId: 0,
-        dateCreated: DateTime.now(),
-        hasAttachments: true,
-        attachments: [attachment],
-      )..generateTempGuid();
+      final pending = prepareAttachment(id, attachment);
       await ah.prepAttachment(chat, pending);
       if (!auth.sameIdentity(await _identity()) ||
           !identical(store, Database.store)) {
@@ -213,7 +258,7 @@ final class BackendHarnessFixtures {
         !identical(store, Database.store)) {
       throw BackendHarnessFailure('backend_identity_changed');
     }
-    return _status(auth, id);
+    return _status(auth, id, completedAction: 'create');
   }
 
   Future<BackendHarnessPayload> edit(Map<String, Object?> args) =>
@@ -242,7 +287,8 @@ final class BackendHarnessFixtures {
     } finally {
       query.close();
     }
-    if (found.length != 1 || !ownsMessage(found.single, id)) {
+    if (found.length != 1 ||
+        !ownsMessage(found.single, id, retainedChat: true)) {
       throw BackendHarnessFailure('backend_not_ready');
     }
     final message = found.single;
@@ -284,31 +330,7 @@ final class BackendHarnessFixtures {
     }
     // A received/restored row or Delivered flag cannot stand in for this
     // fixture's exact positive IDS origin and completed create readback.
-    final origins =
-        store
-            .box<CloudSyncLocalSendIntentEntity>()
-            .query(
-              CloudSyncLocalSendIntentEntity_.accountFingerprint
-                  .equals(auth.accountFingerprint)
-                  .and(
-                    CloudSyncLocalSendIntentEntity_.localMessageId.equals(
-                      message.id!,
-                    ),
-                  ),
-            )
-            .build()
-          ..limit = 2;
-    late final List<CloudSyncLocalSendIntentEntity> intent;
-    try {
-      intent = origins.find();
-    } finally {
-      origins.close();
-    }
-    if (intent.length != 1 ||
-        intent.single.state != 2 ||
-        intent.single.idsConfirmationVersion != 2 ||
-        intent.single.confirmedReadbackBindingSha256 == null ||
-        intent.single.admittedOperationId == null) {
+    if (!hasSettledMutationPredecessor(store, auth, id, message.guid!)) {
       throw BackendHarnessFailure('backend_not_ready');
     }
     if (undo) {
@@ -329,7 +351,7 @@ final class BackendHarnessFixtures {
         !identical(store, Database.store)) {
       throw BackendHarnessFailure('backend_identity_changed');
     }
-    return _status(auth, id);
+    return _status(auth, id, completedAction: undo ? 'undo' : 'edit');
   }
 
   Future<BackendHarnessPayload> status(Map<String, Object?> args) async {
@@ -346,10 +368,33 @@ final class BackendHarnessFixtures {
     return result;
   }
 
-  BackendHarnessPayload _status(CloudSyncNativeAuthSnapshot auth, String id) =>
-      Database.store.runInTransaction(TxMode.read, () {
+  BackendHarnessPayload _status(CloudSyncNativeAuthSnapshot auth, String id, {
+    String? completedAction,
+  }) => readStatus(Database.store, auth, id, completedAction: completedAction);
+
+  /// A retained canonical Chat is selectable only through the same exact
+  /// account/source/readback observation as status, never cloudGuid alone.
+  static bool hasSettledMutationPredecessor(
+    Store store, CloudSyncNativeAuthSnapshot auth, String id, String messageGuid,
+  ) {
+    final observed = readStatus(store, auth, id);
+    final flags = observed.flags;
+    return observed.fixture?.messageGuid == messageGuid &&
+        flags['ids_evidence_present'] == true &&
+        flags['fixture_create_settled'] == true &&
+        flags['outcome_uncertain'] == false &&
+        (flags['fixture_edit_present'] != true || flags['fixture_edit_settled'] == true) &&
+        flags['fixture_undo_present'] != true;
+  }
+
+  /// Synchronous local observation; the command entrypoint fences native
+  /// identity and the Store around this call. Also usable with disposable stores.
+  static BackendHarnessPayload readStatus(
+    Store store, CloudSyncNativeAuthSnapshot auth, String id, {
+    String? completedAction,
+  }) => store.runInTransaction(TxMode.read, () {
         final chats =
-            Database.store.box<Chat>().query(Chat_.guid.equals(id)).build()
+            store.box<Chat>().query(Chat_.guid.equals(id).or(Chat_.cloudGuid.equals(id))).build()
               ..limit = 2;
         late final List<Chat> matching;
         try {
@@ -358,10 +403,15 @@ final class BackendHarnessFixtures {
           chats.close();
         }
         if (matching.length != 1) {
-          return const BackendHarnessPayload(counts: {'messages': 0});
+          return BackendHarnessPayload(
+            flags: backendFixtureArchiveAbsentFlags(
+              uncertain: matching.length > 1 || completedAction != null,
+            ),
+            counts: const {'messages': 0},
+          );
         }
         final query =
-            Database.store
+            store
                 .box<Message>()
                 .query(Message_.chat.equals(matching.single.id!))
                 .build()
@@ -372,10 +422,11 @@ final class BackendHarnessFixtures {
         } finally {
           query.close();
         }
-        if (messages.length != 1 || !ownsMessage(messages.single, id)) {
+        if (messages.length != 1 ||
+            !ownsMessage(messages.single, id, retainedChat: true)) {
           return BackendHarnessPayload(
             phase: BackendHarnessPhase.blocked,
-            flags: const {'outcome_uncertain': true},
+            flags: backendFixtureArchiveAbsentFlags(uncertain: true),
             counts: {'messages': messages.length},
           );
         }
@@ -385,34 +436,16 @@ final class BackendHarnessFixtures {
             ? message.guid
             : message.stagingGuid;
         if (guid == null || !BackendHarnessFixtureReceipt.uuid.hasMatch(guid)) {
-          return const BackendHarnessPayload(
+          return BackendHarnessPayload(
             phase: BackendHarnessPhase.blocked,
-            flags: {'outcome_uncertain': true},
-            counts: {'messages': 1},
+            flags: backendFixtureArchiveAbsentFlags(uncertain: true),
+            counts: const {'messages': 1},
           );
         }
-        final origins =
-            Database.store
-                .box<CloudSyncLocalSendIntentEntity>()
-                .query(
-                  CloudSyncLocalSendIntentEntity_.accountFingerprint
-                      .equals(auth.accountFingerprint)
-                      .and(
-                        CloudSyncLocalSendIntentEntity_.localMessageId.equals(
-                          message.id!,
-                        ),
-                      ),
-                )
-                .build()
-              ..limit = 2;
-        late final List<CloudSyncLocalSendIntentEntity> intents;
-        try {
-          intents = origins.find();
-        } finally {
-          origins.close();
-        }
-        final ids =
-            intents.length == 1 && intents.single.idsConfirmationVersion == 2;
+        final archive = backendFixtureArchiveFlags(
+          store: store, auth: auth, message: message, messageGuid: guid,
+          completedAction: completedAction,
+        );
         final visible = message
             .buildMessageParts()
             .where((part) => !part.isUnsent)
@@ -425,7 +458,9 @@ final class BackendHarnessFixtures {
             .where((value) => value.isNotEmpty)
             .join('\n');
         return BackendHarnessPayload(
-          flags: {'ids_evidence_present': ids, 'outcome_uncertain': !ids},
+          phase: archive['outcome_uncertain'] == true
+              ? BackendHarnessPhase.blocked : BackendHarnessPhase.idle,
+          flags: archive,
           counts: {'messages': 1},
           fixture: BackendHarnessFixtureReceipt(
             fixtureId: id,
@@ -433,6 +468,7 @@ final class BackendHarnessFixtures {
             visibleTextSha256: sha256.convert(utf8.encode(visible)).toString(),
             participantsSha256: backendFixtureParticipantsSha256(matching.single),
             editHistorySha256: backendFixtureEditHistorySha256(message),
+            chatGuidSha256: sha256.convert(utf8.encode(matching.single.guid)).toString(),
           ),
         );
       });

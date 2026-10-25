@@ -145,6 +145,12 @@ void main() {
         'editHistorySha256': 'c' * 64,
       };
       expect(BackendHarnessFixtureReceipt.validJson(full), isTrue);
+      expect(BackendHarnessFixtureReceipt.validJson({...full,
+        'chatGuidSha256': 'd' * 64}), isTrue);
+      expect(BackendHarnessFixtureReceipt.validJson({...full,
+        'chatGuidSha256': 'iMessage;+;private-route'}), isFalse);
+      expect(BackendHarnessFixtureReceipt.validJson({...receipt,
+        'chatGuidSha256': 'd' * 64}), isFalse);
       expect(BackendHarnessFixtureReceipt.validJson({
         ...full, 'editHistorySha256': 'invalid',
       }), isFalse);

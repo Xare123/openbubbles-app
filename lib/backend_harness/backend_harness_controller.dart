@@ -18,6 +18,7 @@ import 'backend_harness_interactions.dart';
 import 'backend_harness_protocol.dart';
 import 'backend_harness_recovery_input.dart';
 import 'backend_harness_reports.dart';
+import 'backend_harness_windows_writer.dart';
 
 /// A loaded client and a saved setup marker are availability facts. Neither
 /// establishes fresh account authentication; the auth adapter must do that.
@@ -41,7 +42,11 @@ BackendHarnessPayload backendHarnessAccountAvailability({
 /// Compiled adapters call the same service methods as Profile. Capabilities
 /// include only implemented operations; account/archive adapters are separate.
 final class BackendHarnessController {
-  BackendHarnessController() {
+  BackendHarnessController({this.retainedRecoveryOwner}) {
+    if (retainedRecoveryOwner != null &&
+        !backendHarnessRecoveryOwnerValid(retainedRecoveryOwner!)) {
+      throw ArgumentError('backend_windows_recovery_owner_invalid');
+    }
     engine = BackendHarnessEngine(
       enabled: true,
       source: BackendHarnessGate.source,
@@ -89,12 +94,21 @@ final class BackendHarnessController {
         'archive.prepare': BackendHarnessOperation(
           background: true,
           validate: (args) => args.isEmpty,
-          handler: (_) => archive.prepare(),
+          handler: (_) async {
+            if (Platform.isWindows) {
+              if (retainedRecoveryOwner == null) {
+                throw BackendHarnessFailure('backend_disabled');
+              }
+              await pushService.prepareCloudSyncV2BackendArchiveAuthentication();
+            }
+            return archive.prepare();
+          },
         ),
         'archive.scope': BackendHarnessOperation(
           background: true,
           uncertainOnFailure: true,
-          validate: BackendHarnessArchive.validScope,
+          validate: (args) => BackendHarnessArchive.validScope(args) &&
+              (!Platform.isWindows || retainedRecoveryOwner != null),
           handler: archive.setScope,
         ),
         'archive.status': BackendHarnessOperation(
@@ -122,19 +136,22 @@ final class BackendHarnessController {
         'fixture.send': BackendHarnessOperation(
           background: true,
           uncertainOnFailure: true,
-          validate: BackendHarnessFixtures.validSend,
+          validate: (args) => BackendHarnessFixtures.validSend(args) &&
+              _retainedFixtureAllowed(args),
           handler: fixtures.send,
         ),
         'fixture.edit': BackendHarnessOperation(
           background: true,
           uncertainOnFailure: true,
-          validate: BackendHarnessFixtures.validMutation,
+          validate: (args) => BackendHarnessFixtures.validMutation(args) &&
+              _retainedFixtureAllowed(args),
           handler: fixtures.edit,
         ),
         'fixture.unsend': BackendHarnessOperation(
           background: true,
           uncertainOnFailure: true,
-          validate: BackendHarnessFixtures.validMutation,
+          validate: (args) => BackendHarnessFixtures.validMutation(args) &&
+              _retainedFixtureAllowed(args),
           handler: fixtures.unsend,
         ),
         'fixture.status': BackendHarnessOperation(
@@ -195,11 +212,25 @@ final class BackendHarnessController {
       },
     );
   }
+  final String? retainedRecoveryOwner;
+
+  bool _retainedFixtureAllowed(Map<String, Object?> args) =>
+      backendHarnessRetainedFixtureAllowed(
+        isWindows: Platform.isWindows,
+        admittedOwner: retainedRecoveryOwner,
+        requestedOwner: args['retainedRecoveryOwner'],
+        archiveSessionReady: !Platform.isWindows ||
+            pushService.cloudSyncV2BackendArchiveSessionReady,
+      );
+
   late final BackendHarnessEngine engine;
   final interactions = BackendHarnessInteractions();
   late final account = BackendHarnessAccount(interactions);
   late final archive = BackendHarnessArchive(
     read: () => pushService.readCloudSyncV2AutomaticArchivePreference(),
+    readCounts: (value) => backendHarnessArchiveQueueCounts(
+      Database.store, value.identity.accountFingerprint,
+    ),
     write: (expected, enabled, acknowledged, received, media) =>
         pushService.setCloudSyncV2AutomaticArchivePreference(
           expected,

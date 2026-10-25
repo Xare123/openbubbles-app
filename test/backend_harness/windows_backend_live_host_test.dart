@@ -6,6 +6,7 @@ import 'dart:io';
 import 'package:bluebubbles/backend_harness/backend_harness_controller.dart';
 import 'package:bluebubbles/backend_harness/backend_harness_protocol.dart';
 import 'package:bluebubbles/backend_harness/backend_harness_vm_service.dart';
+import 'package:bluebubbles/backend_harness/backend_harness_windows_writer.dart';
 import 'package:bluebubbles/cloud_sync_v2_windows_harness.dart' as harness;
 import 'package:bluebubbles/database/database.dart';
 import 'package:bluebubbles/helpers/backend/startup_tasks.dart';
@@ -177,12 +178,21 @@ void main() {
       final library =
           Platform.environment['OPENBUBBLES_TEST_NATIVE_LIBRARY'] ?? '';
       const build = String.fromEnvironment('OPENBUBBLES_BUILD_COMMIT');
+      const writerCompiled = bool.fromEnvironment('BACKEND_HARNESS_WINDOWS_WRITER');
+      final recoveryOwner =
+          Platform.environment['OPENBUBBLES_BACKEND_RECOVERY_OWNER'] ?? '';
       if (!kDebugMode ||
           !BackendHarnessGate.compiledIn ||
-          CloudKitWriterOwnership.legacyMutationsEnabled ||
-          CloudKitWriterOwnership.v2MutationsEnabled ||
-          CloudSyncDevGate.manualOutboundCanaryEnabled ||
-          CloudSyncDevGate.localSendRuntimeEnabled ||
+          !backendHarnessWindowsWriterModeAllowed(
+            writerCompiled: writerCompiled,
+            writerEnvironment: Platform.environment[
+                'OPENBUBBLES_RUN_WINDOWS_BACKEND_WRITER'] == '1',
+            recoveryOwner: recoveryOwner,
+            legacyWriter: CloudKitWriterOwnership.legacyMutationsEnabled,
+            v2Writer: CloudKitWriterOwnership.v2MutationsEnabled,
+            outbound: CloudSyncDevGate.manualOutboundCanaryEnabled,
+            automaticUploads: CloudSyncDevGate.localSendRuntimeEnabled,
+          ) ||
           !RegExp(r'^[a-f0-9]{40}$').hasMatch(BackendHarnessGate.source) ||
           build != BackendHarnessGate.source ||
           library.isEmpty ||
@@ -257,7 +267,9 @@ void main() {
         if (service.state == null) {
           throw StateError('backend_windows_retained_session_required');
         }
-        final controller = BackendHarnessController();
+        final controller = BackendHarnessController(
+          retainedRecoveryOwner: writerCompiled ? recoveryOwner : null,
+        );
         activeController = controller;
         if (!registerBackendHarnessExtension(
           controller.engine,
