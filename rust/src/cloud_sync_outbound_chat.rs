@@ -83,6 +83,18 @@ pub(crate) fn stage_outbound_chat(
     stage_validated_outbound_chat(storage_directory, account_fingerprint, chat, false)
 }
 
+/// Fresh group staging only. The caller must separately bind the exact local
+/// group origin and positive native-send proof before durable admission.
+/// This does not borrow historical provenance or grant remote write authority.
+pub(crate) fn stage_outbound_group_chat(
+    storage_directory: PathBuf,
+    account_fingerprint: String,
+    chat: CloudChat,
+) -> Result<NativeProtectedOutboundStage, Failure> {
+    validate_group_chat_create(&chat).map_err(|_| Failure::UnsupportedMessage)?;
+    stage_validated_outbound_chat(storage_directory, account_fingerprint, chat, false)
+}
+
 /// Historical group-parent component only. This freezes the entire candidate
 /// and one server name. It performs no remote save and grants no admission;
 /// the historical caller must bind its protected source and retain this exact
@@ -640,6 +652,87 @@ mod tests {
             ],
             ..fixture()
         }
+    }
+
+    #[test]
+    fn fresh_group_stage_preserves_exact_payload_and_record_after_commit() {
+        let directory = tempfile::tempdir().unwrap();
+        let account = "A".repeat(43);
+        let source = group_fixture();
+        let stage =
+            stage_outbound_group_chat(directory.path().into(), account.clone(), source.clone())
+                .unwrap();
+        crate::cloud_sync_native_fetch::cloud_sync_commit_protected_page_lease(
+            directory.path().into(),
+            &stage.lease_reference,
+            std::slice::from_ref(&stage.protected_payload_reference),
+        )
+        .unwrap();
+        let reopen = || {
+            open_staged_outbound_chat(
+                directory.path().into(),
+                account.clone(),
+                &stage.protected_payload_reference,
+                &stage.payload_sha256,
+                &stage.server_record_id_hash,
+            )
+            .unwrap()
+        };
+        let (restored, record) = reopen();
+        let (recovered, recovered_record) = reopen();
+        assert_eq!(
+            serde_json::to_value(&restored).unwrap(),
+            serde_json::to_value(&source).unwrap()
+        );
+        assert_eq!(
+            serde_json::to_value(&recovered).unwrap(),
+            serde_json::to_value(&source).unwrap()
+        );
+        assert_eq!(recovered_record, record);
+        assert_eq!(
+            verify_chat_readback(
+                &recovered,
+                &recovered_record,
+                &record,
+                &stage.payload_sha256
+            )
+            .unwrap(),
+            stage.payload_sha256
+        );
+        assert!(verify_chat_readback(
+            &recovered,
+            "DDDDDDDD-DDDD-4DDD-8DDD-DDDDDDDDDDDD",
+            &record,
+            &stage.payload_sha256
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn fresh_group_staging_rejects_direct_and_invalid_routes_before_opening_storage() {
+        assert!(matches!(
+            stage_outbound_group_chat(PathBuf::new(), "A".repeat(43), fixture()),
+            Err(Failure::UnsupportedMessage)
+        ));
+        let changes: &[fn(&mut CloudChat)] = &[
+            |c| c.guid = "iMessage;+;another-chat".into(),
+            |c| c.group_id.clear(),
+            |c| c.last_addressed_handle.clear(),
+            |c| c.participants.clear(),
+            |c| c.participants[1].uri = c.participants[0].uri.clone(),
+        ];
+        for change in changes {
+            let mut invalid = group_fixture();
+            change(&mut invalid);
+            assert!(matches!(
+                stage_outbound_group_chat(PathBuf::new(), "A".repeat(43), invalid),
+                Err(Failure::UnsupportedMessage)
+            ));
+        }
+        assert!(matches!(
+            stage_outbound_historical_direct_chat(PathBuf::new(), "A".repeat(43), group_fixture()),
+            Err(Failure::UnsupportedMessage)
+        ));
     }
 
     #[test]

@@ -5653,6 +5653,97 @@ pub async fn cloud_sync_stage_outbound_chat(
     }
 }
 
+/// Stages one fresh group iMessage Chat and its original random record name.
+/// The caller must durably bind its local group origin and native-send proof
+/// before admission. This grants no historical provenance or remote authority.
+pub async fn cloud_sync_stage_outbound_group_chat(
+    cloud_messages_client: &Arc<CloudMessagesClient<DefaultAnisetteProvider>>,
+    storage_directory: String,
+    expected_account_fingerprint: String,
+    expected_protected_store_identity: String,
+    chat: CloudChat,
+) -> CloudSyncProtectedOutboundStageResult {
+    let auth =
+        match cloud_sync_capture_auth_snapshot(cloud_messages_client, storage_directory.clone())
+            .await
+        {
+            Ok(auth) => auth,
+            Err(_) => {
+                return cloud_sync_outbound_failure_result(
+                    CloudSyncOutboundSafeCode::NativeAuthUnavailable,
+                )
+            }
+        };
+    if expected_account_fingerprint != auth.account_fingerprint
+        || expected_protected_store_identity != auth.protected_store_identity
+    {
+        return cloud_sync_outbound_failure_result(CloudSyncOutboundSafeCode::InvalidScope);
+    }
+    let writer_binding = match cloud_messages_client
+        .warm_chat_writer_preparation_lookup_only()
+        .await
+    {
+        Ok(binding) => binding,
+        Err(error) => {
+            warn!(
+                "Cloud Sync writer preparation failed kind=chat cause={}",
+                cloud_sync_writer_preparation_failure_code(&error)
+            );
+            log::logger().flush();
+            return cloud_sync_outbound_failure_result(
+                CloudSyncOutboundSafeCode::NativeAuthUnavailable,
+            );
+        }
+    };
+    let auth_after_preparation =
+        match cloud_sync_capture_auth_snapshot(cloud_messages_client, storage_directory.clone())
+            .await
+        {
+            Ok(auth) => auth,
+            Err(_) => {
+                return cloud_sync_outbound_failure_result(
+                    CloudSyncOutboundSafeCode::NativeAuthUnavailable,
+                )
+            }
+        };
+    if !cloud_sync_auth_identity_remains_exact(
+        &auth,
+        &auth_after_preparation,
+        &expected_account_fingerprint,
+        &expected_protected_store_identity,
+    ) {
+        return cloud_sync_outbound_failure_result(CloudSyncOutboundSafeCode::InvalidScope);
+    }
+    if cloud_messages_client
+        .validate_writer_preparation_binding(&writer_binding)
+        .await
+        .is_err()
+    {
+        return cloud_sync_outbound_failure_result(CloudSyncOutboundSafeCode::InvalidScope);
+    }
+    match crate::cloud_sync_outbound_chat::stage_outbound_group_chat(
+        PathBuf::from(storage_directory),
+        auth_after_preparation.account_fingerprint,
+        chat,
+    ) {
+        Ok(stage) => CloudSyncProtectedOutboundStageResult {
+            stage: Some(CloudSyncProtectedOutboundStage {
+                logical_entity_key_hash: stage.logical_entity_key_hash,
+                protected_payload_reference: stage.protected_payload_reference,
+                payload_sha256: stage.payload_sha256,
+                payload_length: stage.payload_length,
+                protected_server_record_reference: stage.protected_server_record_reference,
+                server_record_id_hash: stage.server_record_id_hash,
+                lease_reference: stage.lease_reference,
+            }),
+            failure: None,
+        },
+        Err(failure) => {
+            cloud_sync_outbound_failure_result(map_cloud_sync_outbound_failure(failure))
+        }
+    }
+}
+
 #[path = "cloud_sync_historical_chat.rs"]
 mod cloud_sync_historical_chat;
 
