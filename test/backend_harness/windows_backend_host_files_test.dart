@@ -65,6 +65,45 @@ void main() {
     expect(controls.stopRequested(), isTrue);
   });
 
+  Map<String, Object?> sourceRequest() => {
+    'schema': 1, 'launchId': launch, 'source': source, 'pid': 42,
+    'rowId': 4, 'generation': 1, 'sequence': 4,
+    'changeIdHash': List.filled(43, 'c').join(),
+    'recordIdHash': List.filled(43, 'd').join(), 'etagHash': null,
+    'payloadSha256': List.filled(64, 'e').join(),
+    'referenceSha256': List.filled(64, 'f').join(),
+  };
+
+  test('source inspection consumes once under the exact live owner', () {
+    controls.publishReady(Uri.parse('ws://127.0.0.1:1234/token/ws'), source, 42);
+    expect(controls.takeChatSourceInspection(source, 42), isNull);
+    control('chat-source.json').writeAsStringSync(jsonEncode(sourceRequest()));
+    expect(controls.takeChatSourceInspection(source, 42), sourceRequest());
+    expect(control('chat-source-started.json').existsSync(), isTrue);
+    expect(controls.takeChatSourceInspection(source, 42), isNull);
+    controls.publishChatSourceInspection(source, 42, {'completed': true});
+    expect(() => controls.publishChatSourceInspection(source, 42, {'completed': true}),
+      throwsA(isA<FileSystemException>()));
+  });
+
+  test('source inspection rejects stale owner, extra fields and preseeded launch', () {
+    controls.publishReady(Uri.parse('ws://127.0.0.1:1234/token/ws'), source, 42);
+    for (final bad in [
+      {...sourceRequest(), 'pid': 43},
+      {...sourceRequest(), 'launchId': List.filled(32, 'd').join()},
+      {...sourceRequest(), 'rawPayload': 'not accepted'},
+      {...sourceRequest(), 'rowId': 0},
+      {...sourceRequest(), 'referenceSha256': 'not-a-digest'},
+    ]) {
+      control('chat-source.json').writeAsStringSync(jsonEncode(bad));
+      expect(() => controls.takeChatSourceInspection(source, 42), throwsStateError);
+      expect(control('chat-source-started.json').existsSync(), isFalse);
+    }
+    control('json').deleteSync();
+    control('chat-source.json').writeAsStringSync(jsonEncode(sourceRequest()));
+    expect(() => controls.requireFreshLaunch(), throwsStateError);
+  });
+
   test('endpoint refuses nonlocal and unauthenticated VM services', () {
     for (final endpoint in [
       'ws://example.com:1234/token/ws',

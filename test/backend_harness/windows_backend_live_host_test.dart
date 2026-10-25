@@ -29,6 +29,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as path;
 
 import 'windows_backend_harness_storage.dart';
+import 'windows_chat_source_inspection.dart';
 
 /// Only the test entry below supplies the fixed marked-profile validator.
 /// Offline control-file checks can inject an owned synthetic directory.
@@ -55,6 +56,7 @@ final class WindowsBackendHostFiles {
   late final String expectedRoot;
   late final String expectedResolved;
   String? _recoveryText;
+  bool _chatSourceInspectionConsumed = false;
 
   static int Function() _monotonicClock() {
     final watch = Stopwatch()..start();
@@ -76,7 +78,8 @@ final class WindowsBackendHostFiles {
       File(path.join(_root(), 'backend-host-$launchId.$suffix'));
 
   void requireFreshLaunch() {
-    for (final suffix in ['json', 'stop', 'closed.json', 'recovery.json']) {
+    for (final suffix in ['json', 'stop', 'closed.json', 'recovery.json',
+      'chat-source.json', 'chat-source-started.json', 'chat-source-result.json']) {
       if (FileSystemEntity.typeSync(_file(suffix).path, followLinks: false) !=
           FileSystemEntityType.notFound) {
         throw StateError('backend_windows_launch_consumed');
@@ -153,6 +156,49 @@ final class WindowsBackendHostFiles {
       throw StateError('backend_windows_stop_owner_mismatch');
     }
     return true;
+  }
+
+  Map<String, Object?>? takeChatSourceInspection(String source, int ownerPid) {
+    if (_chatSourceInspectionConsumed) return null;
+    final file = _file('chat-source.json');
+    if (FileSystemEntity.typeSync(file.path, followLinks: false) ==
+        FileSystemEntityType.notFound) {
+      return null;
+    }
+    _requireReadyOwner(source, ownerPid);
+    _requirePlainFile(file);
+    if (file.lengthSync() > 4096) {
+      throw StateError('backend_windows_chat_source_request_invalid');
+    }
+    final decoded = jsonDecode(file.readAsStringSync());
+    if (decoded is! Map<String, dynamic>) {
+      throw StateError('backend_windows_chat_source_request_invalid');
+    }
+    final request = decoded.cast<String, Object?>();
+    if (!validWindowsChatSourceRequest(request) || request['launchId'] != launchId ||
+        request['source'] != source || request['pid'] != ownerPid) {
+      throw StateError('backend_windows_chat_source_request_invalid');
+    }
+    // Consume before entering native work. A timeout or failed observation is
+    // retained under this launch, never retried by the polling loop.
+    _chatSourceInspectionConsumed = true;
+    _writeNew('chat-source-started.json', {
+      'schema': 1, 'launchId': launchId, 'source': source, 'pid': ownerPid,
+      'rowId': request['rowId'], 'generation': request['generation'],
+      'sequence': request['sequence'],
+    });
+    return request;
+  }
+
+  void publishChatSourceInspection(String source, int ownerPid,
+      Map<String, Object?> result) {
+    _requireReadyOwner(source, ownerPid);
+    if (!_chatSourceInspectionConsumed) {
+      throw StateError('backend_windows_chat_source_not_started');
+    }
+    _writeNew('chat-source-result.json', {
+      'launchId': launchId, 'source': source, 'pid': ownerPid, ...result,
+    });
   }
 
   void preserveRecovery(
@@ -443,6 +489,27 @@ void main() {
         files.publishReady(endpoint, BackendHarnessGate.source, pid);
         final deadline = DateTime.now().add(const Duration(minutes: 20));
         while (!files.stopRequested() && DateTime.now().isBefore(deadline)) {
+          final sourceRequest = files.takeChatSourceInspection(
+            BackendHarnessGate.source, pid);
+          if (sourceRequest != null) {
+            // This one-shot observation is terminal for command admission.
+            // Finish any entered command before taking its native read window.
+            await controller.engine.closeAdmissionAndDrain();
+            Future<void> requireIdle() async {
+              final preference = await service.readCloudSyncV2AutomaticArchivePreference();
+              if (preference.enabled || service.cloudSyncV2HistoryReadActive ||
+                  service.cloudSyncV2CanaryAdbSemanticPullQuiescing ||
+                  service.backendRegistrationRestartRequired ||
+                  !identical(controller, activeController)) {
+                throw StateError('backend_windows_chat_source_requires_idle');
+              }
+            }
+            final result = await inspectWindowsChatSource(
+              store: Database.store, profile: profile.path, request: sourceRequest,
+              readActiveClient: () => service.state?.icloudServices?.cloudMessagesClient,
+              requireIdle: requireIdle);
+            files.publishChatSourceInspection(BackendHarnessGate.source, pid, result);
+          }
           await Future<void>.delayed(const Duration(milliseconds: 250));
         }
         await shutdownWindowsBackendHost(
