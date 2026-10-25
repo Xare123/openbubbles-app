@@ -62,8 +62,8 @@ class SettingsService extends GetxService {
         if (settings.allowUpsideDownRotation.value) DeviceOrientation.portraitDown,
       ]);
     }
-    // launch at startup
-    if (kIsDesktop) {
+    // Headless backend hosts must not alter desktop startup integration.
+    if (kIsDesktop && !headless) {
       if (Platform.isWindows) {
         try {
           _canAuthenticate = await LocalAuthentication().isDeviceSupported();

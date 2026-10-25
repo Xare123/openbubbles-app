@@ -315,7 +315,32 @@ final class BackendHarnessEngine {
   final _jobs = <String, _BackendHarnessJob>{};
   final _requests = <String, _BackendHarnessJob>{};
   _BackendHarnessJob? _active;
+  bool _accepting = true;
+  int _enteredCalls = 0;
+  Completer<void>? _drained;
   static final _tokenPattern = RegExp(r'^[A-Za-z0-9_-]{1,64}$');
+
+  /// Stop new backend invocations without canceling an entered operation.
+  /// Hello and cached job observations remain available for the original owner.
+  Future<void> closeAdmissionAndDrain() {
+    _accepting = false;
+    final completion = _drained ??= Completer<void>();
+    _notifyDrained();
+    return completion.future;
+  }
+
+  bool get hasUncertainJobs => _jobs.values.any((job) {
+    final flags = job.payload['flags'];
+    return flags is Map && flags['outcome_uncertain'] == true;
+  });
+
+  void _notifyDrained() {
+    final completion = _drained;
+    if (_active == null && _enteredCalls == 0 &&
+        completion != null && !completion.isCompleted) {
+      completion.complete();
+    }
+  }
 
   String _token() => List.generate(
     16,
@@ -344,6 +369,7 @@ final class BackendHarnessEngine {
     Object? raw, {
     String? expectedSessionId,
   }) async {
+    _enteredCalls++;
     var id = 'invalid';
     var action = 'hello';
     try {
@@ -427,6 +453,9 @@ final class BackendHarnessEngine {
             ? _reply(id, action, 'backend_job_unknown', state: 'blocked')
             : _jobReply(id, action, job);
       }
+      if (!_accepting) {
+        return _reply(id, action, 'backend_busy', state: 'blocked');
+      }
       final operation = _operations[action];
       if (operation == null) {
         return _reply(id, action, 'backend_not_supported', state: 'blocked');
@@ -492,6 +521,7 @@ final class BackendHarnessEngine {
             ).toJson();
           } finally {
             if (identical(_active, job)) _active = null;
+            _notifyDrained();
           }
         }),
       );
@@ -500,6 +530,9 @@ final class BackendHarnessEngine {
       return _reply(id, action, error.code, state: 'blocked');
     } catch (_) {
       return _reply(id, action, 'backend_internal_error', state: 'failed');
+    } finally {
+      _enteredCalls--;
+      _notifyDrained();
     }
   }
 

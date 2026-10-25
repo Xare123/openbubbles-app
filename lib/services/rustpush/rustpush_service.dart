@@ -114,6 +114,7 @@ import 'package:bluebubbles/utils/crypto_utils.dart';
 import 'package:bluebubbles/utils/logger/logger.dart';
 import 'package:collection/collection.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
+import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:crypto/crypto.dart';
 import 'package:ffmpeg_kit_flutter_new/ffmpeg_kit.dart';
 import 'package:flutter/cupertino.dart';
@@ -2425,6 +2426,17 @@ bool cloudSyncPreviousUploadCheckIsSetupUnavailable(Object error) {
 }
 
 class RustPushService extends GetxService {
+  bool get _isolatedWindowsBackendHost =>
+      Platform.isWindows &&
+      kDebugMode &&
+      fs.cloudSyncV2WindowsDevProfileActive &&
+      CloudSyncDevGate.isAgentBackendRuntime(
+        isAndroid: false,
+        isWindows: true,
+        packageName: fs.packageInfo.packageName,
+        isolatedWindowsProfile: true,
+      );
+
   final Rx<AppleNetworkHealth> appleNetworkHealth =
       AppleNetworkHealth.unknown.obs;
   final RxnString appleNetworkDetail = RxnString();
@@ -2435,6 +2447,7 @@ class RustPushService extends GetxService {
   int _networkRefreshGeneration = 0;
 
   void _watchNetworkChanges() {
+    if (_isolatedWindowsBackendHost) return;
     _networkSubscription ??=
         Connectivity().onConnectivityChanged.listen((results) {
       if (results.contains(ConnectivityResult.none)) {
@@ -2761,6 +2774,7 @@ class RustPushService extends GetxService {
   }
 
   Future<void> scheduleRelayHealthReminder(int secondsUntilRenewal) async {
+    if (_isolatedWindowsBackendHost) return;
     await _relayReminderLock.synchronized(() async {
       await notif.cancelRelayCheckReminder();
       final currentState = state;
@@ -2793,6 +2807,7 @@ class RustPushService extends GetxService {
   }
 
   Future<void> cancelRelayHealthReminder() async {
+    if (_isolatedWindowsBackendHost) return;
     await _relayReminderLock
         .synchronized(() => notif.cancelRelayCheckReminder());
   }
@@ -5914,9 +5929,11 @@ class RustPushService extends GetxService {
 
   Future handleMsg(api.PushMessage push) async {
     final expectedState = state;
-    await handleMsgInner(push).timeout(const Duration(minutes: 3));
-    // if we complete successfully, mark delivery "certified"
-    markCertified(push);
+    await completeRustPushReceive(
+      process: () async { await handleMsgInner(push); },
+      certify: () => markCertified(push),
+      retainEnteredWork: _isolatedWindowsBackendHost,
+    );
     // An ordinary or mirrored iMessage is an invalidation hint, not proof of
     // CloudKit contents. Schedule only the registered read-only metadata work
     // after local processing, and never make IDS delivery wait for that work.
@@ -7201,7 +7218,7 @@ class RustPushService extends GetxService {
     return (change, text);
   }
 
-  final googleSignIn = GoogleSignIn(
+  late final googleSignIn = GoogleSignIn(
     // See 'How to Get Google OAuth Credentials' section below
     params: const GoogleSignInParams(
       clientId: clientId,
@@ -7668,7 +7685,21 @@ class RustPushService extends GetxService {
     }
   }
 
-  void doPoll(
+  final List<Future<void>> _windowsBackendPolls = [];
+
+  void doPoll(api.ApsWatcher watcher, lib.ArcSharedPushState sharedPushState) {
+    final polling = _doPoll(watcher, sharedPushState);
+    if (_isolatedWindowsBackendHost) {
+      _windowsBackendPolls.add(polling);
+      // Retain the original result for protected shutdown, while observing a
+      // failed loop now rather than emitting an unhandled asynchronous error.
+      unawaited(polling.then<void>((_) {}, onError: (Object _, StackTrace __) {}));
+    } else {
+      unawaited(polling);
+    }
+  }
+
+  Future<void> _doPoll(
       api.ApsWatcher watcher, lib.ArcSharedPushState sharedPushState) async {
     while (true) {
       try {
@@ -7694,6 +7725,7 @@ class RustPushService extends GetxService {
       }
     }
     watcher.dispose();
+    if (_isolatedWindowsBackendHost) sharedPushState.dispose();
   }
 
   void hello() {
@@ -7703,6 +7735,19 @@ class RustPushService extends GetxService {
   // Receive-critical startup barrier. Keep optional account maintenance,
   // CloudKit work, contact refresh, and other network probes outside it.
   late Future<void> initFuture;
+
+  Future<void>? _startupFuture;
+  /// Completes after the normal startup body, including receipt reconciliation.
+  /// A completed body is not proof that a timed-out native replay has settled.
+  Future<void> get startupFuture => _startupFuture ??
+      (throw StateError('rustpush_startup_not_started'));
+
+  Future<void>? _nativeCloseFuture;
+  bool _nativeCloseCompleted = false;
+  /// Awaiting this only observes the existing protected disposal attempt.
+  /// Callers must also prove handles were released and protected work is idle.
+  Future<void>? get nativeCloseFuture => _nativeCloseFuture;
+  bool get nativeCloseCompleted => _nativeCloseCompleted;
 
   Future<bool> setupZenMode(bool val) async {
     if (val) {
@@ -7724,6 +7769,7 @@ class RustPushService extends GetxService {
   }
 
   void onboardZenMode() async {
+    if (_isolatedWindowsBackendHost) return;
     if (ss.settings.zenModeAware.value || !ss.settings.finishedSetup.value) {
       return;
     }
@@ -7807,6 +7853,7 @@ class RustPushService extends GetxService {
   }
 
   void tryWarnVpn() async {
+    if (_isolatedWindowsBackendHost) return;
     var state = await VpnConnectionDetector.isVpnActive();
     if (state && !ss.settings.vpnWarned.value && ls.isAlive) {
       ss.settings.vpnWarned.value = true;
@@ -7927,6 +7974,7 @@ class RustPushService extends GetxService {
   }
 
   void initAppLinks() async {
+    if (_isolatedWindowsBackendHost) return;
     final _appLinks = AppLinks();
 
     var link = await _appLinks.getLatestLink();
@@ -7937,6 +7985,7 @@ class RustPushService extends GetxService {
   }
 
   void validateSubState() async {
+    if (_isolatedWindowsBackendHost) return;
     // only show notification if we are registered
     if (state == null) {
       return;
@@ -7969,7 +8018,7 @@ class RustPushService extends GetxService {
   // uniquely identify the backend service that is running
   String serviceId = "";
 
-  BillingClientManager client = BillingClientManager();
+  late BillingClientManager client = BillingClientManager();
   bool cachedInClique = false;
 
   final _icloudMaintenance = ICloudMaintenance();
@@ -8017,16 +8066,25 @@ class RustPushService extends GetxService {
   }
 
   @override
-  Future<void> onInit() async {
+  Future<void> onInit() {
+    final existing = _startupFuture;
+    if (existing != null) return existing;
     super.onInit();
+    return _startupFuture = initializeStartup();
+  }
+
+  @protected
+  Future<void> initializeStartup() async {
     _watchNetworkChanges();
     initFuture = (() async {
       await api.doFirstTimeInit(path: fs.appDocDir.path);
       statePath = (await getApplicationSupportDirectory()).path;
-      final vpnDetector = VpnConnectionDetector();
-      vpnDetector.vpnConnectionStream.listen((state) {
-        tryWarnVpn();
-      });
+      if (!_isolatedWindowsBackendHost) {
+        final vpnDetector = VpnConnectionDetector();
+        vpnDetector.vpnConnectionStream.listen((state) {
+          tryWarnVpn();
+        });
+      }
       if (Platform.isAndroid) {
         Logger.info("tryingService");
         serviceId = await mcs.invokeMethod("get-native-handle");
@@ -8093,9 +8151,11 @@ class RustPushService extends GetxService {
     initAppLinks();
     initMixPanel();
     await initFuture;
-    Timer.periodic(const Duration(days: 1), (timer) => validateSubState());
-    validateSubState();
-    if (ls.isUiThread) {
+    if (!_isolatedWindowsBackendHost) {
+      Timer.periodic(const Duration(days: 1), (timer) => validateSubState());
+      validateSubState();
+    }
+    if (ls.isUiThread && !_isolatedWindowsBackendHost) {
       _startRecurringICloudMaintenance();
       final initializedState = state;
       if (initializedState != null) {
@@ -8127,9 +8187,11 @@ class RustPushService extends GetxService {
             error: e, trace: s);
       }
     }
-    Timer(const Duration(seconds: 2), checkIncident);
+    if (!_isolatedWindowsBackendHost) {
+      Timer(const Duration(seconds: 2), checkIncident);
+    }
     // pre-cache next FT link
-    if (pushService.state != null) {
+    if (pushService.state != null && !_isolatedWindowsBackendHost) {
       api
           .getFtLink(facetime: pushService.state!.ftClient, usage: "next")
           .then<void>((_) {}, onError: (Object error, StackTrace stackTrace) {
@@ -8138,12 +8200,17 @@ class RustPushService extends GetxService {
       });
     }
     Logger.info("initDone");
-    await _replayCloudSyncV2NativeSendReceipts().timeout(
-      const Duration(seconds: 5),
-      onTimeout: () => Logger.warn(
-        'Cloud Sync V2 native send receipt startup replay timed out',
-      ),
-    );
+    final receiptReplay = _replayCloudSyncV2NativeSendReceipts();
+    if (_isolatedWindowsBackendHost) {
+      await receiptReplay;
+    } else {
+      await receiptReplay.timeout(
+        const Duration(seconds: 5),
+        onTimeout: () => Logger.warn(
+          'Cloud Sync V2 native send receipt startup replay timed out',
+        ),
+      );
+    }
     final sendingProgress = Database.messages
         .query(Message_.sendingServiceId.notNull())
         .build()
@@ -8162,7 +8229,7 @@ class RustPushService extends GetxService {
       }
       await markFailed(failed, "Crashed while still sending");
     }
-    if (ls.isUiThread) await cs.refreshContacts();
+    if (ls.isUiThread && !_isolatedWindowsBackendHost) await cs.refreshContacts();
     Logger.info("finishInit");
     _queueCloudSyncV2LocalSends(CloudSyncTrigger.startup);
     if (ls.isUiThread && !mcs.background) {
@@ -8171,6 +8238,7 @@ class RustPushService extends GetxService {
   }
 
   void checkIncident() {
+    if (_isolatedWindowsBackendHost) return;
     if (!File("$statePath/incident_affected").existsSync()) return;
     showDialog(
       context: Get.context!,
@@ -8205,6 +8273,7 @@ class RustPushService extends GetxService {
   }
 
   void initMixPanel() async {
+    if (_isolatedWindowsBackendHost) return;
     if (ss.settings.finishedSetup.value && !ss.settings.deviceIsHosted.value) {
       return;
     }
@@ -8278,7 +8347,7 @@ class RustPushService extends GetxService {
       CloudSyncDevGate.isCanaryRuntime(
         isAndroid: Platform.isAndroid,
         packageName: fs.packageInfo.packageName,
-      );
+      ) || _isolatedWindowsBackendHost;
 
   bool get _cloudSyncV2AndroidBackgroundRuntimeAllowed =>
       CloudSyncDevGate.androidBackgroundReadEnabled &&
@@ -10967,7 +11036,8 @@ class RustPushService extends GetxService {
   Future<CloudSyncV2PcsPreparationOutcome>
   _prepareCloudSyncV2ProfilePcs({void Function()? validateContinuation,
     CloudSyncRecoveryInput? recoveryInput}) {
-    if (recoveryInput != null && (!CloudSyncDevGate.agentBackendEnabled ||
+    if (recoveryInput != null && !_isolatedWindowsBackendHost &&
+        (!CloudSyncDevGate.agentBackendEnabled ||
         fs.packageInfo.packageName != CloudSyncDevGate.androidBackendTestPackageName)) {
       throw StateError('cloud_sync_canary_package_required');
     }
@@ -13016,7 +13086,9 @@ class RustPushService extends GetxService {
 
   Future configured() async {
     await handleRegistered();
-    Timer(const Duration(seconds: 2), checkIncident);
+    if (!_isolatedWindowsBackendHost) {
+      Timer(const Duration(seconds: 2), checkIncident);
+    }
     if (Platform.isAndroid) {
       await mcs.invokeMethod("notify-native-configured");
     }
@@ -13026,6 +13098,24 @@ class RustPushService extends GetxService {
     api.SharedPushState closingState,
   ) async {
     try {
+      if (_isolatedWindowsBackendHost) {
+        api.cancelPoll(cancel: closingState.cancelPoll);
+        await Future.wait(_windowsBackendPolls);
+        _cloudSyncV2MessageUpdateRetryTimer?.cancel();
+        _cloudSyncV2MessageUpdateRetryTimer = null;
+        await _cloudSyncV2AutomaticArchiveSetting;
+        await _cloudSyncV2AutomaticArchiveAdmission;
+        await _cloudSyncV2ReceivedRuntime?.dispose();
+        await _drainCloudSyncV2ReceivedCaptures();
+        await _cloudSyncV2NativeReceiptReplayInFlight;
+        await _cloudSyncV2MessageUpdateInFlight;
+        await _cloudSyncV2PcsPreparationInFlight;
+        await _cloudSyncV2SemanticPullInFlight;
+        await _cloudSyncV2OutboundProvisioningInFlight;
+        await _cloudSyncV2OutboundInFlight;
+        await _relayHealthInFlight;
+        await _cloudSyncV2ShadowOwner?.quiesceForAccountTransition();
+      }
       try {
         await _cloudSyncV2LocalSourceOperations.quiesce().timeout(
           _cloudSyncV2OutboundQuiescenceTimeout,
@@ -13046,6 +13136,7 @@ class RustPushService extends GetxService {
         if (!identical(state, closingState)) return;
         state = null;
         disposeState(closingState, true, false);
+        _nativeCloseCompleted = true;
       });
     } on CloudKitOperationInterlockException catch (error) {
       Logger.warn(
@@ -13086,7 +13177,9 @@ class RustPushService extends GetxService {
       // same process-wide boundary as every CloudKit reader and writer. If the
       // boundary is busy, process teardown or the native finalizers reclaim
       // this instance without releasing handles underneath active work.
-      unawaited(_disposeStateAfterServiceClose(closingState));
+      final closing = _nativeCloseFuture ??=
+          _disposeStateAfterServiceClose(closingState);
+      unawaited(closing);
     }
     // A headless engine borrows the native service's Arc-backed resources.
     // Its wrapper finalizers must not close the shared APNs/iMessage clients.
