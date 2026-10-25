@@ -137,6 +137,7 @@ impl CloudSyncProtectionContext {
                     | "outboundMessage"
                     | "outboundMessageUpdate"
                     | "outboundChat"
+                    | "freshGroupChat"
                     | "historicalDirectChat"
                     | "outboundAttachment"
                     | "outboundAttachmentUpload"
@@ -961,6 +962,7 @@ mod tests {
             "idsSendReceipt",
             "outboundMessage",
             "outboundChat",
+            "freshGroupChat",
             "historicalDirectChat",
             "rawRecord",
         ];

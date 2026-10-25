@@ -176,6 +176,34 @@ pub(super) async fn stage_parent(
     }
 }
 
+/// An ordinary direct envelope and a purpose-bound fresh group are the only
+/// local-create inputs. Historical groups keep the legacy purpose and must
+/// retain their source; matching group fields alone cannot select this lane.
+fn open_local_chat_create(
+    storage: &str,
+    auth: &CloudSyncNativeAuthMetadata,
+    input: &CloudSyncPreparedMessageCreateInput,
+) -> Result<(CloudChat, String), CloudSyncOutboundSafeCode> {
+    match crate::cloud_sync_outbound_chat::open_staged_fresh_group_chat(
+        PathBuf::from(storage), auth.account_fingerprint.clone(),
+        &input.protected_payload_reference, &input.payload_sha256,
+        &input.server_record_id_hash,
+    ) {
+        Ok(opened) => Ok(opened),
+        Err(crate::cloud_sync_outbound::CloudSyncOutboundFailure::ProtectedStorage) => {
+            let opened = crate::cloud_sync_outbound_chat::open_staged_outbound_chat(
+                PathBuf::from(storage), auth.account_fingerprint.clone(),
+                &input.protected_payload_reference, &input.payload_sha256,
+                &input.server_record_id_hash,
+            ).map_err(map_cloud_sync_outbound_failure)?;
+            rustpush::cloud_messages::validate_direct_chat_create(&opened.0)
+                .map_err(|_| CloudSyncOutboundSafeCode::UnsupportedMessage)?;
+            Ok(opened)
+        }
+        Err(failure) => Err(map_cloud_sync_outbound_failure(failure)),
+    }
+}
+
 /// Shared by preparation, delayed consumption and ambiguous-write readback.
 /// Neither the source nor the frozen parent can be replaced after adoption.
 pub(super) fn open_chat_create_bound(
@@ -197,19 +225,17 @@ pub(super) fn open_chat_create_bound(
         std::slice::from_ref(&input.protected_payload_reference),
     )
     .map_err(|_| CloudSyncOutboundSafeCode::ProtectedStorage)?;
-    let opener = if input.historical_chat_source.is_some() {
-        crate::cloud_sync_outbound_chat::open_staged_historical_chat
+    let opened = if input.historical_chat_source.is_some() {
+        crate::cloud_sync_outbound_chat::open_staged_historical_chat(
+            PathBuf::from(storage),
+            auth.account_fingerprint.clone(),
+            &input.protected_payload_reference,
+            &input.payload_sha256,
+            &input.server_record_id_hash,
+        ).map_err(map_cloud_sync_outbound_failure)?
     } else {
-        crate::cloud_sync_outbound_chat::open_staged_outbound_chat
+        open_local_chat_create(storage, auth, input)?
     };
-    let opened = opener(
-        PathBuf::from(storage),
-        auth.account_fingerprint.clone(),
-        &input.protected_payload_reference,
-        &input.payload_sha256,
-        &input.server_record_id_hash,
-    )
-    .map_err(map_cloud_sync_outbound_failure)?;
     let hasher = crate::cloud_sync_protector::semantic_identifier_hasher(storage.to_owned())
         .map_err(|_| CloudSyncOutboundSafeCode::ProtectedStorage)?;
     let logical = hasher
@@ -242,10 +268,8 @@ pub(super) fn open_chat_create_bound(
         )
         .map_err(map_cloud_sync_outbound_failure)
     } else {
-        // A group must never fall back to the local direct-send writer when its
-        // historical source is missing. Existing direct creates keep their lane.
-        rustpush::cloud_messages::validate_direct_chat_create(&opened.0)
-            .map_err(|_| CloudSyncOutboundSafeCode::UnsupportedMessage)?;
+        // open_local_chat_create already classified the protected purpose.
+        // A legacy group without its historical source never reaches here.
         Ok(opened)
     }
 }
@@ -404,6 +428,72 @@ mod tests {
             }),
         };
         (auth, input)
+    }
+
+    fn fresh_group_fixture(
+        storage: &str,
+        committed: bool,
+    ) -> (CloudSyncNativeAuthMetadata, CloudSyncPreparedMessageCreateInput) {
+        // Identical valid group fields do not confer historical provenance.
+        // The explicit fresh staging call must mint its own protected purpose.
+        let (auth, mut input) = fixture(storage, true);
+        let (chat, _) = open_chat_create_bound(storage, &auth, &input).unwrap();
+        let stage = crate::cloud_sync_outbound_chat::stage_outbound_group_chat(
+            PathBuf::from(storage), auth.account_fingerprint.clone(), chat,
+        ).unwrap();
+        if committed {
+            cloud_sync_commit_protected_page_lease(
+                PathBuf::from(storage), &stage.lease_reference,
+                std::slice::from_ref(&stage.protected_payload_reference),
+            ).unwrap();
+        }
+        input.logical_entity_key_hash = stage.logical_entity_key_hash;
+        input.protected_lease_reference = stage.lease_reference;
+        input.protected_payload_reference = stage.protected_payload_reference;
+        input.payload_sha256 = stage.payload_sha256;
+        input.protected_server_record_reference = stage.protected_server_record_reference;
+        input.server_record_id_hash = stage.server_record_id_hash;
+        input.historical_chat_source = None;
+        (auth, input)
+    }
+
+    #[test]
+    fn fresh_group_api_reopens_same_committed_stage_for_prepare_and_readback() {
+        let directory = tempfile::tempdir().unwrap();
+        let storage = directory.path().to_str().unwrap();
+        let (auth, input) = fresh_group_fixture(storage, true);
+        assert!(input.historical_chat_source.is_none());
+        let (first, record) = open_chat_create_bound(storage, &auth, &input).unwrap();
+        let (reopened, same_record) = open_chat_create_bound(storage, &auth, &input).unwrap();
+        assert_eq!(first.style, 43);
+        assert_eq!(serde_json::to_value(first).unwrap(), serde_json::to_value(reopened).unwrap());
+        assert_eq!(record, same_record);
+    }
+
+    #[test]
+    fn fresh_group_api_rejects_uncommitted_or_swapped_stage_and_historical_lane() {
+        let directory = tempfile::tempdir().unwrap();
+        let storage = directory.path().to_str().unwrap();
+        let (auth, mut input) = fresh_group_fixture(storage, false);
+        assert!(matches!(open_chat_create_bound(storage, &auth, &input),
+            Err(CloudSyncOutboundSafeCode::ProtectedStorage)));
+        cloud_sync_commit_protected_page_lease(
+            PathBuf::from(storage), &input.protected_lease_reference,
+            std::slice::from_ref(&input.protected_payload_reference),
+        ).unwrap();
+        assert!(open_chat_create_bound(storage, &auth, &input).is_ok());
+        let mut wrong_hash = input.clone();
+        wrong_hash.payload_sha256 = "0".repeat(64);
+        assert!(matches!(open_chat_create_bound(storage, &auth, &wrong_hash),
+            Err(CloudSyncOutboundSafeCode::BindingMismatch)));
+        let mut wrong_record = input.clone();
+        wrong_record.server_record_id_hash = "X".repeat(43);
+        assert!(matches!(open_chat_create_bound(storage, &auth, &wrong_record),
+            Err(CloudSyncOutboundSafeCode::BindingMismatch)));
+        let (_, historical) = fixture(storage, true);
+        input.historical_chat_source = historical.historical_chat_source;
+        assert!(matches!(open_chat_create_bound(storage, &auth, &input),
+            Err(CloudSyncOutboundSafeCode::ProtectedStorage)));
     }
 
     #[test]

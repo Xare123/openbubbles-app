@@ -91,7 +91,7 @@ fn verify_staged_candidate(
     candidate: &CloudChat,
     stage: &CloudSyncStagedChatIdentityCandidate,
 ) -> Result<String, ()> {
-    let (stored, _) = crate::cloud_sync_outbound_chat::open_staged_outbound_chat(
+    let (stored, _) = crate::cloud_sync_outbound_chat::open_staged_chat_for_identity(
         PathBuf::from(storage_directory),
         account_fingerprint.to_owned(),
         &stage.protected_payload_reference,

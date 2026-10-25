@@ -308,6 +308,7 @@ enum CloudNativeProtectionPurpose {
     OutboundMessage,
     OutboundMessageUpdate,
     OutboundChat,
+    FreshGroupChat,
     HistoricalDirectChat,
     OutboundAttachment,
     OutboundAttachmentUpload,
@@ -328,6 +329,7 @@ impl CloudNativeProtectionPurpose {
             Self::OutboundMessage => "outboundMessage",
             Self::OutboundMessageUpdate => "outboundMessageUpdate",
             Self::OutboundChat => "outboundChat",
+            Self::FreshGroupChat => "freshGroupChat",
             Self::HistoricalDirectChat => "historicalDirectChat",
             Self::OutboundAttachment => "outboundAttachment",
             Self::OutboundAttachmentUpload => "outboundAttachmentUpload",
@@ -4970,6 +4972,20 @@ pub(crate) fn cloud_sync_stage_protected_historical_direct_chat_envelope(
     )
 }
 
+pub(crate) fn cloud_sync_stage_protected_fresh_group_chat_envelope(
+    storage_directory: PathBuf,
+    account_fingerprint: String,
+    outbound_envelope: String,
+) -> Result<CloudNativeProtectedOutboundStage, CloudNativeFetchFailure> {
+    stage_protected_outbound_value(
+        storage_directory,
+        account_fingerprint,
+        outbound_envelope,
+        CloudNativeStream::Chats,
+        CloudNativeProtectionPurpose::FreshGroupChat,
+    )
+}
+
 pub(crate) fn cloud_sync_stage_protected_outbound_attachment_envelope(
     storage_directory: PathBuf,
     account_fingerprint: String,
@@ -5182,6 +5198,20 @@ pub(crate) fn cloud_sync_open_protected_historical_direct_chat(
         protected_reference,
         CloudNativeStream::Chats,
         CloudNativeProtectionPurpose::HistoricalDirectChat,
+    )
+}
+
+pub(crate) fn cloud_sync_open_protected_fresh_group_chat(
+    storage_directory: PathBuf,
+    account_fingerprint: String,
+    protected_reference: &str,
+) -> Result<String, CloudNativeFetchFailure> {
+    cloud_sync_open_protected_outbound_value(
+        storage_directory,
+        account_fingerprint,
+        protected_reference,
+        CloudNativeStream::Chats,
+        CloudNativeProtectionPurpose::FreshGroupChat,
     )
 }
 

@@ -4415,6 +4415,18 @@ pub struct CloudSyncProtectedOutboundStageResult {
     pub failure: Option<CloudSyncOutboundSafeCode>,
 }
 
+/// The immutable legacy stage selected by an explicit local-group repair.
+/// This is storage metadata, not proof that an operation was never submitted.
+#[derive(Clone)]
+pub struct CloudSyncLegacyGroupChatStage {
+    pub logical_entity_key_hash: String,
+    pub protected_payload_reference: String,
+    pub payload_sha256: String,
+    pub protected_server_record_reference: String,
+    pub server_record_id_hash: String,
+    pub lease_reference: String,
+}
+
 #[derive(Clone, Debug)]
 pub struct CloudSyncPreparedMessageCreateInput {
     pub local_operation_id: String,
@@ -5747,6 +5759,28 @@ pub async fn cloud_sync_stage_outbound_group_chat(
 #[path = "cloud_sync_historical_chat.rs"]
 mod cloud_sync_historical_chat;
 
+#[path = "cloud_sync_fresh_group_recovery.rs"]
+mod cloud_sync_fresh_group_recovery;
+
+/// Stage-only conversion for an explicitly validated never-submitted local
+/// group repair. It preserves the original server record and exact wire bytes.
+/// The caller must validate the saved local-send origin/source before and after
+/// this await, then atomically preserve the old audit and adopt the new lease.
+/// It does not requeue a quarantine, submit a save or infer freshness from the
+/// absence of historical provenance. Ordinary historical preparation never
+/// calls this entry point.
+pub async fn cloud_sync_stage_exact_fresh_group_chat_recovery(
+    cloud_messages_client: &Arc<CloudMessagesClient<DefaultAnisetteProvider>>,
+    storage_directory: String,
+    expected_auth: CloudSyncNativeAuthMetadata,
+    previous_stage: CloudSyncLegacyGroupChatStage,
+    expected_chat: CloudChat,
+) -> CloudSyncProtectedOutboundStageResult {
+    cloud_sync_fresh_group_recovery::stage_exact(
+        cloud_messages_client, storage_directory, expected_auth, previous_stage, expected_chat,
+    ).await
+}
+
 /// Stage a parent from one committed historical snapshot source. This does not
 /// admit the candidate, prove remote absence, or submit a CloudKit operation.
 /// The caller retains one stage in its historical origin before retrying.
@@ -6165,6 +6199,13 @@ pub async fn cloud_sync_prepare_chat_create(
         )).await
     } else if input.historical_chat_source.is_some() {
         native_writer_permit.run(cloud_messages_client.prepare_historical_group_chat_save_submission(
+            &writer_binding, chat_input, request_identity,
+            Duration::from_secs(request_timeout_seconds),
+        )).await
+    } else if chat_input.chat.style == 43 {
+        // The shared opener accepted this source-free group only through the
+        // dedicated fresh-group protected purpose, never a historical fallback.
+        native_writer_permit.run(cloud_messages_client.prepare_fresh_group_chat_save_submission(
             &writer_binding, chat_input, request_identity,
             Duration::from_secs(request_timeout_seconds),
         )).await

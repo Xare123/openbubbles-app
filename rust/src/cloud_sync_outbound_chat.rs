@@ -17,7 +17,9 @@ use uuid::Uuid;
 use crate::{
     cloud_sync_canonical_dto::CloudCanonicalEntityKind,
     cloud_sync_native_fetch::{
+        cloud_sync_open_protected_fresh_group_chat,
         cloud_sync_open_protected_historical_direct_chat, cloud_sync_open_protected_outbound_chat,
+        cloud_sync_stage_protected_fresh_group_chat_envelope,
         cloud_sync_stage_protected_historical_direct_chat_envelope,
         cloud_sync_stage_protected_outbound_chat_envelope,
     },
@@ -33,6 +35,13 @@ mod wire {
 
 const CHAT_PAYLOAD_VERSION: u32 = 1;
 const MAX_CHAT_ENVELOPE_BYTES: usize = 256 * 1024;
+
+#[derive(Clone, Copy)]
+enum ChatEnvelopePurpose {
+    Ordinary,
+    FreshGroup,
+    HistoricalDirect,
+}
 
 /// Exact Dart `CloudOperationIdentity.forInitialCreate` domain for semantic
 /// Chat schema 2, payload version 1. Message, mutation, and legacy operations
@@ -80,7 +89,7 @@ pub(crate) fn stage_outbound_chat(
     // Preserve the shipped direct-only staging entry point. A group must use
     // its explicit origin/admission path, never masquerade as a direct send.
     validate_direct_chat_create(&chat).map_err(|_| Failure::UnsupportedMessage)?;
-    stage_validated_outbound_chat(storage_directory, account_fingerprint, chat, false)
+    stage_validated_outbound_chat(storage_directory, account_fingerprint, chat, ChatEnvelopePurpose::Ordinary)
 }
 
 /// Fresh group staging only. The caller must separately bind the exact local
@@ -92,7 +101,7 @@ pub(crate) fn stage_outbound_group_chat(
     chat: CloudChat,
 ) -> Result<NativeProtectedOutboundStage, Failure> {
     validate_group_chat_create(&chat).map_err(|_| Failure::UnsupportedMessage)?;
-    stage_validated_outbound_chat(storage_directory, account_fingerprint, chat, false)
+    stage_validated_outbound_chat(storage_directory, account_fingerprint, chat, ChatEnvelopePurpose::FreshGroup)
 }
 
 /// Historical group-parent component only. This freezes the entire candidate
@@ -105,7 +114,7 @@ pub(crate) fn stage_outbound_historical_group_chat(
     chat: CloudChat,
 ) -> Result<NativeProtectedOutboundStage, Failure> {
     validate_group_chat_create(&chat).map_err(|_| Failure::UnsupportedMessage)?;
-    stage_validated_outbound_chat(storage_directory, account_fingerprint, chat, false)
+    stage_validated_outbound_chat(storage_directory, account_fingerprint, chat, ChatEnvelopePurpose::Ordinary)
 }
 
 /// A separate protected purpose prevents a lost historical source from falling
@@ -116,46 +125,103 @@ pub(crate) fn stage_outbound_historical_direct_chat(
     chat: CloudChat,
 ) -> Result<NativeProtectedOutboundStage, Failure> {
     validate_historical_direct_chat_create(&chat).map_err(|_| Failure::UnsupportedMessage)?;
-    stage_validated_outbound_chat(storage_directory, account_fingerprint, chat, true)
+    stage_validated_outbound_chat(storage_directory, account_fingerprint, chat, ChatEnvelopePurpose::HistoricalDirect)
 }
 
 fn stage_validated_outbound_chat(
     storage_directory: PathBuf,
     account_fingerprint: String,
     chat: CloudChat,
-    historical_direct: bool,
+    purpose: ChatEnvelopePurpose,
 ) -> Result<NativeProtectedOutboundStage, Failure> {
     let record_name = Uuid::new_v4().to_string().to_uppercase();
     let encoded = encode_chat(&chat, &record_name)?;
+    stage_encoded_chat(
+        storage_directory, account_fingerprint, &chat.guid, &record_name, &encoded, purpose,
+    )
+}
+
+fn stage_encoded_chat(
+    storage_directory: PathBuf,
+    account_fingerprint: String,
+    chat_guid: &str,
+    record_name: &str,
+    encoded: &[u8],
+    purpose: ChatEnvelopePurpose,
+) -> Result<NativeProtectedOutboundStage, Failure> {
     let hasher = crate::cloud_sync_protector::semantic_identifier_hasher(
         storage_directory.to_string_lossy().into_owned(),
     )
     .map_err(|_| Failure::ProtectedStorage)?;
     let logical_entity_key_hash = hasher
-        .canonical_entity_key_hash(CloudCanonicalEntityKind::Chat, &chat.guid)
+        .canonical_entity_key_hash(CloudCanonicalEntityKind::Chat, chat_guid)
         .map_err(|_| Failure::MalformedMessage)?
         .value()
         .to_owned();
-    let stage_fn = if historical_direct {
-        cloud_sync_stage_protected_historical_direct_chat_envelope
-    } else {
-        cloud_sync_stage_protected_outbound_chat_envelope
+    let stage_fn = match purpose {
+        ChatEnvelopePurpose::Ordinary => cloud_sync_stage_protected_outbound_chat_envelope,
+        ChatEnvelopePurpose::FreshGroup => cloud_sync_stage_protected_fresh_group_chat_envelope,
+        ChatEnvelopePurpose::HistoricalDirect => cloud_sync_stage_protected_historical_direct_chat_envelope,
     };
     let stage = stage_fn(
         storage_directory,
         account_fingerprint,
-        URL_SAFE_NO_PAD.encode(&encoded),
+        URL_SAFE_NO_PAD.encode(encoded),
     )
     .map_err(|_| Failure::ProtectedStorage)?;
     Ok(NativeProtectedOutboundStage {
         logical_entity_key_hash,
         protected_payload_reference: stage.protected_envelope_reference.clone(),
-        payload_sha256: digest(&encoded),
+        payload_sha256: digest(encoded),
         payload_length: encoded.len() as u64,
         protected_server_record_reference: stage.protected_envelope_reference,
-        server_record_id_hash: hasher.server_record_id_hash(&record_name),
+        server_record_id_hash: hasher.server_record_id_hash(record_name),
         lease_reference: stage.lease_reference,
     })
+}
+
+/// Storage-only component of an explicit fresh-group repair. The caller must
+/// separately prove the original never-submitted local group/send ownership;
+/// this function neither infers it from a legacy envelope nor authorizes save.
+/// Keep the old payload, lease and server name intact. The new lease must still
+/// follow durable adoption and commit before a writer can use the new purpose.
+pub(crate) fn stage_recovered_fresh_group_chat_exact(
+    storage_directory: PathBuf,
+    account_fingerprint: String,
+    original: &NativeProtectedOutboundStage,
+    expected_chat: &CloudChat,
+) -> Result<NativeProtectedOutboundStage, Failure> {
+    if original.protected_server_record_reference != original.protected_payload_reference {
+        return Err(Failure::BindingMismatch);
+    }
+    crate::cloud_sync_native_fetch::cloud_sync_verify_committed_lease_exact(
+        storage_directory.clone(), &original.lease_reference,
+        std::slice::from_ref(&original.protected_payload_reference),
+    ).map_err(|_| Failure::ProtectedStorage)?;
+    let (chat, record_name) = open_staged_outbound_chat(
+        storage_directory.clone(), account_fingerprint.clone(),
+        &original.protected_payload_reference, &original.payload_sha256,
+        &original.server_record_id_hash,
+    )?;
+    validate_group_chat_create(&chat).map_err(|_| Failure::UnsupportedMessage)?;
+    let encoded = encode_chat(&chat, &record_name)?;
+    if encoded != encode_chat(expected_chat, &record_name)?
+        || encoded.len() as u64 != original.payload_length
+    {
+        return Err(Failure::BindingMismatch);
+    }
+    let hasher = crate::cloud_sync_protector::semantic_identifier_hasher(
+        storage_directory.to_string_lossy().into_owned(),
+    ).map_err(|_| Failure::ProtectedStorage)?;
+    if hasher.canonical_entity_key_hash(CloudCanonicalEntityKind::Chat, &chat.guid)
+        .map_err(|_| Failure::BindingMismatch)?.value() != original.logical_entity_key_hash
+    {
+        return Err(Failure::BindingMismatch);
+    }
+    stage_encoded_chat(
+        storage_directory, account_fingerprint, &chat.guid, &record_name, &encoded,
+        ChatEnvelopePurpose::FreshGroup,
+    )
 }
 
 /// Open and check both identities together. The payload hash and keyed record
@@ -180,6 +246,54 @@ pub(crate) fn open_staged_outbound_chat(
         expected_payload_sha256,
         expected_record_id_hash,
     )
+}
+
+/// Only the explicit fresh-group staging API can mint this purpose. Legacy
+/// group envelopes remain ambiguous with historical parents and stay closed
+/// without their committed source; a caller's group flag cannot upgrade them.
+pub(crate) fn open_staged_fresh_group_chat(
+    storage_directory: PathBuf,
+    account_fingerprint: String,
+    protected_reference: &str,
+    expected_payload_sha256: &str,
+    expected_record_id_hash: &str,
+) -> Result<(CloudChat, String), Failure> {
+    let value = cloud_sync_open_protected_fresh_group_chat(
+        storage_directory.clone(),
+        account_fingerprint,
+        protected_reference,
+    )
+    .map_err(|_| Failure::ProtectedStorage)?;
+    let opened = decode_opened_chat(
+        storage_directory,
+        value,
+        expected_payload_sha256,
+        expected_record_id_hash,
+    )?;
+    validate_group_chat_create(&opened.0).map_err(|_| Failure::UnsupportedMessage)?;
+    Ok(opened)
+}
+
+/// Identity comparison is read-only. It may inspect either purpose, while
+/// create preparation separately enforces the historical/fresh authority lane.
+pub(crate) fn open_staged_chat_for_identity(
+    storage_directory: PathBuf,
+    account_fingerprint: String,
+    protected_reference: &str,
+    expected_payload_sha256: &str,
+    expected_record_id_hash: &str,
+) -> Result<(CloudChat, String), Failure> {
+    match open_staged_fresh_group_chat(
+        storage_directory.clone(), account_fingerprint.clone(), protected_reference,
+        expected_payload_sha256, expected_record_id_hash,
+    ) {
+        Ok(opened) => Ok(opened),
+        Err(Failure::ProtectedStorage) => open_staged_outbound_chat(
+            storage_directory, account_fingerprint, protected_reference,
+            expected_payload_sha256, expected_record_id_hash,
+        ),
+        Err(failure) => Err(failure),
+    }
 }
 
 /// Historical direct values require their own protected purpose. Previously
@@ -669,7 +783,7 @@ mod tests {
         )
         .unwrap();
         let reopen = || {
-            open_staged_outbound_chat(
+            open_staged_fresh_group_chat(
                 directory.path().into(),
                 account.clone(),
                 &stage.protected_payload_reference,
@@ -733,6 +847,129 @@ mod tests {
             stage_outbound_historical_direct_chat(PathBuf::new(), "A".repeat(43), group_fixture()),
             Err(Failure::UnsupportedMessage)
         ));
+    }
+
+    #[test]
+    fn fresh_group_purpose_is_separate_from_legacy_historical_groups() {
+        let directory = tempfile::tempdir().unwrap();
+        let account = "A".repeat(43);
+        let fresh = stage_outbound_group_chat(
+            directory.path().into(), account.clone(), group_fixture(),
+        ).unwrap();
+        let historical = stage_outbound_historical_group_chat(
+            directory.path().into(), account.clone(), group_fixture(),
+        ).unwrap();
+        assert!(matches!(
+            open_staged_outbound_chat(
+                directory.path().into(), account.clone(),
+                &fresh.protected_payload_reference, &fresh.payload_sha256,
+                &fresh.server_record_id_hash,
+            ),
+            Err(Failure::ProtectedStorage)
+        ));
+        assert!(matches!(
+            open_staged_historical_chat(
+                directory.path().into(), account.clone(),
+                &fresh.protected_payload_reference, &fresh.payload_sha256,
+                &fresh.server_record_id_hash,
+            ),
+            Err(Failure::ProtectedStorage)
+        ));
+        assert!(matches!(
+            open_staged_fresh_group_chat(
+                directory.path().into(), account.clone(),
+                &historical.protected_payload_reference, &historical.payload_sha256,
+                &historical.server_record_id_hash,
+            ),
+            Err(Failure::ProtectedStorage)
+        ));
+        for stage in [&fresh, &historical] {
+            assert_eq!(
+                open_staged_chat_for_identity(
+                    directory.path().into(), account.clone(),
+                    &stage.protected_payload_reference, &stage.payload_sha256,
+                    &stage.server_record_id_hash,
+                ).unwrap().0.style,
+                43,
+            );
+        }
+    }
+
+    #[test]
+    fn exact_fresh_group_recovery_preserves_payload_record_and_original_lease() {
+        let directory = tempfile::tempdir().unwrap();
+        let account = "A".repeat(43);
+        let source = group_fixture();
+        // Model the legacy shared-purpose ciphertext. Runtime source/origin
+        // authority must be checked separately before using this component.
+        let old = stage_outbound_historical_group_chat(
+            directory.path().into(), account.clone(), source.clone(),
+        ).unwrap();
+        crate::cloud_sync_native_fetch::cloud_sync_commit_protected_page_lease(
+            directory.path().into(), &old.lease_reference,
+            std::slice::from_ref(&old.protected_payload_reference),
+        ).unwrap();
+        let (_, old_record) = open_staged_outbound_chat(
+            directory.path().into(), account.clone(), &old.protected_payload_reference,
+            &old.payload_sha256, &old.server_record_id_hash,
+        ).unwrap();
+        let recovered = stage_recovered_fresh_group_chat_exact(
+            directory.path().into(), account.clone(), &old, &source,
+        ).unwrap();
+        assert_eq!(recovered.payload_sha256, old.payload_sha256);
+        assert_eq!(recovered.payload_length, old.payload_length);
+        assert_eq!(recovered.server_record_id_hash, old.server_record_id_hash);
+        assert_eq!(recovered.logical_entity_key_hash, old.logical_entity_key_hash);
+        assert_ne!(recovered.protected_payload_reference, old.protected_payload_reference);
+        assert_ne!(recovered.lease_reference, old.lease_reference);
+        crate::cloud_sync_native_fetch::cloud_sync_verify_committed_lease_exact(
+            directory.path().into(), &old.lease_reference,
+            std::slice::from_ref(&old.protected_payload_reference),
+        ).unwrap();
+        let (opened, same_record) = open_staged_fresh_group_chat(
+            directory.path().into(), account.clone(), &recovered.protected_payload_reference,
+            &recovered.payload_sha256, &recovered.server_record_id_hash,
+        ).unwrap();
+        assert_eq!(same_record, old_record);
+        assert_eq!(serde_json::to_value(opened).unwrap(), serde_json::to_value(source).unwrap());
+        assert!(matches!(open_staged_outbound_chat(
+            directory.path().into(), account, &recovered.protected_payload_reference,
+            &recovered.payload_sha256, &recovered.server_record_id_hash,
+        ), Err(Failure::ProtectedStorage)));
+    }
+
+    #[test]
+    fn exact_fresh_group_recovery_rejects_uncommitted_or_changed_source_bindings() {
+        let directory = tempfile::tempdir().unwrap();
+        let account = "A".repeat(43);
+        let source = group_fixture();
+        let mut old = stage_outbound_historical_group_chat(
+            directory.path().into(), account.clone(), source.clone(),
+        ).unwrap();
+        assert!(matches!(stage_recovered_fresh_group_chat_exact(
+            directory.path().into(), account.clone(), &old, &source,
+        ), Err(Failure::ProtectedStorage)));
+        crate::cloud_sync_native_fetch::cloud_sync_commit_protected_page_lease(
+            directory.path().into(), &old.lease_reference,
+            std::slice::from_ref(&old.protected_payload_reference),
+        ).unwrap();
+        let mut changed = source.clone();
+        changed.participants[0].uri = "different@example.invalid".into();
+        assert!(matches!(stage_recovered_fresh_group_chat_exact(
+            directory.path().into(), account.clone(), &old, &changed,
+        ), Err(Failure::BindingMismatch)));
+        old.payload_length += 1;
+        assert!(matches!(stage_recovered_fresh_group_chat_exact(
+            directory.path().into(), account.clone(), &old, &source,
+        ), Err(Failure::BindingMismatch)));
+        old.payload_length -= 1;
+        old.logical_entity_key_hash = "X".repeat(43);
+        assert!(matches!(stage_recovered_fresh_group_chat_exact(
+            directory.path().into(), account.clone(), &old, &source,
+        ), Err(Failure::BindingMismatch)));
+        assert!(matches!(stage_recovered_fresh_group_chat_exact(
+            directory.path().into(), "B".repeat(43), &old, &source,
+        ), Err(Failure::ProtectedStorage)));
     }
 
     #[test]
