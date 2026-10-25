@@ -6,6 +6,33 @@ import 'package:flutter_test/flutter_test.dart';
 import 'windows_chat_source_inspection.dart';
 
 void main() {
+  test(
+    'projected member formats distinguish supported shapes without content',
+    () {
+      for (final entry in <String, String>{
+        '12345': 'telephone',
+        'tel:12345': 'telephone',
+        'tel:+12345678901234567890': 'telephone',
+        'BANK-ALERT': 'bareOpaque',
+        'MAILTO:fixture@example.invalid': 'email',
+        'urn:biz:AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE': 'business',
+        'future:private-scheme': 'unknownScheme',
+        'urn:biz:invalid': 'unknownScheme',
+        'tel:ALERT': 'malformed',
+        'mailto:user@host': 'malformed',
+        ' embedded space': 'malformed',
+        'control\u0001value': 'malformed',
+        'embedded\uFEFFvalue': 'malformed',
+      }.entries) {
+        expect(classifyWindowsChatSourceParticipant(entry.key), entry.value);
+      }
+      expect(
+        classifyWindowsChatSourceParticipant(List.filled(513, 'a').join()),
+        'malformed',
+      );
+    },
+  );
+
   test('cold restored client is prepared before identity capture', () async {
     final client = Object();
     var warm = false;
@@ -125,6 +152,7 @@ void main() {
       'service',
       'primaryIdentitiesValid',
       'participantClasses',
+      'projectedParticipantClasses',
       'aliasCount',
       'rawContentExposed',
     });

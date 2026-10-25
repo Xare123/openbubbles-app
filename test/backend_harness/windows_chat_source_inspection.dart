@@ -104,6 +104,39 @@ String safeWindowsChatSourceFailure(Object error) {
       : 'backend_windows_chat_source_observation_failed';
 }
 
+/// Closed format class using the app's existing participant projection grammar.
+/// It never returns an address, unknown scheme name, or identifier fragment.
+String classifyWindowsChatSourceParticipant(String raw) {
+  if (raw.isEmpty ||
+      raw.length > 512 ||
+      raw != raw.trim() ||
+      RegExp(r'[\x00-\x1f\x7f-\x9f\s\uFEFF]').hasMatch(raw)) {
+    return 'malformed';
+  }
+  final telephone = RegExp(r'^\+?[0-9]{3,20}$');
+  final email = RegExp(r'^[^@\s:]+@[^@\s:]+\.[^@\s:]+$');
+  final lower = raw.toLowerCase();
+  if (lower.startsWith('tel:')) {
+    return telephone.hasMatch(raw.substring(4)) ? 'telephone' : 'malformed';
+  }
+  if (lower.startsWith('mailto:')) {
+    return email.hasMatch(raw.substring(7)) ? 'email' : 'malformed';
+  }
+  if (RegExp(
+    r'^urn:biz:[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-'
+    r'[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$',
+  ).hasMatch(raw)) {
+    return 'business';
+  }
+  if (raw.contains(':')) {
+    return 'unknownScheme';
+  }
+  if (raw.contains('@')) {
+    return email.hasMatch(raw) ? 'email' : 'malformed';
+  }
+  return telephone.hasMatch(raw) ? 'telephone' : 'bareOpaque';
+}
+
 /// Closed classifications only. No identities, handles or plaintext are
 /// returned, even when the canonical payload contains them in transient memory.
 Map<String, Object?> summarizeWindowsChatSource(
@@ -116,7 +149,17 @@ Map<String, Object?> summarizeWindowsChatSource(
     'opaque': 0,
     'other': 0,
   };
+  final projectedClasses = <String, int>{
+    'telephone': 0,
+    'email': 0,
+    'business': 0,
+    'bareOpaque': 0,
+    'unknownScheme': 0,
+    'malformed': 0,
+  };
   for (final raw in chat?.participantHandles ?? const <String>[]) {
+    final projected = classifyWindowsChatSourceParticipant(raw);
+    projectedClasses[projected] = projectedClasses[projected]! + 1;
     final lower = raw.toLowerCase();
     final value = lower.startsWith('tel:')
         ? lower.substring(4)
@@ -162,6 +205,7 @@ Map<String, Object?> summarizeWindowsChatSource(
           chat.originalGroupId,
         ].every(identityValid),
     'participantClasses': classes,
+    'projectedParticipantClasses': projectedClasses,
     'aliasCount': chat?.aliases.length ?? 0,
     'rawContentExposed': false,
   };
