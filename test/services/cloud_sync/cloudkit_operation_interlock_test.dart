@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:isolate';
 
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_operation_interlock.dart';
+import 'package:bluebubbles/services/rustpush/ids_registration_refresh.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_models.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_store.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/in_memory_cloud_sync_store.dart';
@@ -29,6 +30,37 @@ void main() {
     await CloudKitOperationInterlock.debugResetPoisonedLocksForTesting();
     CloudKitOperationInterlock.resumeEngineAdmission();
     temporaryDirectory.deleteSync(recursive: true);
+  });
+
+  test('lost fence during IDS serialization prevents registration after entry', () async {
+    final serialization = Completer<String>();
+    final suspended = Completer<void>();
+    var restartRequired = false;
+    var registrations = 0;
+    final result = interlock.runExclusive(
+      kind: CloudKitOperationKind.identityMaintenance,
+      action: () async {
+        restartRequired = true; // Authentication already entered this lifetime.
+        final snapshot = IdsRegistrationSnapshot.capture(
+          serialize: () {
+            suspended.complete();
+            return serialization.future;
+          },
+          validate: CloudKitOperationInterlock.throwIfActiveFenceLost,
+        );
+        await suspended.future;
+        interlock.poisonUntilProcessRestart();
+        serialization.complete('private-result-must-not-be-parsed-after-fence-loss');
+        await snapshot;
+        registrations++;
+      },
+    );
+    await expectLater(result, throwsA(
+      isA<CloudKitOperationInterlockException>().having(
+        (failure) => failure.safeCode, 'fence', 'cloudkit_interlock_fence_lost'),
+    ));
+    expect(registrations, 0);
+    expect(restartRequired, true);
   });
 
   test(

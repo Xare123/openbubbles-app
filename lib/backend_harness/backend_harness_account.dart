@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:bluebubbles/app/layouts/setup/setup_view.dart';
 import 'package:bluebubbles/services/rustpush/rustpush_service.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_operation_interlock.dart';
@@ -293,9 +295,14 @@ final class BackendHarnessAccount implements SetupInteractionPort {
         captureIdentity: () async => client == null ? null :
             await api.cloudSyncCaptureReceivedIdentity(
               cloudMessagesClient: client, storageDirectory: storage),
-        // The ordinary Profile action owns the identity-maintenance interlock.
-        // No reset, cache invalidation, new identity, message or implicit retry.
-        refresh: pushService.reregisterIdentity,
+        // Windows terminal rejection needs fresh credentials and a restart.
+        // Other clients retain the ordinary Profile action and its interlock.
+        refresh: Platform.isWindows
+            ? pushService.refreshWindowsBackendRegistrationCredentials
+            : pushService.reregisterIdentity,
+        restartAfterRefresh: Platform.isWindows,
+        credentialsEffectEntered: Platform.isWindows
+            ? () => pushService.backendRegistrationRestartRequired : null,
         isRegistered: () async => current != null &&
             await api.getRegstate(state: current.client) is api.RegisterState_Registered,
       );
@@ -336,6 +343,8 @@ final class BackendHarnessAccount implements SetupInteractionPort {
     required Future<api.CloudSyncNativeAuthMetadata?> Function() captureIdentity,
     required Future<void> Function() refresh,
     required Future<bool> Function() isRegistered,
+    bool restartAfterRefresh = false,
+    bool Function()? credentialsEffectEntered,
   }) async {
     var entered = false;
     void requireCurrent() {
@@ -350,9 +359,16 @@ final class BackendHarnessAccount implements SetupInteractionPort {
       throw BackendHarnessFailure('backend_not_ready', effectNotEntered: true);
     }
     entered = true;
-    await refresh();
+    try {
+      await refresh();
+    } catch (_) {
+      if (restartAfterRefresh && credentialsEffectEntered?.call() == false) {
+        throw BackendHarnessFailure('backend_not_ready', effectNotEntered: true);
+      }
+      rethrow;
+    }
     requireCurrent();
-    final registered = await isRegistered();
+    final registered = restartAfterRefresh ? false : await isRegistered();
     requireCurrent();
     final after = await captureIdentity();
     requireCurrent();
@@ -361,6 +377,18 @@ final class BackendHarnessAccount implements SetupInteractionPort {
         before.protectedStoreIdentity != after.protectedStoreIdentity ||
         before.nativeSessionId != after.nativeSessionId) {
       throw BackendHarnessFailure('backend_identity_changed');
+    }
+    if (restartAfterRefresh) {
+      return const BackendHarnessPayload(
+        phase: BackendHarnessPhase.blocked,
+        flags: {
+          'native_client_present': true,
+          'native_identity_available': true,
+          'registration_ready': false,
+          'credentials_refreshed': true,
+          'restart_required': true,
+        },
+      );
     }
     if (!registered) throw BackendHarnessFailure('backend_not_ready');
     return const BackendHarnessPayload(flags: {
@@ -399,7 +427,8 @@ final class BackendHarnessAccount implements SetupInteractionPort {
       throw BackendHarnessFailure('backend_identity_changed');
     }
     final validIdentity = identity != null && validCachedIdentity(identity);
-    final registered = registration is api.RegisterState_Registered;
+    final restartRequired = pushService.backendRegistrationRestartRequired;
+    final registered = registration is api.RegisterState_Registered && !restartRequired;
     // Native metadata binds identity; it does not prove fresh network auth.
     // The normal semantic read still owns read-auth refresh under its interlock.
     phase = registered && validIdentity
@@ -410,6 +439,8 @@ final class BackendHarnessAccount implements SetupInteractionPort {
       flags: {
         'native_client_present': true,
         ...registrationObservation(registration),
+        'registration_ready': registered,
+        'restart_required': restartRequired,
         'native_identity_available': validIdentity,
         'setup_finished': ss.settings.finishedSetup.value,
       },

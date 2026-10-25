@@ -41,6 +41,26 @@ BackendHarnessPayload backendHarnessAccountAvailability({
 
 /// Compiled adapters call the same service methods as Profile. Capabilities
 /// include only implemented operations; account/archive adapters are separate.
+BackendHarnessOperation backendHarnessRegistrationLifetimeOperation(
+  String action,
+  BackendHarnessOperation operation, {
+  required bool Function() restartRequired,
+}) => BackendHarnessOperation(
+  background: operation.background,
+  uncertainOnFailure: operation.uncertainOnFailure,
+  validate: operation.validate,
+  snapshot: operation.snapshot,
+  handler: (args) {
+    if (restartRequired() && !const {
+      'status', 'auth.status', 'archive.status', 'report.snapshot',
+      'fixture.status', 'pcs.devices', 'sync.pause',
+    }.contains(action)) {
+      throw BackendHarnessFailure('backend_restart_required', effectNotEntered: true);
+    }
+    return operation.handler(args);
+  },
+);
+
 final class BackendHarnessController {
   BackendHarnessController({this.retainedRecoveryOwner}) {
     if (retainedRecoveryOwner != null &&
@@ -222,7 +242,11 @@ final class BackendHarnessController {
           handler: _read,
           snapshot: snapshot,
         ),
-      },
+      }.map((action, operation) => MapEntry(
+        action,
+        backendHarnessRegistrationLifetimeOperation(action, operation,
+          restartRequired: () => pushService.backendRegistrationRestartRequired),
+      )),
     );
   }
   final String? retainedRecoveryOwner;
@@ -352,7 +376,8 @@ final class BackendHarnessController {
             CloudSyncProgressPhase.error => BackendHarnessPhase.error,
           };
     return BackendHarnessPayload(
-      phase: phase,
+      phase: service.backendRegistrationRestartRequired
+          ? BackendHarnessPhase.blocked : phase,
       challenge: challenge,
       flags: {
         ...availability.flags,
@@ -365,6 +390,7 @@ final class BackendHarnessController {
         'projection_complete': progress.projectionComplete,
         'has_report': progress.hasReport,
         'failure_present': progress.safeFailure != null,
+        'restart_required': service.backendRegistrationRestartRequired,
       },
       counts: {
         'pages': progress.pages,

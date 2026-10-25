@@ -13,6 +13,7 @@ import 'package:bluebubbles/services/rustpush/imessage_initial_submission.dart';
 import 'package:bluebubbles/services/rustpush/imessage_reaction_payload.dart';
 import 'package:bluebubbles/services/rustpush/imessage_reaction_submission.dart';
 import 'package:bluebubbles/services/rustpush/registration_recovery.dart';
+import 'package:bluebubbles/services/rustpush/ids_registration_refresh.dart';
 import 'package:async_task/async_task_extension.dart';
 import 'package:bluebubbles/app/layouts/conversation_list/pages/conversation_list.dart';
 import 'package:bluebubbles/app/layouts/conversation_view/widgets/message/message_holder.dart';
@@ -5707,6 +5708,179 @@ class RustPushService extends GetxService {
         },
       );
 
+  bool _backendRegistrationRestartRequired = false;
+  bool get backendRegistrationRestartRequired => _backendRegistrationRestartRequired;
+
+  /// Explicit retained Windows recovery for a terminal IDS6005 resource. Keep
+  /// the existing APS/NGM identity and CloudKit clients; the rejected IMClient
+  /// stays alive only for observation and ordinary close, never replacement.
+  Future<void> refreshWindowsBackendRegistrationCredentials() async {
+    if (!_isolatedWindowsBackendHost) {
+      throw StateError('ids_registration_refresh_unavailable');
+    }
+    final expected = state;
+    final services = expected?.icloudServices;
+    final client = services?.cloudMessagesClient;
+    final storage = statePath;
+    final store = Database.store;
+    bool current() => _isolatedWindowsBackendHost && expected != null &&
+        services != null && client != null && storage.isNotEmpty &&
+        identical(expected, state) && identical(services, state?.icloudServices) &&
+        identical(client, state?.icloudServices?.cloudMessagesClient) &&
+        identical(store, Database.store) && !store.isClosed() &&
+        storage == statePath && ss.settings.finishedSetup.value &&
+        !_serviceClosing && !loggingOut && !_cloudSyncV2OutboundQuiescing &&
+        !cloudSyncV2HistoryReadActive && !cloudSyncV2Progress.active &&
+        !ss.settings.cloudSyncingEnabled.value;
+    void validate() {
+      CloudKitOperationInterlock.throwIfActiveFenceLost();
+      if (!current()) throw StateError('ids_registration_refresh_unavailable');
+    }
+    if (_backendRegistrationRestartRequired) {
+      throw StateError('ids_registration_refresh_restart_required');
+    }
+    validate();
+    await _cloudSyncV2LocalSourceOperations.run(
+      validate: validate,
+      action: () async {
+        // Reuse the qualified read-auth warmup before identity maintenance;
+        // nesting these two interlocks would deadlock the native GSA path.
+        final preference = await readCloudSyncV2AutomaticArchivePreference();
+        validate();
+        if (preference.enabled || _cloudSyncV2AutomaticArchiveActive) {
+          throw StateError('ids_registration_refresh_archive_enabled');
+        }
+        await prepareCloudSyncV2BackendArchiveAuthentication();
+        validate();
+        await _runCloudKitIdentityMaintenance(() async {
+          validate();
+          final reloadedPreference = await readCloudSyncV2AutomaticArchivePreference();
+          validate();
+          if (reloadedPreference.enabled || _cloudSyncV2AutomaticArchiveActive ||
+              _backendRegistrationRestartRequired) {
+            throw StateError('ids_registration_refresh_unavailable');
+          }
+          final registration = await api.getRegstate(state: expected!.client);
+          validate();
+          if (registration is! api.RegisterState_Failed ||
+              registration.retryWait != null ||
+              !RegExp(r'Registration Error[^\r\n]{0,220}\(6005\)')
+                  .hasMatch(registration.error)) {
+            throw StateError('ids_registration_refresh_not_rejected');
+          }
+          final hardwareFile = File('$storage/hw_info.plist');
+          final hardwareDigest = sha256.convert(await hardwareFile.readAsBytes()).toString();
+          validate();
+          final saved = api.restoreUsers(path: storage);
+          api.SavedHardwareState? hardware;
+          api.IdsngmIdentity? identity;
+          api.IdsUser? freshUser;
+          List<api.IdsUser>? registeredUsers;
+          try {
+            if (saved == null || saved.length != 1) {
+              throw StateError('ids_registration_snapshot_refused');
+            }
+            final before = await IdsRegistrationSnapshot.capture(
+              serialize: () => api.saveUser(user: saved.single), validate: validate,
+            );
+            before.requireRepairable();
+            hardware = api.readHardware(path: storage);
+            if (hardware == null) {
+              throw StateError('ids_registration_snapshot_refused');
+            }
+            identity = api.decodeIdentity(identity: hardware.identity);
+            validate();
+            if (hardwareDigest != sha256.convert(await hardwareFile.readAsBytes()).toString()) {
+              throw StateError('ids_registration_snapshot_refused');
+            }
+            final currentUsers = api.restoreUsers(path: storage);
+            try {
+              if (currentUsers == null || currentUsers.length != 1 ||
+                  !before.sameSavedValue(await IdsRegistrationSnapshot.capture(
+                    serialize: () => api.saveUser(user: currentUsers.single), validate: validate))) {
+                throw StateError('ids_registration_snapshot_refused');
+              }
+            } finally {
+              for (final user in currentUsers ?? <api.IdsUser>[]) {
+                user.dispose();
+              }
+            }
+            validate();
+            final beganAtS = DateTime.now().toUtc().millisecondsSinceEpoch ~/ 1000;
+            // Authentication can replace a protected key alias even before
+            // id.plist changes. Every outcome after entry requires a restart.
+            _backendRegistrationRestartRequired = true;
+            freshUser = await api.cloudSyncWindowsAuthenticateSender(
+              path: storage, account: services!.account, config: expected.osConfig,
+            );
+            validate();
+            final fresh = await IdsRegistrationSnapshot.capture(
+              serialize: () => api.saveUser(user: freshUser!), validate: validate,
+            );
+            before.requireFreshUser(fresh);
+            validate();
+            final result = await api.registerIds(
+              path: storage, config: expected.osConfig, aps: expected.conn,
+              identity: identity,
+              users: [api.duplicateUser(user: freshUser)],
+            );
+            registeredUsers = result.$1;
+            validate();
+            if (result.$2 != null || registeredUsers == null ||
+                registeredUsers.length != 1) {
+              throw StateError('ids_registration_refresh_unconfirmed');
+            }
+            final registered = await IdsRegistrationSnapshot.capture(
+              serialize: () => api.saveUser(user: registeredUsers!.single), validate: validate,
+            );
+            before.requireRegisteredReplacement(registered, beganAtS, fresh: fresh);
+            // Native registerIds writes id.plist non-atomically. Flush without
+            // truncating or rewriting it, then verify actual restored values.
+            final idFile = File('$storage/id.plist');
+            if (!await idFile.exists()) {
+              throw StateError('ids_registration_refresh_unconfirmed');
+            }
+            validate();
+            final persistedFile = await idFile.open(mode: FileMode.append);
+            try {
+              validate();
+              await persistedFile.flush();
+            } finally {
+              await persistedFile.close();
+            }
+            validate();
+            final persisted = api.restoreUsers(path: storage);
+            try {
+              if (persisted == null || persisted.length != 1 ||
+                  !registered.sameSavedValue(await IdsRegistrationSnapshot.capture(
+                    serialize: () => api.saveUser(user: persisted.single), validate: validate))) {
+                throw StateError('ids_registration_refresh_unconfirmed');
+              }
+            } finally {
+              for (final user in persisted ?? <api.IdsUser>[]) {
+                user.dispose();
+              }
+            }
+            if (hardwareDigest != sha256.convert(await hardwareFile.readAsBytes()).toString()) {
+              throw StateError('ids_registration_refresh_unconfirmed');
+            }
+            validate();
+          } finally {
+            for (final user in registeredUsers ?? <api.IdsUser>[]) {
+              user.dispose();
+            }
+            freshUser?.dispose();
+            identity?.dispose();
+            hardware?.dispose();
+            for (final user in saved ?? <api.IdsUser>[]) {
+              user.dispose();
+            }
+          }
+        });
+      },
+    );
+  }
+
   Future<void> invalidatePeerCaches() => _runCloudKitIdentityMaintenance(
         () async {
           final currentState = state;
@@ -8631,8 +8805,8 @@ class RustPushService extends GetxService {
       CloudSyncArchiveSessionAcknowledgment();
 
   bool get cloudSyncV2BackendArchiveSessionReady =>
-      !_isolatedWindowsBackendHost ||
-      _cloudSyncV2BackendArchiveSession.ready;
+      !backendRegistrationRestartRequired &&
+      (!_isolatedWindowsBackendHost || _cloudSyncV2BackendArchiveSession.ready);
 
   bool cloudSyncV2BackendArchiveScopeCurrent(
       CloudSyncAutomaticArchivePreference consent) =>
