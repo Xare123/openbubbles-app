@@ -158,6 +158,11 @@ final class BackendHarnessController {
           validate: BackendHarnessFixtures.validStatus,
           handler: fixtures.status,
         ),
+        'fixture.route': BackendHarnessOperation(
+          background: true,
+          validate: BackendHarnessFixtures.validRoute,
+          handler: fixtures.route,
+        ),
         'protector.check': BackendHarnessOperation(
           background: true,
           uncertainOnFailure: true,

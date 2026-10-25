@@ -42,6 +42,22 @@ void main() {
     'retainedRecoveryOwner': ownerId,
   };
 
+  test('route preflight permits only the exact approved existing-route set', () {
+    expect(BackendHarnessFixtures.validRoute({'recipients': ['+16177106179']}), true);
+    expect(BackendHarnessFixtures.validRoute({'recipients': ['+19079786948', '+16177106179']}), true);
+    for (final value in [
+      <String, Object?>{},
+      {'recipients': []},
+      {'recipients': ['+10000000000']},
+      {'recipients': ['+16177106179', '+16177106179']},
+      {'recipients': ['+16177106179', '+19079786948', '+10000000000']},
+      {'recipients': ['+16177106179'], 'fixtureId': fixtureId},
+      {'recipients': ['+16177106179'], 'path': 'caller-path'},
+    ]) {
+      expect(BackendHarnessFixtures.validRoute(value), false);
+    }
+  });
+
   test(
     'fixture send requires explicit scope and supports one bounded group',
     () {

@@ -3,6 +3,8 @@ import 'dart:io';
 
 import 'package:bluebubbles/backend_harness/backend_harness_fixtures.dart';
 import 'package:bluebubbles/backend_harness/backend_harness_fixture_archive.dart';
+import 'package:bluebubbles/backend_harness/backend_harness_fixture_claims.dart';
+import 'package:bluebubbles/backend_harness/backend_harness_protocol.dart';
 import 'package:bluebubbles/database/database.dart';
 import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync.dart';
@@ -284,6 +286,97 @@ void main() {
   test('fixture status serializes with the parent protocol flags', () {
     settleCreate();
     expect(BackendHarnessFixtures.readStatus(store, auth, fixture).toJson()['flags'], observe());
+  });
+
+  test('claimed exact message shares an ordinary conversation with personal history', () {
+    settleCreate();
+    final chat = message.chat.target!;
+    chat.cloudGuid = null;
+    store.box<Chat>().put(chat);
+    final personal = Message(guid: '31234567-89AB-4DEF-8123-456789ABCDEF',
+      text: 'unrelated retained history', isFromMe: true, dateCreated: now)
+      ..chat.target = chat;
+    final received = Message(guid: '41234567-89AB-4DEF-8123-456789ABCDEF',
+      text: 'unrelated received history', isFromMe: false, dateCreated: now)
+      ..chat.target = chat;
+    store.box<Message>().putMany([personal, received]);
+    final claims = BackendHarnessFixtureClaims(storageDirectory: directory.path, source: 'a' * 40, auth: auth);
+    final claim = claims.consume(fixture, owner: '51234567-89AB-4DEF-8123-456789ABCDEF');
+    claims.commit(claim, guid);
+    final result = BackendHarnessFixtures.readClaimStatus(store, auth, fixture, claims.read(fixture)!);
+    expect(result.fixture!.messageGuid, guid);
+    expect(result.counts['messages'], 1);
+    expect(result.flags['fixture_create_settled'], true);
+    expect(BackendHarnessFixtures.hasSettledMutationPredecessor(store, auth, fixture, guid,
+      exactMessageGuid: guid), true);
+    expect(BackendHarnessFixtures.hasSettledMutationPredecessor(store, auth, fixture, personal.guid!,
+      exactMessageGuid: personal.guid), false);
+    expect(BackendHarnessFixtures.ownsMessage(personal, fixture, exactMessageGuid: personal.guid), false);
+    expect(store.box<Message>().count(), 3);
+    expect(store.box<Message>().get(personal.id!)!.text, personal.text);
+    expect(store.box<Message>().get(received.id!)!.text, received.text);
+  });
+
+  test('consumed claim without reflection is uncertain and never invents IDS', () {
+    final claims = BackendHarnessFixtureClaims(storageDirectory: directory.path, source: 'a' * 40, auth: auth);
+    final claim = claims.consume('61234567-89AB-4DEF-8123-456789ABCDEF',
+      owner: '51234567-89AB-4DEF-8123-456789ABCDEF');
+    final result = BackendHarnessFixtures.readClaimStatus(store, auth, claim.fixtureId, claim);
+    expect(result.fixture, isNull);
+    expect(result.flags['outcome_uncertain'], true);
+    expect(result.flags['ids_evidence_present'], false);
+    expect(() => claims.consume(claim.fixtureId, owner: claim.owner), throwsA(isA<BackendHarnessFailure>()));
+  });
+
+  test('restart after partial result recovers exact marker and journal only', () {
+    settleCreate();
+    final chat = message.chat.target!..cloudGuid = null;
+    store.box<Chat>().put(chat);
+    final claims = BackendHarnessFixtureClaims(storageDirectory: directory.path, source: 'a' * 40, auth: auth);
+    claims.consume(fixture, owner: '51234567-89AB-4DEF-8123-456789ABCDEF');
+    File('${directory.path}/cloud-sync-v2/backend-fixtures/$fixture.jsonl')
+      .writeAsStringSync('{"messageGuid":', mode: FileMode.append, flush: true);
+    final restarted = BackendHarnessFixtureClaims(storageDirectory: directory.path, source: 'a' * 40, auth: auth);
+    final claim = restarted.read(fixture)!;
+    expect(claim.partialResult, true);
+    final result = BackendHarnessFixtures.readClaimStatus(store, auth, fixture, claim);
+    expect(result.fixture!.messageGuid, guid);
+    expect(result.flags['fixture_create_settled'], true);
+    store.box<CloudSyncLocalSendIntentEntity>().remove(origin.id);
+    final absent = BackendHarnessFixtures.readClaimStatus(store, auth, fixture, claim);
+    expect(absent.fixture, isNull);
+    expect(absent.flags['ids_evidence_present'], false);
+    expect(absent.flags['outcome_uncertain'], true);
+  });
+
+  test('uncommitted correlation refuses duplicate markers and foreign identity', () {
+    settleCreate();
+    final claims = BackendHarnessFixtureClaims(storageDirectory: directory.path, source: 'a' * 40, auth: auth);
+    final claim = claims.consume(fixture, owner: '51234567-89AB-4DEF-8123-456789ABCDEF');
+    final duplicate = Message(guid: '31234567-89AB-4DEF-8123-456789ABCDEF',
+      text: BackendHarnessFixtures.marker(fixture), isFromMe: true, dateCreated: now)
+      ..chat.target = message.chat.target;
+    store.box<Message>().put(duplicate);
+    final result = BackendHarnessFixtures.readClaimStatus(store, auth, fixture, claim);
+    expect(result.fixture, isNull);
+    expect(result.flags['fixture_create_settled'], false);
+    final foreign = CloudSyncNativeAuthSnapshot.fromNative(nativeSessionId: 'foreign',
+      accountFingerprint: 'B' * 43, protectedStoreIdentity: auth.protectedStoreIdentity, cloudMessagesClient: Object());
+    expect(() => BackendHarnessFixtures.readClaimStatus(store, foreign, fixture, claim),
+      throwsA(isA<BackendHarnessFailure>()));
+  });
+
+  test('committed GUID cannot fall back to another marker or staging GUID', () {
+    settleCreate();
+    final claims = BackendHarnessFixtureClaims(storageDirectory: directory.path, source: 'a' * 40, auth: auth);
+    final claim = claims.consume(fixture, owner: '51234567-89AB-4DEF-8123-456789ABCDEF');
+    claims.commit(claim, '31234567-89AB-4DEF-8123-456789ABCDEF');
+    message.stagingGuid = '31234567-89AB-4DEF-8123-456789ABCDEF';
+    store.box<Message>().put(message);
+    final result = BackendHarnessFixtures.readClaimStatus(store, auth, fixture, claims.read(fixture)!);
+    expect(result.fixture, isNull);
+    expect(result.flags['outcome_uncertain'], true);
+    expect(result.flags['fixture_create_settled'], false);
   });
 
   test('save confirmation and receipt cleanup without marker never settle', () {
@@ -839,6 +932,13 @@ void main() {
       expect(BackendHarnessFixtures.ownsMessage(reflected, fixture, retainedChat: true), true);
       expect(CloudSyncLocalSendIdentity.captureAttachment(reflected, chat, guid,
         expectedSourceSha256: source.sourceSha256), isNotNull);
+      reflected.text = '${BackendHarnessFixtures.marker(fixture, edited: true)} ';
+      reflected.attributedBody = [AttributedBody(string: reflected.text!, runs: body.runs)];
+      expect(BackendHarnessFixtures.ownsMessage(reflected, fixture, exactMessageGuid: guid), true);
+      expect(CloudSyncLocalSendIdentity.captureAttachment(reflected, chat, guid,
+        expectedSourceSha256: source.sourceSha256), isNull);
+      reflected.text = '${BackendHarnessFixtures.marker(fixture)} ';
+      reflected.attributedBody = [AttributedBody(string: reflected.text!, runs: body.runs)];
       reflected.subject = BackendHarnessFixtures.marker(fixture);
       expect(CloudSyncLocalSendIdentity.captureAttachment(reflected, chat, guid), isNull);
       reflected.subject = null;

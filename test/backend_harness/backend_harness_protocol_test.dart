@@ -360,6 +360,34 @@ void main() {
     },
   );
 
+  test('typed preflight refusal is certain but remains consumed', () async {
+    var calls = 0;
+    final runner = engine({
+      'fixture.send': BackendHarnessOperation(
+        background: true,
+        uncertainOnFailure: true,
+        validate: (_) => true,
+        handler: (_) async {
+          calls++;
+          throw BackendHarnessFailure('backend_not_ready', effectNotEntered: true);
+        },
+      ),
+    });
+    final original = request('preflight', 'fixture.send');
+    final accepted = await runner.execute(original);
+    await Future<void>.delayed(Duration.zero);
+    final result = await runner.execute(
+      request('preflight-poll', 'job.status', {'jobId': accepted['jobId']}),
+    );
+    expect(result['state'], 'blocked');
+    expect(result['code'], 'backend_not_ready');
+    expect((result['data'] as Map)['flags'], {'outcome_uncertain': false});
+    final repeated = await runner.execute(original);
+    expect(repeated['jobId'], accepted['jobId']);
+    expect(repeated['state'], 'blocked');
+    expect(calls, 1);
+  });
+
   test(
     'exceptions and arbitrary payload keys never leak into receipts',
     () async {

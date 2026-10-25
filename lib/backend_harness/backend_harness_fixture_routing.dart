@@ -1,0 +1,153 @@
+import 'dart:convert';
+
+import 'package:bluebubbles/database/models.dart';
+import 'package:bluebubbles/database/database.dart';
+import 'package:bluebubbles/services/network/backend_service.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_group_send_route.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_manual_shadow_sampler.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_models.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_outbound_chat_binding.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_outbound_group_binding.dart';
+import 'package:bluebubbles/services/rustpush/rustpush_service.dart';
+import 'package:bluebubbles/src/rust/api/api.dart' as api;
+
+import 'backend_harness_protocol.dart';
+
+Never _refuse() =>
+    throw BackendHarnessFailure('backend_not_ready', effectNotEntered: true);
+String _bare(String value) => value.startsWith('tel:')
+    ? value.substring(4)
+    : value.startsWith('mailto:')
+    ? value.substring(7)
+    : value;
+
+/// Existing, exact, already-projected routes only. New-conversation creation is
+/// a separate backend gate; never manufacture a duplicate local conversation.
+Chat selectBackendHarnessFixtureChat({
+  required Store store,
+  required List<String> recipients,
+  required Set<String> senderHandles,
+  required void Function(Chat chat, bool group) requireDependency,
+}) => store.runInTransaction(TxMode.read, () {
+  if (recipients.isEmpty ||
+      recipients.length > 2 ||
+      recipients.toSet().length != recipients.length ||
+      !recipients.every(const {'+16177106179', '+19079786948'}.contains)) {
+    _refuse();
+  }
+  final group = recipients.length == 2;
+  final query =
+      store
+          .box<Chat>()
+          .query(
+            group
+                ? Chat_.style.equals(43)
+                : Chat_.guid.equals('iMessage;-;${recipients.single}'),
+          )
+          .build()
+        ..limit = group ? 4097 : 2;
+  late final List<Chat> candidates;
+  try {
+    candidates = query.find();
+  } finally {
+    query.close();
+  }
+  if (candidates.length >= (group ? 4097 : 2)) {
+    _refuse();
+  }
+  final members = [...recipients]..sort();
+  final senders = senderHandles.map(_bare).toSet();
+  final qualified = <Chat>[];
+  for (final chat in candidates) {
+    if (chat.isRpSms ||
+        chat.isRoutingStub ||
+        chat.usingHandle == null ||
+        !senders.contains(_bare(chat.usingHandle!))) {
+      continue;
+    }
+    if (group) {
+      final route = CloudSyncGroupSendRoute.capture(chat);
+      if (route == null ||
+          route.provisional ||
+          route.groupId == null ||
+          jsonEncode(route.members) != jsonEncode(members)) {
+        continue;
+      }
+    } else {
+      final handles = chat.handles.toList();
+      if (chat.style != 45 ||
+          chat.chatIdentifier != recipients.single ||
+          handles.length != 1 ||
+          handles.single.service != 'iMessage' ||
+          handles.single.address != recipients.single) {
+        continue;
+      }
+    }
+    try {
+      requireDependency(chat, group);
+    } catch (_) {
+      continue;
+    }
+    qualified.add(chat);
+  }
+  if (qualified.length != 1) _refuse();
+  return qualified.single;
+});
+
+Future<Chat> resolveBackendHarnessFixtureChat({
+  required Store store,
+  required CloudSyncNativeAuthSnapshot auth,
+  required List<String> recipients,
+  required String fixtureId,
+}) async {
+  if (backend is! RustPushBackend) _refuse();
+  final state = pushService.state;
+  final client = state?.icloudServices?.cloudMessagesClient;
+  if (state == null ||
+      client == null ||
+      !identical(client, auth.cloudMessagesClient) ||
+      store.isClosed() ||
+      !identical(store, Database.store)) {
+    _refuse();
+  }
+  final handles = await api.getHandles(state: state.client);
+  if (!identical(state, pushService.state) ||
+      !identical(
+        client,
+        pushService.state?.icloudServices?.cloudMessagesClient,
+      ) ||
+      store.isClosed() ||
+      !identical(store, Database.store)) {
+    _refuse();
+  }
+  final scope = CloudSyncScope(
+    accountFingerprint: auth.accountFingerprint,
+    container: 'com.apple.messages.cloud',
+    database: 'private',
+    zone: 'messageManateeZone',
+    streamKind: CloudSyncStreamKind.messages,
+    schemaVersion: 2,
+    persistenceLane: CloudSyncPersistenceLane.semantic,
+  );
+  return selectBackendHarnessFixtureChat(
+    store: store,
+    recipients: recipients,
+    senderHandles: handles.toSet(),
+    requireDependency: (chat, group) {
+      final target = Message(isFromMe: true)..chat.target = chat;
+      if (group) {
+        requireCloudSyncRestoredGroupChatProof(
+          store: store,
+          messageScope: scope,
+          message: target,
+        );
+      } else {
+        requireCloudSyncRestoredDirectChatProofForId(
+          store: store,
+          messageScope: scope,
+          chatId: chat.id!,
+        );
+      }
+    },
+  );
+}

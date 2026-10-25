@@ -30,6 +30,7 @@ const backendHarnessActions = <String>{
   'fixture.edit',
   'fixture.unsend',
   'fixture.status',
+  'fixture.route',
 };
 const backendHarnessCodes = <String>{
   'backend_ready',
@@ -227,6 +228,7 @@ final class BackendHarnessPayload {
     'fixture_undo_pending',
     'fixture_undo_settled',
     'fixture_attachment_archive_settled',
+    'fixture_route_available',
   };
   static const countNames = {
     'pages',
@@ -290,12 +292,15 @@ final class BackendHarnessOperation {
 }
 
 final class BackendHarnessFailure implements Exception {
-  BackendHarnessFailure(this.code) {
+  BackendHarnessFailure(this.code, {this.effectNotEntered = false}) {
     if (!backendHarnessCodes.contains(code)) {
       throw const FormatException('backend_invalid_failure');
     }
   }
   final String code;
+  /// Trusted adapter preflight only. Never set after entering an external
+  /// effect; request consumption and durable fixture claims remain retained.
+  final bool effectNotEntered;
 }
 
 /// One engine per app boot. Repeated submissions return the SAME operation;
@@ -525,7 +530,7 @@ final class BackendHarnessEngine {
             job.code = error.code;
             job.payload = BackendHarnessPayload(
               phase: BackendHarnessPhase.error,
-              flags: {'outcome_uncertain': operation.uncertainOnFailure},
+              flags: {'outcome_uncertain': operation.uncertainOnFailure && !error.effectNotEntered},
             ).toJson();
           } catch (_) {
             job.state = 'failed';
