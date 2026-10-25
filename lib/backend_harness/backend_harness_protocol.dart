@@ -569,7 +569,8 @@ final class BackendHarnessEngine {
     return _reply(
       id,
       action,
-      payload.containsKey('challenge') ? 'backend_auth_challenge' : job.code,
+      const {'accepted', 'running'}.contains(job.state) && payload.containsKey('challenge')
+          ? 'backend_auth_challenge' : job.code,
       state: job.state,
       jobId: job.id,
       data: payload,
