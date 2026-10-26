@@ -43,6 +43,7 @@ void main() {
     const receivedDiscovery = 'lib/services/rustpush/cloud_sync/cloud_sync_received_discovery_retain_adapter.dart';
     const historicalDiscovery = 'lib/services/rustpush/cloud_sync/cloud_sync_historical_discovery_adapter.dart';
     const historicalImport = 'lib/services/rustpush/cloud_sync/cloud_sync_historical_import_runtime.dart';
+    const exactReader = 'lib/services/rustpush/cloud_sync/cloud_sync_exact_message_reader.dart';
 
     for (final entity in Directory('lib').listSync(recursive: true)) {
       if (entity is! File || !entity.path.endsWith('.dart')) continue;
@@ -64,7 +65,7 @@ void main() {
         .toList(growable: false);
     expect(
       normalized,
-      unorderedEquals([allowed, localSource, windowsSource, receivedSource, receivedReader, receivedDiscovery, historicalDiscovery, historicalImport]),
+      unorderedEquals([allowed, localSource, windowsSource, receivedSource, receivedReader, receivedDiscovery, historicalDiscovery, historicalImport, exactReader]),
       reason:
           'only reviewed gated compositions and purpose-bound discovery construct this transport',
     );
@@ -415,6 +416,46 @@ void main() {
       reason:
           'semantic protected fetch must carry the exact active writer-pause capability',
     );
+  });
+
+  test('exact known-GUID reader reuses restored lookup and protected ingress without a cursor or write grant', () {
+    final native = File('rust/src/api/api.rs').readAsStringSync();
+    final exact = native.substring(
+      native.indexOf('pub async fn cloud_sync_fetch_known_message_exact('),
+      native.indexOf('pub async fn cloud_sync_windows_probe_message_feed('),
+    ).replaceAll(RegExp(r'\s+'), '');
+    for (final guard in [
+      'acquire_cloudkit_read_authentication(native_writer_pause_token)',
+      'cloud_sync_require_received_auth(&expected_auth, &before)',
+      'cloud_sync_require_received_auth(&expected_auth, &after)',
+      'get_cached_container_for_read_authentication',
+      'Arc::ptr_eq(&container, &after_container)',
+      'prepare_discovery(&message_guid', 'settle_discovery(',
+      'lookup_received_message_record(&permit, &request.record_name)',
+      'record.original_record_wire()', 'cloud_sync_stage_received_found_projection(',
+      'page.protected_next_checkpoint_reference().is_some()',
+      'cloud_sync_rollback_protected_page(',
+    ]) {
+      expect(exact, contains(guard.replaceAll(RegExp(r'\s+'), '')), reason: guard);
+    }
+    for (final forbidden in [
+      'get_container(', 'get_writer_container', 'save_records', 'ZoneSaveOperation',
+      'sync_messages_page', 'next_token:', 'ArchiveSourceBinding',
+    ]) {
+      expect(exact, isNot(contains(forbidden)), reason: forbidden);
+    }
+    final dart = File('lib/services/rustpush/cloud_sync/cloud_sync_exact_message_reader.dart').readAsStringSync();
+    for (final guard in [
+      'readCurrentBoundAuth()', 'current.generation != checkpoint.generation',
+      'runProtectedStoreExclusive', 'runLocalProtectedStoreExclusive',
+      'journalExactReadFound(', 'commitJournaledPage(', 'if (!adopted)',
+      'rollbackUnjournaledPage(', 'readExactReadEntry(',
+      'quiesceNativeOperations()', 'releaseCoordinatorLease(',
+    ]) {
+      expect(dart, contains(guard), reason: guard);
+    }
+    expect(dart, isNot(contains('journalFetchedBatch(')));
+    expect(dart, isNot(contains('markInboxRetainedUnprojected(')));
   });
 
   test('historical import retains source, owner and single-use consent gates', () {

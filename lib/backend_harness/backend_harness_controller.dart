@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:bluebubbles/services/services.dart';
 import 'package:bluebubbles/services/rustpush/rustpush_service.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_progress.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_exact_message_reader.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_models.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_protector.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_protector_health.dart';
@@ -193,6 +194,25 @@ final class BackendHarnessController {
             } catch (error) {
               throw BackendHarnessFailure(backendHarnessMessageArchiveRecoveryFailureCode(error));
             }
+          },
+        ),
+        'fixture.fetch': BackendHarnessOperation(
+          background: true,
+          validate: BackendHarnessEvidence.validFetch,
+          snapshot: snapshot,
+          handler: (args) async {
+            final result = await pushService.fetchCloudSyncV2BackendMessage(
+              messageGuid: args['messageGuid']! as String,
+              recoveryInput: recovery.input,
+            );
+            return BackendHarnessPayload(flags: {
+              'exact_read_found': result == CloudSyncExactMessageReadDisposition.projected ||
+                  result == CloudSyncExactMessageReadDisposition.retained,
+              'exact_read_projected': result == CloudSyncExactMessageReadDisposition.projected,
+              'exact_read_absent': result == CloudSyncExactMessageReadDisposition.absent,
+              'exact_read_unresolved': result == CloudSyncExactMessageReadDisposition.unresolved,
+              'exact_read_tripwires_intact': true,
+            });
           },
         ),
         'fixture.inspect': BackendHarnessOperation(

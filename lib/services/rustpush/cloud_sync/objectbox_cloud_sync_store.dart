@@ -1062,6 +1062,50 @@ class ObjectBoxCloudSyncStore
       generation: generation, observedAtMs: nowMs),
   );
 
+  /// An authenticated exact reader find has no local send/receive/historical
+  /// source. It joins the ordinary inbox without creating any such provenance,
+  /// changing a remote cursor, or granting archive/write authority. Conflicting
+  /// or newer evidence still refuses through the same discovery guards.
+  bool journalExactReadFound({
+    required CloudSyncScope scope,
+    required CloudFetchedChange change,
+    required int generation,
+    required String batchId,
+    required String leaseReference,
+    required CloudCoordinatorLeaseFence leaseFence,
+    required bool Function() stillCurrent,
+  }) => _journalExactDiscoveryFound(
+    scope: scope, change: change, generation: generation,
+    batchId: batchId, leaseReference: leaseReference, leaseFence: leaseFence,
+    journalBoundToStore: !_store.isClosed(), stillCurrent: stillCurrent,
+    linkSource: (_, __) {},
+  );
+
+  /// Returns only the just-adopted exact row under the active reader fence.
+  /// Pending work behind a predecessor is never selected out of order.
+  CloudInboxEntry? readExactReadEntry({
+    required CloudSyncScope scope,
+    required int generation,
+    required String changeId,
+    required CloudCoordinatorLeaseFence leaseFence,
+  }) => _store.runInTransaction(TxMode.read, () {
+    _requireActiveCoordinatorLeaseLocked(scope, leaseFence, nowMs: _nowMs());
+    final checkpoint = _findCheckpointByKeyLocked(_scopeKey(scope));
+    if (checkpoint == null || checkpoint.generation != generation) {
+      throw _storageFailure('generation_mismatch');
+    }
+    _validateCheckpointScope(checkpoint, scope);
+    final entity = _findInboxByChangeKeyLocked(_changeKey(scope, generation, changeId));
+    if (entity == null) return null;
+    final entry = _inboxFromEntity(scope, entity);
+    if (entry.generation != generation) throw _storageFailure('generation_mismatch');
+    if (entry.status == CloudInboxStatus.pending &&
+        _findFirstNonterminalInboxLocked(scope, checkpoint)?.id != entity.id) {
+      return null;
+    }
+    return entry;
+  });
+
   bool _journalExactDiscoveryFound({
     required CloudSyncScope scope, required CloudFetchedChange change,
     required int generation, required String batchId, required String leaseReference,

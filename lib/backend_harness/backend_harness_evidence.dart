@@ -28,6 +28,10 @@ final class BackendHarnessEvidence {
   static final digest = RegExp(r'^[a-f0-9]{64}$');
   static const maximumFixtureBytes = 16 * 1024 * 1024;
 
+  static bool validFetch(Map<String, Object?> args) =>
+      args.length == 1 && args['messageGuid'] is String &&
+      guid.hasMatch(args['messageGuid'] as String);
+
   static bool validInspect(Map<String, Object?> args) =>
       (args.length == 6 || args.length == 9) &&
       args.keys.every(

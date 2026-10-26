@@ -193,27 +193,38 @@ void main() {
     final budget = File(
       'lib/services/rustpush/cloud_sync/cloud_sync_read_budget.dart',
     ).readAsStringSync();
+    // The agent's exact-record reader also uses this adapter. Pin the history
+    // budget contract to the actual scheduled internal-reader composition.
+    final scheduledStart = service.indexOf(
+      '_runCloudSyncV2ManualSemanticPullWithScheduledSessions({',
+    );
+    final scheduledEnd = service.indexOf(
+      'bool get cloudSyncV2ManualOutboundAvailable', scheduledStart,
+    );
+    expect(scheduledStart, greaterThanOrEqualTo(0));
+    expect(scheduledEnd, greaterThan(scheduledStart));
+    final scheduled = service.substring(scheduledStart, scheduledEnd);
     // One shared fallback owns the automatic/internal budget: Profile Regular
     // and Turbo speeds resolve through their existing per-speed budgets, and
     // only the progress-absent path falls back to the background budget.
     expect(
-      service,
+      scheduled,
       contains(
         'final readBudget = progress?.speed.readBudget ?? CloudSyncReadBudget.background;',
       ),
     );
-    expect(service, contains('readBudget: readBudget,'));
-    final adapterStart = service.indexOf(
+    expect(scheduled, contains('readBudget: readBudget,'));
+    final adapterStart = scheduled.indexOf(
       'final adapter = CloudSyncProductionSemanticPullAdapter(',
     );
     expect(adapterStart, greaterThanOrEqualTo(0));
-    final adapterWindow = service.substring(adapterStart, adapterStart + 300);
+    final adapterWindow = scheduled.substring(adapterStart, adapterStart + 300);
     expect(adapterWindow, contains('readBudget: readBudget,'));
-    final writerStart = service.indexOf(
+    final writerStart = scheduled.indexOf(
       'final reportWriter = CloudSyncSemanticPullReportFileWriter(',
     );
     expect(writerStart, greaterThanOrEqualTo(0));
-    final writerWindow = service.substring(writerStart, writerStart + 400);
+    final writerWindow = scheduled.substring(writerStart, writerStart + 400);
     expect(writerWindow, contains('readBudget: readBudget,'));
     expect(budget, contains('static const background = CloudSyncReadBudget('));
     expect(budget, contains('retainedReplayEntries: 4,'));

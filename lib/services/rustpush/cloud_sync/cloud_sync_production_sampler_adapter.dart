@@ -22,6 +22,7 @@ import 'cloud_inbox_applier.dart';
 import 'cloud_attachment_provenance.dart';
 import 'cloud_protected_page_lease_lifecycle.dart';
 import 'cloud_sync_engine.dart';
+import 'cloud_sync_exact_message_reader.dart';
 import 'cloud_sync_dev_gate.dart';
 import 'cloud_sync_automatic_archive_preference.dart';
 import 'cloud_sync_local_send_consumer.dart';
@@ -54,6 +55,7 @@ import 'cloud_sync_persistent_keys.dart';
 import 'cloud_sync_observability.dart';
 import 'cloud_sync_read_budget.dart';
 import 'cloud_sync_store.dart';
+import 'cloud_sync_transport.dart' show CloudInboxApplier;
 import 'native_protected_cloud_sync_transport.dart';
 import 'objectbox_canonical_semantic_entity_adapter.dart';
 import 'objectbox_confirmed_message_dependency_reader.dart';
@@ -583,6 +585,7 @@ final class CloudSyncProductionSemanticPullAdapter {
       readPreflight: readPreflight,
       nativeWriterPause: activeNativeWriterPause,
     );
+    late final CloudSyncSemanticInboxApplierFactory createInboxApplier;
     sampler = CloudSyncManualSemanticPullSampler(
       progress: progress,
       readBudget: readBudget,
@@ -606,7 +609,7 @@ final class CloudSyncProductionSemanticPullAdapter {
           bindings: transportBindings,
         );
       },
-      createInboxApplier: (snapshot, scope, generation, pauseToken) async {
+      createInboxApplier: createInboxApplier = (snapshot, scope, generation, pauseToken) async {
         if (pauseToken is! BigInt ||
             pauseToken <= BigInt.zero ||
             pauseToken.bitLength > 64) {
@@ -725,9 +728,40 @@ final class CloudSyncProductionSemanticPullAdapter {
       observerFactory: observerFactory,
       compileGateOverrideForTest: compileGateOverrideForTest,
     );
+    final objectBox = Database.store;
+    readKnownMessage = (messageGuid, stillCurrent) =>
+        sampler.runConfirmedAccountBoundReadOnlyObservation((auth, pause, readBound) async {
+      if (pause is! BigInt || !stillCurrent() || objectBox.isClosed() ||
+          !identical(objectBox, Database.store)) {
+        throw StateError('cloud_sync_exact_read_identity_changed');
+      }
+      final before = await readPreflight();
+      if (before.outboxCount != 0) throw StateError('cloud_sync_exact_read_outbox_unsettled');
+      CloudInboxApplier? applier;
+      final result = await retainCloudSyncKnownMessage(
+        messageGuid: messageGuid, auth: auth, pauseToken: pause,
+        objectBox: objectBox, privateStorageDirectory: privateStorageDirectory,
+        readCurrentBoundAuth: readBound,
+        stillCurrent: () => stillCurrent() && !objectBox.isClosed() &&
+            identical(objectBox, Database.store) &&
+            identical(auth.cloudMessagesClient, readActiveClient()),
+        apply: (entry, coordinator) async {
+          applier ??= await createInboxApplier(auth, entry.scope, entry.generation, pause);
+          return applier!.apply(entry, leaseFence: coordinator);
+        },
+      );
+      final after = await readPreflight();
+      if (!stillCurrent() || !before.hasSameSettledOutboxAs(after)) {
+        throw StateError('cloud_sync_semantic_remote_write_tripwire');
+      }
+      return result;
+    });
   }
 
   late final CloudSyncManualSemanticPullSampler sampler;
+  late final Future<CloudSyncExactMessageReadDisposition> Function(
+    String messageGuid, bool Function() stillCurrent,
+  ) readKnownMessage;
 }
 
 /// Concrete consumer of the ordinary-send journal. Unlike the manual sample

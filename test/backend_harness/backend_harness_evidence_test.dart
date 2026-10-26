@@ -20,6 +20,18 @@ const body = 'synthetic backend reader fixture';
 String hash(String value) => sha256.convert(utf8.encode(value)).toString();
 
 void main() {
+  test('exact fetch accepts only a private GUID and no expected content or source import', () {
+    expect(BackendHarnessEvidence.validFetch({'messageGuid': messageGuid}), isTrue);
+    expect(BackendHarnessEvidence.validFetch({'messageGuid': messageGuid.toLowerCase()}), isTrue);
+    for (final arguments in <Map<String, Object?>>[
+      {}, {'fixtureId': messageGuid}, {'messageGuid': 'arbitrary'},
+      {'messageGuid': null}, {'messageGuid': messageGuid, 'visibleTextSha256': 'a' * 64},
+      {'messageGuid': messageGuid, 'acknowledgeSend': true},
+      {'messageGuid': messageGuid, 'chatGuid': messageGuid},
+    ]) {
+      expect(BackendHarnessEvidence.validFetch(arguments), isFalse);
+    }
+  });
   late Directory directory;
   late Store store;
   late CloudSyncNativeAuthSnapshot auth;

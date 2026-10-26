@@ -41,6 +41,41 @@ BackendHarnessOperation operation(
 );
 
 void main() {
+  test('exact read dispositions serialize through strict jobs without exposing the selector', () async {
+    const guid = '01234567-89AB-CDEF-0123-456789ABCDEF';
+    for (final disposition in ['projected', 'retained', 'absent', 'unresolved']) {
+      var calls = 0;
+      final runner = engine({
+        'fixture.fetch': BackendHarnessOperation(
+          background: true,
+          validate: (args) => args.length == 1 && args['messageGuid'] == guid,
+          handler: (_) async {
+            calls++;
+            return BackendHarnessPayload(flags: {
+              'exact_read_found': disposition == 'projected' || disposition == 'retained',
+              'exact_read_projected': disposition == 'projected',
+              'exact_read_absent': disposition == 'absent',
+              'exact_read_unresolved': disposition == 'unresolved',
+              'exact_read_tripwires_intact': true,
+            });
+          },
+        ),
+      });
+      final command = request('exact_read', 'fixture.fetch', {'messageGuid': guid});
+      final accepted = await runner.execute(command);
+      await Future<void>.delayed(Duration.zero);
+      final result = await runner.execute(request('poll', 'job.status', {'jobId': accepted['jobId']}));
+      expect(result['state'], 'completed');
+      expect(result['ok'], isTrue);
+      final flags = (result['data'] as Map)['flags'] as Map;
+      expect(flags['exact_read_projected'], disposition == 'projected');
+      expect(flags['exact_read_tripwires_intact'], isTrue);
+      expect(jsonEncode(result), isNot(contains(guid)));
+      expect(calls, 1);
+      await runner.execute(command);
+      expect(calls, 1);
+    }
+  });
   test('VM routing metadata must match and cannot replace the boot session', () async {
     var calls = 0;
     final runner = engine({

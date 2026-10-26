@@ -1726,6 +1726,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   dco_decode_box_autoadd_cloud_sync_dependency_parent_target(dynamic raw);
 
   @protected
+  CloudSyncExactMessageFound
+  dco_decode_box_autoadd_cloud_sync_exact_message_found(dynamic raw);
+
+  @protected
   CloudSyncHistoricalAttachmentContext
   dco_decode_box_autoadd_cloud_sync_historical_attachment_context(dynamic raw);
 
@@ -2351,6 +2355,15 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   CloudSyncExactAttachmentParentRecoveryResult
   dco_decode_cloud_sync_exact_attachment_parent_recovery_result(dynamic raw);
+
+  @protected
+  CloudSyncExactMessageFound dco_decode_cloud_sync_exact_message_found(
+    dynamic raw,
+  );
+
+  @protected
+  CloudSyncExactMessageReadResult
+  dco_decode_cloud_sync_exact_message_read_result(dynamic raw);
 
   @protected
   CloudSyncHistoricalAttachmentContext
@@ -3436,6 +3449,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   CloudSyncDependencyParentTarget?
   dco_decode_opt_box_autoadd_cloud_sync_dependency_parent_target(dynamic raw);
+
+  @protected
+  CloudSyncExactMessageFound?
+  dco_decode_opt_box_autoadd_cloud_sync_exact_message_found(dynamic raw);
 
   @protected
   CloudSyncMessageUpdateReadbackReceipt?
@@ -5781,6 +5798,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  CloudSyncExactMessageFound
+  sse_decode_box_autoadd_cloud_sync_exact_message_found(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   CloudSyncHistoricalAttachmentContext
   sse_decode_box_autoadd_cloud_sync_historical_attachment_context(
     SseDeserializer deserializer,
@@ -6594,6 +6617,15 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   sse_decode_cloud_sync_exact_attachment_parent_recovery_result(
     SseDeserializer deserializer,
   );
+
+  @protected
+  CloudSyncExactMessageFound sse_decode_cloud_sync_exact_message_found(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  CloudSyncExactMessageReadResult
+  sse_decode_cloud_sync_exact_message_read_result(SseDeserializer deserializer);
 
   @protected
   CloudSyncHistoricalAttachmentContext
@@ -7869,6 +7901,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   CloudSyncDependencyParentTarget?
   sse_decode_opt_box_autoadd_cloud_sync_dependency_parent_target(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  CloudSyncExactMessageFound?
+  sse_decode_opt_box_autoadd_cloud_sync_exact_message_found(
     SseDeserializer deserializer,
   );
 
@@ -10652,6 +10690,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_box_autoadd_cloud_sync_exact_message_found(
+    CloudSyncExactMessageFound self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_box_autoadd_cloud_sync_historical_attachment_context(
     CloudSyncHistoricalAttachmentContext self,
     SseSerializer serializer,
@@ -11599,6 +11643,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_cloud_sync_exact_attachment_parent_recovery_result(
     CloudSyncExactAttachmentParentRecoveryResult self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_cloud_sync_exact_message_found(
+    CloudSyncExactMessageFound self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_cloud_sync_exact_message_read_result(
+    CloudSyncExactMessageReadResult self,
     SseSerializer serializer,
   );
 
@@ -13097,6 +13153,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_opt_box_autoadd_cloud_sync_dependency_parent_target(
     CloudSyncDependencyParentTarget? self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_opt_box_autoadd_cloud_sync_exact_message_found(
+    CloudSyncExactMessageFound? self,
     SseSerializer serializer,
   );
 

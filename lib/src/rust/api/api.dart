@@ -1316,6 +1316,26 @@ cloudSyncReconcileReceivedAttachmentCreate({
       input: input,
     );
 
+/// One exact restored-reader lookup. The GUID is a private read selector,
+/// never a synthetic local source or writer grant. Record-name derivation,
+/// authenticated scope and original response bytes stay native. The caller
+/// holds local protected-store exclusion through staging and durable adoption.
+Future<CloudSyncExactMessageReadResult> cloudSyncFetchKnownMessageExact({
+  required ArcCloudMessagesClientDefaultAnisetteProvider cloudMessagesClient,
+  required BigInt nativeWriterPauseToken,
+  required String storageDirectory,
+  required CloudSyncNativeAuthMetadata expectedAuth,
+  required BigInt messageGeneration,
+  required String messageGuid,
+}) => RustLib.instance.api.crateApiApiCloudSyncFetchKnownMessageExact(
+  cloudMessagesClient: cloudMessagesClient,
+  nativeWriterPauseToken: nativeWriterPauseToken,
+  storageDirectory: storageDirectory,
+  expectedAuth: expectedAuth,
+  messageGeneration: messageGeneration,
+  messageGuid: messageGuid,
+);
+
 /// Windows-only read diagnostic. Compares bounded feed variants without
 /// persisting tokens, projecting records, or returning account content.
 Future<String> cloudSyncWindowsProbeMessageFeed({
@@ -4473,6 +4493,64 @@ class CloudSyncExactAttachmentParentRecoveryResult {
           runtimeType == other.runtimeType &&
           phase == other.phase &&
           stage == other.stage &&
+          failure == other.failure;
+}
+
+class CloudSyncExactMessageFound {
+  final BigInt generation;
+  final String batchId;
+  final String leaseReference;
+  final CloudSyncProtectedChange change;
+
+  const CloudSyncExactMessageFound({
+    required this.generation,
+    required this.batchId,
+    required this.leaseReference,
+    required this.change,
+  });
+
+  @override
+  int get hashCode =>
+      generation.hashCode ^
+      batchId.hashCode ^
+      leaseReference.hashCode ^
+      change.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is CloudSyncExactMessageFound &&
+          runtimeType == other.runtimeType &&
+          generation == other.generation &&
+          batchId == other.batchId &&
+          leaseReference == other.leaseReference &&
+          change == other.change;
+}
+
+/// An exact Message read is not a history page or a remote-head observation.
+/// Exactly one of found, absent, and failure is populated. Absence never
+/// authorizes a create, and a found record still requires ordinary projection.
+class CloudSyncExactMessageReadResult {
+  final CloudSyncExactMessageFound? found;
+  final bool absent;
+  final CloudSyncProtectedFailure? failure;
+
+  const CloudSyncExactMessageReadResult({
+    this.found,
+    required this.absent,
+    this.failure,
+  });
+
+  @override
+  int get hashCode => found.hashCode ^ absent.hashCode ^ failure.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is CloudSyncExactMessageReadResult &&
+          runtimeType == other.runtimeType &&
+          found == other.found &&
+          absent == other.absent &&
           failure == other.failure;
 }
 

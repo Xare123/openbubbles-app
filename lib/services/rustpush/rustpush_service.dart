@@ -99,6 +99,7 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_pcs_operatio
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_chat_presentation_repair.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_persistent_keys.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_production_preflight.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_exact_message_reader.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_production_sampler_adapter.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_protocol_evidence.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_protector.dart';
@@ -12231,6 +12232,85 @@ class RustPushService extends GetxService {
       }
       _cloudSyncV2ReceiptCheckActive = false;
       _readCloudSyncV2ProfileReadiness(fresh: true);
+    }
+  }
+
+  /// Agent-only bounded exact read. Normal Profile preparation, semantic
+  /// preflight, native pause and canonical projection stay authoritative.
+  /// The existing receipt-check lifetime also drains this read on teardown.
+  Future<CloudSyncExactMessageReadDisposition> fetchCloudSyncV2BackendMessage({
+    required String messageGuid,
+    CloudSyncRecoveryInput? recoveryInput,
+  }) async {
+    if (!CloudSyncDevGate.isAgentBackendRuntime(
+      isAndroid: Platform.isAndroid, isWindows: Platform.isWindows,
+      packageName: fs.packageInfo.packageName,
+      isolatedWindowsProfile: _isolatedWindowsBackendHost,
+    ) || !RegExp(r'^[A-Fa-f0-9]{8}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{12}$').hasMatch(messageGuid)) {
+      throw StateError('cloud_sync_exact_read_disabled');
+    }
+    final expectedClient = state?.icloudServices?.cloudMessagesClient;
+    final expectedStorage = statePath;
+    final objectBox = Database.store;
+    bool current() => !_serviceClosing && !loggingOut &&
+        !_cloudSyncV2SemanticPullQuiescing && !_cloudSyncV2OutboundQuiescing &&
+        !_cloudSyncV2PcsPreparationQuiescing && !objectBox.isClosed() &&
+        identical(objectBox, Database.store) && expectedClient != null &&
+        identical(expectedClient, state?.icloudServices?.cloudMessagesClient) &&
+        expectedStorage == statePath && ss.settings.finishedSetup.value &&
+        ls.isUiThread && ls.currentState == AppLifecycleState.resumed &&
+        !ss.settings.cloudSyncingEnabled.value && isSyncing.value == null;
+    void validate() {
+      if (!current()) throw StateError('cloud_sync_exact_read_identity_changed');
+    }
+    validate();
+    if (!cloudSyncV2ProgressAvailable || cloudSyncV2HistoryReadActive ||
+        cloudSyncV2Progress.active || _cloudSyncV2OutboundInFlight != null ||
+        _cloudSyncV2AutomaticArchiveActive || backendRegistrationRestartRequired) {
+      throw StateError('cloud_sync_exact_read_busy');
+    }
+    final preference = await readCloudSyncV2AutomaticArchivePreference();
+    validate();
+    if (preference.enabled) throw StateError('cloud_sync_exact_read_archive_enabled');
+    final prepared = await _prepareCloudSyncV2ProfilePcs(
+      validateContinuation: validate, recoveryInput: recoveryInput,
+    );
+    validate();
+    if (prepared == CloudSyncV2PcsPreparationOutcome.cancelled) {
+      throw StateError('cloud_sync_exact_read_cancelled');
+    }
+    final future = ls.retainEngineUntil(() async {
+      validate();
+      final protector = RustCloudSyncProtector(storageDirectory: expectedStorage);
+      final preflight = CloudSyncProductionPreflightProbe(
+        platformSupported: () => const {ffi.Abi.androidArm64, ffi.Abi.windowsArm64,
+          ffi.Abi.windowsX64}.contains(ffi.Abi.current()),
+        uiIsolate: () => ls.isUiThread,
+        rustPushReady: () => current(),
+        localState: ObjectBoxCloudSyncPreflightReader.fromDatabase().read,
+        privateStorageExists: () => Directory(expectedStorage).existsSync(),
+        logoutActive: () => !current(),
+        legacySyncEnabled: () => ss.settings.cloudSyncingEnabled.value,
+        legacySyncActive: () => isSyncing.value != null,
+        protectorSentinelValid: CloudSyncProtectorHealthProbe(protector: protector).read,
+      );
+      final adapter = CloudSyncProductionSemanticPullAdapter(
+        readActiveClient: () => state?.icloudServices?.cloudMessagesClient,
+        readPreflight: preflight.read, privateStorageDirectory: expectedStorage,
+        platform: Platform.operatingSystem, architecture: ffi.Abi.current().toString(),
+        buildCommit: _cloudSyncV2BuildIdentifier(),
+        scheduleSession: <T>(Future<T> Function() action) =>
+            _cloudSyncV2AttachmentGate.run<T>(validate: validate, action: action),
+      );
+      final currentPreference = await readCloudSyncV2AutomaticArchivePreference();
+      validate();
+      if (currentPreference.enabled) throw StateError('cloud_sync_exact_read_archive_enabled');
+      return adapter.readKnownMessage(messageGuid, current);
+    });
+    _cloudSyncV2OutboundInFlight = future;
+    try { return await future; }
+    finally {
+      if (identical(_cloudSyncV2OutboundInFlight, future)) _cloudSyncV2OutboundInFlight = null;
     }
   }
 
