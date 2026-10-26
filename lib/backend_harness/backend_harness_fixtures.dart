@@ -110,7 +110,15 @@ final class BackendHarnessFixtures {
         effectNotEntered: true,
       );
     }
-    final auth = await _identity();
+    late final CloudSyncNativeAuthSnapshot auth;
+    try {
+      auth = await _identity();
+    } on BackendHarnessFailure catch (failure) {
+      if (args.containsKey('chatGuidSha256') && failure.code == 'backend_not_ready') {
+        throw BackendHarnessFailure('backend_group_context_not_ready', effectNotEntered: true);
+      }
+      rethrow;
+    }
     final store = Database.store;
     final storage = pushService.statePath;
     final requested = (args['recipients'] as List).cast<String>();
@@ -133,12 +141,19 @@ final class BackendHarnessFixtures {
     // The ordinary directory lookup exercises the same registration resource
     // and target-key cache as send, including own-device reflection, without a
     // Message, claim or IDS packet. This does not validate key signatures.
-    await preflightTargets(
-      requested: requested,
-      sender: sender,
-      lookup: (targets, handle) => api.validateTargets(
-        state: current.client, targets: targets, sender: handle),
-    );
+    try {
+      await preflightTargets(
+        requested: requested,
+        sender: sender,
+        lookup: (targets, handle) => api.validateTargets(
+          state: current.client, targets: targets, sender: handle),
+      );
+    } on BackendHarnessFailure catch (failure) {
+      if (args.containsKey('chatGuidSha256') && failure.code == 'backend_not_ready') {
+        throw BackendHarnessFailure('backend_group_targets_not_ready', effectNotEntered: true);
+      }
+      rethrow;
+    }
     if (!auth.sameIdentity(await _identity()) ||
         !identical(current, pushService.state) ||
         !identical(store, Database.store) ||

@@ -14,8 +14,8 @@ import 'package:crypto/crypto.dart';
 
 import 'backend_harness_protocol.dart';
 
-Never _refuse() =>
-    throw BackendHarnessFailure('backend_not_ready', effectNotEntered: true);
+Never _refuse([String code = 'backend_not_ready']) =>
+    throw BackendHarnessFailure(code, effectNotEntered: true);
 String _bare(String value) => value.startsWith('tel:')
     ? value.substring(4)
     : value.startsWith('mailto:')
@@ -64,17 +64,21 @@ Chat selectBackendHarnessFixtureChat({
   final members = [...recipients]..sort();
   final senders = senderHandles.map(_bare).toSet();
   final qualified = <Chat>[];
+  var parentMatched = false;
+  var senderMatched = false;
+  var routeMatched = false;
   for (final chat in candidates) {
     if (expectedChatGuidSha256 != null &&
         sha256.convert(utf8.encode(chat.guid)).toString() != expectedChatGuidSha256) {
       continue;
     }
-    if (chat.isRpSms ||
-        chat.isRoutingStub ||
-        chat.usingHandle == null ||
+    parentMatched = true;
+    if (chat.usingHandle == null ||
         !senders.contains(_bare(chat.usingHandle!))) {
       continue;
     }
+    senderMatched = true;
+    if (chat.isRpSms || chat.isRoutingStub) continue;
     if (group) {
       final route = CloudSyncGroupSendRoute.capture(chat);
       if (route == null ||
@@ -93,6 +97,7 @@ Chat selectBackendHarnessFixtureChat({
         continue;
       }
     }
+    routeMatched = true;
     try {
       requireDependency(chat, group);
     } catch (_) {
@@ -100,7 +105,16 @@ Chat selectBackendHarnessFixtureChat({
     }
     qualified.add(chat);
   }
-  if (qualified.length != 1) _refuse();
+  if (qualified.length != 1) {
+    if (expectedChatGuidSha256 != null) {
+      if (!parentMatched) _refuse('backend_group_parent_not_ready');
+      if (!senderMatched) _refuse('backend_group_sender_not_ready');
+      if (!routeMatched) _refuse('backend_group_route_not_ready');
+      if (qualified.isEmpty) _refuse('backend_group_dependency_not_ready');
+      _refuse('backend_group_route_ambiguous');
+    }
+    _refuse();
+  }
   return qualified.single;
 });
 
@@ -111,7 +125,9 @@ Future<Chat> resolveBackendHarnessFixtureChat({
   required String fixtureId,
   String? expectedChatGuidSha256,
 }) async {
-  if (backend is! RustPushBackend) _refuse();
+  final contextFailure = expectedChatGuidSha256 == null
+      ? 'backend_not_ready' : 'backend_group_context_not_ready';
+  if (backend is! RustPushBackend) _refuse(contextFailure);
   final state = pushService.state;
   final client = state?.icloudServices?.cloudMessagesClient;
   if (state == null ||
@@ -119,7 +135,7 @@ Future<Chat> resolveBackendHarnessFixtureChat({
       !identical(client, auth.cloudMessagesClient) ||
       store.isClosed() ||
       !identical(store, Database.store)) {
-    _refuse();
+    _refuse(contextFailure);
   }
   final handles = await api.getHandles(state: state.client);
   if (!identical(state, pushService.state) ||
@@ -129,7 +145,7 @@ Future<Chat> resolveBackendHarnessFixtureChat({
       ) ||
       store.isClosed() ||
       !identical(store, Database.store)) {
-    _refuse();
+    _refuse(contextFailure);
   }
   final scope = CloudSyncScope(
     accountFingerprint: auth.accountFingerprint,

@@ -388,6 +388,34 @@ void main() {
     expect(calls, 1);
   });
 
+  test('fixed group readiness refusals serialize as certain consumed results', () async {
+    for (final code in const [
+      'backend_group_context_not_ready', 'backend_group_parent_not_ready',
+      'backend_group_sender_not_ready', 'backend_group_route_not_ready',
+      'backend_group_dependency_not_ready', 'backend_group_route_ambiguous',
+      'backend_group_targets_not_ready',
+    ]) {
+      var calls = 0;
+      final runner = engine({'fixture.route': BackendHarnessOperation(
+        background: true, uncertainOnFailure: true, validate: (_) => true,
+        handler: (_) async {
+          calls++;
+          throw BackendHarnessFailure(code, effectNotEntered: true);
+        },
+      )});
+      final original = request('fixed-stage', 'fixture.route');
+      final accepted = await runner.execute(original);
+      await Future<void>.delayed(Duration.zero);
+      final result = await runner.execute(request('fixed-stage-poll', 'job.status', {'jobId': accepted['jobId']}));
+      expect(result['state'], 'blocked');
+      expect(result['code'], code);
+      expect((result['data'] as Map)['flags'], {'outcome_uncertain': false});
+      expect(jsonDecode(jsonEncode(result))['code'], code);
+      expect((await runner.execute(original))['jobId'], accepted['jobId']);
+      expect(calls, 1);
+    }
+  });
+
   test(
     'exceptions and arbitrary payload keys never leak into receipts',
     () async {

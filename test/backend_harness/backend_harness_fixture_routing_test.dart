@@ -276,6 +276,29 @@ void main() {
     expect(() => select(expectedChatGuidSha256: pin), refused);
   });
 
+  test('pinned refusal identifies parent, sender, metadata and dependency stages', () {
+    final original = chat(group: true);
+    final pin = sha256.convert(utf8.encode(original.guid)).toString();
+    Matcher code(String expected) => throwsA(isA<BackendHarnessFailure>()
+      .having((failure) => failure.code, 'fixed readiness code', expected)
+      .having((failure) => failure.effectNotEntered, 'effect not entered', true));
+    expect(() => select(group: true, expectedChatGuidSha256: '0' * 64),
+      code('backend_group_parent_not_ready'));
+    expect(() => select(group: true, expectedChatGuidSha256: pin, senders: {'other@example.invalid'}),
+      code('backend_group_sender_not_ready'));
+    original.cloudGuid = null;
+    store.box<Chat>().put(original);
+    expect(() => select(group: true, expectedChatGuidSha256: pin),
+      code('backend_group_route_not_ready'));
+    original.cloudGuid = 'opaque-existing';
+    store.box<Chat>().put(original);
+    expect(() => select(group: true, expectedChatGuidSha256: pin,
+      proof: (_, _) => throw StateError('private protected proof detail')),
+      code('backend_group_dependency_not_ready'));
+    expect(store.box<Chat>().count(), 1);
+    expect(store.box<Message>().count(), 0);
+  });
+
   test('a stale group cannot hide the one current protected route', () {
     final stale = chat(group: true, suffix: 'stale');
     final current = chat(group: true, suffix: 'current');
