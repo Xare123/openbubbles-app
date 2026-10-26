@@ -392,6 +392,91 @@ pub(crate) fn open_staged_outbound_attachment_parent_with_group(
     decode_outbound_attachment_parent_with_group(&encoded, source, group)
 }
 
+/// Original retained metadata, not a historical lease or fresh-write authority.
+/// The API must authenticate the committed IDS source and current group proof;
+/// the caller must durably adopt the returned fresh stage before committing it.
+#[derive(Clone, Copy)]
+pub(crate) struct RetainedAttachmentParentRecoveryInput<'a> {
+    pub local_operation_id: &'a str,
+    pub logical_entity_key_hash: &'a str,
+    pub protected_payload_reference: &'a str,
+    pub payload_sha256: &'a str,
+    pub server_record_id_hash: &'a str,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ExactAttachmentParentRecoveryPhase {
+    OriginalOpen,
+    Identity,
+    Protect,
+}
+
+/// Closed phase and existing safe enum only, never a native exception string.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct ExactAttachmentParentRecoveryFailure {
+    pub phase: ExactAttachmentParentRecoveryPhase,
+    pub failure: CloudSyncOutboundFailure,
+}
+
+/// Restages the ORIGINAL encoded bytes after their independent source and
+/// identity checks. No headers, attributed body, timestamps, or record name
+/// are reconstructed. The original Message-create lease may already have
+/// been acknowledged at quarantine; this never pretends to restore it.
+pub(crate) fn stage_exact_attachment_parent_recovery(
+    storage_directory: PathBuf,
+    account_fingerprint: String,
+    container_scoped_user_id: &str,
+    original: &RetainedAttachmentParentRecoveryInput<'_>,
+    source: &DecodedIdsAttachmentSource,
+    group: Option<&CloudCanonicalChatPayload>,
+) -> Result<NativeProtectedOutboundStage, ExactAttachmentParentRecoveryFailure> {
+    let opened = open_staged_outbound_attachment_parent_with_group(
+        storage_directory.clone(),
+        account_fingerprint.clone(),
+        original.protected_payload_reference,
+        original.payload_sha256,
+        source,
+        group,
+    ).map_err(|failure| ExactAttachmentParentRecoveryFailure {
+        phase: ExactAttachmentParentRecoveryPhase::OriginalOpen, failure,
+    })?;
+    let (guid, record_name, encoded) = (|| {
+    verify_deterministic_message_record_name(
+        &opened.message.guid,
+        container_scoped_user_id,
+        &opened.server_record_name,
+    )?;
+    let hasher = crate::cloud_sync_protector::semantic_identifier_hasher(
+        storage_directory.to_string_lossy().into_owned(),
+    )
+    .map_err(|_| CloudSyncOutboundFailure::ProtectedStorage)?;
+    let logical = hasher
+        .canonical_entity_key_hash(CloudCanonicalEntityKind::Message, &opened.message.guid)
+        .map_err(|_| CloudSyncOutboundFailure::MalformedMessage)?;
+    if logical.value() != original.logical_entity_key_hash
+        || hasher.server_record_id_hash(&opened.server_record_name)
+            != original.server_record_id_hash
+        || initial_message_create_operation_id(&account_fingerprint, logical.value())?
+            != original.local_operation_id
+    {
+        return Err(CloudSyncOutboundFailure::BindingMismatch);
+    }
+    Ok((opened.message.guid, opened.server_record_name, opened.encoded))
+    })().map_err(|failure| ExactAttachmentParentRecoveryFailure {
+        phase: ExactAttachmentParentRecoveryPhase::Identity, failure,
+    })?;
+    stage_encoded_message(
+        storage_directory,
+        account_fingerprint,
+        CloudCanonicalEntityKind::Message,
+        &guid,
+        &record_name,
+        encoded,
+    ).map_err(|failure| ExactAttachmentParentRecoveryFailure {
+        phase: ExactAttachmentParentRecoveryPhase::Protect, failure,
+    })
+}
+
 /// Same exact CloudKit Date roundtrip exception as plaintext readback. Every
 /// other field, including the archived body, must equal the ORIGINAL stage.
 /// A semantically equivalent fresh archive is not permission to rewrite it.
@@ -1346,6 +1431,145 @@ pub(crate) mod attachment_parent_test_support {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn exact_parent_recovery_preserves_original_bytes_after_old_receipt_release() {
+        use super::attachment_parent_test_support::{
+            group, group_headers, group_source, headers, source,
+        };
+        for grouped in [false, true] {
+            let directory = tempfile::tempdir().unwrap();
+            let account = "A".repeat(43);
+            let route = group();
+            let source = if grouped { group_source() } else { source() };
+            let group = grouped.then_some(&route);
+            let message = if grouped { group_headers() } else { headers() };
+            let original_utm = message.utm;
+            let old = stage_outbound_attachment_parent_with_group(
+                directory.path().into(), account.clone(), "container-user".into(),
+                message, &source, group,
+            ).unwrap();
+            crate::cloud_sync_native_fetch::cloud_sync_commit_protected_page_lease(
+                directory.path().into(), &old.lease_reference,
+                std::slice::from_ref(&old.protected_payload_reference),
+            ).unwrap();
+            crate::cloud_sync_native_fetch::cloud_sync_acknowledge_committed_page_lease(
+                directory.path().into(), &old.lease_reference,
+            ).unwrap();
+            assert!(crate::cloud_sync_native_fetch::cloud_sync_verify_committed_lease_exact(
+                directory.path().into(), &old.lease_reference,
+                std::slice::from_ref(&old.protected_payload_reference),
+            ).is_err());
+            let before = open_staged_outbound_attachment_parent_with_group(
+                directory.path().into(), account.clone(), &old.protected_payload_reference,
+                &old.payload_sha256, &source, group,
+            ).unwrap();
+            let operation = initial_message_create_operation_id(&account, &old.logical_entity_key_hash).unwrap();
+            let selected = RetainedAttachmentParentRecoveryInput {
+                local_operation_id: &operation,
+                logical_entity_key_hash: &old.logical_entity_key_hash,
+                protected_payload_reference: &old.protected_payload_reference,
+                payload_sha256: &old.payload_sha256,
+                server_record_id_hash: &old.server_record_id_hash,
+            };
+            let fresh = stage_exact_attachment_parent_recovery(
+                directory.path().into(), account.clone(), "container-user",
+                &selected, &source, group,
+            ).unwrap();
+            assert_ne!(fresh.lease_reference, old.lease_reference);
+            assert_ne!(fresh.protected_payload_reference, old.protected_payload_reference);
+            assert_eq!(fresh.payload_sha256, old.payload_sha256);
+            assert_eq!(fresh.payload_length, old.payload_length);
+            assert_eq!(fresh.logical_entity_key_hash, old.logical_entity_key_hash);
+            assert_eq!(fresh.server_record_id_hash, old.server_record_id_hash);
+            assert!(crate::cloud_sync_native_fetch::cloud_sync_verify_committed_lease_exact(
+                directory.path().into(), &fresh.lease_reference,
+                std::slice::from_ref(&fresh.protected_payload_reference),
+            ).is_err()); // Recovery returns an uncommitted stage, not ownership.
+            let reopened = open_staged_outbound_attachment_parent_with_group(
+                directory.path().into(), account.clone(), &fresh.protected_payload_reference,
+                &fresh.payload_sha256, &source, group,
+            ).unwrap();
+            assert_eq!(reopened.encoded, before.encoded);
+            assert_eq!(reopened.message().utm, original_utm);
+            crate::cloud_sync_native_fetch::cloud_sync_rollback_protected_page_lease(
+                directory.path().into(), &fresh.lease_reference,
+            ).unwrap();
+            let retained = open_staged_outbound_attachment_parent_with_group(
+                directory.path().into(), account, &old.protected_payload_reference,
+                &old.payload_sha256, &source, group,
+            ).unwrap();
+            assert_eq!(retained.encoded, before.encoded);
+        }
+    }
+
+    #[test]
+    fn exact_parent_recovery_rejects_changed_bindings_without_staging() {
+        use super::attachment_parent_test_support::{group, group_headers, group_source};
+        fn files(directory: &std::path::Path) -> Vec<(PathBuf, u64)> {
+            let mut result = Vec::new();
+            for entry in std::fs::read_dir(directory).unwrap() {
+                let entry = entry.unwrap();
+                if entry.file_type().unwrap().is_dir() {
+                    result.extend(files(&entry.path()));
+                } else {
+                    result.push((entry.path(), entry.metadata().unwrap().len()));
+                }
+            }
+            result.sort();
+            result
+        }
+        let directory = tempfile::tempdir().unwrap();
+        let account = "A".repeat(43);
+        let route = group();
+        let source = group_source();
+        let old = stage_outbound_attachment_parent_with_group(
+            directory.path().into(), account.clone(), "container-user".into(),
+            group_headers(), &source, Some(&route),
+        ).unwrap();
+        let operation = initial_message_create_operation_id(&account, &old.logical_entity_key_hash).unwrap();
+        let selected = RetainedAttachmentParentRecoveryInput {
+            local_operation_id: &operation,
+            logical_entity_key_hash: &old.logical_entity_key_hash,
+            protected_payload_reference: &old.protected_payload_reference,
+            payload_sha256: &old.payload_sha256,
+            server_record_id_hash: &old.server_record_id_hash,
+        };
+        let wrong_operation = format!("op1:{}", "0".repeat(64));
+        let wrong_hash = "Z".repeat(43);
+        let wrong_sha = "0".repeat(64);
+        let baseline = files(directory.path());
+        for changed in [
+            RetainedAttachmentParentRecoveryInput { local_operation_id: &wrong_operation, ..selected },
+            RetainedAttachmentParentRecoveryInput { logical_entity_key_hash: &wrong_hash, ..selected },
+            RetainedAttachmentParentRecoveryInput { server_record_id_hash: &wrong_hash, ..selected },
+            RetainedAttachmentParentRecoveryInput { payload_sha256: &wrong_sha, ..selected },
+        ] {
+            assert!(stage_exact_attachment_parent_recovery(
+                directory.path().into(), account.clone(), "container-user",
+                &changed, &source, Some(&route),
+            ).is_err());
+            assert_eq!(files(directory.path()), baseline);
+        }
+        for container_user in ["other-container-user", ""] {
+            assert!(stage_exact_attachment_parent_recovery(
+                directory.path().into(), account.clone(), container_user,
+                &selected, &source, Some(&route),
+            ).is_err());
+            assert_eq!(files(directory.path()), baseline);
+        }
+        assert!(stage_exact_attachment_parent_recovery(
+            directory.path().into(), account.clone(), "container-user",
+            &selected, &source, None,
+        ).is_err());
+        let mut changed_source = group_source();
+        changed_source.message_guid = "other-message".into();
+        assert!(stage_exact_attachment_parent_recovery(
+            directory.path().into(), account, "container-user",
+            &selected, &changed_source, Some(&route),
+        ).is_err());
+        assert_eq!(files(directory.path()), baseline);
+    }
 
     #[test]
     fn group_attachment_parent_retains_opaque_chat_identity_body_and_child_identity() {

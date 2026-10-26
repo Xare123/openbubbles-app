@@ -6395,6 +6395,232 @@ pub async fn cloud_sync_stage_outbound_attachment_parent(
     }
 }
 
+/// Original Message metadata selected by an independently validated recovery
+/// owner. No historical Message lease, caller-authored body or timestamp is
+/// accepted. This value alone is neither adoption nor CloudKit save authority.
+#[derive(Clone)]
+pub struct CloudSyncRetainedAttachmentParentRecoveryInput {
+    pub local_operation_id: String,
+    pub logical_entity_key_hash: String,
+    pub protected_payload_reference: String,
+    pub payload_sha256: String,
+    pub server_record_id_hash: String,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CloudSyncExactAttachmentParentRecoveryPhase {
+    Input,
+    Storage,
+    Auth,
+    Source,
+    WriterBinding,
+    AuthRevalidate,
+    SourceRevalidate,
+    Group,
+    OriginalOpen,
+    Identity,
+    Protect,
+    Complete,
+}
+
+#[derive(Debug)]
+pub struct CloudSyncExactAttachmentParentRecoveryResult {
+    pub phase: CloudSyncExactAttachmentParentRecoveryPhase,
+    pub stage: Option<CloudSyncProtectedOutboundStage>,
+    pub failure: Option<CloudSyncOutboundSafeCode>,
+}
+
+#[frb(ignore)]
+fn exact_attachment_parent_recovery_failure(
+    phase: CloudSyncExactAttachmentParentRecoveryPhase,
+    failure: CloudSyncOutboundSafeCode,
+) -> CloudSyncExactAttachmentParentRecoveryResult {
+    CloudSyncExactAttachmentParentRecoveryResult { phase, stage: None, failure: Some(failure) }
+}
+
+#[frb(ignore)]
+fn valid_retained_attachment_parent_recovery_input(
+    account_fingerprint: &str,
+    original: &CloudSyncRetainedAttachmentParentRecoveryInput,
+) -> bool {
+    is_cloud_sync_keyed_hash(account_fingerprint)
+        && is_cloud_sync_operation_id(&original.local_operation_id)
+        && is_cloud_sync_keyed_hash(&original.logical_entity_key_hash)
+        && is_cloud_sync_protected_reference(&original.protected_payload_reference)
+        && is_cloud_sync_hex_digest(&original.payload_sha256)
+        && is_cloud_sync_keyed_hash(&original.server_record_id_hash)
+        && crate::cloud_sync_outbound::initial_message_create_operation_id(
+            account_fingerprint,
+            &original.logical_entity_key_hash,
+        )
+        .as_deref()
+            == Ok(original.local_operation_id.as_str())
+}
+
+#[frb(ignore)]
+fn require_existing_windows_message_recovery_storage(
+    storage_directory: &str,
+) -> Result<(), CloudSyncOutboundSafeCode> {
+    #[cfg(target_os = "windows")]
+    {
+        if !is_cloud_sync_windows_dev_profile(storage_directory) {
+            return Err(CloudSyncOutboundSafeCode::InvalidScope);
+        }
+        // Recovery must never initialize a replacement key for retained data.
+        // Match the existing protector's installation-secret path, using the
+        // strict read-only DPAPI parser before any load-or-create auth helper.
+        crate::windows_secret_storage::read_cloud_sync_install_secret(
+            &PathBuf::from(storage_directory).join("cloud_sync_v2_install_secret.bin"),
+        )
+        .map(|_| ())
+        .map_err(|_| CloudSyncOutboundSafeCode::ProtectedStorage)
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = storage_directory;
+        Err(CloudSyncOutboundSafeCode::InvalidScope)
+    }
+}
+
+/// Windows engineering-profile recovery of one ORIGINAL attachment-parent
+/// envelope. Reuses the normal lookup-only writer binding outside a read
+/// pause, and authenticates the genuine committed IDS source and group proof.
+/// Returns only a fresh UNCOMMITTED local stage. The caller must retain the
+/// original quarantine/audit, durably adopt the new owner before commit, and
+/// independently authorize any later action. No send, upload or save occurs.
+pub async fn cloud_sync_windows_stage_exact_attachment_parent_recovery(
+    cloud_messages_client: &Arc<CloudMessagesClient<DefaultAnisetteProvider>>,
+    context: CloudSyncNativeSendReceiptContext,
+    original: CloudSyncRetainedAttachmentParentRecoveryInput,
+    attachment_parent_group_proof: Option<CloudSyncAttachmentParentGroupProof>,
+) -> CloudSyncExactAttachmentParentRecoveryResult {
+    use CloudSyncExactAttachmentParentRecoveryPhase as Phase;
+    if !valid_retained_attachment_parent_recovery_input(&context.account_fingerprint, &original) {
+        return exact_attachment_parent_recovery_failure(Phase::Input, CloudSyncOutboundSafeCode::InvalidRequest);
+    }
+    let storage = context.storage_directory.clone();
+    if let Err(code) = require_existing_windows_message_recovery_storage(&storage) {
+        return exact_attachment_parent_recovery_failure(Phase::Storage, code);
+    }
+    let before = match cloud_sync_capture_auth_snapshot(cloud_messages_client, storage.clone()).await {
+        Ok(value) => value,
+        Err(_) => return exact_attachment_parent_recovery_failure(Phase::Auth, CloudSyncOutboundSafeCode::NativeAuthUnavailable),
+    };
+    if let Err(code) = cloud_sync_open_attachment_parent_source(&storage, &before, &context) {
+        return exact_attachment_parent_recovery_failure(Phase::Source, code);
+    }
+    let binding = match cloud_messages_client.warm_message_writer_preparation_lookup_only().await {
+        Ok(value) => value,
+        Err(_) => return exact_attachment_parent_recovery_failure(Phase::WriterBinding, CloudSyncOutboundSafeCode::NativeAuthUnavailable),
+    };
+    let after = match cloud_sync_capture_auth_snapshot(cloud_messages_client, storage.clone()).await {
+        Ok(value) => value,
+        Err(_) => return exact_attachment_parent_recovery_failure(Phase::AuthRevalidate, CloudSyncOutboundSafeCode::NativeAuthUnavailable),
+    };
+    if !cloud_sync_auth_identity_remains_exact(
+        &before, &after, &context.account_fingerprint, &context.protected_store_identity,
+    ) || cloud_messages_client.validate_writer_preparation_binding(&binding).await.is_err() {
+        return exact_attachment_parent_recovery_failure(Phase::AuthRevalidate, CloudSyncOutboundSafeCode::InvalidScope);
+    }
+    let source = match cloud_sync_open_attachment_parent_source(&storage, &after, &context) {
+        Ok(value) => value,
+        Err(code) => return exact_attachment_parent_recovery_failure(Phase::SourceRevalidate, code),
+    };
+    if let Some(proof) = &attachment_parent_group_proof {
+        if let Err(code) = cloud_sync_validate_attachment_group_proof(&storage, &after, proof) {
+            return exact_attachment_parent_recovery_failure(Phase::Group, code);
+        }
+    }
+    let selected = crate::cloud_sync_outbound::RetainedAttachmentParentRecoveryInput {
+        local_operation_id: &original.local_operation_id,
+        logical_entity_key_hash: &original.logical_entity_key_hash,
+        protected_payload_reference: &original.protected_payload_reference,
+        payload_sha256: &original.payload_sha256,
+        server_record_id_hash: &original.server_record_id_hash,
+    };
+    match crate::cloud_sync_outbound::stage_exact_attachment_parent_recovery(
+        PathBuf::from(storage), after.account_fingerprint,
+        binding.container_scoped_user_id(), &selected, &source,
+        attachment_parent_group_proof.as_ref().map(|value| &value.route),
+    ) {
+        Ok(stage) => CloudSyncExactAttachmentParentRecoveryResult {
+            phase: Phase::Complete, stage: Some(cloud_sync_bridge_stage(stage)), failure: None,
+        },
+        Err(failure) => {
+            use crate::cloud_sync_outbound::ExactAttachmentParentRecoveryPhase as Core;
+            let phase = match failure.phase {
+                Core::OriginalOpen => Phase::OriginalOpen,
+                Core::Identity => Phase::Identity,
+                Core::Protect => Phase::Protect,
+            };
+            exact_attachment_parent_recovery_failure(phase, map_cloud_sync_outbound_failure(failure.failure))
+        },
+    }
+}
+
+#[cfg(test)]
+mod retained_attachment_parent_recovery_input_tests {
+    use super::*;
+
+    fn original() -> (String, CloudSyncRetainedAttachmentParentRecoveryInput) {
+        let account = "A".repeat(43);
+        let logical = "L".repeat(43);
+        let local_operation_id = crate::cloud_sync_outbound::initial_message_create_operation_id(
+            &account, &logical,
+        ).unwrap();
+        (account, CloudSyncRetainedAttachmentParentRecoveryInput {
+            local_operation_id,
+            logical_entity_key_hash: logical,
+            protected_payload_reference: format!("obcs2.ref.{}", "r".repeat(43)),
+            payload_sha256: "a".repeat(64),
+            server_record_id_hash: "S".repeat(43),
+        })
+    }
+
+    #[test]
+    fn retained_parent_recovery_input_binds_initial_operation_and_all_original_metadata() {
+        let (account, original) = original();
+        assert!(valid_retained_attachment_parent_recovery_input(&account, &original));
+        assert!(!valid_retained_attachment_parent_recovery_input(&"B".repeat(43), &original));
+        for field in 0..5 {
+            let mut changed = original.clone();
+            match field {
+                0 => changed.local_operation_id = format!("op1:{}", "0".repeat(64)),
+                1 => changed.logical_entity_key_hash = "K".repeat(43),
+                2 => changed.protected_payload_reference = "not-a-protected-reference".into(),
+                3 => changed.payload_sha256 = "private-or-malformed".into(),
+                _ => changed.server_record_id_hash = "not-a-keyed-hash".into(),
+            }
+            assert!(!valid_retained_attachment_parent_recovery_input(&account, &changed));
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn retained_parent_recovery_never_initializes_or_replaces_an_install_secret() {
+        let directory = tempfile::tempdir().unwrap();
+        std::fs::write(directory.path().join(".openbubbles-cloud-sync-v2-windows-dev"),
+            "openbubbles-cloud-sync-v2-windows-dev-profile:v1").unwrap();
+        let secret = directory.path().join("cloud_sync_v2_install_secret.bin");
+        assert_eq!(require_existing_windows_message_recovery_storage(
+            &directory.path().to_string_lossy()), Err(CloudSyncOutboundSafeCode::ProtectedStorage));
+        assert!(!secret.exists());
+        std::fs::write(&secret, b"invalid-existing-secret").unwrap();
+        assert_eq!(require_existing_windows_message_recovery_storage(
+            &directory.path().to_string_lossy()), Err(CloudSyncOutboundSafeCode::ProtectedStorage));
+        assert_eq!(std::fs::read(&secret).unwrap(), b"invalid-existing-secret");
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn retained_parent_recovery_platform_gate_leaves_other_platform_storage_untouched() {
+        let directory = tempfile::tempdir().unwrap();
+        assert_eq!(require_existing_windows_message_recovery_storage(
+            &directory.path().to_string_lossy()), Err(CloudSyncOutboundSafeCode::InvalidScope));
+        assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 0);
+    }
+}
+
 #[frb(ignore)]
 fn cloud_sync_open_attachment_parent_source(
     storage_directory: &str,
