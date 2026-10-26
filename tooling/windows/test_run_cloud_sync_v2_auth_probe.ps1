@@ -147,6 +147,7 @@ if (-not $testDirectory.StartsWith(
 New-Item -ItemType Directory -Path $testDirectory | Out-Null
 
 $syntheticChild = Join-Path $testDirectory "synthetic-auth-probe-child.ps1"
+$timeoutHoldRelease = $null
 
 function Wait-SyntheticAuthProbePublished {
     param([Parameter(Mandatory)][string] $StatusPath)
@@ -688,6 +689,7 @@ param(
     [string] $Stage = "auth-admitted",
     [string] $SafeCode = "none",
     [int] $HoldSeconds = 0,
+    [string] $HoldReleaseEventName = "",
     [string] $StatusLaunchId = "",
     [string] $UpdatedUtc = ""
 )
@@ -711,7 +713,16 @@ $payload = @{
     updated_utc = $effectiveUpdatedUtc
 }
 $payload | ConvertTo-Json -Compress | Set-Content -LiteralPath $StatusPath -NoNewline
-if ($HoldSeconds -gt 0) {
+if ($HoldReleaseEventName) {
+    $release = [Threading.EventWaitHandle]::OpenExisting($HoldReleaseEventName)
+    try {
+        # The parent owns release. A watchdog bounds an orphan after a parent
+        # crash; elapsed startup time is never the terminal-alive assertion.
+        if (-not $release.WaitOne(120000)) { exit 254 }
+    }
+    finally { $release.Dispose() }
+}
+elseif ($HoldSeconds -gt 0) {
     Start-Sleep -Seconds $HoldSeconds
 }
 exit $ExitCode
@@ -761,7 +772,7 @@ exit $ExitCode
             Remove-Item -LiteralPath $syntheticStatus -Force
         }
         $syntheticLaunchId = New-CryptographicLaunchId
-        $syntheticProcess = Start-Process `
+        $syntheticProcess = Start-Process -WindowStyle Hidden `
             -FilePath $pwshExecutable `
             -ArgumentList @(
                 "-NoProfile", "-File", $syntheticChild,
@@ -788,16 +799,31 @@ exit $ExitCode
 
     Remove-Item -LiteralPath $syntheticStatus -Force
     $terminalHangLaunchId = New-CryptographicLaunchId
-    $terminalHangProcess = Start-Process `
+    $terminalHangReleaseName = "Local\OpenBubblesAuthProbeTest-$terminalHangLaunchId"
+    $terminalHangEventCreated = $false
+    $terminalHangRelease = [Threading.EventWaitHandle]::new(
+        $false, [Threading.EventResetMode]::ManualReset,
+        $terminalHangReleaseName, [ref] $terminalHangEventCreated)
+    if (-not $terminalHangEventCreated) {
+        $terminalHangRelease.Dispose()
+        throw "The synthetic terminal hold event was already owned."
+    }
+    $terminalHangProcess = $null
+    try {
+    $terminalHangProcess = Start-Process -WindowStyle Hidden `
         -FilePath $pwshExecutable `
         -ArgumentList @(
             "-NoProfile", "-File", $syntheticChild,
             "-StatusPath", $syntheticStatus,
             "-LaunchId", $terminalHangLaunchId,
             "-ExitCode", "0",
-            "-HoldSeconds", "10"
+            "-HoldReleaseEventName", $terminalHangReleaseName
         ) `
         -PassThru
+    Wait-SyntheticAuthProbePublished -StatusPath $syntheticStatus
+    $terminalHangProcess.Refresh()
+    Assert-True -Condition (-not $terminalHangProcess.HasExited) `
+        -Message "The synthetic terminal child did not remain behind its release gate."
     $terminalHangFailure = Invoke-ExpectedFailure {
         Wait-AuthProbeTerminalProcess `
             -Process $terminalHangProcess `
@@ -809,15 +835,29 @@ exit $ExitCode
     Assert-True `
         -Condition ($terminalHangFailure -eq
             "Windows authentication probe did not exit after terminal status.") `
-        -Message "A terminal authentication probe child that remained active was accepted."
+        -Message ("A terminal authentication probe child that remained active was accepted. Actual: " +
+            $terminalHangFailure)
     $terminalHangProcess.Refresh()
     Assert-True `
         -Condition $terminalHangProcess.HasExited `
         -Message "The terminal authentication probe child remained active after forced termination."
+    }
+    finally {
+        $null = $terminalHangRelease.Set()
+        $terminalHangRelease.Dispose()
+        if ($null -ne $terminalHangProcess) {
+            $terminalHangProcess.Refresh()
+            if (-not $terminalHangProcess.HasExited -and
+                -not $terminalHangProcess.WaitForExit(5000)) {
+                Stop-ExactLaunchedHarness -Process $terminalHangProcess `
+                    -ExpectedExecutable $pwshExecutable
+            }
+        }
+    }
 
     Remove-Item -LiteralPath $syntheticStatus -Force
     $mismatchLaunchId = New-CryptographicLaunchId
-    $mismatchProcess = Start-Process `
+    $mismatchProcess = Start-Process -WindowStyle Hidden `
         -FilePath $pwshExecutable `
         -ArgumentList @(
             "-NoProfile", "-File", $syntheticChild,
@@ -840,8 +880,20 @@ exit $ExitCode
         -Message "The controlled lifecycle accepted a mismatched child exit code."
 
     Remove-Item -LiteralPath $syntheticStatus -Force
+    # Timeout fixtures must stay alive until the tested guard stops them,
+    # regardless of status-publication or process-inspection setup delays.
+    $timeoutHoldReleaseName = "Local\OpenBubblesAuthProbeTimeoutTest-$(New-CryptographicLaunchId)"
+    $timeoutHoldCreated = $false
+    $timeoutHoldRelease = [Threading.EventWaitHandle]::new(
+        $false, [Threading.EventResetMode]::ManualReset,
+        $timeoutHoldReleaseName, [ref] $timeoutHoldCreated)
+    if (-not $timeoutHoldCreated) {
+        $timeoutHoldRelease.Dispose()
+        $timeoutHoldRelease = $null
+        throw "The synthetic timeout hold event was already owned."
+    }
     $progressLaunchId = New-CryptographicLaunchId
-    $progressProcess = Start-Process `
+    $progressProcess = Start-Process -WindowStyle Hidden `
         -FilePath $pwshExecutable `
         -ArgumentList @(
             "-NoProfile", "-File", $syntheticChild,
@@ -851,7 +903,7 @@ exit $ExitCode
             "-State", "running",
             "-Stage", "aps-setup",
             "-SafeCode", "none",
-            "-HoldSeconds", "5"
+            "-HoldReleaseEventName", $timeoutHoldReleaseName
         ) `
         -PassThru
     Wait-SyntheticAuthProbePublished -StatusPath $syntheticStatus
@@ -878,7 +930,7 @@ exit $ExitCode
         "yyyy-MM-dd'T'HH:mm:ss.ffffff'Z'",
         [System.Globalization.CultureInfo]::InvariantCulture
     )
-    $staleTimeoutProcess = Start-Process `
+    $staleTimeoutProcess = Start-Process -WindowStyle Hidden `
         -FilePath $pwshExecutable `
         -ArgumentList @(
             "-NoProfile", "-File", $syntheticChild,
@@ -888,7 +940,7 @@ exit $ExitCode
             "-State", "running",
             "-Stage", "aps-setup",
             "-SafeCode", "none",
-            "-HoldSeconds", "5",
+            "-HoldReleaseEventName", $timeoutHoldReleaseName,
             "-UpdatedUtc", $staleTimeoutUpdatedUtc
         ) `
         -PassThru
@@ -908,7 +960,7 @@ exit $ExitCode
 
     Remove-Item -LiteralPath $syntheticStatus -Force
     $mismatchedTimeoutLaunchId = New-CryptographicLaunchId
-    $mismatchedTimeoutProcess = Start-Process `
+    $mismatchedTimeoutProcess = Start-Process -WindowStyle Hidden `
         -FilePath $pwshExecutable `
         -ArgumentList @(
             "-NoProfile", "-File", $syntheticChild,
@@ -918,7 +970,7 @@ exit $ExitCode
             "-State", "running",
             "-Stage", "aps-setup",
             "-SafeCode", "none",
-            "-HoldSeconds", "5",
+            "-HoldReleaseEventName", $timeoutHoldReleaseName,
             "-StatusLaunchId", (New-CryptographicLaunchId)
         ) `
         -PassThru
@@ -942,7 +994,7 @@ exit $ExitCode
     $delayedChildCommand = "Start-Sleep -Seconds 3; & `"$syntheticChild`" @args"
 
     $delayedTimeoutLaunchId = New-CryptographicLaunchId
-    $delayedTimeoutProcess = Start-Process `
+    $delayedTimeoutProcess = Start-Process -WindowStyle Hidden `
         -FilePath $pwshExecutable `
         -ArgumentList @(
             '-NoProfile', '-Command', $delayedChildCommand,
@@ -952,7 +1004,7 @@ exit $ExitCode
             "-State", "running",
             "-Stage", "aps-setup",
             "-SafeCode", "none",
-            "-HoldSeconds", "5"
+            "-HoldReleaseEventName", $timeoutHoldReleaseName
         ) `
         -PassThru
     Wait-SyntheticAuthProbePublished -StatusPath $syntheticStatus
@@ -1433,6 +1485,10 @@ exit $ExitCode
     Write-Host "Cloud Sync V2 Windows authentication probe launcher tests passed."
 }
 finally {
+    if ($null -ne $timeoutHoldRelease) {
+        $null = $timeoutHoldRelease.Set()
+        $timeoutHoldRelease.Dispose()
+    }
     if (Test-Path -LiteralPath $testDirectory -PathType Container) {
         $resolved = (Resolve-Path -LiteralPath $testDirectory).Path
         if (-not $resolved.StartsWith(
