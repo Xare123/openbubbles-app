@@ -1104,6 +1104,26 @@ cloudSyncStageOutboundAttachmentParent({
   attachmentParentGroupProof: attachmentParentGroupProof,
 );
 
+/// Windows engineering-profile recovery of one ORIGINAL attachment-parent
+/// envelope. Reuses the normal lookup-only writer binding outside a read
+/// pause, and authenticates the genuine committed IDS source and group proof.
+/// Returns only a fresh UNCOMMITTED local stage. The caller must retain the
+/// original quarantine/audit, durably adopt the new owner before commit, and
+/// independently authorize any later action. No send, upload or save occurs.
+Future<CloudSyncExactAttachmentParentRecoveryResult>
+cloudSyncWindowsStageExactAttachmentParentRecovery({
+  required ArcCloudMessagesClientDefaultAnisetteProvider cloudMessagesClient,
+  required CloudSyncNativeSendReceiptContext context,
+  required CloudSyncRetainedAttachmentParentRecoveryInput original,
+  CloudSyncAttachmentParentGroupProof? attachmentParentGroupProof,
+}) => RustLib.instance.api
+    .crateApiApiCloudSyncWindowsStageExactAttachmentParentRecovery(
+      cloudMessagesClient: cloudMessagesClient,
+      context: context,
+      original: original,
+      attachmentParentGroupProof: attachmentParentGroupProof,
+    );
+
 /// Prepares the original completed attachment record for the same single-use
 /// capability-fenced consumer as Message and Chat. Does not upload bytes.
 Future<CloudSyncPreparedMessageCreateResult> cloudSyncPrepareAttachmentCreate({
@@ -4417,6 +4437,45 @@ class CloudSyncAttachmentUploadReceiptEvidence {
           serverRecordIdHash == other.serverRecordIdHash;
 }
 
+enum CloudSyncExactAttachmentParentRecoveryPhase {
+  input,
+  storage,
+  auth,
+  source,
+  writerBinding,
+  authRevalidate,
+  sourceRevalidate,
+  group,
+  originalOpen,
+  identity,
+  protect,
+  complete,
+}
+
+class CloudSyncExactAttachmentParentRecoveryResult {
+  final CloudSyncExactAttachmentParentRecoveryPhase phase;
+  final CloudSyncProtectedOutboundStage? stage;
+  final CloudSyncOutboundSafeCode? failure;
+
+  const CloudSyncExactAttachmentParentRecoveryResult({
+    required this.phase,
+    this.stage,
+    this.failure,
+  });
+
+  @override
+  int get hashCode => phase.hashCode ^ stage.hashCode ^ failure.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is CloudSyncExactAttachmentParentRecoveryResult &&
+          runtimeType == other.runtimeType &&
+          phase == other.phase &&
+          stage == other.stage &&
+          failure == other.failure;
+}
+
 /// A retained historical source and current CloudKit identity, never an IDS
 /// send context. The existing upload owner/capability/receipt engine is shared.
 class CloudSyncHistoricalAttachmentContext {
@@ -6336,6 +6395,44 @@ class CloudSyncRestoredReceivedMutation {
           sourceSha256 == other.sourceSha256 &&
           capturedLocalHandles == other.capturedLocalHandles &&
           message == other.message;
+}
+
+/// Original Message metadata selected by an independently validated recovery
+/// owner. No historical Message lease, caller-authored body or timestamp is
+/// accepted. This value alone is neither adoption nor CloudKit save authority.
+class CloudSyncRetainedAttachmentParentRecoveryInput {
+  final String localOperationId;
+  final String logicalEntityKeyHash;
+  final String protectedPayloadReference;
+  final String payloadSha256;
+  final String serverRecordIdHash;
+
+  const CloudSyncRetainedAttachmentParentRecoveryInput({
+    required this.localOperationId,
+    required this.logicalEntityKeyHash,
+    required this.protectedPayloadReference,
+    required this.payloadSha256,
+    required this.serverRecordIdHash,
+  });
+
+  @override
+  int get hashCode =>
+      localOperationId.hashCode ^
+      logicalEntityKeyHash.hashCode ^
+      protectedPayloadReference.hashCode ^
+      payloadSha256.hashCode ^
+      serverRecordIdHash.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is CloudSyncRetainedAttachmentParentRecoveryInput &&
+          runtimeType == other.runtimeType &&
+          localOperationId == other.localOperationId &&
+          logicalEntityKeyHash == other.logicalEntityKeyHash &&
+          protectedPayloadReference == other.protectedPayloadReference &&
+          payloadSha256 == other.payloadSha256 &&
+          serverRecordIdHash == other.serverRecordIdHash;
 }
 
 enum CloudSyncTransientAssociationKind {

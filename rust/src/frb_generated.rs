@@ -39,7 +39,7 @@ flutter_rust_bridge::frb_generated_boilerplate!(
     default_rust_auto_opaque = RustAutoOpaqueMoi,
 );
 pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_VERSION: &str = "2.3.0";
-pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = 1513904751;
+pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = 1953705251;
 
 // Section: executor
 
@@ -9495,6 +9495,33 @@ fn wire__crate__api__api__cloud_sync_windows_send_mutation_confirmed_impl(
             }
         },
     )
+}
+fn wire__crate__api__api__cloud_sync_windows_stage_exact_attachment_parent_recovery_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_async::<flutter_rust_bridge::for_generated::SseCodec,_,_,_>(flutter_rust_bridge::for_generated::TaskInfo{ debug_name: "cloud_sync_windows_stage_exact_attachment_parent_recovery", port: Some(port_), mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal }, move || {
+            let message = unsafe { flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(ptr_, rust_vec_len_, data_len_) };
+            let mut deserializer = flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_cloud_messages_client = <RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<Arc < CloudMessagesClient < DefaultAnisetteProvider > >>>>::sse_decode(&mut deserializer);
+let api_context = <crate::api::api::CloudSyncNativeSendReceiptContext>::sse_decode(&mut deserializer);
+let api_original = <crate::api::api::CloudSyncRetainedAttachmentParentRecoveryInput>::sse_decode(&mut deserializer);
+let api_attachment_parent_group_proof = <Option<CloudSyncAttachmentParentGroupProof>>::sse_decode(&mut deserializer);deserializer.end(); move |context| async move {
+                    transform_result_sse::<_, ()>((move || async move {
+                        let mut api_cloud_messages_client_guard = None;
+let decode_indices_ = flutter_rust_bridge::for_generated::lockable_compute_decode_order(vec![flutter_rust_bridge::for_generated::LockableOrderInfo::new(&api_cloud_messages_client, 0, false)]);
+        for i in decode_indices_ {
+            match i {
+                0 => api_cloud_messages_client_guard = Some(api_cloud_messages_client.lockable_decode_async_ref().await),
+                _ => unreachable!(),
+            }
+        }
+        let api_cloud_messages_client_guard = api_cloud_messages_client_guard.unwrap();
+ let output_ok = Result::<_,()>::Ok(crate::api::api::cloud_sync_windows_stage_exact_attachment_parent_recovery(&*api_cloud_messages_client_guard, api_context, api_original, api_attachment_parent_group_proof).await)?;   Ok(output_ok)
+                    })().await)
+                } })
 }
 fn wire__crate__api__api__complete_msg_impl(
     port_: flutter_rust_bridge::for_generated::MessagePort,
@@ -26283,6 +26310,50 @@ impl SseDecode for crate::api::cloud_sync_dependency::CloudSyncDependencyParentT
     }
 }
 
+impl SseDecode for crate::api::api::CloudSyncExactAttachmentParentRecoveryPhase {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut inner = <i32>::sse_decode(deserializer);
+        return match inner {
+            0 => crate::api::api::CloudSyncExactAttachmentParentRecoveryPhase::Input,
+            1 => crate::api::api::CloudSyncExactAttachmentParentRecoveryPhase::Storage,
+            2 => crate::api::api::CloudSyncExactAttachmentParentRecoveryPhase::Auth,
+            3 => crate::api::api::CloudSyncExactAttachmentParentRecoveryPhase::Source,
+            4 => crate::api::api::CloudSyncExactAttachmentParentRecoveryPhase::WriterBinding,
+            5 => crate::api::api::CloudSyncExactAttachmentParentRecoveryPhase::AuthRevalidate,
+            6 => crate::api::api::CloudSyncExactAttachmentParentRecoveryPhase::SourceRevalidate,
+            7 => crate::api::api::CloudSyncExactAttachmentParentRecoveryPhase::Group,
+            8 => crate::api::api::CloudSyncExactAttachmentParentRecoveryPhase::OriginalOpen,
+            9 => crate::api::api::CloudSyncExactAttachmentParentRecoveryPhase::Identity,
+            10 => crate::api::api::CloudSyncExactAttachmentParentRecoveryPhase::Protect,
+            11 => crate::api::api::CloudSyncExactAttachmentParentRecoveryPhase::Complete,
+            _ => unreachable!(
+                "Invalid variant for CloudSyncExactAttachmentParentRecoveryPhase: {}",
+                inner
+            ),
+        };
+    }
+}
+
+impl SseDecode for crate::api::api::CloudSyncExactAttachmentParentRecoveryResult {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_phase =
+            <crate::api::api::CloudSyncExactAttachmentParentRecoveryPhase>::sse_decode(
+                deserializer,
+            );
+        let mut var_stage =
+            <Option<crate::api::api::CloudSyncProtectedOutboundStage>>::sse_decode(deserializer);
+        let mut var_failure =
+            <Option<crate::api::api::CloudSyncOutboundSafeCode>>::sse_decode(deserializer);
+        return crate::api::api::CloudSyncExactAttachmentParentRecoveryResult {
+            phase: var_phase,
+            stage: var_stage,
+            failure: var_failure,
+        };
+    }
+}
+
 impl SseDecode for crate::api::api::CloudSyncHistoricalAttachmentContext {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -27478,6 +27549,24 @@ impl SseDecode for crate::api::api::CloudSyncRestoredReceivedMutation {
             source_sha256: var_sourceSha256,
             captured_local_handles: var_capturedLocalHandles,
             message: var_message,
+        };
+    }
+}
+
+impl SseDecode for crate::api::api::CloudSyncRetainedAttachmentParentRecoveryInput {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_localOperationId = <String>::sse_decode(deserializer);
+        let mut var_logicalEntityKeyHash = <String>::sse_decode(deserializer);
+        let mut var_protectedPayloadReference = <String>::sse_decode(deserializer);
+        let mut var_payloadSha256 = <String>::sse_decode(deserializer);
+        let mut var_serverRecordIdHash = <String>::sse_decode(deserializer);
+        return crate::api::api::CloudSyncRetainedAttachmentParentRecoveryInput {
+            local_operation_id: var_localOperationId,
+            logical_entity_key_hash: var_logicalEntityKeyHash,
+            protected_payload_reference: var_protectedPayloadReference,
+            payload_sha256: var_payloadSha256,
+            server_record_id_hash: var_serverRecordIdHash,
         };
     }
 }
@@ -34240,171 +34329,172 @@ fn pde_ffi_dispatcher_primary_impl(
 153 => wire__crate__api__api__cloud_sync_windows_probe_message_feed_impl(port, ptr, rust_vec_len, data_len),
 154 => wire__crate__api__api__cloud_sync_windows_send_confirmed_impl(port, ptr, rust_vec_len, data_len),
 155 => wire__crate__api__api__cloud_sync_windows_send_mutation_confirmed_impl(port, ptr, rust_vec_len, data_len),
-156 => wire__crate__api__api__complete_msg_impl(port, ptr, rust_vec_len, data_len),
-157 => wire__crate__api__api__config_from_encoded_impl(port, ptr, rust_vec_len, data_len),
-158 => wire__crate__api__api__config_from_relay_impl(port, ptr, rust_vec_len, data_len),
-159 => wire__crate__api__api__config_from_validation_data_impl(port, ptr, rust_vec_len, data_len),
-160 => wire__crate__api__api__configure_app_review_impl(port, ptr, rust_vec_len, data_len),
-161 => wire__crate__api__api__convert_token_to_uuid_impl(port, ptr, rust_vec_len, data_len),
-162 => wire__crate__api__api__count_records_impl(port, ptr, rust_vec_len, data_len),
-163 => wire__crate__api__api__create_facetime_impl(port, ptr, rust_vec_len, data_len),
-164 => wire__crate__api__api__create_group_impl(port, ptr, rust_vec_len, data_len),
-165 => wire__crate__api__api__create_icon_array_impl(port, ptr, rust_vec_len, data_len),
-166 => wire__crate__api__api__create_image_array_impl(port, ptr, rust_vec_len, data_len),
-169 => wire__crate__api__api__decline_facetime_impl(port, ptr, rust_vec_len, data_len),
-170 => wire__crate__api__api__decline_invite_impl(port, ptr, rust_vec_len, data_len),
-180 => wire__crate__api__api__decode_profile_message_impl(port, ptr, rust_vec_len, data_len),
-181 => wire__crate__api__api__decode_summary_info_impl(port, ptr, rust_vec_len, data_len),
-182 => wire__crate__api__api__delete_attachments_impl(port, ptr, rust_vec_len, data_len),
-183 => wire__crate__api__api__delete_beacon_share_impl(port, ptr, rust_vec_len, data_len),
-184 => wire__crate__api__api__delete_chats_impl(port, ptr, rust_vec_len, data_len),
-185 => wire__crate__api__api__delete_group_impl(port, ptr, rust_vec_len, data_len),
-186 => wire__crate__api__api__delete_messages_impl(port, ptr, rust_vec_len, data_len),
-187 => wire__crate__api__api__delete_passkey_impl(port, ptr, rust_vec_len, data_len),
-188 => wire__crate__api__api__delete_password_impl(port, ptr, rust_vec_len, data_len),
-189 => wire__crate__api__api__delete_password_meta_impl(port, ptr, rust_vec_len, data_len),
-190 => wire__crate__api__api__delete_wifi_password_impl(port, ptr, rust_vec_len, data_len),
-191 => wire__crate__api__api__do_first_time_init_impl(port, ptr, rust_vec_len, data_len),
-192 => wire__crate__api__api__do_login_impl(port, ptr, rust_vec_len, data_len),
-193 => wire__crate__api__api__do_reregister_impl(port, ptr, rust_vec_len, data_len),
-194 => wire__crate__api__api__download_attachment_impl(port, ptr, rust_vec_len, data_len),
-195 => wire__crate__api__api__download_cloud_attachments_impl(port, ptr, rust_vec_len, data_len),
-196 => wire__crate__api__api__download_cloud_group_photos_impl(port, ptr, rust_vec_len, data_len),
-197 => wire__crate__api__api__download_mmcs_impl(port, ptr, rust_vec_len, data_len),
-203 => wire__crate__api__api__encode_hex_impl(port, ptr, rust_vec_len, data_len),
-209 => wire__crate__api__api__encode_profile_message_impl(port, ptr, rust_vec_len, data_len),
-210 => wire__crate__api__api__encode_summary_info_impl(port, ptr, rust_vec_len, data_len),
-211 => wire__crate__api__api__fetch_profile_impl(port, ptr, rust_vec_len, data_len),
-212 => wire__crate__api__api__ffi_file_packager_default_impl(port, ptr, rust_vec_len, data_len),
-213 => wire__crate__api__api__from_poster_impl(port, ptr, rust_vec_len, data_len),
-214 => wire__crate__api__api__from_poster_save_impl(port, ptr, rust_vec_len, data_len),
-215 => wire__crate__api__api__from_transcript_poster_save_impl(port, ptr, rust_vec_len, data_len),
-216 => wire__crate__api__api__ft_sessions_impl(port, ptr, rust_vec_len, data_len),
-217 => wire__crate__api__api__generate_udid_impl(port, ptr, rust_vec_len, data_len),
-218 => wire__crate__api__api__get_2fa_code_impl(port, ptr, rust_vec_len, data_len),
-219 => wire__crate__api__api__get_2fa_sms_opts_impl(port, ptr, rust_vec_len, data_len),
-220 => wire__crate__api__api__get_albums_impl(port, ptr, rust_vec_len, data_len),
-221 => wire__crate__api__api__get_anisette_headers_impl(port, ptr, rust_vec_len, data_len),
-222 => wire__crate__api__api__get_aps_connection_status_impl(port, ptr, rust_vec_len, data_len),
-224 => wire__crate__api__api__get_background_following_impl(port, ptr, rust_vec_len, data_len),
-225 => wire__crate__api__api__get_beacon_items_impl(port, ptr, rust_vec_len, data_len),
-226 => wire__crate__api__api__get_bottles_impl(port, ptr, rust_vec_len, data_len),
-227 => wire__crate__api__api__get_contacts_headers_impl(port, ptr, rust_vec_len, data_len),
-228 => wire__crate__api__api__get_device_info_impl(port, ptr, rust_vec_len, data_len),
-229 => wire__crate__api__api__get_devices_impl(port, ptr, rust_vec_len, data_len),
-230 => wire__crate__api__api__get_entitlements_impl(port, ptr, rust_vec_len, data_len),
-231 => wire__crate__api__api__get_following_impl(port, ptr, rust_vec_len, data_len),
-232 => wire__crate__api__api__get_ft_link_impl(port, ptr, rust_vec_len, data_len),
-233 => wire__crate__api__api__get_groups_impl(port, ptr, rust_vec_len, data_len),
-234 => wire__crate__api__api__get_handles_impl(port, ptr, rust_vec_len, data_len),
-235 => wire__crate__api__api__get_my_phone_handles_impl(port, ptr, rust_vec_len, data_len),
-236 => wire__crate__api__api__get_passkeys_impl(port, ptr, rust_vec_len, data_len),
-237 => wire__crate__api__api__get_passwords_impl(port, ptr, rust_vec_len, data_len),
-238 => wire__crate__api__api__get_passwords_meta_impl(port, ptr, rust_vec_len, data_len),
-239 => wire__crate__api__api__get_quota_info_impl(port, ptr, rust_vec_len, data_len),
-240 => wire__crate__api__api__get_regstate_impl(port, ptr, rust_vec_len, data_len),
-241 => wire__crate__api__api__get_sms_targets_impl(port, ptr, rust_vec_len, data_len),
-242 => wire__crate__api__api__get_syncstatus_impl(port, ptr, rust_vec_len, data_len),
-243 => wire__crate__api__api__get_token_impl(port, ptr, rust_vec_len, data_len),
-244 => wire__crate__api__api__get_user_name_impl(port, ptr, rust_vec_len, data_len),
-245 => wire__crate__api__api__get_wifi_passwords_impl(port, ptr, rust_vec_len, data_len),
-247 => wire__crate__api__api__invalidate_id_cache_impl(port, ptr, rust_vec_len, data_len),
-248 => wire__crate__api__api__invite_to_channel_impl(port, ptr, rust_vec_len, data_len),
-249 => wire__crate__api__api__invite_user_impl(port, ptr, rust_vec_len, data_len),
-250 => wire__crate__api__api__is_in_clique_impl(port, ptr, rust_vec_len, data_len),
-251 => wire__crate__api__api__join_clique_with_bottle_impl(port, ptr, rust_vec_len, data_len),
-252 => wire__crate__api__api__make_anisette_impl(port, ptr, rust_vec_len, data_len),
-256 => wire__crate__api__api__make_cloudkit_impl(port, ptr, rust_vec_len, data_len),
-257 => wire__crate__api__api__make_facetime_impl(port, ptr, rust_vec_len, data_len),
-258 => wire__crate__api__api__make_find_my_friends_impl(port, ptr, rust_vec_len, data_len),
-259 => wire__crate__api__api__make_find_my_phone_impl(port, ptr, rust_vec_len, data_len),
-260 => wire__crate__api__api__make_findmy_impl(port, ptr, rust_vec_len, data_len),
-261 => wire__crate__api__api__make_idms_impl(port, ptr, rust_vec_len, data_len),
-262 => wire__crate__api__api__make_imclient_impl(port, ptr, rust_vec_len, data_len),
-264 => wire__crate__api__api__make_passwords_impl(port, ptr, rust_vec_len, data_len),
-265 => wire__crate__api__api__make_profiles_impl(port, ptr, rust_vec_len, data_len),
-266 => wire__crate__api__api__make_shared_streams_impl(port, ptr, rust_vec_len, data_len),
-267 => wire__crate__api__api__make_statuskit_impl(port, ptr, rust_vec_len, data_len),
-269 => wire__crate__api__api__message_parts_raw_text_impl(port, ptr, rust_vec_len, data_len),
-271 => wire__crate__api__api__my_async_runtime_default_impl(port, ptr, rust_vec_len, data_len),
-272 => wire__crate__api__api__new_msg_impl(port, ptr, rust_vec_len, data_len),
-283 => wire__crate__api__api__pack_transcript_poster_impl(port, ptr, rust_vec_len, data_len),
-284 => wire__crate__api__api__parse_poster_impl(port, ptr, rust_vec_len, data_len),
-285 => wire__crate__api__api__parse_poster_save_impl(port, ptr, rust_vec_len, data_len),
-286 => wire__crate__api__api__parse_transcript_poster_impl(port, ptr, rust_vec_len, data_len),
-290 => wire__crate__api__api__play_find_my_sound_impl(port, ptr, rust_vec_len, data_len),
-292 => wire__crate__api__api__provisioned_flavor_default_impl(port, ptr, rust_vec_len, data_len),
-293 => wire__crate__api__api__ptr_to_dart_impl(port, ptr, rust_vec_len, data_len),
-294 => wire__crate__api__api__query_handle_impl(port, ptr, rust_vec_len, data_len),
-296 => wire__crate__api__api__recv_wait_impl(port, ptr, rust_vec_len, data_len),
-297 => wire__crate__api__api__refresh_aps_connection_impl(port, ptr, rust_vec_len, data_len),
-298 => wire__crate__api__api__refresh_background_following_impl(port, ptr, rust_vec_len, data_len),
-299 => wire__crate__api__api__refresh_devices_impl(port, ptr, rust_vec_len, data_len),
-300 => wire__crate__api__api__refresh_following_impl(port, ptr, rust_vec_len, data_len),
-301 => wire__crate__api__api__refresh_phone_registration_push_impl(port, ptr, rust_vec_len, data_len),
-302 => wire__crate__api__api__register_ids_impl(port, ptr, rust_vec_len, data_len),
-303 => wire__crate__api__api__remove_album_impl(port, ptr, rust_vec_len, data_len),
-304 => wire__crate__api__api__remove_user_impl(port, ptr, rust_vec_len, data_len),
-305 => wire__crate__api__api__rename_group_impl(port, ptr, rust_vec_len, data_len),
-306 => wire__crate__api__api__report_messages_impl(port, ptr, rust_vec_len, data_len),
-307 => wire__crate__api__api__request_handles_impl(port, ptr, rust_vec_len, data_len),
-309 => wire__crate__api__api__reset_channel_keys_impl(port, ptr, rust_vec_len, data_len),
-310 => wire__crate__api__api__reset_clique_impl(port, ptr, rust_vec_len, data_len),
-311 => wire__crate__api__api__reset_state_impl(port, ptr, rust_vec_len, data_len),
-312 => wire__crate__api__api__restore_account_impl(port, ptr, rust_vec_len, data_len),
-315 => wire__crate__api__api__restore_user_impl(port, ptr, rust_vec_len, data_len),
-317 => wire__crate__api__api__reuse_native_relay_setup_impl(port, ptr, rust_vec_len, data_len),
-318 => wire__crate__api__api__save_attachment_impl(port, ptr, rust_vec_len, data_len),
-319 => wire__crate__api__api__save_attachments_impl(port, ptr, rust_vec_len, data_len),
-320 => wire__crate__api__api__save_chats_impl(port, ptr, rust_vec_len, data_len),
-322 => wire__crate__api__api__save_messages_impl(port, ptr, rust_vec_len, data_len),
-323 => wire__crate__api__api__save_passkey_impl(port, ptr, rust_vec_len, data_len),
-324 => wire__crate__api__api__save_password_impl(port, ptr, rust_vec_len, data_len),
-325 => wire__crate__api__api__save_password_meta_impl(port, ptr, rust_vec_len, data_len),
-326 => wire__crate__api__api__save_user_impl(port, ptr, rust_vec_len, data_len),
-328 => wire__crate__api__api__save_wifi_password_impl(port, ptr, rust_vec_len, data_len),
-329 => wire__crate__api__api__select_background_friend_impl(port, ptr, rust_vec_len, data_len),
-330 => wire__crate__api__api__select_friend_impl(port, ptr, rust_vec_len, data_len),
-331 => wire__crate__api__api__send_impl(port, ptr, rust_vec_len, data_len),
-332 => wire__crate__api__api__send_2fa_sms_impl(port, ptr, rust_vec_len, data_len),
-333 => wire__crate__api__api__send_2fa_to_devices_impl(port, ptr, rust_vec_len, data_len),
-335 => wire__crate__api__api__service_from_ptr_impl(port, ptr, rust_vec_len, data_len),
-336 => wire__crate__api__api__set_identity_impl(port, ptr, rust_vec_len, data_len),
-337 => wire__crate__api__api__set_profile_impl(port, ptr, rust_vec_len, data_len),
-338 => wire__crate__api__api__set_status_impl(port, ptr, rust_vec_len, data_len),
-339 => wire__crate__api__api__setup_push_impl(port, ptr, rust_vec_len, data_len),
-340 => wire__crate__api__api__setup_push_fresh_impl(port, ptr, rust_vec_len, data_len),
-341 => wire__crate__api__api__shared_push_state_restore_impl(port, ptr, rust_vec_len, data_len),
-342 => wire__crate__api__api__subscribe_impl(port, ptr, rust_vec_len, data_len),
-344 => wire__crate__api__api__subscribe_token_impl(port, ptr, rust_vec_len, data_len),
-345 => wire__crate__api__api__sync_attachments_impl(port, ptr, rust_vec_len, data_len),
-346 => wire__crate__api__api__sync_chats_impl(port, ptr, rust_vec_len, data_len),
-347 => wire__crate__api__api__sync_messages_impl(port, ptr, rust_vec_len, data_len),
-348 => wire__crate__api__api__sync_now_impl(port, ptr, rust_vec_len, data_len),
-349 => wire__crate__api__api__sync_passwords_impl(port, ptr, rust_vec_len, data_len),
-350 => wire__crate__api__api__sync_wifi_passwords_impl(port, ptr, rust_vec_len, data_len),
-352 => wire__crate__api__api__teardown_2fa_impl(port, ptr, rust_vec_len, data_len),
-353 => wire__crate__api__api__transcript_poster_save_impl(port, ptr, rust_vec_len, data_len),
-354 => wire__crate__api__api__try_auth_impl(port, ptr, rust_vec_len, data_len),
-355 => wire__crate__api__api__try_icloud_login_impl(port, ptr, rust_vec_len, data_len),
-356 => wire__crate__api__api__unsubscribe_impl(port, ptr, rust_vec_len, data_len),
-357 => wire__crate__api__api__update_account_headers_impl(port, ptr, rust_vec_len, data_len),
-358 => wire__crate__api__api__update_beacon_name_impl(port, ptr, rust_vec_len, data_len),
-359 => wire__crate__api__api__upload_attachment_impl(port, ptr, rust_vec_len, data_len),
-360 => wire__crate__api__api__upload_cloud_attachments_impl(port, ptr, rust_vec_len, data_len),
-361 => wire__crate__api__api__upload_group_photo_impl(port, ptr, rust_vec_len, data_len),
-362 => wire__crate__api__api__upload_mmcs_impl(port, ptr, rust_vec_len, data_len),
-363 => wire__crate__api__api__use_link_for_impl(port, ptr, rust_vec_len, data_len),
-365 => wire__crate__api__api__validate_cert_impl(port, ptr, rust_vec_len, data_len),
-366 => wire__crate__api__api__validate_relay_impl(port, ptr, rust_vec_len, data_len),
-367 => wire__crate__api__api__validate_targets_impl(port, ptr, rust_vec_len, data_len),
-368 => wire__crate__api__api__validate_targets_facetime_impl(port, ptr, rust_vec_len, data_len),
-369 => wire__crate__api__api__verify_2fa_impl(port, ptr, rust_vec_len, data_len),
-370 => wire__crate__api__api__verify_2fa_direct_impl(port, ptr, rust_vec_len, data_len),
-371 => wire__crate__api__api__verify_2fa_sms_impl(port, ptr, rust_vec_len, data_len),
-372 => wire__crate__api__cloud_sync_chat1_correlation__cloud_sync_inspect_chat1_record_name_correlation_under_writer_pause_impl(port, ptr, rust_vec_len, data_len),
-373 => wire__crate__api__cloud_sync_chat_identity__cloud_sync_observe_protected_chat_identity_impl(port, ptr, rust_vec_len, data_len),
-374 => wire__crate__api__cloud_sync_dependency__cloud_sync_locate_protected_message_parent_impl(port, ptr, rust_vec_len, data_len),
+156 => wire__crate__api__api__cloud_sync_windows_stage_exact_attachment_parent_recovery_impl(port, ptr, rust_vec_len, data_len),
+157 => wire__crate__api__api__complete_msg_impl(port, ptr, rust_vec_len, data_len),
+158 => wire__crate__api__api__config_from_encoded_impl(port, ptr, rust_vec_len, data_len),
+159 => wire__crate__api__api__config_from_relay_impl(port, ptr, rust_vec_len, data_len),
+160 => wire__crate__api__api__config_from_validation_data_impl(port, ptr, rust_vec_len, data_len),
+161 => wire__crate__api__api__configure_app_review_impl(port, ptr, rust_vec_len, data_len),
+162 => wire__crate__api__api__convert_token_to_uuid_impl(port, ptr, rust_vec_len, data_len),
+163 => wire__crate__api__api__count_records_impl(port, ptr, rust_vec_len, data_len),
+164 => wire__crate__api__api__create_facetime_impl(port, ptr, rust_vec_len, data_len),
+165 => wire__crate__api__api__create_group_impl(port, ptr, rust_vec_len, data_len),
+166 => wire__crate__api__api__create_icon_array_impl(port, ptr, rust_vec_len, data_len),
+167 => wire__crate__api__api__create_image_array_impl(port, ptr, rust_vec_len, data_len),
+170 => wire__crate__api__api__decline_facetime_impl(port, ptr, rust_vec_len, data_len),
+171 => wire__crate__api__api__decline_invite_impl(port, ptr, rust_vec_len, data_len),
+181 => wire__crate__api__api__decode_profile_message_impl(port, ptr, rust_vec_len, data_len),
+182 => wire__crate__api__api__decode_summary_info_impl(port, ptr, rust_vec_len, data_len),
+183 => wire__crate__api__api__delete_attachments_impl(port, ptr, rust_vec_len, data_len),
+184 => wire__crate__api__api__delete_beacon_share_impl(port, ptr, rust_vec_len, data_len),
+185 => wire__crate__api__api__delete_chats_impl(port, ptr, rust_vec_len, data_len),
+186 => wire__crate__api__api__delete_group_impl(port, ptr, rust_vec_len, data_len),
+187 => wire__crate__api__api__delete_messages_impl(port, ptr, rust_vec_len, data_len),
+188 => wire__crate__api__api__delete_passkey_impl(port, ptr, rust_vec_len, data_len),
+189 => wire__crate__api__api__delete_password_impl(port, ptr, rust_vec_len, data_len),
+190 => wire__crate__api__api__delete_password_meta_impl(port, ptr, rust_vec_len, data_len),
+191 => wire__crate__api__api__delete_wifi_password_impl(port, ptr, rust_vec_len, data_len),
+192 => wire__crate__api__api__do_first_time_init_impl(port, ptr, rust_vec_len, data_len),
+193 => wire__crate__api__api__do_login_impl(port, ptr, rust_vec_len, data_len),
+194 => wire__crate__api__api__do_reregister_impl(port, ptr, rust_vec_len, data_len),
+195 => wire__crate__api__api__download_attachment_impl(port, ptr, rust_vec_len, data_len),
+196 => wire__crate__api__api__download_cloud_attachments_impl(port, ptr, rust_vec_len, data_len),
+197 => wire__crate__api__api__download_cloud_group_photos_impl(port, ptr, rust_vec_len, data_len),
+198 => wire__crate__api__api__download_mmcs_impl(port, ptr, rust_vec_len, data_len),
+204 => wire__crate__api__api__encode_hex_impl(port, ptr, rust_vec_len, data_len),
+210 => wire__crate__api__api__encode_profile_message_impl(port, ptr, rust_vec_len, data_len),
+211 => wire__crate__api__api__encode_summary_info_impl(port, ptr, rust_vec_len, data_len),
+212 => wire__crate__api__api__fetch_profile_impl(port, ptr, rust_vec_len, data_len),
+213 => wire__crate__api__api__ffi_file_packager_default_impl(port, ptr, rust_vec_len, data_len),
+214 => wire__crate__api__api__from_poster_impl(port, ptr, rust_vec_len, data_len),
+215 => wire__crate__api__api__from_poster_save_impl(port, ptr, rust_vec_len, data_len),
+216 => wire__crate__api__api__from_transcript_poster_save_impl(port, ptr, rust_vec_len, data_len),
+217 => wire__crate__api__api__ft_sessions_impl(port, ptr, rust_vec_len, data_len),
+218 => wire__crate__api__api__generate_udid_impl(port, ptr, rust_vec_len, data_len),
+219 => wire__crate__api__api__get_2fa_code_impl(port, ptr, rust_vec_len, data_len),
+220 => wire__crate__api__api__get_2fa_sms_opts_impl(port, ptr, rust_vec_len, data_len),
+221 => wire__crate__api__api__get_albums_impl(port, ptr, rust_vec_len, data_len),
+222 => wire__crate__api__api__get_anisette_headers_impl(port, ptr, rust_vec_len, data_len),
+223 => wire__crate__api__api__get_aps_connection_status_impl(port, ptr, rust_vec_len, data_len),
+225 => wire__crate__api__api__get_background_following_impl(port, ptr, rust_vec_len, data_len),
+226 => wire__crate__api__api__get_beacon_items_impl(port, ptr, rust_vec_len, data_len),
+227 => wire__crate__api__api__get_bottles_impl(port, ptr, rust_vec_len, data_len),
+228 => wire__crate__api__api__get_contacts_headers_impl(port, ptr, rust_vec_len, data_len),
+229 => wire__crate__api__api__get_device_info_impl(port, ptr, rust_vec_len, data_len),
+230 => wire__crate__api__api__get_devices_impl(port, ptr, rust_vec_len, data_len),
+231 => wire__crate__api__api__get_entitlements_impl(port, ptr, rust_vec_len, data_len),
+232 => wire__crate__api__api__get_following_impl(port, ptr, rust_vec_len, data_len),
+233 => wire__crate__api__api__get_ft_link_impl(port, ptr, rust_vec_len, data_len),
+234 => wire__crate__api__api__get_groups_impl(port, ptr, rust_vec_len, data_len),
+235 => wire__crate__api__api__get_handles_impl(port, ptr, rust_vec_len, data_len),
+236 => wire__crate__api__api__get_my_phone_handles_impl(port, ptr, rust_vec_len, data_len),
+237 => wire__crate__api__api__get_passkeys_impl(port, ptr, rust_vec_len, data_len),
+238 => wire__crate__api__api__get_passwords_impl(port, ptr, rust_vec_len, data_len),
+239 => wire__crate__api__api__get_passwords_meta_impl(port, ptr, rust_vec_len, data_len),
+240 => wire__crate__api__api__get_quota_info_impl(port, ptr, rust_vec_len, data_len),
+241 => wire__crate__api__api__get_regstate_impl(port, ptr, rust_vec_len, data_len),
+242 => wire__crate__api__api__get_sms_targets_impl(port, ptr, rust_vec_len, data_len),
+243 => wire__crate__api__api__get_syncstatus_impl(port, ptr, rust_vec_len, data_len),
+244 => wire__crate__api__api__get_token_impl(port, ptr, rust_vec_len, data_len),
+245 => wire__crate__api__api__get_user_name_impl(port, ptr, rust_vec_len, data_len),
+246 => wire__crate__api__api__get_wifi_passwords_impl(port, ptr, rust_vec_len, data_len),
+248 => wire__crate__api__api__invalidate_id_cache_impl(port, ptr, rust_vec_len, data_len),
+249 => wire__crate__api__api__invite_to_channel_impl(port, ptr, rust_vec_len, data_len),
+250 => wire__crate__api__api__invite_user_impl(port, ptr, rust_vec_len, data_len),
+251 => wire__crate__api__api__is_in_clique_impl(port, ptr, rust_vec_len, data_len),
+252 => wire__crate__api__api__join_clique_with_bottle_impl(port, ptr, rust_vec_len, data_len),
+253 => wire__crate__api__api__make_anisette_impl(port, ptr, rust_vec_len, data_len),
+257 => wire__crate__api__api__make_cloudkit_impl(port, ptr, rust_vec_len, data_len),
+258 => wire__crate__api__api__make_facetime_impl(port, ptr, rust_vec_len, data_len),
+259 => wire__crate__api__api__make_find_my_friends_impl(port, ptr, rust_vec_len, data_len),
+260 => wire__crate__api__api__make_find_my_phone_impl(port, ptr, rust_vec_len, data_len),
+261 => wire__crate__api__api__make_findmy_impl(port, ptr, rust_vec_len, data_len),
+262 => wire__crate__api__api__make_idms_impl(port, ptr, rust_vec_len, data_len),
+263 => wire__crate__api__api__make_imclient_impl(port, ptr, rust_vec_len, data_len),
+265 => wire__crate__api__api__make_passwords_impl(port, ptr, rust_vec_len, data_len),
+266 => wire__crate__api__api__make_profiles_impl(port, ptr, rust_vec_len, data_len),
+267 => wire__crate__api__api__make_shared_streams_impl(port, ptr, rust_vec_len, data_len),
+268 => wire__crate__api__api__make_statuskit_impl(port, ptr, rust_vec_len, data_len),
+270 => wire__crate__api__api__message_parts_raw_text_impl(port, ptr, rust_vec_len, data_len),
+272 => wire__crate__api__api__my_async_runtime_default_impl(port, ptr, rust_vec_len, data_len),
+273 => wire__crate__api__api__new_msg_impl(port, ptr, rust_vec_len, data_len),
+284 => wire__crate__api__api__pack_transcript_poster_impl(port, ptr, rust_vec_len, data_len),
+285 => wire__crate__api__api__parse_poster_impl(port, ptr, rust_vec_len, data_len),
+286 => wire__crate__api__api__parse_poster_save_impl(port, ptr, rust_vec_len, data_len),
+287 => wire__crate__api__api__parse_transcript_poster_impl(port, ptr, rust_vec_len, data_len),
+291 => wire__crate__api__api__play_find_my_sound_impl(port, ptr, rust_vec_len, data_len),
+293 => wire__crate__api__api__provisioned_flavor_default_impl(port, ptr, rust_vec_len, data_len),
+294 => wire__crate__api__api__ptr_to_dart_impl(port, ptr, rust_vec_len, data_len),
+295 => wire__crate__api__api__query_handle_impl(port, ptr, rust_vec_len, data_len),
+297 => wire__crate__api__api__recv_wait_impl(port, ptr, rust_vec_len, data_len),
+298 => wire__crate__api__api__refresh_aps_connection_impl(port, ptr, rust_vec_len, data_len),
+299 => wire__crate__api__api__refresh_background_following_impl(port, ptr, rust_vec_len, data_len),
+300 => wire__crate__api__api__refresh_devices_impl(port, ptr, rust_vec_len, data_len),
+301 => wire__crate__api__api__refresh_following_impl(port, ptr, rust_vec_len, data_len),
+302 => wire__crate__api__api__refresh_phone_registration_push_impl(port, ptr, rust_vec_len, data_len),
+303 => wire__crate__api__api__register_ids_impl(port, ptr, rust_vec_len, data_len),
+304 => wire__crate__api__api__remove_album_impl(port, ptr, rust_vec_len, data_len),
+305 => wire__crate__api__api__remove_user_impl(port, ptr, rust_vec_len, data_len),
+306 => wire__crate__api__api__rename_group_impl(port, ptr, rust_vec_len, data_len),
+307 => wire__crate__api__api__report_messages_impl(port, ptr, rust_vec_len, data_len),
+308 => wire__crate__api__api__request_handles_impl(port, ptr, rust_vec_len, data_len),
+310 => wire__crate__api__api__reset_channel_keys_impl(port, ptr, rust_vec_len, data_len),
+311 => wire__crate__api__api__reset_clique_impl(port, ptr, rust_vec_len, data_len),
+312 => wire__crate__api__api__reset_state_impl(port, ptr, rust_vec_len, data_len),
+313 => wire__crate__api__api__restore_account_impl(port, ptr, rust_vec_len, data_len),
+316 => wire__crate__api__api__restore_user_impl(port, ptr, rust_vec_len, data_len),
+318 => wire__crate__api__api__reuse_native_relay_setup_impl(port, ptr, rust_vec_len, data_len),
+319 => wire__crate__api__api__save_attachment_impl(port, ptr, rust_vec_len, data_len),
+320 => wire__crate__api__api__save_attachments_impl(port, ptr, rust_vec_len, data_len),
+321 => wire__crate__api__api__save_chats_impl(port, ptr, rust_vec_len, data_len),
+323 => wire__crate__api__api__save_messages_impl(port, ptr, rust_vec_len, data_len),
+324 => wire__crate__api__api__save_passkey_impl(port, ptr, rust_vec_len, data_len),
+325 => wire__crate__api__api__save_password_impl(port, ptr, rust_vec_len, data_len),
+326 => wire__crate__api__api__save_password_meta_impl(port, ptr, rust_vec_len, data_len),
+327 => wire__crate__api__api__save_user_impl(port, ptr, rust_vec_len, data_len),
+329 => wire__crate__api__api__save_wifi_password_impl(port, ptr, rust_vec_len, data_len),
+330 => wire__crate__api__api__select_background_friend_impl(port, ptr, rust_vec_len, data_len),
+331 => wire__crate__api__api__select_friend_impl(port, ptr, rust_vec_len, data_len),
+332 => wire__crate__api__api__send_impl(port, ptr, rust_vec_len, data_len),
+333 => wire__crate__api__api__send_2fa_sms_impl(port, ptr, rust_vec_len, data_len),
+334 => wire__crate__api__api__send_2fa_to_devices_impl(port, ptr, rust_vec_len, data_len),
+336 => wire__crate__api__api__service_from_ptr_impl(port, ptr, rust_vec_len, data_len),
+337 => wire__crate__api__api__set_identity_impl(port, ptr, rust_vec_len, data_len),
+338 => wire__crate__api__api__set_profile_impl(port, ptr, rust_vec_len, data_len),
+339 => wire__crate__api__api__set_status_impl(port, ptr, rust_vec_len, data_len),
+340 => wire__crate__api__api__setup_push_impl(port, ptr, rust_vec_len, data_len),
+341 => wire__crate__api__api__setup_push_fresh_impl(port, ptr, rust_vec_len, data_len),
+342 => wire__crate__api__api__shared_push_state_restore_impl(port, ptr, rust_vec_len, data_len),
+343 => wire__crate__api__api__subscribe_impl(port, ptr, rust_vec_len, data_len),
+345 => wire__crate__api__api__subscribe_token_impl(port, ptr, rust_vec_len, data_len),
+346 => wire__crate__api__api__sync_attachments_impl(port, ptr, rust_vec_len, data_len),
+347 => wire__crate__api__api__sync_chats_impl(port, ptr, rust_vec_len, data_len),
+348 => wire__crate__api__api__sync_messages_impl(port, ptr, rust_vec_len, data_len),
+349 => wire__crate__api__api__sync_now_impl(port, ptr, rust_vec_len, data_len),
+350 => wire__crate__api__api__sync_passwords_impl(port, ptr, rust_vec_len, data_len),
+351 => wire__crate__api__api__sync_wifi_passwords_impl(port, ptr, rust_vec_len, data_len),
+353 => wire__crate__api__api__teardown_2fa_impl(port, ptr, rust_vec_len, data_len),
+354 => wire__crate__api__api__transcript_poster_save_impl(port, ptr, rust_vec_len, data_len),
+355 => wire__crate__api__api__try_auth_impl(port, ptr, rust_vec_len, data_len),
+356 => wire__crate__api__api__try_icloud_login_impl(port, ptr, rust_vec_len, data_len),
+357 => wire__crate__api__api__unsubscribe_impl(port, ptr, rust_vec_len, data_len),
+358 => wire__crate__api__api__update_account_headers_impl(port, ptr, rust_vec_len, data_len),
+359 => wire__crate__api__api__update_beacon_name_impl(port, ptr, rust_vec_len, data_len),
+360 => wire__crate__api__api__upload_attachment_impl(port, ptr, rust_vec_len, data_len),
+361 => wire__crate__api__api__upload_cloud_attachments_impl(port, ptr, rust_vec_len, data_len),
+362 => wire__crate__api__api__upload_group_photo_impl(port, ptr, rust_vec_len, data_len),
+363 => wire__crate__api__api__upload_mmcs_impl(port, ptr, rust_vec_len, data_len),
+364 => wire__crate__api__api__use_link_for_impl(port, ptr, rust_vec_len, data_len),
+366 => wire__crate__api__api__validate_cert_impl(port, ptr, rust_vec_len, data_len),
+367 => wire__crate__api__api__validate_relay_impl(port, ptr, rust_vec_len, data_len),
+368 => wire__crate__api__api__validate_targets_impl(port, ptr, rust_vec_len, data_len),
+369 => wire__crate__api__api__validate_targets_facetime_impl(port, ptr, rust_vec_len, data_len),
+370 => wire__crate__api__api__verify_2fa_impl(port, ptr, rust_vec_len, data_len),
+371 => wire__crate__api__api__verify_2fa_direct_impl(port, ptr, rust_vec_len, data_len),
+372 => wire__crate__api__api__verify_2fa_sms_impl(port, ptr, rust_vec_len, data_len),
+373 => wire__crate__api__cloud_sync_chat1_correlation__cloud_sync_inspect_chat1_record_name_correlation_under_writer_pause_impl(port, ptr, rust_vec_len, data_len),
+374 => wire__crate__api__cloud_sync_chat_identity__cloud_sync_observe_protected_chat_identity_impl(port, ptr, rust_vec_len, data_len),
+375 => wire__crate__api__cloud_sync_dependency__cloud_sync_locate_protected_message_parent_impl(port, ptr, rust_vec_len, data_len),
                         _ => unreachable!(),
                     }
 }
@@ -34631,74 +34721,74 @@ fn pde_ffi_dispatcher_sync_impl(
             data_len,
         ),
         146 => wire__crate__api__api__cloud_sync_unprotect_impl(ptr, rust_vec_len, data_len),
-        167 => wire__crate__api__api__date_now_impl(ptr, rust_vec_len, data_len),
-        168 => wire__crate__api__api__date_to_ms_impl(ptr, rust_vec_len, data_len),
-        171 => wire__crate__api__api__decode_attachmentmeta_impl(ptr, rust_vec_len, data_len),
-        172 => wire__crate__api__api__decode_chatproto_impl(ptr, rust_vec_len, data_len),
-        173 => wire__crate__api__api__decode_extension_app_impl(ptr, rust_vec_len, data_len),
-        174 => wire__crate__api__api__decode_identity_impl(ptr, rust_vec_len, data_len),
-        175 => wire__crate__api__api__decode_message_info_impl(ptr, rust_vec_len, data_len),
-        176 => wire__crate__api__api__decode_messageproto_impl(ptr, rust_vec_len, data_len),
-        177 => wire__crate__api__api__decode_messageproto2_impl(ptr, rust_vec_len, data_len),
-        178 => wire__crate__api__api__decode_messageproto3_impl(ptr, rust_vec_len, data_len),
-        179 => wire__crate__api__api__decode_messageproto4_impl(ptr, rust_vec_len, data_len),
-        198 => wire__crate__api__api__dup_daemon_desk_impl(ptr, rust_vec_len, data_len),
-        199 => wire__crate__api__api__duplicate_user_impl(ptr, rust_vec_len, data_len),
-        200 => wire__crate__api__api__encode_attachmentmeta_impl(ptr, rust_vec_len, data_len),
-        201 => wire__crate__api__api__encode_chatproto_impl(ptr, rust_vec_len, data_len),
-        202 => wire__crate__api__api__encode_extension_app_impl(ptr, rust_vec_len, data_len),
-        204 => wire__crate__api__api__encode_message_info_impl(ptr, rust_vec_len, data_len),
-        205 => wire__crate__api__api__encode_messageproto_impl(ptr, rust_vec_len, data_len),
-        206 => wire__crate__api__api__encode_messageproto2_impl(ptr, rust_vec_len, data_len),
-        207 => wire__crate__api__api__encode_messageproto3_impl(ptr, rust_vec_len, data_len),
-        208 => wire__crate__api__api__encode_messageproto4_impl(ptr, rust_vec_len, data_len),
-        223 => wire__crate__api__api__get_available_user_impl(ptr, rust_vec_len, data_len),
-        246 => wire__crate__api__api__import_watcher_impl(ptr, rust_vec_len, data_len),
-        253 => wire__crate__api__api__make_circle_sessions_impl(ptr, rust_vec_len, data_len),
-        254 => wire__crate__api__api__make_client_session_impl(ptr, rust_vec_len, data_len),
-        255 => wire__crate__api__api__make_cloud_messages_client_impl(ptr, rust_vec_len, data_len),
-        263 => wire__crate__api__api__make_keychain_impl(ptr, rust_vec_len, data_len),
-        268 => wire__crate__api__api__make_token_provider_impl(ptr, rust_vec_len, data_len),
-        270 => wire__crate__api__api__ms_to_date_impl(ptr, rust_vec_len, data_len),
-        273 => wire__crate__api__api__new_ngm_identity_impl(ptr, rust_vec_len, data_len),
-        274 => wire__crate__api__api__ns_attributed_string_decode_impl(ptr, rust_vec_len, data_len),
-        275 => wire__crate__api__api__ns_attributed_string_encode_impl(ptr, rust_vec_len, data_len),
-        276 => wire__crate__api__api__ns_null_impl(ptr, rust_vec_len, data_len),
-        277 => wire__crate__api__api__ns_number_decode_impl(ptr, rust_vec_len, data_len),
-        278 => wire__crate__api__api__ns_number_encode_impl(ptr, rust_vec_len, data_len),
-        279 => wire__crate__api__api__ns_string_decode_impl(ptr, rust_vec_len, data_len),
-        280 => wire__crate__api__api__ns_string_encode_impl(ptr, rust_vec_len, data_len),
-        281 => wire__crate__api__api__nscoder_decode_impl(ptr, rust_vec_len, data_len),
-        282 => wire__crate__api__api__nscoder_encode_impl(ptr, rust_vec_len, data_len),
-        287 => {
+        168 => wire__crate__api__api__date_now_impl(ptr, rust_vec_len, data_len),
+        169 => wire__crate__api__api__date_to_ms_impl(ptr, rust_vec_len, data_len),
+        172 => wire__crate__api__api__decode_attachmentmeta_impl(ptr, rust_vec_len, data_len),
+        173 => wire__crate__api__api__decode_chatproto_impl(ptr, rust_vec_len, data_len),
+        174 => wire__crate__api__api__decode_extension_app_impl(ptr, rust_vec_len, data_len),
+        175 => wire__crate__api__api__decode_identity_impl(ptr, rust_vec_len, data_len),
+        176 => wire__crate__api__api__decode_message_info_impl(ptr, rust_vec_len, data_len),
+        177 => wire__crate__api__api__decode_messageproto_impl(ptr, rust_vec_len, data_len),
+        178 => wire__crate__api__api__decode_messageproto2_impl(ptr, rust_vec_len, data_len),
+        179 => wire__crate__api__api__decode_messageproto3_impl(ptr, rust_vec_len, data_len),
+        180 => wire__crate__api__api__decode_messageproto4_impl(ptr, rust_vec_len, data_len),
+        199 => wire__crate__api__api__dup_daemon_desk_impl(ptr, rust_vec_len, data_len),
+        200 => wire__crate__api__api__duplicate_user_impl(ptr, rust_vec_len, data_len),
+        201 => wire__crate__api__api__encode_attachmentmeta_impl(ptr, rust_vec_len, data_len),
+        202 => wire__crate__api__api__encode_chatproto_impl(ptr, rust_vec_len, data_len),
+        203 => wire__crate__api__api__encode_extension_app_impl(ptr, rust_vec_len, data_len),
+        205 => wire__crate__api__api__encode_message_info_impl(ptr, rust_vec_len, data_len),
+        206 => wire__crate__api__api__encode_messageproto_impl(ptr, rust_vec_len, data_len),
+        207 => wire__crate__api__api__encode_messageproto2_impl(ptr, rust_vec_len, data_len),
+        208 => wire__crate__api__api__encode_messageproto3_impl(ptr, rust_vec_len, data_len),
+        209 => wire__crate__api__api__encode_messageproto4_impl(ptr, rust_vec_len, data_len),
+        224 => wire__crate__api__api__get_available_user_impl(ptr, rust_vec_len, data_len),
+        247 => wire__crate__api__api__import_watcher_impl(ptr, rust_vec_len, data_len),
+        254 => wire__crate__api__api__make_circle_sessions_impl(ptr, rust_vec_len, data_len),
+        255 => wire__crate__api__api__make_client_session_impl(ptr, rust_vec_len, data_len),
+        256 => wire__crate__api__api__make_cloud_messages_client_impl(ptr, rust_vec_len, data_len),
+        264 => wire__crate__api__api__make_keychain_impl(ptr, rust_vec_len, data_len),
+        269 => wire__crate__api__api__make_token_provider_impl(ptr, rust_vec_len, data_len),
+        271 => wire__crate__api__api__ms_to_date_impl(ptr, rust_vec_len, data_len),
+        274 => wire__crate__api__api__new_ngm_identity_impl(ptr, rust_vec_len, data_len),
+        275 => wire__crate__api__api__ns_attributed_string_decode_impl(ptr, rust_vec_len, data_len),
+        276 => wire__crate__api__api__ns_attributed_string_encode_impl(ptr, rust_vec_len, data_len),
+        277 => wire__crate__api__api__ns_null_impl(ptr, rust_vec_len, data_len),
+        278 => wire__crate__api__api__ns_number_decode_impl(ptr, rust_vec_len, data_len),
+        279 => wire__crate__api__api__ns_number_encode_impl(ptr, rust_vec_len, data_len),
+        280 => wire__crate__api__api__ns_string_decode_impl(ptr, rust_vec_len, data_len),
+        281 => wire__crate__api__api__ns_string_encode_impl(ptr, rust_vec_len, data_len),
+        282 => wire__crate__api__api__nscoder_decode_impl(ptr, rust_vec_len, data_len),
+        283 => wire__crate__api__api__nscoder_encode_impl(ptr, rust_vec_len, data_len),
+        288 => {
             wire__crate__api__api__password_manager_meta_get_data_impl(ptr, rust_vec_len, data_len)
         }
-        288 => wire__crate__api__api__password_manager_meta_get_password_data_impl(
+        289 => wire__crate__api__api__password_manager_meta_get_password_data_impl(
             ptr,
             rust_vec_len,
             data_len,
         ),
-        289 => wire__crate__api__api__password_manager_totp_generate_otp_impl(
+        290 => wire__crate__api__api__password_manager_totp_generate_otp_impl(
             ptr,
             rust_vec_len,
             data_len,
         ),
-        291 => wire__crate__api__api__prepare_cloud_sync_windows_auth_probe_impl(
+        292 => wire__crate__api__api__prepare_cloud_sync_windows_auth_probe_impl(
             ptr,
             rust_vec_len,
             data_len,
         ),
-        295 => wire__crate__api__api__read_hardware_impl(ptr, rust_vec_len, data_len),
-        308 => wire__crate__api__api__reset_anisette_impl(ptr, rust_vec_len, data_len),
-        313 => wire__crate__api__api__restore_attachment_impl(ptr, rust_vec_len, data_len),
-        314 => wire__crate__api__api__restore_cloud_chat_impl(ptr, rust_vec_len, data_len),
-        316 => wire__crate__api__api__restore_users_impl(ptr, rust_vec_len, data_len),
-        321 => wire__crate__api__api__save_cloud_chat_impl(ptr, rust_vec_len, data_len),
-        327 => wire__crate__api__api__save_users_impl(ptr, rust_vec_len, data_len),
-        334 => wire__crate__api__api__send_daemon_impl(ptr, rust_vec_len, data_len),
-        343 => wire__crate__api__api__subscribe_conn_impl(ptr, rust_vec_len, data_len),
-        351 => wire__crate__api__api__systemtime_to_millis_impl(ptr, rust_vec_len, data_len),
-        364 => wire__crate__api__api__utm_now_impl(ptr, rust_vec_len, data_len),
+        296 => wire__crate__api__api__read_hardware_impl(ptr, rust_vec_len, data_len),
+        309 => wire__crate__api__api__reset_anisette_impl(ptr, rust_vec_len, data_len),
+        314 => wire__crate__api__api__restore_attachment_impl(ptr, rust_vec_len, data_len),
+        315 => wire__crate__api__api__restore_cloud_chat_impl(ptr, rust_vec_len, data_len),
+        317 => wire__crate__api__api__restore_users_impl(ptr, rust_vec_len, data_len),
+        322 => wire__crate__api__api__save_cloud_chat_impl(ptr, rust_vec_len, data_len),
+        328 => wire__crate__api__api__save_users_impl(ptr, rust_vec_len, data_len),
+        335 => wire__crate__api__api__send_daemon_impl(ptr, rust_vec_len, data_len),
+        344 => wire__crate__api__api__subscribe_conn_impl(ptr, rust_vec_len, data_len),
+        352 => wire__crate__api__api__systemtime_to_millis_impl(ptr, rust_vec_len, data_len),
+        365 => wire__crate__api__api__utm_now_impl(ptr, rust_vec_len, data_len),
         _ => unreachable!(),
     }
 }
@@ -37141,6 +37231,64 @@ impl
     }
 }
 // Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart
+    for crate::api::api::CloudSyncExactAttachmentParentRecoveryPhase
+{
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        match self {
+            Self::Input => 0.into_dart(),
+            Self::Storage => 1.into_dart(),
+            Self::Auth => 2.into_dart(),
+            Self::Source => 3.into_dart(),
+            Self::WriterBinding => 4.into_dart(),
+            Self::AuthRevalidate => 5.into_dart(),
+            Self::SourceRevalidate => 6.into_dart(),
+            Self::Group => 7.into_dart(),
+            Self::OriginalOpen => 8.into_dart(),
+            Self::Identity => 9.into_dart(),
+            Self::Protect => 10.into_dart(),
+            Self::Complete => 11.into_dart(),
+            _ => unreachable!(),
+        }
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::api::CloudSyncExactAttachmentParentRecoveryPhase
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::api::CloudSyncExactAttachmentParentRecoveryPhase>
+    for crate::api::api::CloudSyncExactAttachmentParentRecoveryPhase
+{
+    fn into_into_dart(self) -> crate::api::api::CloudSyncExactAttachmentParentRecoveryPhase {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart
+    for crate::api::api::CloudSyncExactAttachmentParentRecoveryResult
+{
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.phase.into_into_dart().into_dart(),
+            self.stage.into_into_dart().into_dart(),
+            self.failure.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::api::CloudSyncExactAttachmentParentRecoveryResult
+{
+}
+impl
+    flutter_rust_bridge::IntoIntoDart<crate::api::api::CloudSyncExactAttachmentParentRecoveryResult>
+    for crate::api::api::CloudSyncExactAttachmentParentRecoveryResult
+{
+    fn into_into_dart(self) -> crate::api::api::CloudSyncExactAttachmentParentRecoveryResult {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
 impl flutter_rust_bridge::IntoDart for crate::api::api::CloudSyncHistoricalAttachmentContext {
     fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
         [
@@ -38662,6 +38810,36 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::api::CloudSyncRestoredReceive
     for crate::api::api::CloudSyncRestoredReceivedMutation
 {
     fn into_into_dart(self) -> crate::api::api::CloudSyncRestoredReceivedMutation {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart
+    for crate::api::api::CloudSyncRetainedAttachmentParentRecoveryInput
+{
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.local_operation_id.into_into_dart().into_dart(),
+            self.logical_entity_key_hash.into_into_dart().into_dart(),
+            self.protected_payload_reference
+                .into_into_dart()
+                .into_dart(),
+            self.payload_sha256.into_into_dart().into_dart(),
+            self.server_record_id_hash.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::api::CloudSyncRetainedAttachmentParentRecoveryInput
+{
+}
+impl
+    flutter_rust_bridge::IntoIntoDart<
+        crate::api::api::CloudSyncRetainedAttachmentParentRecoveryInput,
+    > for crate::api::api::CloudSyncRetainedAttachmentParentRecoveryInput
+{
+    fn into_into_dart(self) -> crate::api::api::CloudSyncRetainedAttachmentParentRecoveryInput {
         self
     }
 }
@@ -45533,6 +45711,45 @@ impl SseEncode for crate::api::cloud_sync_dependency::CloudSyncDependencyParentT
     }
 }
 
+impl SseEncode for crate::api::api::CloudSyncExactAttachmentParentRecoveryPhase {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(
+            match self {
+                crate::api::api::CloudSyncExactAttachmentParentRecoveryPhase::Input => 0,
+                crate::api::api::CloudSyncExactAttachmentParentRecoveryPhase::Storage => 1,
+                crate::api::api::CloudSyncExactAttachmentParentRecoveryPhase::Auth => 2,
+                crate::api::api::CloudSyncExactAttachmentParentRecoveryPhase::Source => 3,
+                crate::api::api::CloudSyncExactAttachmentParentRecoveryPhase::WriterBinding => 4,
+                crate::api::api::CloudSyncExactAttachmentParentRecoveryPhase::AuthRevalidate => 5,
+                crate::api::api::CloudSyncExactAttachmentParentRecoveryPhase::SourceRevalidate => 6,
+                crate::api::api::CloudSyncExactAttachmentParentRecoveryPhase::Group => 7,
+                crate::api::api::CloudSyncExactAttachmentParentRecoveryPhase::OriginalOpen => 8,
+                crate::api::api::CloudSyncExactAttachmentParentRecoveryPhase::Identity => 9,
+                crate::api::api::CloudSyncExactAttachmentParentRecoveryPhase::Protect => 10,
+                crate::api::api::CloudSyncExactAttachmentParentRecoveryPhase::Complete => 11,
+                _ => {
+                    unimplemented!("");
+                }
+            },
+            serializer,
+        );
+    }
+}
+
+impl SseEncode for crate::api::api::CloudSyncExactAttachmentParentRecoveryResult {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <crate::api::api::CloudSyncExactAttachmentParentRecoveryPhase>::sse_encode(
+            self.phase, serializer,
+        );
+        <Option<crate::api::api::CloudSyncProtectedOutboundStage>>::sse_encode(
+            self.stage, serializer,
+        );
+        <Option<crate::api::api::CloudSyncOutboundSafeCode>>::sse_encode(self.failure, serializer);
+    }
+}
+
 impl SseEncode for crate::api::api::CloudSyncHistoricalAttachmentContext {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
@@ -46414,6 +46631,17 @@ impl SseEncode for crate::api::api::CloudSyncRestoredReceivedMutation {
         <String>::sse_encode(self.source_sha256, serializer);
         <Vec<String>>::sse_encode(self.captured_local_handles, serializer);
         <crate::api::api::MessageInst>::sse_encode(self.message, serializer);
+    }
+}
+
+impl SseEncode for crate::api::api::CloudSyncRetainedAttachmentParentRecoveryInput {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <String>::sse_encode(self.local_operation_id, serializer);
+        <String>::sse_encode(self.logical_entity_key_hash, serializer);
+        <String>::sse_encode(self.protected_payload_reference, serializer);
+        <String>::sse_encode(self.payload_sha256, serializer);
+        <String>::sse_encode(self.server_record_id_hash, serializer);
     }
 }
 
