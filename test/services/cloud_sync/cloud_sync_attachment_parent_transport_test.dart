@@ -340,13 +340,14 @@ void main() {
   test('prepare and reconcile attach the reopened group proof', () async {
     reconcileAbsent();
     final context = parentContext();
-    final proof = _FakeGroupProof();
+    final reconcileProof = _FakeGroupProof();
+    final prepareProof = _FakeGroupProof();
     var proofInvocations = 0;
     final transport = buildTransport(
       reader: (readScope, operationId) => context,
       proofReader: (readScope, operationId) async {
         proofInvocations++;
-        return proof;
+        return proofInvocations == 1 ? reconcileProof : prepareProof;
       },
     );
     final operation = _messageOperation(scope);
@@ -357,15 +358,18 @@ void main() {
         operations: [_protectedWriteOperation(operation)],
       ),
     );
-    expect(proofInvocations, 1);
+    expect(proofInvocations, 2);
     expect(
-      identical(bindings.reconcileInput!.attachmentParentGroupProof, proof),
+      identical(
+        bindings.reconcileInput!.attachmentParentGroupProof,
+        reconcileProof,
+      ),
       isTrue,
     );
     expect(
       identical(
         bindings.preparedInputs.single.attachmentParentGroupProof,
-        proof,
+        prepareProof,
       ),
       isTrue,
     );
@@ -1065,6 +1069,9 @@ final class _FakePreparedHandle
 
 final class _FakeGroupProof
     implements frb_api.CloudSyncAttachmentParentGroupProof {
+  @override
+  bool get isDisposed => false;
+
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }

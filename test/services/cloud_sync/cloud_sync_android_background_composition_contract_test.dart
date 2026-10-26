@@ -293,15 +293,20 @@ void main() {
       expect(end, greaterThan(start));
       final handler = source.substring(start, end);
       final capture = handler.indexOf('final expectedState = state;');
-      final apply = handler.indexOf('await handleMsgInner(push).timeout(');
-      final certify = handler.indexOf('markCertified(push);');
+      final apply = handler.indexOf('await completeRustPushReceive(');
+      final process = handler.indexOf(
+        'process: () async { await handleMsgInner(push); },',
+      );
+      final certify = handler.indexOf('certify: () => markCertified(push),');
       final hint = handler.indexOf(
         'unawaited(enqueueCloudSyncV2AndroidBackgroundReadHint());',
       );
       expect(capture, greaterThanOrEqualTo(0));
       expect(apply, greaterThan(capture));
-      expect(certify, greaterThan(apply));
+      expect(process, greaterThan(apply));
+      expect(certify, greaterThan(process));
       expect(hint, greaterThan(certify));
+      expect(handler, contains('retainEnteredWork: _isolatedWindowsBackendHost,'));
       expect(handler, contains('push is api.PushMessage_IMessage'));
       expect(handler, contains('expectedState != null'));
       expect(handler, contains('identical(expectedState, state)'));

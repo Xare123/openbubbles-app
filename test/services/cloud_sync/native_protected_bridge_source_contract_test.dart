@@ -847,6 +847,9 @@ void main() {
         'Future<Message> _captureCloudSyncV2ReceivedMessage(');
     final groupRecovery = _section(service,
         'Future<CloudOutboxOperation> recoverCloudSyncV2BackendFreshGroupChat(',
+        'Future<CloudOutboxOperation> recoverCloudSyncV2BackendMessageArchive(');
+    final messageRecovery = _section(service,
+        'Future<CloudOutboxOperation> recoverCloudSyncV2BackendMessageArchive(',
         'bool get _cloudSyncV2AutomaticArchiveActive');
     final send = _section(
       service,
@@ -921,6 +924,7 @@ void main() {
       'guarded conditional update': updateTransport,
       'received seed materialization': received,
       'exact legacy group recovery': groupRecovery,
+      'retained message archive recovery': messageRecovery,
     };
     final constructors = RegExp(r'NativeProtectedCloudSyncTransport\(');
     for (final composition in compositions.entries) {
@@ -929,30 +933,41 @@ void main() {
     }
     expect(constructors.allMatches(service), hasLength(compositions.length),
         reason: 'every runtime constructor must belong to an exact mapped scope');
-    for (final fence in [
-      '_isolatedWindowsBackendHost', 'cloudSyncV2AutomaticArchiveVisible',
-      '!backendRegistrationRestartRequired', '!_cloudSyncV2AutomaticArchiveActive',
-      'if (preference.enabled)', 'if (saved.enabled)',
-      '_cloudSyncV2LocalSourceOperations.run(validate: validate',
-      'kind: CloudKitOperationKind.v2ReadWrite', 'CloudSyncLocalSendAuthFence(',
-      'owner.owner != CloudKitWriterOwner.v2', 'CloudSyncWriteChatIdentitySession(',
-      'await lifecycle.ensureRecoveredBeforeFetch()',
-      'verifyRecoveredReceipts: () async',
-      'await lifecycle.ensureRecoveredBeforeWrite()',
-      'await session.run<void>((_) async {})',
-      'CloudSyncFreshGroupRecoveryCoordinator(',
-      'operationId: operationId, chatId: chatId, intentId: intentId',
-      '_cloudSyncV2LocalSourceOperations.release(transport.quiesceNativeOperations)',
-      'exclusion.poisonUntilProcessRestart()',
-    ]) {
-      expect(groupRecovery, contains(fence), reason: 'exact recovery must retain $fence');
+    for (final recovery in [groupRecovery, messageRecovery]) {
+      for (final fence in [
+        '_isolatedWindowsBackendHost', 'cloudSyncV2AutomaticArchiveVisible',
+        '!backendRegistrationRestartRequired', '!_cloudSyncV2AutomaticArchiveActive',
+        'identical(expectedState, state)', 'identical(objectBox, Database.store)',
+        'identical(client, state?.icloudServices?.cloudMessagesClient)', 'storage == statePath',
+        'if (preference.enabled)', 'if (saved.enabled)',
+        '_cloudSyncV2LocalSourceOperations.run(validate: validate',
+        'kind: CloudKitOperationKind.v2ReadWrite', 'CloudSyncLocalSendAuthFence(',
+        'authority.read(writerScope)?.epoch == owner.epoch',
+        'owner.owner != CloudKitWriterOwner.v2', 'CloudSyncWriteChatIdentitySession(',
+        'validateMutationAdmission: () => fence.requireCurrentBinding(auth)',
+        'await lifecycle.ensureRecoveredBeforeFetch()',
+        'verifyRecoveredReceipts: () async',
+        'await lifecycle.ensureRecoveredBeforeWrite()',
+        'await session.run<void>((_) async {})',
+        'operationId: operationId, chatId: chatId, intentId: intentId',
+        '_cloudSyncV2LocalSourceOperations.release(transport.quiesceNativeOperations)',
+        'exclusion.poisonUntilProcessRestart()',
+      ]) {
+        expect(recovery, contains(fence), reason: 'exact recovery must retain $fence');
+      }
+      for (final forbidden in [
+        'sendMsg(', 'sendMessage(', 'CloudSyncEngine(', 'flushOutbox(',
+        'prepareSubmission(', 'provisionInitialOwner(', 'setEnabled(',
+      ]) {
+        expect(recovery, isNot(contains(forbidden)));
+      }
     }
-    for (final forbidden in [
-      'sendMsg(', 'sendMessage(', 'CloudSyncEngine(', 'flushOutbox(',
-      'prepareSubmission(', 'provisionInitialOwner(', 'setEnabled(',
-    ]) {
-      expect(groupRecovery, isNot(contains(forbidden)));
-    }
+    expect(groupRecovery, contains('CloudSyncFreshGroupRecoveryCoordinator('));
+    expect(messageRecovery, contains('CloudSyncMessageArchiveRecoveryCoordinator('));
+    expect(messageRecovery, contains('retainedOperation.accountFingerprint != auth.accountFingerprint'));
+    expect(messageRecovery, contains("retainedOperation.zone != 'messageManateeZone'"));
+    expect(messageRecovery, contains('uploads.requireParentReadbackProof(localSendIntentId: id, proof: proof)'));
+    expect(messageRecovery, contains('onUncertainRecovery: exclusion.poisonUntilProcessRestart'));
     for (final local in [mutation, prepare, restore, reflection]) {
       expect(local, isNot(contains('writerMutationGuard:')));
       expect(local, isNot(contains('readCheckpointGeneration:')));
