@@ -159,7 +159,9 @@ final class WindowsBackendHostFiles {
     return true;
   }
 
-  Map<String, Object?>? takeChatSourceInspection(String source, int ownerPid) {
+  Map<String, Object?>? takeChatSourceInspection(String source, int ownerPid, {
+    bool allowMessagePreparationRecovery = false,
+  }) {
     if (_chatSourceInspectionConsumed) return null;
     final file = _file('chat-source.json');
     if (FileSystemEntity.typeSync(file.path, followLinks: false) ==
@@ -176,7 +178,8 @@ final class WindowsBackendHostFiles {
       throw StateError('backend_windows_chat_source_request_invalid');
     }
     final request = decoded.cast<String, Object?>();
-    if (!validWindowsChatSourceRequest(request) || request['launchId'] != launchId ||
+    if (!validWindowsChatSourceRequest(request) ||
+        request['schema'] == 4 && !allowMessagePreparationRecovery || request['launchId'] != launchId ||
         request['source'] != source || request['pid'] != ownerPid) {
       throw StateError('backend_windows_chat_source_request_invalid');
     }
@@ -503,7 +506,7 @@ void main() {
         final deadline = DateTime.now().add(const Duration(minutes: 20));
         while (!files.stopRequested() && DateTime.now().isBefore(deadline)) {
           final sourceRequest = files.takeChatSourceInspection(
-            BackendHarnessGate.source, pid);
+            BackendHarnessGate.source, pid, allowMessagePreparationRecovery: writerCompiled);
           if (sourceRequest != null) {
             // This one-shot observation is terminal for command admission.
             // Finish any entered command before taking its native read window.
@@ -533,6 +536,7 @@ void main() {
                 'schema': 1, 'completed': false, 'rowId': sourceRequest['rowId'],
                 'generation': sourceRequest['generation'], 'sequence': sourceRequest['sequence'],
                 'lastStage': stage, 'failure': safeWindowsChatSourceFailure(error),
+                if (sourceRequest['schema'] == 4) ...windowsMessagePreparationFailureDetails(error),
                 'rawContentExposed': false,
               });
               rethrow; // Preserve native ownership; failure is not a close grant.

@@ -110,6 +110,18 @@ void main() {
     expect(() => controls.requireFreshLaunch(), throwsStateError);
   });
 
+  test('schema4 requires compiled writer admission before consuming the one-shot request', () {
+    controls.publishReady(Uri.parse('ws://127.0.0.1:1234/token/ws'), source, 42);
+    final request = {...sourceRequest(), 'schema': 4, 'groupChatId': 773,
+      'messageOperationId': 'op1:${'a' * 64}', 'messageIntentId': 19, 'messageId': 42,
+      'messageSourceSha256': 'b' * 64, 'messageSnapshotSha256': 'c' * 64};
+    control('chat-source.json').writeAsStringSync(jsonEncode(request));
+    expect(() => controls.takeChatSourceInspection(source, 42), throwsStateError);
+    expect(control('chat-source-started.json').existsSync(), isFalse);
+    expect(controls.takeChatSourceInspection(source, 42, allowMessagePreparationRecovery: true), request);
+    expect(controls.takeChatSourceInspection(source, 42, allowMessagePreparationRecovery: true), isNull);
+  });
+
   test('endpoint refuses nonlocal and unauthenticated VM services', () {
     for (final endpoint in [
       'ws://example.com:1234/token/ws',

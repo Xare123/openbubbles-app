@@ -22,7 +22,11 @@ void main() {
     'changeIdHash': 'c' * 43, 'recordIdHash': 'd' * 43, 'etagHash': 'e' * 43,
     'payloadSha256': 'f' * 64,
     'referenceSha256': sha256.convert(utf8.encode(reference)).toString(),
-    if (schema == 2) 'groupChatId': 773,
+    if (schema == 2 || schema == 4) 'groupChatId': 773,
+    if (schema == 4) ...{
+      'messageOperationId': 'op1:${'a' * 64}', 'messageIntentId': 19, 'messageId': 42,
+      'messageSourceSha256': 'b' * 64, 'messageSnapshotSha256': 'c' * 64,
+    },
   };
   CloudInboxChangeEntity row() => CloudInboxChangeEntity(
     id: 4, changeKey: 'fixture-change', changeIdHash: 'c' * 43,
@@ -83,6 +87,76 @@ void main() {
       'group-proof-before', 'group-proof-after',
     ]));
     requireWindowsChatSourceGroupBinding(request: group, row: row(), proof: proof());
+  });
+
+  test('schema4 pins only an exact existing Message and refuses retired probe or write flags', () {
+    final exact = request(schema: 4);
+    expect(validWindowsChatSourceRequest(exact), isTrue);
+    for (final key in ['groupChatId', 'messageOperationId', 'messageIntentId', 'messageId',
+      'messageSourceSha256', 'messageSnapshotSha256']) {
+      expect(validWindowsChatSourceRequest({...exact}..remove(key)), isFalse, reason: key);
+    }
+    for (final bad in [
+      {...exact, 'schema': 3}, {...exact, 'schema': 4.0},
+      {...exact, 'messageOperationId': 'raw GUID'}, {...exact, 'messageId': 42.0},
+      {...exact, 'messageIntentId': 0}, {...exact, 'groupChatId': -1},
+      {...exact, 'messageSnapshotSha256': 'private text'},
+      {...exact, 'resend': true}, {...exact, 'consume': true}, {...exact, 'save': true},
+      {...exact, 'allowMessagePreparationRecovery': true},
+    ]) { expect(validWindowsChatSourceRequest(bad), isFalse); }
+  });
+
+  test('preparation-only helper releases, settles and retains without a mutation callback', () async {
+    final events = <String>[];
+    final prepared = Object();
+    final result = await prepareWindowsMessageWithoutMutation<Object>(
+      prepare: () async { events.add('prepare'); return prepared; },
+      release: (value) async { expect(identical(value, prepared), isTrue); events.add('release'); return true; },
+      quiesce: () async { events.add('quiesce'); },
+      retain: () async { events.add('retain'); }, onStage: events.add);
+    expect(events, ['message-prepare-started', 'prepare', 'release', 'message-prepared-released',
+      'quiesce', 'message-prepare-settled', 'retain', 'message-owner-retained']);
+    expect(result['prepared'], isTrue);
+    expect(result['preparedSubmissionConsumed'], isFalse);
+    expect(result['cloudWritesRequested'], isFalse);
+    expect(result['idsSendsRequested'], isFalse);
+    expect(result['readbackReceiptApplied'], isFalse);
+  });
+
+  test('failed no-save preflight becomes settled only after quiesce and retained validation', () async {
+    final events = <String>[];
+    final result = await prepareWindowsMessageWithoutMutation<Object>(
+      prepare: () async => throw StateError('private message content'),
+      release: (_) async { fail('no prepared owner exists'); },
+      quiesce: () async { events.add('quiesce'); },
+      retain: () async { events.add('retain'); }, onStage: events.add);
+    expect(events, ['message-prepare-started', 'quiesce', 'message-prepare-settled', 'retain', 'message-owner-retained']);
+    expect(result['prepared'], isFalse);
+    expect(result['preflightFailure'], 'cloud_sync_unknown_failure');
+    expect(jsonEncode(result), isNot(contains('private message content')));
+  });
+
+  for (final stage in ['release', 'quiesce', 'retain']) {
+    test('uncertain $stage cannot report completed preparation-only settlement', () async {
+      final events = <String>[];
+      await expectLater(prepareWindowsMessageWithoutMutation<Object>(
+        prepare: () async => Object(),
+        release: (_) async { events.add('release'); if (stage == 'release') throw StateError('synthetic'); return true; },
+        quiesce: () async { events.add('quiesce'); if (stage == 'quiesce') throw StateError('synthetic'); },
+        retain: () async { events.add('retain'); throw StateError('synthetic'); },
+        onStage: events.add), throwsStateError);
+      expect(events, contains('quiesce'));
+      expect(events.contains('message-owner-retained'), isFalse);
+      if (stage != 'retain') expect(events.contains('retain'), isFalse);
+    });
+  }
+
+  test('message recovery failure details never expose arbitrary errors', () {
+    expect(windowsMessagePreparationFailureDetails(StateError('private body')),
+      {'messageRecoverySafeCode': 'cloud_sync_unknown_failure'});
+    expect(windowsMessagePreparationFailureDetails(
+      StateError('cloud_sync_message_preparation_recovery_changed')),
+      {'messageRecoverySafeCode': 'cloud_sync_message_preparation_recovery_changed'});
   });
 
   for (final field in [

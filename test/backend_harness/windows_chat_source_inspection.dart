@@ -3,6 +3,21 @@ import 'dart:convert';
 import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_manual_semantic_pull_sampler.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_models.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_attachment_upload_journal.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_attachment_upload_adapters.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_fresh_group_recovery_snapshot.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_send_journal.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_manual_shadow_sampler.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_message_preparation_recovery.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_message_preparation_recovery_binding.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_message_preparation_recovery_origin.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_record_maps.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_safe_failure.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_protected_page_lease_lifecycle.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_write_transport.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_writer_authority.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_writer_ownership.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/native_protected_cloud_sync_transport.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_outbound_group_binding.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_persistent_keys.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_production_sampler_adapter.dart';
@@ -14,9 +29,12 @@ import 'package:bluebubbles/src/rust/api/api.dart' as api;
 import 'package:bluebubbles/src/rust/lib.dart' as rustlib;
 import 'package:crypto/crypto.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge.dart' show AnyhowException;
+import 'package:uuid/uuid.dart';
 
 /// Test-host-only inspection of ONE original protected journal source. This
 /// neither projects its decoded payload nor substitutes a newer record map.
+/// Schema4 additionally owns exact local Message recovery + prepare/release,
+/// with no consume, save, upload, send, or receipt-application capability.
 bool validWindowsChatSourceRequest(Map<String, Object?> request) {
   const keys = {
     'schema',
@@ -34,11 +52,20 @@ bool validWindowsChatSourceRequest(Map<String, Object?> request) {
   };
   final digest = RegExp(r'^[A-Za-z0-9_-]{43}$');
   final sha = RegExp(r'^[a-f0-9]{64}$');
-  final groupProbe = request['schema'] is int && request['schema'] == 2;
-  final allowed = {...keys, if (groupProbe) 'groupChatId'};
+  final preparation = request['schema'] is int && request['schema'] == 4;
+  final groupProbe = request['schema'] is int && (request['schema'] == 2 || preparation);
+  final allowed = {...keys, if (groupProbe) 'groupChatId', if (preparation) ...{
+    'messageOperationId', 'messageIntentId', 'messageId', 'messageSourceSha256', 'messageSnapshotSha256',
+  }};
   return request.length == allowed.length &&
       request.keys.every(allowed.contains) &&
       (request['schema'] == 1 || groupProbe) &&
+      (!preparation ||
+        request['messageOperationId'] is String &&
+        RegExp(r'^op1:[a-f0-9]{64}$').hasMatch(request['messageOperationId']! as String) &&
+        const ['messageIntentId', 'messageId'].every((key) => request[key] is int && (request[key]! as int) > 0) &&
+        const ['messageSourceSha256', 'messageSnapshotSha256'].every((key) =>
+          request[key] is String && sha.hasMatch(request[key]! as String))) &&
       (!groupProbe || request['groupChatId'] is int &&
           (request['groupChatId']! as int) > 0) &&
       request['launchId'] is String &&
@@ -75,6 +102,62 @@ const windowsChatSourceInspectionStages = {
   'decode-finished',
   'group-proof-after',
   'read-released',
+  'message-source-bound',
+  'message-owner-committed',
+  'message-prepare-started',
+  'message-prepare-settled',
+  'message-prepared-released',
+  'message-owner-retained',
+};
+
+String windowsMessagePreparationSnapshotSha256({
+  required CloudSyncLocalSendIntentEntity intent,
+  required CloudOutboxOperationEntity operation,
+  required CloudRecordMapEntity mapping,
+}) => _sha(jsonEncode([
+  freshGroupRecoveryOperationSnapshot(operation),
+  freshGroupRecoveryMapSnapshot(mapping), freshGroupRecoverySourceSnapshot(intent),
+]));
+
+/// No mutation callback exists. A failed preflight is a settled diagnostic only
+/// after native quiescence and exact retained-owner validation both succeed.
+Future<Map<String, Object?>> prepareWindowsMessageWithoutMutation<P extends Object>({
+  required Future<P> Function() prepare,
+  required Future<bool> Function(P) release,
+  required Future<void> Function() quiesce,
+  required Future<void> Function() retain,
+  required void Function(String) onStage,
+}) async {
+  P? prepared;
+  Object? failure;
+  bool? released;
+  onStage('message-prepare-started');
+  try { prepared = await prepare(); } catch (error) { failure = error; }
+  try {
+    if (prepared != null) {
+      released = await release(prepared);
+      onStage('message-prepared-released');
+    }
+  } finally {
+    await quiesce();
+  }
+  onStage('message-prepare-settled');
+  await retain();
+  onStage('message-owner-retained');
+  return {
+    'prepared': prepared != null,
+    'preflightFailure': failure == null ? null : cloudSyncV2SafeFailureCode(failure),
+    'preparedOwnerReleaseResult': released,
+    'nativeCallsSettled': true, 'recoveryOwnerRetained': true,
+    'cloudWritesRequested': false, 'idsSendsRequested': false,
+    'preparedSubmissionConsumed': false, 'readbackReceiptApplied': false,
+  };
+}
+
+Map<String, Object?> windowsMessagePreparationFailureDetails(Object error) => {
+  'messageRecoverySafeCode': cloudSyncV2SafeFailureCode(error),
+  if (error is CloudSyncMessagePreparationStageFailure)
+    'nativeRecoveryPhase': error.phase.name,
 };
 
 /// Refuse a newer/other retained Chat even when it has the same participants.
@@ -518,7 +601,7 @@ Future<Map<String, Object?>> inspectWindowsChatSource({
       }
 
       final original = jsonEncode(source().toMapForChatSourceInspection());
-      final groupProbe = request['schema'] == 2;
+      final groupProbe = request['schema'] == 2 || request['schema'] == 4;
       CloudSyncRestoredGroupChatProof captureGroupProof() {
         final proof = requireCloudSyncRestoredGroupChatProofForId(
           store: store,
@@ -573,8 +656,8 @@ Future<Map<String, Object?>> inspectWindowsChatSource({
       // The existing identity session tolerates a preserved queued outbox. Its
       // v2ReadWrite lock is exclusion only; this callback has no write operation.
       onStage('read-window');
-      Future<Map<String, Object?>> readWindow(
-        Future<Map<String, Object?>> Function(BigInt token) observe,
+      Future<T> readWindow<T>(
+        Future<T> Function(BigInt token) observe,
       ) => runWindowsChatSourceReadWindow(
         exclusion: interlock,
         nativePause: FrbCloudSyncNativeWriterPause(),
@@ -590,6 +673,14 @@ Future<Map<String, Object?>> inspectWindowsChatSource({
             ),
         observe: observe,
       );
+      if (request['schema'] == 4) {
+        return _inspectWindowsOriginalMessagePreparation(store: store, profile: profile,
+          request: request, client: client, auth: auth, provider: provider,
+          readActiveClient: readActiveClient,
+          pinnedGroup: pinnedGroup!, validateChat: validate,
+          readProofWindow: (observe) => readWindow<api.CloudSyncAttachmentParentGroupProof>(observe),
+          onStage: onStage);
+      }
       Future<Map<String, Object?>> decode(BigInt token) async {
         final row = source();
         onStage('decode-started');
@@ -668,6 +759,186 @@ Future<Map<String, Object?>> inspectWindowsChatSource({
       };
     },
   );
+}
+
+Future<Map<String, Object?>> _inspectWindowsOriginalMessagePreparation({
+  required Store store,
+  required String profile,
+  required Map<String, Object?> request,
+  required rustlib.ArcCloudMessagesClientDefaultAnisetteProvider client,
+  required CloudSyncNativeAuthSnapshot auth,
+  required CloudSyncProductionAuthSnapshotProvider provider,
+  required Object? Function() readActiveClient,
+  required CloudSyncRestoredGroupChatProof pinnedGroup,
+  required Future<void> Function() validateChat,
+  required Future<api.CloudSyncAttachmentParentGroupProof> Function(
+    Future<api.CloudSyncAttachmentParentGroupProof> Function(BigInt)) readProofWindow,
+  required void Function(String) onStage,
+}) async {
+  final operationId = request['messageOperationId']! as String;
+  final intentId = request['messageIntentId']! as int;
+  final chatId = request['groupChatId']! as int;
+  final scope = CloudSyncScope(accountFingerprint: auth.accountFingerprint,
+    container: 'com.apple.messages.cloud', database: 'private', zone: 'messageManateeZone',
+    persistenceLane: CloudSyncPersistenceLane.semantic);
+  ({CloudSyncLocalSendIntentEntity intent, CloudOutboxOperationEntity operation,
+    CloudRecordMapEntity mapping, Message message, Chat chat}) rows() {
+    final query = store.box<CloudOutboxOperationEntity>().query(
+      CloudOutboxOperationEntity_.operationId.equals(operationId)).build();
+    final CloudOutboxOperationEntity? operation;
+    try { operation = query.findUnique(); } finally { query.close(); }
+    final intent = store.box<CloudSyncLocalSendIntentEntity>().get(intentId);
+    final message = store.box<Message>().get(request['messageId']! as int);
+    final chat = store.box<Chat>().get(chatId);
+    final mapping = operation == null ? null : cloudSyncFindRecordMap(store: store, scope: scope,
+      generation: operation.checkpointGeneration, logicalEntityKeyHash: operation.logicalEntityKeyHash,
+      serverRecordIdHash: operation.serverRecordIdHash);
+    if (operation == null || intent == null || message == null || chat == null || mapping == null ||
+        intent.localMessageId != message.id || message.chat.targetId != chatId ||
+        intent.admittedOperationId != operationId || intent.state != 2 || intent.idsConfirmationVersion != 2 ||
+        intent.sourceSha256 != request['messageSourceSha256'] ||
+        operation.state != CloudOutboxStatus.quarantined.index) {
+      throw StateError('backend_windows_chat_source_binding_changed');
+    }
+    return (intent: intent, operation: operation, mapping: mapping, message: message, chat: chat);
+  }
+  final initial = rows();
+  if (windowsMessagePreparationSnapshotSha256(intent: initial.intent, operation: initial.operation,
+      mapping: initial.mapping) != request['messageSnapshotSha256']) {
+    throw StateError('backend_windows_chat_source_binding_changed');
+  }
+  String immutableRows() {
+    final current = rows();
+    return _sha(jsonEncode([
+      freshGroupRecoveryOperationSnapshot(current.operation), freshGroupRecoveryMapSnapshot(current.mapping),
+      current.message.toMap(), current.chat.toMap(),
+      current.message.dbAttachments.map((a) => a.toMap()).toList(),
+    ]));
+  }
+  final immutableBefore = immutableRows();
+  final authority = ObjectBoxCloudKitWriterAuthority(store: store);
+  final writerScope = CloudKitWriterScope(accountFingerprint: auth.accountFingerprint);
+  final owner = authority.read(writerScope);
+  if (owner == null || owner.owner != CloudKitWriterOwner.v2) {
+    throw StateError('cloud_sync_local_send_owner_changed');
+  }
+  List<Object?> ownerFields(CloudKitWriterAuthoritySnapshot? value) => [
+    value?.owner.name, value?.state.name, value?.epoch, value?.ownershipEpoch,
+    value?.targetOwner.name, value?.transitionIdHash,
+  ];
+  final ownerBefore = jsonEncode(ownerFields(owner));
+  late final CloudSyncAttachmentUploadJournal uploads;
+  final journal = CloudSyncLocalSendJournal(store: store, authority: authority,
+    authoritySnapshot: owner, currentAuth: auth, attachmentParentReadback: (id, proof) {
+      if (id != intentId || proof == null) throw StateError('cloud_sync_attachment_parent_readback_required');
+      uploads.requireParentReadbackProof(localSendIntentId: id, proof: proof);
+      return proof;
+    });
+  uploads = CloudSyncAttachmentUploadJournal(store: store, localSends: journal,
+    scope: CloudSyncScope(accountFingerprint: auth.accountFingerprint,
+      container: scope.container, database: scope.database, zone: 'attachmentManateeZone',
+      persistenceLane: scope.persistenceLane),
+    checkpointGeneration: initial.operation.checkpointGeneration, currentAuth: auth);
+  final durable = ObjectBoxCloudSyncStore(store: store, localSendJournal: journal,
+    attachmentUploadJournal: uploads, protector: RustCloudSyncProtector(storageDirectory: profile));
+  final plans = FrbCloudSyncAttachmentPlanSource(storageDirectory: profile);
+  CloudSyncRestoredGroupChatProof adoptedGroup() {
+    final dependency = journal.readAdoptedAttachmentChatDependency(operationId: operationId, currentAuth: auth);
+    final group = requireCloudSyncAdoptedGroupChatProof(store: store,
+      messageScope: scope, binding: dependency, expectedChatId: chatId);
+    if (group.binding != pinnedGroup.binding || group.generation != pinnedGroup.generation ||
+        group.source != pinnedGroup.source || group.routingMetadataDigest != pinnedGroup.routingMetadataDigest) {
+      throw StateError('backend_windows_chat_source_binding_changed');
+    }
+    return group;
+  }
+  Future<void> validate() async {
+    await validateChat();
+    if (!auth.sameIdentity(await provider.capture()) ||
+        jsonEncode(ownerFields(authority.read(writerScope))) != ownerBefore || immutableRows() != immutableBefore) {
+      throw StateError('backend_windows_chat_source_binding_changed');
+    }
+    adoptedGroup();
+  }
+  final fence = CloudSyncLocalSendAuthFence(expected: auth, capture: provider.capture,
+    stillCurrent: () => !store.isClosed() && identical(readActiveClient(), client) &&
+      jsonEncode(ownerFields(authority.read(writerScope))) == ownerBefore);
+  final proofs = <api.CloudSyncAttachmentParentGroupProof>[];
+  final diagnostics = <Map<String, Object?>>[];
+  var poisoned = false;
+  final transport = NativeProtectedCloudSyncTransport(cloudMessagesClient: client,
+    storageDirectory: profile, protectedStoreIdentity: auth.protectedStoreIdentity,
+    // No writer mutation guard/token is supplied. Only local preparation is available.
+    readAttachmentParentContext: (readScope, id) {
+      if (readScope != scope || id != operationId || immutableRows() != immutableBefore) {
+        throw StateError('backend_windows_chat_source_binding_changed');
+      }
+      final source = journal.readAdoptedAttachmentSource(operationId: id, currentAuth: auth);
+      if (source == null) throw StateError('cloud_sync_local_send_protected_source_missing');
+      return plans.receiptContext(source, auth);
+    },
+    readAttachmentParentGroupProof: (readScope, id) async {
+      if (readScope != scope || id != operationId) throw StateError('backend_windows_chat_source_binding_changed');
+      await validate();
+      return readProofWindow((token) async {
+        final group = adoptedGroup();
+        final proof = await api.cloudSyncOpenAttachmentParentGroupProof(cloudMessagesClient: client,
+          nativeWriterPauseToken: token, storageDirectory: profile,
+          expectedAccountFingerprint: auth.accountFingerprint,
+          expectedProtectedStoreIdentity: auth.protectedStoreIdentity,
+          generation: BigInt.from(group.generation), routingMetadataDigest: group.routingMetadataDigest,
+          source: group.source);
+        proofs.add(proof); // Own it even if the read-window resume later fails.
+        return proof;
+      });
+    },
+    recordCreatePreflightDiagnostic: (value) {
+      if (diagnostics.length < 32) diagnostics.add(Map.unmodifiable(value));
+    });
+  final lifecycle = CloudProtectedPageLeaseLifecycle(store: durable, transport: transport);
+  try {
+    await validate();
+    onStage('message-source-bound');
+    await CloudSyncMessagePreparationRecoveryCoordinator(store: durable, transport: transport,
+      ensureProtectedStoreRecovered: () async { await validate(); await lifecycle.ensureRecoveredBeforeFetch(); await validate(); },
+      verifyRecoveredReceipts: () async { await validate(); await lifecycle.ensureRecoveredBeforeWrite(); await validate(); },
+      onUncertainRecovery: () { poisoned = true; },
+    ).recover(scope, operationId: operationId, chatId: chatId, intentId: intentId,
+      currentAuth: auth, authFence: fence, now: DateTime.now().toUtc());
+    onStage('message-owner-committed');
+    final outcome = await prepareWindowsMessageWithoutMutation<CloudSyncPreparedSubmission>(
+      prepare: () async {
+        await validate();
+        final origin = durable.readMessagePreparationRecovery(scope, operationId: operationId,
+          chatId: chatId, intentId: intentId, currentAuth: auth)!;
+        final original = validateMessagePreparationRecoveryReceipt(origin);
+        return transport.prepareSubmission(scope,
+          submissionIdentity: CloudOutboxSubmissionIdentity(requestUuid: const Uuid().v4().toUpperCase(),
+            operationUuids: {operationId: const Uuid().v4().toUpperCase()}),
+          operations: [resolveMessagePreparationRecoveryOperation(origin, originalOperation: original)]);
+      },
+      release: transport.releasePreparedSubmission,
+      quiesce: transport.quiesceNativeOperations,
+      retain: () async {
+        await validate();
+        if (poisoned) throw StateError('cloud_sync_message_preparation_recovery_changed');
+        final current = durable.readMessagePreparationRecovery(scope, operationId: operationId,
+          chatId: chatId, intentId: intentId, currentAuth: auth)!;
+        if (current.phase == CloudSyncMessagePreparationRecoveryPhase.committed) {
+          durable.advanceMessagePreparationRecoveryPhase(scope, expected: current,
+            next: CloudSyncMessagePreparationRecoveryPhase.retained, currentAuth: auth);
+        }
+        if (immutableRows() != immutableBefore) throw StateError('backend_windows_chat_source_binding_changed');
+      }, onStage: onStage);
+    return {'schema': 4, 'completed': true, 'rowId': request['rowId'],
+      'generation': request['generation'], 'sequence': request['sequence'],
+      'messageId': request['messageId'], 'intentId': intentId,
+      'originalOpMapMessageUnchanged': true, 'originalIdsEvidencePreserved': true,
+      'preflightDiagnostics': diagnostics, ...outcome};
+  } finally {
+    await transport.quiesceNativeOperations();
+    for (final proof in proofs) { proof.dispose(); }
+  }
 }
 
 extension on CloudInboxChangeEntity {
