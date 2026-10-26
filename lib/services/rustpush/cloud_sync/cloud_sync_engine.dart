@@ -2622,11 +2622,25 @@ class CloudSyncEngine {
     final transport = _writeTransport;
     if (transport is! CloudSyncWriteReceiptFinalizer) return;
     try {
+      var acknowledgable = transitions;
+      final store = _store;
+      if (store is CloudProtectedOutboundLeaseAdoptionStore) {
+        // Terminal status alone cannot release a receipt still owned by a
+        // durable recovery audit. Read the committed ownership set AFTER the
+        // transition; uncertainty keeps the receipt for ordinary recovery.
+        final live = await (store as CloudProtectedOutboundLeaseAdoptionStore)
+            .readLiveProtectedOutboundLeaseReferences(maximumCount: 4096);
+        final byId = {for (final operation in operations) operation.operationId: operation};
+        acknowledgable = transitions.where((transition) {
+          final reference = byId[transition.operationId]?.protectedLeaseReference;
+          return reference == null || !live.contains(reference);
+        }).toList(growable: false);
+      }
       await (transport as CloudSyncWriteReceiptFinalizer)
           .acknowledgeDurableTerminalOperations(
             scope,
             operations: operations,
-            transitions: transitions,
+            transitions: acknowledgable,
           );
     } catch (_) {
       // The outbox transition is already durable. A receipt leak is safe and

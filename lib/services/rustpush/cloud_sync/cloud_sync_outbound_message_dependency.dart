@@ -4,6 +4,7 @@ import 'package:bluebubbles/database/models.dart';
 import 'package:crypto/crypto.dart';
 
 import 'cloud_sync_models.dart';
+import 'cloud_sync_message_archive_recovery_origin.dart';
 import 'cloud_sync_message_preparation_recovery_origin.dart';
 import 'cloud_sync_outbound_chat_binding.dart';
 import 'cloud_sync_outbound_group_binding.dart';
@@ -430,7 +431,10 @@ void requireCloudSyncAdoptedLocalSendDependencies({
   );
   // The journal authenticates the audit before this dependency-only check.
   // Preserve the exact old v4 proof and still require its journal callback.
-  if (binding != null && CloudSyncMessagePreparationRecoveryOrigin.isEncoded(binding)) {
+  if (binding != null && CloudSyncMessageArchiveRecoveryOrigin.isEncoded(binding)) {
+    if (requireAttachmentReadback == null) reject();
+    binding = CloudSyncMessageArchiveRecoveryOrigin.decode(binding).legacyBinding;
+  } else if (binding != null && CloudSyncMessagePreparationRecoveryOrigin.isEncoded(binding)) {
     if (requireAttachmentReadback == null) reject();
     binding = CloudSyncMessagePreparationRecoveryOrigin.decode(binding).legacyBinding;
   }

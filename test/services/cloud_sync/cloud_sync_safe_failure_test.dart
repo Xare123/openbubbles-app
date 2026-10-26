@@ -67,6 +67,8 @@ void main() {
       'cloud_sync_local_source_quiescence_timeout',
       'cloud_sync_message_preparation_recovery_changed',
       'cloud_sync_message_preparation_recovery_origin_invalid',
+      'cloud_sync_message_archive_recovery_changed',
+      'cloud_sync_message_archive_recovery_origin_invalid',
     };
     for (final code in codes) {
       expect(cloudSyncV2SafeFailureCode(StateError(code)), code);

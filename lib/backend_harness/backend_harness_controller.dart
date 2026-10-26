@@ -175,6 +175,26 @@ final class BackendHarnessController {
             }
           },
         ),
+        'archive.recover-message': BackendHarnessOperation(
+          background: true,
+          uncertainOnFailure: true,
+          validate: (args) => Platform.isWindows && retainedRecoveryOwner != null &&
+              backendHarnessValidMessageArchiveRecovery(args) &&
+              args['retainedRecoveryOwner'] == retainedRecoveryOwner,
+          handler: (args) async {
+            try {
+              final operation = await pushService.recoverCloudSyncV2BackendMessageArchive(
+                operationId: args['operationId']! as String,
+                chatId: args['chatId']! as int, intentId: args['intentId']! as int);
+              return BackendHarnessPayload(flags: {
+                'message_recovery_ready': operation.status == CloudOutboxStatus.pending,
+                'message_recovery_record_retained': true,
+              });
+            } catch (error) {
+              throw BackendHarnessFailure(backendHarnessMessageArchiveRecoveryFailureCode(error));
+            }
+          },
+        ),
         'fixture.inspect': BackendHarnessOperation(
           background: true,
           validate: BackendHarnessEvidence.validInspect,

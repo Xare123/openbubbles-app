@@ -21,6 +21,8 @@ import 'cloud_sync_fresh_group_recovery_origin.dart';
 import 'cloud_sync_fresh_group_recovery_snapshot.dart';
 import 'cloud_sync_fresh_group_recovery_binding.dart';
 import 'cloud_sync_message_preparation_recovery_origin.dart';
+import 'cloud_sync_message_archive_recovery_origin.dart';
+import 'cloud_sync_message_archive_recovery_binding.dart';
 import 'cloud_sync_message_preparation_recovery_binding.dart';
 import 'cloud_sync_outbound_group_binding.dart';
 import 'cloud_sync_group_send_route.dart';
@@ -2725,6 +2727,13 @@ final class CloudSyncLocalSendJournal {
       _verifyLocalOwnership();
     }
     final intent = _readRetainedIntent(expected.intentId);
+    if (CloudSyncMessageArchiveRecoveryOrigin.isEncoded(intent.admittedChatBinding ?? '')) {
+      final raw = _readUnique(_store.box<CloudOutboxOperationEntity>().query(
+        CloudOutboxOperationEntity_.operationId.equals(intent.admittedOperationId ?? '')));
+      if (messageArchiveRecoveryAuditForLiveness(intent, originalOperation: raw) == null) {
+        throw StateError(messageArchiveRecoveryChangedCode);
+      }
+    }
     if (!expected._matches(intent) ||
         intent.state != 2 ||
         operation == null ||
@@ -2902,6 +2911,10 @@ final class CloudSyncLocalSendJournal {
     CloudOutboxOperationEntity? originalOperation,
   }) {
     final encoded = intent.admittedChatBinding;
+    if (CloudSyncMessageArchiveRecoveryOrigin.isEncoded(encoded ?? '')) {
+      messageArchiveRecoveryAuditForLiveness(intent, originalOperation: originalOperation);
+      return null; // The regular outbox now owns the transferred receipt.
+    }
     if (encoded == null) {
       if (intent.state == 2 && !_legacyAdoptionMatchesForLiveness(intent, originalOperation)) {
         throw StateError(messagePreparationRecoveryChangedCode);
@@ -2976,9 +2989,94 @@ final class CloudSyncLocalSendJournal {
     return digest == intent.admittedBindingSha256;
   }
 
-  static String? _legacyPreparationDependency(String? encoded) => encoded != null &&
-      CloudSyncMessagePreparationRecoveryOrigin.isEncoded(encoded)
-    ? CloudSyncMessagePreparationRecoveryOrigin.decode(encoded).legacyBinding : encoded;
+  static String? _legacyPreparationDependency(String? encoded) {
+    if (encoded == null) return null;
+    if (CloudSyncMessageArchiveRecoveryOrigin.isEncoded(encoded)) {
+      return CloudSyncMessageArchiveRecoveryOrigin.decode(encoded).legacyBinding;
+    }
+    return CloudSyncMessagePreparationRecoveryOrigin.isEncoded(encoded)
+      ? CloudSyncMessagePreparationRecoveryOrigin.decode(encoded).legacyBinding : encoded;
+  }
+
+  /// Audit/liveness recognition only. The normal adoption digest authenticates
+  /// the current row; the immutable receipt preserves the exact old owner.
+  static CloudSyncMessageArchiveRecoveryOrigin? messageArchiveRecoveryAuditForLiveness(
+    CloudSyncLocalSendIntentEntity intent, {
+    required CloudOutboxOperationEntity? originalOperation,
+  }) {
+    final encoded = intent.admittedChatBinding;
+    if (!CloudSyncMessageArchiveRecoveryOrigin.isEncoded(encoded ?? '')) return null;
+    final origin = CloudSyncMessageArchiveRecoveryOrigin.decode(encoded!);
+    if (!_legacyAdoptionMatchesForLiveness(intent, originalOperation)) {
+      throw StateError(messageArchiveRecoveryChangedCode);
+    }
+    validateMessageArchiveRecoveryOperationAndSource(origin: origin,
+      operation: originalOperation!, intent: intent);
+    return origin;
+  }
+
+  /// Called only by the Store's compare-and-swap handoff transaction. Native
+  /// receipt verification precedes it; no stage, commit or remote save occurs.
+  void bindMessageArchiveRecoveryOwner(
+    Store transactionStore, {
+    required CloudSyncMessageArchiveRecoveryClaim claim,
+    required CloudOutboxOperation replacement,
+    required CloudSyncMessageArchiveRecoveryOrigin origin,
+    required CloudSyncNativeAuthSnapshot currentAuth,
+  }) {
+    _requireMessagePreparationAuthority(transactionStore, replacement.scope, currentAuth);
+    final intent = _readRetainedIntent(claim.intentId);
+    if (freshGroupRecoverySnapshotFingerprint(freshGroupRecoverySourceSnapshot(intent)) !=
+          freshGroupRecoverySnapshotFingerprint(claim.sourceSnapshot) ||
+        intent.admittedBindingSha256 != _operationBinding(claim.operation,
+          chatBinding: claim.preparation.encode(), protectedSourceBinding: intent.protectedSourceBinding) ||
+        origin.preparationBinding != claim.preparation.encode() ||
+        replacement.operationId != claim.operation.operationId ||
+        replacement.encryptedPayloadReference != claim.preparation.freshProtectedReference ||
+        replacement.protectedLeaseReference != claim.preparation.freshLeaseReference) {
+      throw StateError(messageArchiveRecoveryChangedCode);
+    }
+    intent
+      ..admittedChatBinding = origin.encode()
+      ..admittedBindingSha256 = _operationBinding(replacement,
+        chatBinding: origin.encode(), protectedSourceBinding: intent.protectedSourceBinding);
+    _intents.put(intent);
+  }
+
+  CloudSyncMessageArchiveRecoveryOrigin validateMessageArchiveRecoveryOwner(
+    Store transactionStore, CloudOutboxOperation operation, {
+    required int chatId,
+    required int intentId,
+    required CloudSyncNativeAuthSnapshot currentAuth,
+  }) {
+    _requireMessagePreparationAuthority(transactionStore, operation.scope, currentAuth);
+    final intent = _adoptedIntentForOperation(operation.operationId);
+    final raw = _readUnique(_store.box<CloudOutboxOperationEntity>().query(
+      CloudOutboxOperationEntity_.operationId.equals(operation.operationId)));
+    final origin = intent == null ? null
+      : messageArchiveRecoveryAuditForLiveness(intent, originalOperation: raw);
+    if (origin == null || intent!.id != intentId || origin.binding['chatId'] != chatId ||
+        origin.binding['protectedStoreIdentity'] != currentAuth.protectedStoreIdentity ||
+        origin.binding['ownershipEpoch'] != _binding.ownershipEpoch ||
+        !_binding.continuesCapturedEpoch(origin.binding['writerEpoch']! as int) ||
+        origin.binding['ownershipSnapshotSha256'] != messageArchiveRecoveryOwnershipDigest(
+          origin.binding['writerEpoch']! as int, origin.binding['ownershipEpoch']! as int)) {
+      throw StateError(messageArchiveRecoveryChangedCode);
+    }
+    final source = readAdoptedCreateSource(transactionStore, operation);
+    if (source == null || _validatedExactAdoptedMessage(intent).chat.targetId != chatId ||
+        _retainedProtectedSource(intent, currentAuth) == null) {
+      throw StateError(messageArchiveRecoveryChangedCode);
+    }
+    requireIdsConfirmationForDispatch(source);
+    return origin;
+  }
+
+  String messageArchiveRecoveryOwnershipDigest(int epoch, int ownershipEpoch) =>
+      _messagePreparationOwnershipDigest(_binding.scope, epoch, ownershipEpoch);
+
+  ({int epoch, int ownershipEpoch}) get messageArchiveRecoveryOwnership =>
+      (epoch: _binding.epoch, ownershipEpoch: _binding.ownershipEpoch);
 
   /// Fresh group-dependency pin for attachment parents, called before stage
   /// and before adoption after awaits. Revalidates the state-1 source, then
@@ -3167,7 +3265,7 @@ final class CloudSyncLocalSendJournal {
     // binding and the COMPLETE child readback proof are revalidated below.
     dynamic chatBinding;
     try {
-      final binding = intent.admittedChatBinding;
+      final binding = _legacyPreparationDependency(intent.admittedChatBinding);
       if (binding == null || binding.length > 65536) {
         throw StateError('cloud_sync_local_send_parent_not_ready');
       }

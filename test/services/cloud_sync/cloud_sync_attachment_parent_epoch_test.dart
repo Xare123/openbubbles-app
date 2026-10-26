@@ -20,9 +20,12 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_manual_shado
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_message_preparation_recovery_binding.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_message_preparation_recovery_origin.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_message_preparation_recovery.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_message_archive_recovery.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_message_archive_recovery_origin.dart';
 import 'package:bluebubbles/src/rust/api/api.dart' as api;
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_models.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_outbound_staging.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_store.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_persistent_keys.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_protector.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_writer_authority.dart';
@@ -651,6 +654,220 @@ void main() {
       expect(oldOutboxAndMaps(), before);
     });
   }
+
+  group('message archive ownership handoff', () {
+    Future<({CloudOutboxOperation operation, int intentId})> retainedOwner() async {
+      final held = await heldForRecovery();
+      final adopted = adoptRecovery(recoveryClaim(held));
+      final committed = liveStore().advanceMessagePreparationRecoveryPhase(_messageScope,
+        expected: adopted, next: CloudSyncMessagePreparationRecoveryPhase.committed,
+        currentAuth: auth);
+      liveStore().advanceMessagePreparationRecoveryPhase(_messageScope,
+        expected: committed, next: CloudSyncMessagePreparationRecoveryPhase.retained,
+        currentAuth: auth);
+      return held;
+    }
+
+    ObjectBoxCloudSyncStore archiveStore() => ObjectBoxCloudSyncStore(store: store,
+      protector: _FakeProtector(), localSendJournal: localSends,
+      attachmentUploadJournal: uploads, clock: () => _time(80));
+
+    Future<CloudOutboxOperation> activate(
+      ({CloudOutboxOperation operation, int intentId}) held,
+    ) async {
+      final claim = liveStore().captureMessageArchiveRecovery(_messageScope,
+        operationId: held.operation.operationId, chatId: chat.id!, intentId: held.intentId,
+        currentAuth: auth);
+      return liveStore().adoptMessageArchiveRecovery(claim: claim, currentAuth: auth, now: _time(50));
+    }
+
+    test('atomic same-row transfer preserves full history and normal admission across restart', () async {
+      final held = await retainedOwner();
+      final oldIntent = freshGroupRecoverySourceSnapshot(store.box<CloudSyncLocalSendIntentEntity>().get(held.intentId)!);
+      final oldRows = oldOutboxAndMaps();
+      final count = store.box<CloudOutboxOperationEntity>().count();
+      final staged = _RecoveryCoordinatorStaging();
+      var verified = 0, uncertain = 0;
+      Future<CloudOutboxOperation> recover() => CloudSyncMessageArchiveRecoveryCoordinator(
+        store: liveStore(), transport: staged, ensureProtectedStoreRecovered: () async {},
+        verifyRecoveredReceipts: () async { verified++; },
+        onUncertainRecovery: () { uncertain++; },
+      ).recover(_messageScope, operationId: held.operation.operationId, chatId: chat.id!,
+        intentId: held.intentId, currentAuth: auth,
+        authFence: CloudSyncLocalSendAuthFence(expected: auth, capture: () async => auth, stillCurrent: () => true),
+        now: _time(50));
+      final transferred = await recover();
+      expect(transferred.operationId, held.operation.operationId);
+      expect(transferred.status, CloudOutboxStatus.pending);
+      expect(transferred.encryptedPayloadReference, _ref('Q'));
+      expect(transferred.protectedLeaseReference, _lease('f'));
+      expect(transferred.payloadSha256, held.operation.payloadSha256);
+      expect(transferred.attemptCount, held.operation.attemptCount);
+      expect(store.box<CloudOutboxOperationEntity>().count(), count);
+      final intent = store.box<CloudSyncLocalSendIntentEntity>().get(held.intentId)!;
+      final origin = CloudSyncMessageArchiveRecoveryOrigin.decode(intent.admittedChatBinding!);
+      expect(origin.preparationBinding, oldIntent['admittedChatBinding']);
+      expect(origin.source, oldIntent);
+      expect(origin.operation['state'], CloudOutboxStatus.quarantined.index);
+      expect(origin.operation['lastErrorCategory'], CloudFailureCategory.unknown.name);
+      expect(origin.operation['attemptCount'], 3);
+      expect(origin.operation['localChatOrigin'], isNull);
+      final nowIntent = Map<String, Object?>.of(freshGroupRecoverySourceSnapshot(intent))
+        ..remove('admittedChatBinding')..remove('admittedBindingSha256');
+      final beforeIntent = Map<String, Object?>.of(oldIntent)
+        ..remove('admittedChatBinding')..remove('admittedBindingSha256');
+      expect(nowIntent, beforeIntent);
+      final source = localSends.readAdoptedCreateSource(store, transferred)!;
+      localSends.requireIdsConfirmationForDispatch(source);
+      expect(localSends.readAdoptedAttachmentChatDependency(operationId: transferred.operationId, currentAuth: auth),
+        (jsonDecode(origin.legacyBinding) as List)[1]);
+      expect(await liveStore().readLiveProtectedOutboundLeaseReferences(maximumCount: 1024), contains(_lease('f')));
+      final blobs = await liveStore().readLiveProtectedReferences(maximumCount: 1024);
+      expect(blobs.references, containsAll([_ref('Q'), held.operation.encryptedPayloadReference]));
+      await recover();
+      await reopen();
+      bindRecoveryAuth();
+      expect((await recover()).status, CloudOutboxStatus.pending);
+      expect(staged.stages, 0);
+      expect(staged.commits, 0);
+      expect(staged.rollbacks, 0);
+      expect(uncertain, 0);
+      expect(verified, 4);
+      expect(oldOutboxAndMaps(), isNot(oldRows));
+    });
+
+    test('post-transfer uncertainty fences the host and restart reuses the same owner', () async {
+      final held = await retainedOwner();
+      final staged = _RecoveryCoordinatorStaging();
+      var verifies = 0, uncertain = 0;
+      Future<CloudOutboxOperation> recover() => CloudSyncMessageArchiveRecoveryCoordinator(
+        store: liveStore(), transport: staged, ensureProtectedStoreRecovered: () async {},
+        verifyRecoveredReceipts: () async {
+          verifies++;
+          if (verifies == 2) throw StateError('synthetic_post_transfer_uncertainty');
+        }, onUncertainRecovery: () { uncertain++; },
+      ).recover(_messageScope, operationId: held.operation.operationId, chatId: chat.id!,
+        intentId: held.intentId, currentAuth: auth,
+        authFence: CloudSyncLocalSendAuthFence(expected: auth, capture: () async => auth, stillCurrent: () => true),
+        now: _time(50));
+      await expectLater(recover(), throwsStateError);
+      expect(uncertain, 1);
+      expect(await liveStore().readLiveProtectedOutboundLeaseReferences(maximumCount: 1024), contains(_lease('f')));
+      final encoded = store.box<CloudSyncLocalSendIntentEntity>().get(held.intentId)!.admittedChatBinding;
+      await reopen(); bindRecoveryAuth();
+      expect((await recover()).status, CloudOutboxStatus.pending);
+      expect(store.box<CloudSyncLocalSendIntentEntity>().get(held.intentId)!.admittedChatBinding, encoded);
+      expect(staged.stages, 0); expect(staged.commits, 0); expect(staged.rollbacks, 0);
+      expect(uncertain, 1);
+    });
+
+    for (final changed in ['mapping', 'intent', 'message']) {
+      test('$changed drift rejects the complete handoff without partial owner changes', () async {
+        final held = await retainedOwner();
+        final claim = liveStore().captureMessageArchiveRecovery(_messageScope,
+          operationId: held.operation.operationId, chatId: chat.id!, intentId: held.intentId, currentAuth: auth);
+        if (changed == 'mapping') {
+          final box = store.box<CloudRecordMapEntity>();
+          final row = box.get(claim.recordMapSnapshot['id']! as int)!;
+          row.updatedAtMs++;
+          box.put(row);
+        } else if (changed == 'intent') {
+          final box = store.box<CloudSyncLocalSendIntentEntity>();
+          final row = box.get(held.intentId)!;
+          row.updatedAtMs++;
+          box.put(row);
+        } else {
+          final box = store.box<Message>();
+          final row = box.get(claim.sourceSnapshot['localMessageId']! as int)!;
+          row.text = 'changed after capture';
+          box.put(row);
+        }
+        final before = oldOutboxAndMaps();
+        final sourceBefore = freshGroupRecoverySourceSnapshot(store.box<CloudSyncLocalSendIntentEntity>().get(held.intentId)!);
+        expect(() => liveStore().adoptMessageArchiveRecovery(claim: claim, currentAuth: auth, now: _time(50)),
+          throwsA(anyOf(isA<StateError>(), isA<CloudSyncFailure>())));
+        expect(oldOutboxAndMaps(), before);
+        expect(freshGroupRecoverySourceSnapshot(store.box<CloudSyncLocalSendIntentEntity>().get(held.intentId)!), sourceBefore);
+      });
+    }
+
+    for (final terminal in ['unknown', 'quarantine']) {
+      test('$terminal keeps transferred lease live through normal durable submission', () async {
+        final held = await retainedOwner();
+        final operation = await activate(held);
+        final durable = archiveStore();
+        final leased = await durable.leaseEligibleOutbox(_messageScope, now: _time(60), limit: 1,
+          leaseId: 'archive-owner', leaseDuration: const Duration(minutes: 5), allowedActions: {CloudOutboxAction.save});
+        expect(leased.single.operationId, operation.operationId);
+        await durable.markOutboxSubmissionStarted(_messageScope, leaseId: 'archive-owner',
+          submissionIdentity: CloudOutboxSubmissionIdentity(requestUuid: _requestUuid,
+            operationUuids: {operation.operationId: _operationUuid}), now: _time(61));
+        await durable.applyOutboxTransitions(_messageScope, leaseId: 'archive-owner', now: _time(62), transitions: [
+          terminal == 'unknown'
+            ? CloudOutboxTransition.unknownOutcome(operation.operationId, nextEligibleAt: _time(70))
+            : CloudOutboxTransition.quarantined(operation.operationId, category: CloudFailureCategory.unknown),
+        ]);
+        final current = (await durable.readOutboxEntries(_messageScope)).singleWhere((e) => e.operationId == operation.operationId);
+        expect(current.status, terminal == 'unknown' ? CloudOutboxStatus.unknownOutcome : CloudOutboxStatus.quarantined);
+        expect(current.protectedLeaseReference, _lease('f'));
+        expect(current.appleRequestUuid, _requestUuid);
+        expect(current.appleOperationUuid, _operationUuid);
+        expect(await durable.readLiveProtectedOutboundLeaseReferences(maximumCount: 1024), contains(_lease('f')));
+        await reopen(); bindRecoveryAuth();
+        expect(await liveStore().readLiveProtectedOutboundLeaseReferences(maximumCount: 1024), contains(_lease('f')));
+        expect(liveStore().readRecoveredMessageArchive(_messageScope, operationId: operation.operationId,
+          chatId: chat.id!, intentId: held.intentId, currentAuth: auth)!.status, current.status);
+      });
+    }
+
+    test('only exact create-readback finalization releases transferred and source leases', () async {
+      final held = await retainedOwner();
+      final operation = await activate(held);
+      final durable = archiveStore();
+      await durable.leaseEligibleOutbox(_messageScope, now: _time(60), limit: 1,
+        leaseId: 'archive-readback', leaseDuration: const Duration(minutes: 5), allowedActions: {CloudOutboxAction.save});
+      await durable.markOutboxSubmissionStarted(_messageScope, leaseId: 'archive-readback',
+        submissionIdentity: CloudOutboxSubmissionIdentity(requestUuid: _requestUuid,
+          operationUuids: {operation.operationId: _operationUuid}), now: _time(61));
+      final receipt = CloudOutboxCreateReceipt(operationId: operation.operationId,
+        logicalEntityKeyHash: operation.logicalEntityKeyHash, serverRecordIdHash: operation.serverRecordIdHash!,
+        etagHash: _token('E'), protectedCurrentRawRecordReference: _ref('R'),
+        protectedCurrentRawRecordLeaseReference: _lease('b'), rawGeneration: 1);
+      await durable.commitOutboxCreateReceipt(_messageScope, leaseId: 'archive-readback', receipt: receipt,
+        retainProtectedLeaseReference: true, now: _time(62));
+      expect(await durable.readLiveProtectedOutboundLeaseReferences(maximumCount: 1024), contains(_lease('f')));
+      final confirmed = (await durable.readOutboxEntries(_messageScope)).singleWhere((e) => e.operationId == operation.operationId);
+      final snapshot = await durable.commitConfirmedMessageCreateReadback(expectedOperation: confirmed,
+        receipt: receipt, now: _time(63));
+      await expectLater(durable.finalizeMessageCreateReadbackLeases(expectedSnapshot: snapshot,
+        createSourceLeaseCommitted: false, readbackLeaseCommitted: true), throwsA(isA<CloudSyncFailure>()));
+      expect(await durable.readLiveProtectedOutboundLeaseReferences(maximumCount: 1024), contains(_lease('f')));
+      await durable.finalizeMessageCreateReadbackLeases(expectedSnapshot: snapshot,
+        createSourceLeaseCommitted: true, readbackLeaseCommitted: true);
+      expect(await durable.readLiveProtectedOutboundLeaseReferences(maximumCount: 1024), isNot(contains(_lease('f'))));
+      final intent = store.box<CloudSyncLocalSendIntentEntity>().get(held.intentId)!;
+      expect(intent.confirmedReadbackBindingSha256, intent.admittedBindingSha256);
+      final blobSnapshot = await durable.readLiveProtectedReferences(maximumCount: 1024);
+      expect(blobSnapshot.references, containsAll([_ref('Q'), held.operation.encryptedPayloadReference]));
+    });
+
+    test('malformed or downgraded handoff audits cannot disappear from cleanup', () async {
+      final held = await retainedOwner();
+      await activate(held);
+      final box = store.box<CloudSyncLocalSendIntentEntity>();
+      final good = box.get(held.intentId)!;
+      final origin = CloudSyncMessageArchiveRecoveryOrigin.decode(good.admittedChatBinding!);
+      for (final bad in ['[6]', origin.preparationBinding, origin.legacyBinding, 'bad', 'x' * 262145]) {
+        final row = box.get(held.intentId)!..admittedChatBinding = bad;
+        box.put(row);
+        await expectLater(liveStore().readLiveProtectedOutboundLeaseReferences(maximumCount: 1024), throwsA(anyOf(isA<StateError>(), isA<CloudSyncFailure>())));
+        await expectLater(liveStore().readLiveProtectedReferences(maximumCount: 1024), throwsA(anyOf(isA<StateError>(), isA<CloudSyncFailure>())));
+      }
+      good.protectedSourceBinding = null;
+      box.put(good);
+      await expectLater(liveStore().readLiveProtectedOutboundLeaseReferences(maximumCount: 1024), throwsStateError);
+    });
+  });
 
   test('E+1 unknown: adopted-parent evidence read survives', () async {
     final intent = seedConfirmedIntent();

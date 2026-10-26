@@ -21,6 +21,21 @@ String backendHarnessFreshGroupRecoveryFailureCode(Object error) {
   }[safeCode] ?? 'backend_job_failed';
 }
 
+String backendHarnessMessageArchiveRecoveryFailureCode(Object error) {
+  final code = error is CloudSyncFailure ? error.safeCode
+    : error is StateError ? error.message : null;
+  return const {
+    'protected_outbound_lease_missing': 'backend_message_recovery_receipt_missing',
+    'cloud_sync_message_archive_recovery_changed': 'backend_message_recovery_binding_changed',
+    'cloud_sync_message_preparation_recovery_changed': 'backend_message_recovery_binding_changed',
+    'cloud_sync_local_send_identity_changed': 'backend_message_recovery_auth_unavailable',
+    'cloud_sync_local_send_owner_changed': 'backend_message_recovery_auth_unavailable',
+    'cloud_sync_message_archive_recovery_origin_invalid': 'backend_message_recovery_ineligible',
+    'cloud_sync_message_preparation_recovery_origin_invalid': 'backend_message_recovery_ineligible',
+    'cloud_sync_outbound_protected_storage': 'backend_message_recovery_protected_storage_failed',
+  }[code] ?? 'backend_job_failed';
+}
+
 /// Explicit Windows writer admission is separate from the read-only host.
 /// This policy grants no native permit or archive consent.
 bool backendHarnessWindowsWriterModeAllowed({
@@ -61,6 +76,11 @@ bool backendHarnessValidFreshGroupRecovery(Map<String, Object?> args) =>
     args['intentId'] is int && (args['intentId'] as int) > 0 &&
     args['retainedRecoveryOwner'] is String &&
     backendHarnessRecoveryOwnerValid(args['retainedRecoveryOwner'] as String);
+
+// Same exact four-key selector; the service separately requires a retained
+// Message owner and never interprets this as Chat recovery or send authority.
+bool backendHarnessValidMessageArchiveRecovery(Map<String, Object?> args) =>
+    backendHarnessValidFreshGroupRecovery(args);
 
 bool backendHarnessRetainedFixtureAllowed({
   required bool isWindows,

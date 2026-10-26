@@ -4314,6 +4314,46 @@ void main() {
   );
 
   test(
+    'durable terminal cleanup cannot acknowledge a live recovery owner',
+    () async {
+      final protectedStore = _ProtectedRecoveryTrackingStore();
+      store = protectedStore;
+      final tracking = _TerminalReceiptTrackingFakeCloudSyncTransport();
+      transport = tracking;
+      final retained = testOutboxOperation(scope, 913).copyWith(
+        protectedLeaseReference: 'obcs2.lease.${'a' * 32}',
+      );
+      final disposable = testOutboxOperation(scope, 914).copyWith(
+        protectedLeaseReference: 'obcs2.lease.${'b' * 32}',
+      );
+      protectedStore.outboundLeaseReferences.add(retained.protectedLeaseReference!);
+      await store.enqueueOutbox(retained);
+      await store.enqueueOutbox(disposable);
+      transport.pushHandler = (_, operations) async => CloudPushBatchResult(
+        outcomes: operations.map(
+          (operation) => CloudPushOutcome(
+            operationId: operation.operationId,
+            disposition: CloudPushDisposition.quarantined,
+            failureCategory: CloudFailureCategory.malformedRecord,
+          ),
+        ),
+      );
+      final result = await engine(
+        flags: const CloudSyncFeatureFlags(readOnlyFetch: false, saves: true),
+        batchSize: 2,
+        maximumOutboxBatches: 1,
+      ).synchronize(trigger: CloudSyncTrigger.localOutbox);
+      expect(result.counters.quarantined, 2);
+      expect(tracking.consumePreparedSubmissionCallCount, 1);
+      expect(tracking.acknowledgedOperationIds, [disposable.operationId]);
+      expect(
+        protectedStore.outboundLeaseReferences,
+        contains(retained.protectedLeaseReference),
+      );
+    },
+  );
+
+  test(
     'timed-out push remains unknown until native operations quiesce',
     () async {
       final operation = testOutboxOperation(scope, 807);
@@ -5504,6 +5544,26 @@ final class _ReceiptTrackingFakeCloudSyncTransport
             (transition) =>
                 transition.type == CloudOutboxTransitionType.confirmed,
           )
+          .map((transition) => transition.operationId),
+    );
+  }
+}
+
+final class _TerminalReceiptTrackingFakeCloudSyncTransport
+    extends FakeCloudSyncTransport
+    implements CloudSyncWriteReceiptFinalizer {
+  final List<String> acknowledgedOperationIds = [];
+  @override
+  Future<void> acknowledgeDurableTerminalOperations(
+    CloudSyncScope scope, {
+    required List<CloudOutboxOperation> operations,
+    required List<CloudOutboxTransition> transitions,
+  }) async {
+    acknowledgedOperationIds.addAll(
+      transitions
+          .where((transition) =>
+              transition.type == CloudOutboxTransitionType.confirmed ||
+              transition.type == CloudOutboxTransitionType.quarantined)
           .map((transition) => transition.operationId),
     );
   }

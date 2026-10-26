@@ -32,6 +32,8 @@ import 'cloud_sync_fresh_group_recovery_origin.dart';
 import 'cloud_sync_fresh_group_recovery_snapshot.dart';
 import 'cloud_sync_fresh_group_recovery_binding.dart';
 import 'cloud_sync_message_preparation_recovery_origin.dart';
+import 'cloud_sync_message_archive_recovery_origin.dart';
+import 'cloud_sync_message_archive_recovery_binding.dart';
 import 'cloud_sync_message_preparation_recovery_binding.dart';
 import 'cloud_sync_persistent_keys.dart';
 import 'cloud_sync_record_maps.dart';
@@ -765,6 +767,14 @@ class ObjectBoxCloudSyncStore
               throw _storageFailure('protected_outbound_lease_recovery_bound_exceeded');
             }
           }
+          final archiveRecovery = _validatedMessageArchiveAuditLocked(intent);
+          if (archiveRecovery != null) {
+            references.addAll(messageArchiveRecoveryAuditLeaseReferences(origin: archiveRecovery,
+              currentOperation: _findOutboxByOperationIdLocked(archiveRecovery.operation['operationId']! as String)!));
+            if (references.length > maximumCount) {
+              throw _storageFailure('protected_outbound_lease_recovery_bound_exceeded');
+            }
+          }
           final source = _localSendSource(intent);
           if (source == null) continue;
           // Exact readback is committed atomically with final outbox receipt
@@ -1389,6 +1399,12 @@ class ObjectBoxCloudSyncStore
           final recovery = _validatedMessagePreparationAuditLocked(intent);
           if (recovery != null) {
             for (final reference in messagePreparationRecoveryAuditProtectedReferences(recovery.encode())) {
+              capture(reference);
+            }
+          }
+          final archiveRecovery = _validatedMessageArchiveAuditLocked(intent);
+          if (archiveRecovery != null) {
+            for (final reference in messageArchiveRecoveryAuditProtectedReferences(archiveRecovery)) {
               capture(reference);
             }
           }
@@ -3017,6 +3033,141 @@ class ObjectBoxCloudSyncStore
     return origin;
   }
 
+  /// Read-only idempotence. A transferred owner is never reactivated, including
+  /// when normal dispatch has submitted, confirmed, or quarantined it again.
+  CloudOutboxOperation? readRecoveredMessageArchive(
+    CloudSyncScope scope, {
+    required String operationId, required int chatId, required int intentId,
+    required CloudSyncNativeAuthSnapshot currentAuth,
+  }) => _store.runInTransaction(TxMode.read, () {
+    final intent = _store.box<CloudSyncLocalSendIntentEntity>().get(intentId);
+    if (intent == null) throw _storageFailure(messageArchiveRecoveryChangedCode);
+    final archive = _validatedMessageArchiveAuditLocked(intent);
+    if (archive == null) return null;
+    final row = _findOutboxByOperationIdLocked(operationId);
+    final checkpoint = _findCheckpointByKeyLocked(_scopeKey(scope));
+    if (row == null || row.scopeKey != _scopeKey(scope) ||
+        archive.operation['operationId'] != operationId ||
+        archive.binding['chatId'] != chatId || checkpoint == null ||
+        checkpoint.generation != row.checkpointGeneration) {
+      throw _storageFailure(messageArchiveRecoveryChangedCode);
+    }
+    _validateCheckpointScope(checkpoint, scope);
+    final operation = _outboxFromEntity(scope, row);
+    _requireChatCreateJournal().validateMessageArchiveRecoveryOwner(_store, operation,
+      chatId: chatId, intentId: intentId, currentAuth: currentAuth);
+    return operation;
+  });
+
+  CloudSyncMessageArchiveRecoveryClaim captureMessageArchiveRecovery(
+    CloudSyncScope scope, {
+    required String operationId, required int chatId, required int intentId,
+    required CloudSyncNativeAuthSnapshot currentAuth,
+  }) => _store.runInTransaction(TxMode.read, () {
+    final preparation = readMessagePreparationRecovery(scope, operationId: operationId,
+      chatId: chatId, intentId: intentId, currentAuth: currentAuth);
+    final row = _findOutboxByOperationIdLocked(operationId);
+    final mapping = preparation == null ? null
+      : _recordMaps.get(preparation.recordMap['id']! as int);
+    final intent = _store.box<CloudSyncLocalSendIntentEntity>().get(intentId);
+    if (preparation == null || row == null || mapping == null || intent == null ||
+        preparation.phase != CloudSyncMessagePreparationRecoveryPhase.retained ||
+        row.state != CloudOutboxStatus.quarantined.index || row.appleRequestUuid != null ||
+        row.appleOperationUuid != null || row.leaseIdHash != null || row.leaseExpiresAtMs != 0 ||
+        mapping.etagHash != null || mapping.encryptedRawRecordRef != null ||
+        mapping.rawRecordGeneration != 0 || mapping.protectedReadbackLeaseReference != null ||
+        mapping.pendingUpdateOperationId != null || mapping.pendingUpdatePredecessorEtagHash != null) {
+      throw _storageFailure(messageArchiveRecoveryChangedCode);
+    }
+    return CloudSyncMessageArchiveRecoveryClaim(operation: _outboxFromEntity(scope, row),
+      preparation: preparation, operationSnapshot: freshGroupRecoveryOperationSnapshot(row),
+      recordMapSnapshot: freshGroupRecoveryMapSnapshot(mapping),
+      sourceSnapshot: freshGroupRecoverySourceSnapshot(intent));
+  });
+
+  /// Transfer an EXISTING verified committed lease. The complete old v5 and
+  /// all old rows stay in the new intent audit. No new Native stage/commit or
+  /// mutation permit is created. Ordinary writer admission remains mandatory.
+  CloudOutboxOperation adoptMessageArchiveRecovery({
+    required CloudSyncMessageArchiveRecoveryClaim claim,
+    required CloudSyncNativeAuthSnapshot currentAuth,
+    required DateTime now,
+  }) => _store.runInTransaction(TxMode.write, () {
+    final scope = claim.operation.scope;
+    final actual = captureMessageArchiveRecovery(scope,
+      operationId: claim.operation.operationId, chatId: claim.chatId,
+      intentId: claim.intentId, currentAuth: currentAuth);
+    if (!actual.operation.sameDurableSnapshotAs(claim.operation) ||
+        actual.preparation.encode() != claim.preparation.encode() ||
+        freshGroupRecoverySnapshotFingerprint(actual.operationSnapshot) !=
+          freshGroupRecoverySnapshotFingerprint(claim.operationSnapshot) ||
+        freshGroupRecoverySnapshotFingerprint(actual.recordMapSnapshot) !=
+          freshGroupRecoverySnapshotFingerprint(claim.recordMapSnapshot) ||
+        freshGroupRecoverySnapshotFingerprint(actual.sourceSnapshot) !=
+          freshGroupRecoverySnapshotFingerprint(claim.sourceSnapshot)) {
+      throw _storageFailure(messageArchiveRecoveryChangedCode);
+    }
+    final journal = _requireChatCreateJournal();
+    final ownership = journal.messageArchiveRecoveryOwnership;
+    final receipt = messageArchiveRecoveryBuildReceipt(claim: claim, currentAuth: currentAuth,
+      writerEpoch: ownership.epoch, ownershipEpoch: ownership.ownershipEpoch,
+      ownershipSnapshotSha256: journal.messageArchiveRecoveryOwnershipDigest(
+        ownership.epoch, ownership.ownershipEpoch), now: now);
+    final archive = CloudSyncMessageArchiveRecoveryOrigin.create(
+      preparationBinding: claim.preparation.encode(), receipt: receipt);
+    final row = _findOutboxByOperationIdLocked(claim.operation.operationId)!;
+    final mapping = _recordMaps.get(claim.recordMapSnapshot['id']! as int)!;
+    row
+      ..encryptedPayloadRef = claim.preparation.freshProtectedReference
+      ..protectedLeaseReference = claim.preparation.freshLeaseReference
+      ..state = CloudOutboxStatus.pending.index
+      ..lastErrorCategory = null
+      ..nextEligibleAtMs = 0
+      ..updatedAtMs = now.millisecondsSinceEpoch;
+    mapping
+      ..encryptedServerRecordId = claim.preparation.freshProtectedReference
+      ..updatedAtMs = now.millisecondsSinceEpoch;
+    _outbox.put(row);
+    _recordMaps.put(mapping);
+    final replacement = _outboxFromEntity(scope, row);
+    journal.bindMessageArchiveRecoveryOwner(_store, claim: claim,
+      replacement: replacement, origin: archive, currentAuth: currentAuth);
+    if (readRecoveredMessageArchive(scope, operationId: row.operationId,
+      chatId: claim.chatId, intentId: claim.intentId, currentAuth: currentAuth) == null) {
+      throw _storageFailure(messageArchiveRecoveryChangedCode);
+    }
+    return replacement;
+  });
+
+  CloudSyncMessageArchiveRecoveryOrigin? _validatedMessageArchiveAuditLocked(
+    CloudSyncLocalSendIntentEntity intent,
+  ) {
+    final row = intent.admittedOperationId == null ? null
+      : _findOutboxByOperationIdLocked(intent.admittedOperationId!);
+    final origin = CloudSyncLocalSendJournal.messageArchiveRecoveryAuditForLiveness(
+      intent, originalOperation: row);
+    if (origin == null) return null;
+    final mapping = _recordMaps.get(origin.recordMap['id']! as int);
+    if (row == null || mapping == null) throw _storageFailure(messageArchiveRecoveryChangedCode);
+    validateMessageArchiveRecoveryCurrentState(origin: origin,
+      operation: row, mapping: mapping, intent: intent);
+    return origin;
+  }
+
+  CloudSyncMessageArchiveRecoveryOrigin? _messageArchiveRecoveryForOperationLocked(
+    CloudOutboxOperationEntity row,
+  ) {
+    final query = _store.box<CloudSyncLocalSendIntentEntity>().query(
+      CloudSyncLocalSendIntentEntity_.admittedOperationId.equals(row.operationId)).build();
+    try {
+      final intents = query.find();
+      if (intents.length > 1) throw _storageFailure(messageArchiveRecoveryChangedCode);
+      return intents.isEmpty ? null : _validatedMessageArchiveAuditLocked(intents.single);
+    } finally {
+      query.close();
+    }
+  }
+
   /// Cancel only proven, never-submitted Chat dependencies whose original
   /// Message was removed/edited. All immutable evidence and the adopted native
   /// lease remain. This transaction must finish before selection validation,
@@ -4378,12 +4529,13 @@ class ObjectBoxCloudSyncStore
             }
             break;
           case CloudOutboxTransitionType.quarantined:
+            final retainArchiveReceipt = _messageArchiveRecoveryForOperationLocked(entity) != null;
             entity
               ..state = _outboxStatusToInt(CloudOutboxStatus.quarantined)
               ..attemptCount += 1
               ..nextEligibleAtMs = 0
               ..protectedLeaseReference =
-                  cloudSyncIsNeverSubmittedChatCreate(entity)
+                  (retainArchiveReceipt || cloudSyncIsNeverSubmittedChatCreate(entity))
                   ? entity.protectedLeaseReference
                   : null
               ..lastErrorCategory =
