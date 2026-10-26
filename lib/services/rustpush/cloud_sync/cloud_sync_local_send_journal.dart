@@ -965,6 +965,173 @@ final class CloudSyncLocalSendJournal {
     }
   }
 
+  static const nativeSendFailureMetadataKey = 'cloud_sync_native_send_failure_v1';
+  static const nativeSendFailureErrorCode = 1001;
+  static const _nativeSendFailureCodes = {
+    'cloud_sync_native_send_failed',
+    'cloud_sync_native_send_completion_unknown',
+  };
+
+  /// A negative callback is an observation, not proof of non-delivery. Keep
+  /// the pending intent/source/lease and never persist arbitrary native text.
+  static String nativeSendFailureCategory(String error) =>
+      _nativeSendFailureCodes.contains(error)
+          ? error
+          : 'cloud_sync_native_send_completion_unknown';
+
+  static CloudSyncLocalSendIntentEntity? _failureOrigin(
+    Store store,
+    Message message,
+  ) {
+    final id = message.id;
+    if (id == null || id <= 0) return null;
+    final query = store.box<CloudSyncLocalSendIntentEntity>().query(
+      CloudSyncLocalSendIntentEntity_.localMessageId.equals(id),
+    ).build()..limit = 2;
+    final List<CloudSyncLocalSendIntentEntity> found;
+    try { found = query.find(); } finally { query.close(); }
+    if (found.length != 1) return null;
+    final origin = found.single;
+    if (![message.guid, message.stagingGuid].whereType<String>().any(
+          (guid) => CloudSyncLocalSendIdentity._uuid.hasMatch(guid) &&
+              CloudSyncLocalSendIdentity._digest([
+                'cloud-sync-local-send-guid-v1', guid,
+              ]) == origin.messageGuidHash,
+        )) {
+      return null;
+    }
+    return origin;
+  }
+
+  static CloudSyncLocalSendIntentEntity? _pendingFailureOrigin(
+    Store store,
+    Message message,
+  ) {
+    final origin = _failureOrigin(store, message);
+    return origin?.state == 0 && origin?.idsConfirmationVersion == 0
+        ? origin : null;
+  }
+
+  /// Content-free local diagnostic only. A late authenticated receipt wins.
+  static String? nativeSendFailureCode(Store store, Message message) {
+    final marker = message.metadata?[nativeSendFailureMetadataKey];
+    if (marker is! Map || marker.length != 4 || marker['version'] != 1 ||
+        !_nativeSendFailureCodes.contains(marker['code'])) {
+      return null;
+    }
+    final origin = _pendingFailureOrigin(store, message);
+    return origin != null && marker['guidHash'] == origin.messageGuidHash &&
+        marker['sourceSha256'] == origin.sourceSha256
+        ? marker['code'] as String : null;
+  }
+
+  static Message? recordNativeSendFailure(
+    Store store, {
+    required String stableGuid,
+    required String error,
+    required String serviceId,
+  }) {
+    if (store.isClosed() ||
+        !CloudSyncLocalSendIdentity._uuid.hasMatch(stableGuid)) {
+      return null;
+    }
+    return store.runInTransaction(TxMode.write, () {
+      final query = store.box<Message>().query(
+        Message_.guid.equals(stableGuid).or(Message_.stagingGuid.equals(stableGuid)),
+      ).build()..limit = 2;
+      final List<Message> found;
+      try { found = query.find(); } finally { query.close(); }
+      if (found.length != 1) return null;
+      final message = found.single;
+      final origin = _pendingFailureOrigin(store, message);
+      if (origin == null || message.sendingServiceId != serviceId) return null;
+      message.metadata = {
+        ...?message.metadata,
+        nativeSendFailureMetadataKey: {
+          'version': 1,
+          'code': nativeSendFailureCategory(error),
+          'guidHash': origin.messageGuidHash,
+          'sourceSha256': origin.sourceSha256,
+        },
+      };
+      // Same generic local failure indication as the normal send-error path.
+      // The retained-submission UI guard still forbids delete-and-resend.
+      if (message.error == 0) message.error = nativeSendFailureErrorCode;
+      message.sendingServiceId = null;
+      store.box<Message>().put(message);
+      return message;
+    });
+  }
+
+  /// Preserve legacy cleanup only for one exact, untracked service owner.
+  /// A refused V2 callback must never fall through to an arbitrary row.
+  static void clearUntrackedNativeSendFailure(
+    Store store, {
+    required String stableGuid,
+    required String serviceId,
+  }) {
+    if (store.isClosed() ||
+        !CloudSyncLocalSendIdentity._uuid.hasMatch(stableGuid)) {
+      return;
+    }
+    store.runInTransaction(TxMode.write, () {
+      final query = store.box<Message>().query(
+        Message_.guid.equals(stableGuid).or(Message_.stagingGuid.equals(stableGuid)),
+      ).build()..limit = 2;
+      final List<Message> found;
+      try { found = query.find(); } finally { query.close(); }
+      if (found.length != 1) return;
+      final message = found.single;
+      if (message.sendingServiceId != serviceId ||
+          hasRetainedSubmissionForMessage(store, message)) {
+        return;
+      }
+      message.sendingServiceId = null;
+      store.box<Message>().put(message);
+    });
+  }
+
+  /// Foreground reflection may finish after the negative callback. Its stale
+  /// Message object must not erase the durable diagnostic or restart a send.
+  static void retainNativeSendFailurePresentation(
+    Store store,
+    Message incoming, {
+    Message? retained,
+  }) {
+    final saved = retained ?? (incoming.id == null
+        ? null : store.box<Message>().get(incoming.id!));
+    if (saved == null || saved.id != incoming.id) return;
+    if (nativeSendFailureCode(store, saved) == null) {
+      // A stale foreground model may still contain the failure that an
+      // authenticated positive receipt has already cleared in the store.
+      if (incoming.metadata?.containsKey(nativeSendFailureMetadataKey) == true) {
+        final confirmed = _failureOrigin(store, incoming);
+        if (confirmed?.idsConfirmationVersion == cloudSyncIdsConfirmationVersion &&
+            const {1, 2, 3}.contains(confirmed?.state)) {
+          incoming.metadata?.remove(nativeSendFailureMetadataKey);
+          if (incoming.metadata?.isEmpty == true) {
+            incoming.metadata = null;
+          }
+          if (incoming.error == nativeSendFailureErrorCode && saved.error == 0) {
+            incoming.error = 0;
+          }
+          incoming.sendingServiceId = null;
+        }
+      }
+      return;
+    }
+    final origin = _pendingFailureOrigin(store, incoming);
+    if (origin == null) return;
+    incoming.metadata = {
+      ...?incoming.metadata,
+      nativeSendFailureMetadataKey: saved.metadata![nativeSendFailureMetadataKey],
+    };
+    if (incoming.error == 0) {
+      incoming.error = saved.error == 0 ? nativeSendFailureErrorCode : saved.error;
+    }
+    incoming.sendingServiceId = null;
+  }
+
   /// Atomically claims only an untracked stale send for legacy failure
   /// normalization. Native receipt replay uses the same Store transaction
   /// boundary, so it cannot confirm between this check and the claim.
@@ -1767,6 +1934,10 @@ final class CloudSyncLocalSendJournal {
         ..stagingGuid = null
         ..sendingServiceId = null
         ..error = 0;
+      message.metadata?.remove(nativeSendFailureMetadataKey);
+      if (message.metadata?.isEmpty == true) {
+        message.metadata = null;
+      }
       final identity = CloudSyncLocalSendIdentity._captureJournaled(
         message,
         chat,

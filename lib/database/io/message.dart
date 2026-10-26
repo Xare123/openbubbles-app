@@ -5,6 +5,7 @@ import 'dart:math';
 
 import 'package:async_task/async_task.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_send_journal.dart';
 import 'package:bluebubbles/utils/attachment_guid_utils.dart';
 import 'package:bluebubbles/utils/logger/logger.dart';
 import 'package:bluebubbles/services/network/backend_service.dart';
@@ -866,6 +867,13 @@ class Message {
 
       try {
         if (chat != null) this.chat.target = chat;
+        if (metadata?.containsKey(CloudSyncLocalSendJournal.nativeSendFailureMetadataKey) == true ||
+            existing?.metadata?.containsKey(CloudSyncLocalSendJournal.nativeSendFailureMetadataKey) == true ||
+            (existing == null && id != null && id! > 0)) {
+          CloudSyncLocalSendJournal.retainNativeSendFailurePresentation(
+            Database.store, this, retained: existing,
+          );
+        }
         id = Database.messages.put(this);
       } on UniqueViolationException catch (ex, stack) {
         // Still swallowed, because callers rely on save() not throwing. But no
@@ -899,6 +907,13 @@ class Message {
         if (existingMessage != null) {
           m.id = existingMessage.id;
           m.text ??= existingMessage.text;
+        }
+        if (m.metadata?.containsKey(CloudSyncLocalSendJournal.nativeSendFailureMetadataKey) == true ||
+            existingMessage?.metadata?.containsKey(CloudSyncLocalSendJournal.nativeSendFailureMetadataKey) == true ||
+            (existingMessage == null && m.id != null && m.id! > 0)) {
+          CloudSyncLocalSendJournal.retainNativeSendFailurePresentation(
+            Database.store, m, retained: existingMessage,
+          );
         }
       }
 
@@ -961,6 +976,14 @@ class Message {
       throw Exception("Cannot replace on a null existing message!!");
     }
 
+    if (existing.metadata?.containsKey(CloudSyncLocalSendJournal.nativeSendFailureMetadataKey) == true ||
+        newMessage.metadata?.containsKey(CloudSyncLocalSendJournal.nativeSendFailureMetadataKey) == true) {
+      newMessage.id = existing.id;
+      CloudSyncLocalSendJournal.retainNativeSendFailurePresentation(
+        Database.store, newMessage, retained: existing,
+      );
+    }
+
     // We just need to update the timestamps & error
     if (existing.guid != newMessage.guid) {
       existing.guid = newMessage.guid;
@@ -986,6 +1009,12 @@ class Message {
       existing.dateCreated = newMessage.dateCreated;
     }
     existing.dateScheduled = newMessage.dateScheduled;
+
+    if (existing.metadata?.containsKey(CloudSyncLocalSendJournal.nativeSendFailureMetadataKey) == true) {
+      CloudSyncLocalSendJournal.retainNativeSendFailurePresentation(
+        Database.store, existing,
+      );
+    }
 
     try {
       Database.messages.put(existing, mode: PutMode.update);

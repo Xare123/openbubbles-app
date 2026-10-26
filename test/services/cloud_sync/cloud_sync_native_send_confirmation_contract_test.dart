@@ -350,6 +350,13 @@ void main() {
       lessThan(handler.indexOf('Message.findOne(guid: push.uuid)')),
     );
     expect(handler, contains('background send failed; intent retained'));
+    expect(handler, contains('CloudSyncLocalSendJournal.recordNativeSendFailure('));
+    expect(handler, contains('serviceId: serviceId,'));
+    expect(handler, contains('nativeSendFailureCategory(push.error!)'));
+    expect(compact, contains('if (push.error == null) { message.sendingServiceId = null;'));
+    expect(handler, contains('CloudSyncLocalSendJournal.clearUntrackedNativeSendFailure('));
+    expect(handler, isNot(contains('handleSendError(')));
+    expect(handler, isNot(contains(r'code=${push.error}')));
     final noMessage = handler.substring(
       handler.indexOf('if (message == null)'),
       handler.indexOf('message.sendingServiceId = null;'),

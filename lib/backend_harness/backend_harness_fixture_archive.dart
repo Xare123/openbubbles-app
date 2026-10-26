@@ -38,6 +38,8 @@ Map<String, bool> backendFixtureArchiveFlags({
   String? completedAction,
 }) => store.runInTransaction(TxMode.read, () {
   final flags = backendFixtureArchiveAbsentFlags();
+  flags['failure_present'] =
+      CloudSyncLocalSendJournal.nativeSendFailureCode(store, message) != null;
   var commandIdsConfirmed = false;
   final account = auth.accountFingerprint;
   final guidHash = _digest(['cloud-sync-local-send-guid-v1', messageGuid]);

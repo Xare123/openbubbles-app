@@ -6507,8 +6507,19 @@ class RustPushService extends GetxService {
         }
         return;
       }
-      message.sendingServiceId = null;
-      message.save(updateSendingServiceId: true);
+      final failed = push.error == null ? null
+          : CloudSyncLocalSendJournal.recordNativeSendFailure(
+              Database.store, stableGuid: push.uuid, error: push.error!,
+              serviceId: serviceId,
+            );
+      if (push.error == null) {
+        message.sendingServiceId = null;
+        message.save(updateSendingServiceId: true);
+      } else if (failed == null) {
+        CloudSyncLocalSendJournal.clearUntrackedNativeSendFailure(
+          Database.store, stableGuid: push.uuid, serviceId: serviceId,
+        );
+      }
       if (push.error == null) {
         if (push.nativeReceiptError != null ||
             CloudSyncLocalSendJournal.hasUnresolvedNativeConfirmation(Database.store, message)) {
@@ -6518,7 +6529,8 @@ class RustPushService extends GetxService {
         }
       } else {
         // A failed background job is never evidence that CloudKit may upload.
-        Logger.warn('Cloud Sync V2 background send failed; intent retained');
+        Logger.warn('Cloud Sync V2 background send failed; intent retained '
+            'code=${CloudSyncLocalSendJournal.nativeSendFailureCategory(push.error!)}');
       }
       return;
     }
