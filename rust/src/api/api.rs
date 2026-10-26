@@ -4313,6 +4313,24 @@ pub struct CloudSyncProtectedFetchResult {
     pub failure: Option<CloudSyncProtectedFailure>,
 }
 
+/// An exact Message read is not a history page or a remote-head observation.
+/// Exactly one of found, absent, and failure is populated. Absence never
+/// authorizes a create, and a found record still requires ordinary projection.
+#[derive(Clone)]
+pub struct CloudSyncExactMessageReadResult {
+    pub found: Option<CloudSyncExactMessageFound>,
+    pub absent: bool,
+    pub failure: Option<CloudSyncProtectedFailure>,
+}
+
+#[derive(Clone)]
+pub struct CloudSyncExactMessageFound {
+    pub generation: u64,
+    pub batch_id: String,
+    pub lease_reference: String,
+    pub change: CloudSyncProtectedChange,
+}
+
 /// A lease mutation succeeds only when `failure` is absent.
 #[derive(Clone, Debug)]
 pub struct CloudSyncProtectedLeaseResult {
@@ -9877,6 +9895,154 @@ fn map_cloud_sync_protected_page(
         complete: page.complete(),
         admitted_raw_bytes: page.admitted_raw_bytes(),
     }
+}
+
+/// One exact restored-reader lookup. The GUID is a private read selector,
+/// never a synthetic local source or writer grant. Record-name derivation,
+/// authenticated scope and original response bytes stay native. The caller
+/// holds local protected-store exclusion through staging and durable adoption.
+pub async fn cloud_sync_fetch_known_message_exact(
+    cloud_messages_client: &Arc<CloudMessagesClient<DefaultAnisetteProvider>>,
+    native_writer_pause_token: u64,
+    storage_directory: String,
+    expected_auth: CloudSyncNativeAuthMetadata,
+    message_generation: u64,
+    message_guid: String,
+) -> anyhow::Result<CloudSyncExactMessageReadResult> {
+    use crate::cloud_sync_received_record_discovery::{
+        prepare_discovery, settle_discovery, DiscoveryDisposition, DiscoveryLookupOutcome,
+        DiscoverySnapshot,
+    };
+    use rustpush::cloud_messages::CloudMessageRecordVersionLookup;
+    if message_generation == 0
+        || message_guid.len() != 36
+        || uuid::Uuid::parse_str(&message_guid).is_err()
+    {
+        return Err(anyhow!("cloud_sync_exact_read_invalid_request"));
+    }
+    let permit = acquire_cloudkit_read_authentication(native_writer_pause_token)
+        .map_err(|_| anyhow!("cloud_sync_exact_read_scope_unavailable"))?;
+    let before = cloud_sync_capture_auth_snapshot(cloud_messages_client, storage_directory.clone())
+        .await
+        .map_err(|_| anyhow!("cloud_sync_exact_read_identity_unavailable"))?;
+    cloud_sync_require_received_auth(&expected_auth, &before)
+        .map_err(|_| anyhow!("cloud_sync_exact_read_identity_changed"))?;
+    let container = cloud_messages_client
+        .get_cached_container_for_read_authentication(&permit)
+        .await
+        .map_err(|_| anyhow!("cloud_sync_exact_read_scope_unavailable"))?;
+    let hasher = crate::cloud_sync_protector::semantic_identifier_hasher(storage_directory.clone())
+        .map_err(|_| anyhow!("cloud_sync_exact_read_protection_failed"))?;
+    let snapshot = DiscoverySnapshot {
+        account_fingerprint: before.account_fingerprint.clone(),
+        protected_store_identity: before.protected_store_identity.clone(),
+        container_user_id: container.user_id.clone(),
+        message_generation,
+    };
+    let request = prepare_discovery(&message_guid, &snapshot, &hasher)
+        .map_err(|_| anyhow!("cloud_sync_exact_read_invalid_request"))?;
+    let mut raw_found = None;
+    let outcome = match cloud_messages_client
+        .lookup_received_message_record(&permit, &request.record_name)
+        .await
+    {
+        Ok(CloudMessageRecordVersionLookup::NotFound) => DiscoveryLookupOutcome::NotFound,
+        Ok(CloudMessageRecordVersionLookup::Found(record, receipt)) => {
+            let raw = record
+                .get_raw_record()
+                .map_err(|_| anyhow!("cloud_sync_exact_read_record_mismatch"))?;
+            if receipt.record_name() != request.record_name
+                || raw.etag.as_deref() != Some(receipt.etag())
+            {
+                return Err(anyhow!("cloud_sync_exact_read_record_mismatch"));
+            }
+            let wire = record
+                .original_record_wire()
+                .ok_or_else(|| anyhow!("cloud_sync_exact_read_record_mismatch"))?
+                .to_vec();
+            raw_found = Some((raw.clone(), wire.clone()));
+            DiscoveryLookupOutcome::Found {
+                record_name: request.record_name.clone(),
+                etag: receipt.etag().to_owned(),
+                raw_bytes: wire,
+            }
+        }
+        _ => DiscoveryLookupOutcome::TransportFailure,
+    };
+    // NotFound is usable only in the same account, session, store and container.
+    let after = cloud_sync_capture_auth_snapshot(cloud_messages_client, storage_directory.clone())
+        .await
+        .map_err(|_| anyhow!("cloud_sync_exact_read_identity_unavailable"))?;
+    cloud_sync_require_received_auth(&expected_auth, &after)
+        .map_err(|_| anyhow!("cloud_sync_exact_read_identity_changed"))?;
+    let after_container = cloud_messages_client
+        .get_cached_container_for_read_authentication(&permit)
+        .await
+        .map_err(|_| anyhow!("cloud_sync_exact_read_identity_changed"))?;
+    if !Arc::ptr_eq(&container, &after_container) {
+        return Err(anyhow!("cloud_sync_exact_read_identity_changed"));
+    }
+    let settled = settle_discovery(
+        &snapshot,
+        &DiscoverySnapshot {
+            account_fingerprint: after.account_fingerprint.clone(),
+            protected_store_identity: after.protected_store_identity.clone(),
+            container_user_id: after_container.user_id.clone(),
+            message_generation,
+        },
+        &request,
+        outcome,
+        &hasher,
+    )
+    .map_err(|_| anyhow!("cloud_sync_exact_read_record_mismatch"))?;
+    if settled.disposition == DiscoveryDisposition::Absent {
+        return Ok(CloudSyncExactMessageReadResult {
+            found: None,
+            absent: true,
+            failure: None,
+        });
+    }
+    if settled.disposition != DiscoveryDisposition::FoundForReaderIngress {
+        return Ok(CloudSyncExactMessageReadResult {
+            found: None,
+            absent: false,
+            failure: Some(local_cloud_sync_protected_failure(
+                CloudSyncProtectedFailureCategory::Network,
+                CloudSyncProtectedSafeCode::Network,
+            )),
+        });
+    }
+    let (record, wire) =
+        raw_found.ok_or_else(|| anyhow!("cloud_sync_exact_read_record_mismatch"))?;
+    let page = crate::cloud_sync_native_fetch::cloud_sync_stage_received_found_projection(
+        PathBuf::from(&storage_directory),
+        after.account_fingerprint,
+        message_generation,
+        &record,
+        &wire,
+    )
+    .map_err(|_| anyhow!("cloud_sync_exact_read_protection_failed"))?;
+    if page.changes().len() != 1
+        || page.protected_next_checkpoint_reference().is_some()
+        || page.changes()[0].record_id_hash() != request.server_record_id_hash
+        || page.changes()[0].etag_hash() != settled.etag_hash.as_deref()
+    {
+        let _ = crate::cloud_sync_native_fetch::cloud_sync_rollback_protected_page(
+            PathBuf::from(&storage_directory),
+            &page,
+        );
+        return Err(anyhow!("cloud_sync_exact_read_record_mismatch"));
+    }
+    Ok(CloudSyncExactMessageReadResult {
+        absent: false,
+        failure: None,
+        found: Some(CloudSyncExactMessageFound {
+            generation: page.generation(),
+            batch_id: page.batch_id().to_owned(),
+            lease_reference: page.page_lease_reference().to_owned(),
+            change: map_cloud_sync_protected_change(&page.changes()[0]),
+        }),
+    })
 }
 
 /// Windows-only read diagnostic. Compares bounded feed variants without
