@@ -7,6 +7,10 @@ import 'package:bluebubbles/backend_harness/backend_harness_protocol.dart';
 import 'package:bluebubbles/database/database.dart';
 import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/services/backend/action_handler.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_attachment_send_body.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_send_journal.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_send_source_binding.dart';
+import 'package:bluebubbles/services/services.dart' show fs;
 import 'package:flutter_test/flutter_test.dart';
 
 const fixtureId = '01234567-89AB-CDEF-0123-456789ABCDEF';
@@ -18,6 +22,7 @@ void main() {
   group('normal merged fixture result', () {
     late Directory directory;
     late Chat chat;
+    var cacheIndex = 0;
 
     setUpAll(() async {
       directory = await Directory.systemTemp.createTemp('fixture-merged-result-');
@@ -25,10 +30,15 @@ void main() {
       Database.messages = Database.store.box<Message>();
       Database.chats = Database.store.box<Chat>();
       Database.handles = Database.store.box<Handle>();
+      Database.attachments = Database.store.box<Attachment>();
     });
     setUp(() {
+      Database.attachments.removeAll();
+      Database.store.box<CloudSyncLocalSendIntentEntity>().removeAll();
       Database.messages.removeAll(); // This group's disposable store only.
       Database.chats.removeAll();
+      Database.handles.removeAll();
+      fs.appDocDir = Directory('${directory.path}/cache-${cacheIndex++}')..createSync();
       chat = Chat(guid: 'iMessage;-;+16177106179', style: 45,
         chatIdentifier: '+16177106179', usingHandle: 'mailto:self@example.invalid');
       Database.chats.put(chat);
@@ -47,6 +57,142 @@ void main() {
     Message requireMerged(String? guid) => BackendHarnessFixtures.requireMergedMessage(
       store: Database.store, chat: chat, fixtureId: fixtureId, messageGuid: guid,
     );
+
+    ({Message pending, Message reflected, Attachment attachment,
+      CloudSyncLocalSendIntentEntity origin}) attachmentReflection() {
+      const guid = '11234567-89AB-4DEF-8123-456789ABCDEF';
+      const descriptor = '<attachment><fixture>original-mmcs</fixture></attachment>';
+      chat
+        ..guid = 'iMessage;+;fixture-group'
+        ..chatIdentifier = 'fixture-group'
+        ..cloudGuid = 'opaque-fixture-group'
+        ..style = 43;
+      for (final address in BackendHarnessFixtures.recipients) {
+        final handle = Handle(address: address, service: 'iMessage',
+          uniqueAddressAndService: '$address/iMessage');
+        Database.handles.put(handle);
+        chat.handles.add(handle);
+      }
+      Database.chats.put(chat);
+      final bytes = backendFixtureBytes(fixtureId, 'image');
+      final attachment = Attachment(guid: 'local-original-attachment',
+        transferName: 'fixture.png', mimeType: 'image/png', uti: 'public.png',
+        isOutgoing: true, totalBytes: bytes.length, metadata: {'rustpush': descriptor});
+      final pending = BackendHarnessFixtures.prepareAttachment(fixtureId, attachment)
+        ..guid = guid
+        ..chat.target = chat;
+      Database.messages.put(pending);
+      attachment.save(pending);
+      File(attachment.path)..createSync(recursive: true)..writeAsBytesSync(bytes);
+      final identity = CloudSyncLocalSendIdentity.captureAttachment(pending, chat, guid)!;
+      final source = CloudSyncLocalSendSourceBinding(
+        accountFingerprint: 'A' * 43, protectedStoreIdentity: 'obcs2.store.${'B' * 43}',
+        messageGuidHash: identity.guidHash, sourceSha256: identity.sourceSha256,
+        protectedReference: 'obcs2.ref.${'C' * 43}', leaseReference: 'obcs2.lease.${'d' * 32}',
+        payloadSha256: 'e' * 64, payloadLength: 1009,
+      );
+      final origin = CloudSyncLocalSendIntentEntity(
+        intentKey: 'fixture-attachment-intent', accountFingerprint: source.accountFingerprint,
+        writerEpoch: 1, localMessageId: pending.id!, messageGuidHash: identity.guidHash,
+        sourceSha256: identity.sourceSha256, state: 1, idsConfirmationVersion: 2,
+        protectedSourceBinding: source.encode(), createdAtMs: 1, updatedAtMs: 1,
+      );
+      Database.store.box<CloudSyncLocalSendIntentEntity>().put(origin);
+      final replacement = Attachment(guid: '${guid}_0',
+        transferName: attachment.transferName, mimeType: attachment.mimeType, uti: attachment.uti,
+        isOutgoing: false, totalBytes: attachment.totalBytes, metadata: {'rustpush': descriptor});
+      final text = BackendHarnessFixtures.marker(fixtureId);
+      final reflected = Message(guid: guid, text: '$text ', isFromMe: true,
+        dateCreated: pending.dateCreated, hasAttachments: true, attachments: [replacement],
+        attributedBody: [AttributedBody(string: '$text ', runs: [
+          Run(range: [0, text.length], attributes: Attributes(messagePart: 0)),
+          Run(range: [text.length, 1],
+            attributes: Attributes(messagePart: 1, attachmentGuid: replacement.guid)),
+        ])]);
+      return (pending: pending, reflected: reflected, attachment: attachment, origin: origin);
+    }
+
+    test('attachment reflection preserves the row, cache, descriptor and exact source', () async {
+      final fixture = attachmentReflection();
+      final originalPath = fixture.attachment.path;
+      final broken = Database.messages.get(fixture.pending.id!)!
+        ..text = fixture.reflected.text
+        ..attributedBody = fixture.reflected.attributedBody;
+      // Actual failure shape: reflected ..._0 body, original linked GUID.
+      expect(CloudSyncAttachmentSendBody.capture(broken), isNull);
+
+      await BackendHarnessFixtures.reconcileAttachmentReflection(
+        store: Database.store, chat: chat, fixtureId: fixtureId,
+        pending: fixture.pending, reflected: fixture.reflected,
+      );
+      await ActionHandler().matchMessageWithExisting(
+        chat, fixture.pending.guid!, fixture.reflected, existing: fixture.pending,
+      );
+
+      final canonical = requireMerged(fixture.reflected.guid);
+      final linked = canonical.dbAttachments.single;
+      expect(canonical.id, fixture.pending.id);
+      expect(linked.id, fixture.attachment.id);
+      expect(linked.message.targetId, canonical.id);
+      expect(linked.guid, fixture.reflected.attachments.single!.guid);
+      expect(linked.dbMetadata, fixture.attachment.dbMetadata);
+      expect(File(originalPath).existsSync(), isFalse);
+      expect(File(linked.path).readAsBytesSync(), backendFixtureBytes(fixtureId, 'image'));
+      expect(CloudSyncLocalSendIdentity.captureAttachment(canonical, chat, canonical.guid!,
+        expectedSourceSha256: fixture.origin.sourceSha256)?.sourceSha256,
+        fixture.origin.sourceSha256);
+      final retained = Database.store.box<CloudSyncLocalSendIntentEntity>().get(fixture.origin.id)!;
+      expect(retained.protectedSourceBinding, fixture.origin.protectedSourceBinding);
+      expect(retained.sourceSha256, fixture.origin.sourceSha256);
+      expect(retained.messageGuidHash, fixture.origin.messageGuidHash);
+      expect(retained.state, 1);
+      expect(retained.idsConfirmationVersion, 2);
+      expect(Database.attachments.count(), 1);
+      expect(Database.messages.count(), 1);
+    });
+
+    for (final mismatch in [
+      'descriptor', 'multiple attachments', 'wrong owner', 'collision', 'cache collision',
+    ]) {
+      test('attachment reflection refuses $mismatch before changing the original', () async {
+        final fixture = attachmentReflection();
+        final replacement = fixture.reflected.attachments.single!;
+        switch (mismatch) {
+          case 'descriptor':
+            replacement.metadata = {'rustpush': '<attachment>different-mmcs</attachment>'};
+          case 'multiple attachments':
+            fixture.reflected.attachments.add(Attachment(guid: 'unrelated'));
+          case 'wrong owner':
+            replacement.guid = '${ownerId}_0';
+            final body = fixture.reflected.attributedBody.single;
+            fixture.reflected.attributedBody = [AttributedBody(string: body.string, runs: [
+              body.runs.first,
+              Run(range: body.runs.last.range,
+                attributes: Attributes(messagePart: 1, attachmentGuid: replacement.guid)),
+            ])];
+          case 'collision':
+            final other = Message(guid: ownerId)..chat.target = chat;
+            Database.messages.put(other);
+            Attachment(guid: replacement.guid, metadata: replacement.metadata).save(other);
+          case 'cache collision':
+            Directory(replacement.directory).createSync(recursive: true);
+        }
+        final attachmentCount = Database.attachments.count();
+        await expectLater(BackendHarnessFixtures.reconcileAttachmentReflection(
+          store: Database.store, chat: chat, fixtureId: fixtureId,
+          pending: fixture.pending, reflected: fixture.reflected,
+        ), throwsA(isA<BackendHarnessFailure>()));
+        final original = Database.attachments.get(fixture.attachment.id!)!;
+        expect(original.guid, fixture.attachment.guid);
+        expect(original.message.targetId, fixture.pending.id);
+        expect(original.dbMetadata, fixture.attachment.dbMetadata);
+        expect(Database.attachments.count(), attachmentCount);
+        expect(File(original.path).readAsBytesSync(), backendFixtureBytes(fixtureId, 'image'));
+        expect(Database.messages.get(fixture.pending.id!)!.text, fixture.pending.text);
+        expect(Database.store.box<CloudSyncLocalSendIntentEntity>().get(fixture.origin.id)!
+          .protectedSourceBinding, fixture.origin.protectedSourceBinding);
+      });
+    }
 
     for (final normalized in [false, true]) {
       test('detached reflection validates the persisted merge, normalized=$normalized', () async {

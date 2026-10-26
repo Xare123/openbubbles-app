@@ -6,6 +6,8 @@ import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/services/network/backend_service.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_dev_gate.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_group_send_route.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_send_journal.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_send_source_binding.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_manual_shadow_sampler.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_production_sampler_adapter.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_writer_ownership.dart';
@@ -271,6 +273,110 @@ final class BackendHarnessFixtures {
     )..generateTempGuid();
   }
 
+  /// Reconcile the one fixture attachment before replacing its Message body.
+  /// Reflection changes its local GUID, not the captured native descriptor.
+  static Future<void> reconcileAttachmentReflection({
+    required Store store,
+    required Chat chat,
+    required String fixtureId,
+    required Message pending,
+    required Message reflected,
+  }) async {
+    Never refuse() => throw BackendHarnessFailure('backend_not_ready');
+    if (store.isClosed() || !identical(store, Database.store) ||
+        pending.id == null || reflected.guid == null ||
+        !_uuid.hasMatch(reflected.guid!) || reflected.attachments.length != 1 ||
+        !_ownsAttachmentBody(reflected, fixtureId)) {
+      refuse();
+    }
+    final replacement = reflected.attachments.single;
+    if (replacement == null ||
+        !RegExp('^${reflected.guid}_(0|[1-9][0-9]*)\$')
+            .hasMatch(replacement.guid ?? '')) {
+      refuse();
+    }
+    final before = store.runInTransaction(TxMode.read, () {
+      final saved = store.box<Message>().get(pending.id!);
+      if (saved == null || saved.chat.targetId != chat.id ||
+          saved.chat.target?.guid != chat.guid || saved.stagingGuid != null ||
+          !ownsMessage(saved, fixtureId, exactMessageGuid: reflected.guid)) {
+        refuse();
+      }
+      final linked = saved.dbAttachments.toList();
+      if (linked.length != 1 || linked.single.message.targetId != saved.id) {
+        refuse();
+      }
+      if (replacement.transferName != linked.single.transferName ||
+          replacement.mimeType != linked.single.mimeType ||
+          replacement.uti != linked.single.uti ||
+          replacement.totalBytes != linked.single.totalBytes) {
+        refuse();
+      }
+      final query = store.box<CloudSyncLocalSendIntentEntity>().query(
+        CloudSyncLocalSendIntentEntity_.localMessageId.equals(saved.id!),
+      ).build()..limit = 2;
+      late final List<CloudSyncLocalSendIntentEntity> origins;
+      try { origins = query.find(); } finally { query.close(); }
+      if (origins.length != 1 || origins.single.protectedSourceBinding == null) {
+        refuse();
+      }
+      final origin = origins.single;
+      final originalIdentity = CloudSyncLocalSendIdentity.captureAttachment(
+        saved, chat, reflected.guid!, expectedSourceSha256: origin.sourceSha256,
+      );
+      final reflectedIdentity = CloudSyncLocalSendIdentity.captureAttachment(
+        reflected, chat, reflected.guid!, expectedSourceSha256: origin.sourceSha256,
+      );
+      if (originalIdentity == null || reflectedIdentity == null ||
+          originalIdentity.guidHash != origin.messageGuidHash ||
+          reflectedIdentity.guidHash != origin.messageGuidHash) {
+        refuse();
+      }
+      CloudSyncLocalSendSourceBinding.decode(origin.protectedSourceBinding!)
+          .requireOrigin(accountFingerprint: origin.accountFingerprint,
+            messageGuidHash: origin.messageGuidHash, sourceSha256: origin.sourceSha256);
+      final collisions = store.box<Attachment>().query(
+        Attachment_.guid.equals(replacement.guid!),
+      ).build()..limit = 2;
+      try {
+        if (collisions.find().any((row) => row.id != linked.single.id)) refuse();
+      } finally { collisions.close(); }
+      return (attachment: linked.single, origin: origin);
+    });
+    final originalFile = File(before.attachment.path);
+    if (!originalFile.existsSync()) refuse();
+    final fileSha256 = sha256.convert(originalFile.readAsBytesSync()).toString();
+    if (before.attachment.guid != replacement.guid) {
+      if (FileSystemEntity.typeSync(replacement.directory, followLinks: false) !=
+          FileSystemEntityType.notFound) {
+        refuse();
+      }
+      // Pass the ATTACHMENT GUID. The ordinary helper ignores `existing` and
+      // may swallow replacement errors; verify its persisted result below.
+      await ah.matchAttachmentWithExisting(
+        chat, before.attachment.guid!, replacement, existing: before.attachment,
+      );
+    }
+    if (store.isClosed() || !identical(store, Database.store)) refuse();
+    store.runInTransaction(TxMode.read, () {
+      final saved = store.box<Message>().get(pending.id!);
+      final linked = saved?.dbAttachments.toList();
+      final origin = store.box<CloudSyncLocalSendIntentEntity>().get(before.origin.id);
+      if (saved?.chat.targetId != chat.id || linked == null || linked.length != 1 ||
+          linked.single.id != before.attachment.id ||
+          linked.single.guid != replacement.guid ||
+          linked.single.message.targetId != pending.id ||
+          linked.single.dbMetadata != before.attachment.dbMetadata ||
+          !File(linked.single.path).existsSync() ||
+          sha256.convert(File(linked.single.path).readAsBytesSync()).toString() != fileSha256 ||
+          origin?.messageGuidHash != before.origin.messageGuidHash ||
+          origin?.sourceSha256 != before.origin.sourceSha256 ||
+          origin?.protectedSourceBinding != before.origin.protectedSourceBinding) {
+        refuse();
+      }
+    });
+  }
+
   Future<CloudSyncNativeAuthSnapshot> _identity() async {
     await pushService.initFuture;
     final auth = await CloudSyncProductionAuthSnapshotProvider(
@@ -447,6 +553,13 @@ final class BackendHarnessFixtures {
         pending,
         false,
         attachment,
+      );
+      if (!auth.sameIdentity(await _identity()) ||
+          !identical(store, Database.store) || storage != pushService.statePath) {
+        throw BackendHarnessFailure('backend_identity_changed');
+      }
+      await reconcileAttachmentReflection(
+        store: store, chat: chat, fixtureId: id, pending: pending, reflected: reflected,
       );
       await ah.matchMessageWithExisting(
         chat,
