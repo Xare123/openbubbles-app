@@ -10,6 +10,7 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_outbound_cha
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_outbound_group_binding.dart';
 import 'package:bluebubbles/services/rustpush/rustpush_service.dart';
 import 'package:bluebubbles/src/rust/api/api.dart' as api;
+import 'package:crypto/crypto.dart';
 
 import 'backend_harness_protocol.dart';
 
@@ -28,6 +29,7 @@ Chat selectBackendHarnessFixtureChat({
   required List<String> recipients,
   required Set<String> senderHandles,
   required void Function(Chat chat, bool group) requireDependency,
+  String? expectedChatGuidSha256,
 }) => store.runInTransaction(TxMode.read, () {
   if (recipients.isEmpty ||
       recipients.length > 2 ||
@@ -36,6 +38,10 @@ Chat selectBackendHarnessFixtureChat({
     _refuse();
   }
   final group = recipients.length == 2;
+  if (expectedChatGuidSha256 != null &&
+      (!group || !RegExp(r'^[a-f0-9]{64}$').hasMatch(expectedChatGuidSha256))) {
+    _refuse();
+  }
   final query =
       store
           .box<Chat>()
@@ -59,6 +65,10 @@ Chat selectBackendHarnessFixtureChat({
   final senders = senderHandles.map(_bare).toSet();
   final qualified = <Chat>[];
   for (final chat in candidates) {
+    if (expectedChatGuidSha256 != null &&
+        sha256.convert(utf8.encode(chat.guid)).toString() != expectedChatGuidSha256) {
+      continue;
+    }
     if (chat.isRpSms ||
         chat.isRoutingStub ||
         chat.usingHandle == null ||
@@ -99,6 +109,7 @@ Future<Chat> resolveBackendHarnessFixtureChat({
   required CloudSyncNativeAuthSnapshot auth,
   required List<String> recipients,
   required String fixtureId,
+  String? expectedChatGuidSha256,
 }) async {
   if (backend is! RustPushBackend) _refuse();
   final state = pushService.state;
@@ -133,6 +144,7 @@ Future<Chat> resolveBackendHarnessFixtureChat({
     store: store,
     recipients: recipients,
     senderHandles: handles.toSet(),
+    expectedChatGuidSha256: expectedChatGuidSha256,
     requireDependency: (chat, group) {
       final target = Message(isFromMe: true)..chat.target = chat;
       if (group) {

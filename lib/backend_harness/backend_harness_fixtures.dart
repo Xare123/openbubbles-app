@@ -29,6 +29,7 @@ import 'backend_harness_fixture_routing.dart';
 final class BackendHarnessFixtures {
   static const recipients = {'+16177106179', '+19079786948'};
   static final _uuid = BackendHarnessFixtureReceipt.uuid;
+  static final _chatDigest = RegExp(r'^[a-f0-9]{64}$');
   static String marker(String id, {bool edited = false}) =>
       backendFixtureMarker(id, edited: edited);
 
@@ -38,12 +39,20 @@ final class BackendHarnessFixtures {
       args['acknowledgeSend'] == true &&
       args['retainedRecoveryOwner'] is String &&
       _uuid.hasMatch(args['retainedRecoveryOwner'] as String);
+  static bool _pinnedExistingGroup(Map<String, Object?> args) =>
+      !args.containsKey('createGroup') &&
+      args['recipients'] is List &&
+      (args['recipients'] as List).length == 2 &&
+      args['chatGuidSha256'] is String &&
+      _chatDigest.hasMatch(args['chatGuidSha256'] as String);
   static bool validSend(Map<String, Object?> args) =>
       _admission(args) &&
       (args.length == 5 ||
-          (args.length == 6 && args['createGroup'] == true &&
-              args['kind'] == 'text' && args['recipients'] is List &&
-              (args['recipients'] as List).length == 2)) &&
+          (args.length == 6 &&
+              (_pinnedExistingGroup(args) ||
+                  (args['createGroup'] == true && args['kind'] == 'text' &&
+                      args['recipients'] is List &&
+                      (args['recipients'] as List).length == 2)))) &&
       args.keys.every(
         const {
           'fixtureId',
@@ -52,6 +61,7 @@ final class BackendHarnessFixtures {
           'recipients',
           'kind',
           'createGroup',
+          'chatGuidSha256',
         }.contains,
       ) &&
       const {'text', 'image', 'document'}.contains(args['kind']) &&
@@ -81,10 +91,11 @@ final class BackendHarnessFixtures {
 
   static bool validRoute(Map<String, Object?> args) =>
       (args.length == 1 ||
-          (args.length == 2 && args['createGroup'] == true &&
-              args['recipients'] is List &&
-              (args['recipients'] as List).length == 2)) &&
-      args.keys.every(const {'recipients', 'createGroup'}.contains) &&
+          (args.length == 2 &&
+              (_pinnedExistingGroup(args) ||
+                  (args['createGroup'] == true && args['recipients'] is List &&
+                      (args['recipients'] as List).length == 2)))) &&
+      args.keys.every(const {'recipients', 'createGroup', 'chatGuidSha256'}.contains) &&
       args['recipients'] is List &&
       (args['recipients'] as List).isNotEmpty &&
       (args['recipients'] as List).length <= 2 &&
@@ -112,6 +123,7 @@ final class BackendHarnessFixtures {
         store: store, auth: auth, recipients: requested,
         // Read-only selection has no fixture claim or message identity.
         fixtureId: '00000000-0000-4000-8000-000000000000',
+        expectedChatGuidSha256: args['chatGuidSha256'] as String?,
       );
       sender = chat.usingHandle ?? '';
     }
@@ -358,6 +370,7 @@ final class BackendHarnessFixtures {
         ? await backend.createChat(requested, null, 'iMessage')
         : await resolveBackendHarnessFixtureChat(
             store: store, auth: auth, recipients: requested, fixtureId: id,
+            expectedChatGuidSha256: args['chatGuidSha256'] as String?,
           );
     if (!auth.sameIdentity(await _identity()) ||
         !identical(store, Database.store) ||

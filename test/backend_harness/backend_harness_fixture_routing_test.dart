@@ -1,9 +1,11 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:bluebubbles/backend_harness/backend_harness_fixture_routing.dart';
 import 'package:bluebubbles/backend_harness/backend_harness_fixtures.dart';
 import 'package:bluebubbles/backend_harness/backend_harness_protocol.dart';
 import 'package:bluebubbles/database/models.dart';
+import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 const first = '+16177106179';
@@ -66,11 +68,13 @@ void main() {
     List<String>? recipients,
     Set<String> senders = const {sender},
     void Function(Chat, bool)? proof,
+    String? expectedChatGuidSha256,
   }) => selectBackendHarnessFixtureChat(
     store: store,
     recipients: recipients ?? (group ? [first, second] : [first]),
     senderHandles: senders,
     requireDependency: proof ?? (_, _) {},
+    expectedChatGuidSha256: expectedChatGuidSha256,
   );
 
   final refused = throwsA(
@@ -227,6 +231,49 @@ void main() {
     chat(group: true, suffix: 'two');
     expect(() => select(group: true), refused);
     expect(store.box<Chat>().count(), 2);
+  });
+
+  test('an exact parent selects the original among two qualified groups', () {
+    final original = chat(group: true, suffix: 'original');
+    chat(group: true, suffix: 'other');
+    store.box<Message>().put(Message(guid: 'kept', text: 'kept')..chat.target = original);
+    final checked = <int>[];
+    final selected = select(group: true,
+      expectedChatGuidSha256: sha256.convert(utf8.encode(original.guid)).toString(),
+      proof: (candidate, group) {
+        expect(group, isTrue);
+        checked.add(candidate.id!);
+      });
+    expect(selected.id, original.id);
+    expect(checked, [original.id]);
+    expect(store.box<Chat>().count(), 2);
+    expect(store.box<Message>().getAll().single.chat.targetId, original.id);
+    expect(store.box<Message>().getAll().single.text, 'kept');
+  });
+
+  test('an exact parent never falls back to a different qualified group', () {
+    final original = chat(group: true, suffix: 'original');
+    chat(group: true, suffix: 'other');
+    final pin = sha256.convert(utf8.encode(original.guid)).toString();
+    expect(() => select(group: true, expectedChatGuidSha256: '0' * 64), refused);
+    expect(() => select(group: true, expectedChatGuidSha256: pin,
+      proof: (_, _) => throw StateError('original dependency no longer valid')), refused);
+    expect(() => select(group: true, expectedChatGuidSha256: pin,
+      senders: {'other@example.invalid'}), refused);
+    expect(store.box<Chat>().count(), 2);
+    expect(store.box<Message>().count(), 0);
+  });
+
+  test('an exact parent cannot bypass approved members or digest grammar', () {
+    final original = chat(group: true);
+    final pin = sha256.convert(utf8.encode(original.guid)).toString();
+    final member = original.handles.last..address = '+15555550101';
+    store.box<Handle>().put(member);
+    expect(() => select(group: true, expectedChatGuidSha256: pin), refused);
+    for (final value in ['', 'A' * 64, 'g' * 64, '0' * 63]) {
+      expect(() => select(group: true, expectedChatGuidSha256: value), refused);
+    }
+    expect(() => select(expectedChatGuidSha256: pin), refused);
   });
 
   test('a stale group cannot hide the one current protected route', () {

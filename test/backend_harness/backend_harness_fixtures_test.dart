@@ -161,6 +161,26 @@ void main() {
     }
   });
 
+  test('an exact parent is bounded to an existing approved group for route and send', () {
+    final group = ['+16177106179', '+19079786948'];
+    final pin = 'a' * 64;
+    expect(BackendHarnessFixtures.validRoute({'recipients': group, 'chatGuidSha256': pin}), isTrue);
+    for (final kind in ['text', 'image', 'document']) {
+      expect(BackendHarnessFixtures.validSend({...send, 'recipients': group,
+        'kind': kind, 'chatGuidSha256': pin}), isTrue);
+    }
+    for (final value in <Object?>[null, false, '', 'A' * 64, 'g' * 64, 'a' * 63]) {
+      expect(BackendHarnessFixtures.validRoute({'recipients': group, 'chatGuidSha256': value}), isFalse);
+      expect(BackendHarnessFixtures.validSend({...send, 'recipients': group, 'chatGuidSha256': value}), isFalse);
+    }
+    expect(BackendHarnessFixtures.validRoute({'recipients': [group.first], 'chatGuidSha256': pin}), isFalse);
+    expect(BackendHarnessFixtures.validSend({...send, 'chatGuidSha256': pin}), isFalse);
+    expect(BackendHarnessFixtures.validRoute({'recipients': group, 'createGroup': true, 'chatGuidSha256': pin}), isFalse);
+    expect(BackendHarnessFixtures.validSend({...send, 'recipients': group, 'createGroup': true, 'chatGuidSha256': pin}), isFalse);
+    expect(BackendHarnessFixtures.validSend({...send, 'recipients': group, 'acknowledgeSend': false, 'chatGuidSha256': pin}), isFalse);
+    expect(BackendHarnessFixtures.validSend({...send, 'recipients': ['+16177106179', '+15555550101'], 'chatGuidSha256': pin}), isFalse);
+  });
+
   test(
     'fixture send requires explicit scope and supports one bounded group',
     () {
