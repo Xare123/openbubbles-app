@@ -7,6 +7,7 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_mutati
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_send_journal.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_send_source_binding.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_manual_shadow_sampler.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_message_archive_recovery_origin.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_models.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_mutation_lineage.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_outbound_message_dependency.dart';
@@ -198,7 +199,15 @@ Map<String, bool> backendFixtureArchiveFlags({
         );
         // A protected attachment origin must carry the v4 child inventory.
         if (encodedSource != null) {
-          final binding = jsonDecode(origin.admittedChatBinding!);
+          var dependency = origin.admittedChatBinding!;
+          if (CloudSyncMessageArchiveRecoveryOrigin.isEncoded(dependency)) {
+            final recovery = CloudSyncLocalSendJournal.messageArchiveRecoveryAuditForLiveness(
+              origin, originalOperation: create,
+            );
+            if (recovery == null) _reject();
+            dependency = recovery.legacyBinding;
+          }
+          final binding = jsonDecode(dependency);
           if (binding is! List || binding.length != 3 || binding[0] != 4) {
             _reject();
           }

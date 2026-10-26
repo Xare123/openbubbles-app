@@ -9,6 +9,7 @@
 // only the epoch boundary is crossed synthetically via the writer authority.
 import 'dart:convert';
 import 'dart:io';
+import 'package:bluebubbles/backend_harness/backend_harness_fixture_archive.dart';
 
 import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_operation_identity.dart';
@@ -847,6 +848,14 @@ void main() {
       expect(await durable.readLiveProtectedOutboundLeaseReferences(maximumCount: 1024), isNot(contains(_lease('f'))));
       final intent = store.box<CloudSyncLocalSendIntentEntity>().get(held.intentId)!;
       expect(intent.confirmedReadbackBindingSha256, intent.admittedBindingSha256);
+      final message = store.box<Message>().get(intent.localMessageId)!;
+      final flags = backendFixtureArchiveFlags(
+        store: store, auth: auth, message: message,
+        messageGuid: message.guid!, completedAction: 'create',
+      );
+      expect(flags['fixture_create_settled'], isTrue);
+      expect(flags['fixture_attachment_archive_settled'], isTrue);
+      expect(flags['outcome_uncertain'], isFalse);
       final blobSnapshot = await durable.readLiveProtectedReferences(maximumCount: 1024);
       expect(blobSnapshot.references, containsAll([_ref('Q'), held.operation.encryptedPayloadReference]));
     });
