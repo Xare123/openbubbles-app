@@ -1009,7 +1009,8 @@ final class NativeProtectedCloudSyncTransport
   final CloudSyncAttachmentParentContextReader? readAttachmentParentContext;
 
   /// Journal-owned opener for the ephemeral group-parent proof. Per-pass
-  /// authority: resolved on every prepare and every readback, never cached.
+  /// authority: a fresh owner for each reconcile/prepare FFI call and readback,
+  /// never cached. Generated owned-input encoding moves the returned proof.
   /// Null means direct parent: native inputs stay proof-free.
   final CloudSyncAttachmentParentGroupProofReader?
   readAttachmentParentGroupProof;
@@ -2375,6 +2376,53 @@ final class NativeProtectedCloudSyncTransport
         }
       }
       trace.lookup = null;
+      // Reconcile moves opaque group proofs through the generated owned-input
+      // encoder. Reopen only the absent group inputs before the separate
+      // prepare call; all scalar identities and source contexts stay exact.
+      final prepareGroupProofs =
+          Set<frb_api.CloudSyncAttachmentParentGroupProof>.identity();
+      for (var index = 0; index < remoteInputs.length; index++) {
+        final input = remoteInputs[index];
+        if (input.attachmentParentGroupProof == null) {
+          continue;
+        }
+        trace.at(_CreatePreflightStep.parentContext, operationId: input.localOperationId);
+        final context = _readParentContextForPrepare(scope, input.localOperationId);
+        if (context == null || context != input.attachmentParentContext) {
+          throw _localStorage('cloud_sync_outbound_parent_context_changed');
+        }
+        trace.at(_CreatePreflightStep.parentGroup, operationId: input.localOperationId);
+        final proof = await _readParentGroupProofForPrepare(
+          scope, input.localOperationId, context,
+        );
+        if (proof == null || identical(proof, input.attachmentParentGroupProof) ||
+            proof.isDisposed || !prepareGroupProofs.add(proof)) {
+          throw _localStorage('cloud_sync_attachment_parent_group_changed');
+        }
+        remoteInputs[index] = frb_api.CloudSyncPreparedMessageCreateInput(
+          localOperationId: input.localOperationId,
+          logicalEntityKeyHash: input.logicalEntityKeyHash,
+          protectedLeaseReference: input.protectedLeaseReference,
+          protectedPayloadReference: input.protectedPayloadReference,
+          payloadSha256: input.payloadSha256,
+          protectedServerRecordReference: input.protectedServerRecordReference,
+          serverRecordIdHash: input.serverRecordIdHash,
+          appleOperationUuid: input.appleOperationUuid,
+          attachmentParentContext: context,
+          attachmentParentGroupProof: proof,
+          receivedArchiveProof: input.receivedArchiveProof,
+          historicalArchiveProof: input.historicalArchiveProof,
+          historicalChatSource: input.historicalChatSource,
+        );
+      }
+      // A later group's awaited opener must not stale an earlier input.
+      for (final input in remoteInputs) {
+        if (input.attachmentParentGroupProof != null &&
+            _readParentContextForPrepare(scope, input.localOperationId) !=
+                input.attachmentParentContext) {
+          throw _localStorage('cloud_sync_outbound_parent_context_changed');
+        }
+      }
       trace.at(_CreatePreflightStep.prepare);
       final result = remoteInputs.isEmpty
           ? null

@@ -2237,6 +2237,185 @@ void main() {
     },
   );
 
+  group('owned group proof preflight', () {
+    late _ConsumingGroupBindings groupBindings;
+    late CloudOutboxOperation operation;
+    late CloudOutboxSubmissionIdentity identity;
+    late frb_api.CloudSyncNativeSendReceiptContext? currentContext;
+    late List<_ConsumingGroupProof> proofs;
+    late int proofReads;
+    late bool direct;
+    Future<frb_api.CloudSyncAttachmentParentGroupProof?> Function()? replacement;
+
+    frb_api.CloudSyncNativeSendReceiptContext context({
+      String? session, String? sourceSha256,
+    }) => frb_api.CloudSyncNativeSendReceiptContext(
+      storageDirectory: 'private-storage', guidHash: _sha('8'),
+      accountFingerprint: scope.accountFingerprint, protectedStoreIdentity: _storeIdentity,
+      nativeSessionId: session ?? _hash('N'),
+      sourceBinding: frb_api.CloudSyncNativeSendSourceBinding(
+        kind: frb_api.CloudSyncNativeSendSourceKind.attachment,
+        sourceSha256: sourceSha256 ?? _sha('6'), protectedReference: _reference('M'),
+        leaseReference: _lease('c'), payloadSha256: _sha('7'), payloadLength: BigInt.from(512)),
+    );
+
+    _ConsumingGroupProof freshProof() {
+      final proof = _ConsumingGroupProof();
+      proofs.add(proof);
+      return proof;
+    }
+
+    setUp(() {
+      groupBindings = _ConsumingGroupBindings();
+      bindings = groupBindings;
+      operation = _writeOperation(scope);
+      identity = _submissionIdentity(operation.operationId);
+      currentContext = context();
+      proofs = [];
+      proofReads = 0;
+      direct = false;
+      replacement = null;
+      groupBindings.reconcileResult = frb_api.CloudSyncOutboundReconcileResult(
+        disposition: frb_api.CloudSyncOutboundReconcileDisposition.notApplied,
+        protectedProofReference: operation.encryptedPayloadReference);
+      groupBindings.prepareResult = frb_api.CloudSyncPreparedMessageCreateResult(
+        handle: _FakePreparedHandle(), handleBindingSha256: _preparedHandleBindingSha256);
+      transport = buildTransport(
+        parentContextReader: (_, _) => currentContext,
+        parentGroupReader: (target, id) async {
+          expect(target, scope);
+          expect(id, operation.operationId);
+          proofReads++;
+          if (direct) {
+            return null;
+          }
+          if (proofReads > 1 && replacement != null) {
+            return replacement!();
+          }
+          return freshProof();
+        });
+    });
+
+    Future<CloudSyncPreparedSubmission> prepare() => runV2(
+      () => transport.prepareSubmission(scope, submissionIdentity: identity,
+        operations: [_protectedWriteOperation(operation)]));
+
+    void requireNoMutation() {
+      expect(groupBindings.consumeCalls, 0);
+      expect(groupBindings.stageCalls, 0);
+      expect(groupBindings.commitCalls, 0);
+    }
+
+    test('reconcile consumes one proof and prepare consumes a distinct live exact input', () async {
+      final prepared = await prepare();
+      expect(proofReads, 2);
+      expect(proofs, hasLength(2));
+      expect(groupBindings.reconcileInput!.attachmentParentGroupProof, same(proofs.first));
+      final input = groupBindings.preparedInputs.single;
+      expect(input.attachmentParentGroupProof, same(proofs.last));
+      expect(identical(proofs.first, proofs.last), isFalse);
+      expect(proofs.every((proof) => proof.isDisposed), isTrue);
+      expect(input.localOperationId, operation.operationId);
+      expect(input.logicalEntityKeyHash, operation.logicalEntityKeyHash);
+      expect(input.protectedLeaseReference, operation.protectedLeaseReference);
+      expect(input.protectedPayloadReference, operation.encryptedPayloadReference);
+      expect(input.protectedServerRecordReference, operation.encryptedPayloadReference);
+      expect(input.payloadSha256, operation.payloadSha256);
+      expect(input.serverRecordIdHash, operation.serverRecordIdHash);
+      expect(input.appleOperationUuid, identity.operationUuids[operation.operationId]);
+      expect(input.attachmentParentContext, groupBindings.reconcileInput!.attachmentParentContext);
+      expect(input.receivedArchiveProof, isNull);
+      expect(input.historicalArchiveProof, isNull);
+      expect(input.historicalChatSource, isNull);
+      expect(groupBindings.preparedRequestUuid, identity.requestUuid);
+      expect(prepared.operationIds, [operation.operationId]);
+      await transport.releasePreparedSubmission(prepared);
+      expect(groupBindings.releaseCalls, 1);
+      requireNoMutation();
+    });
+
+    for (final changed in ['source', 'auth']) {
+      test('$changed change while reopening refuses before prepare', () async {
+        replacement = () async {
+          await Future<void>.value();
+          currentContext = changed == 'source'
+              ? context(sourceSha256: _sha('5')) : context(session: _hash('O'));
+          return freshProof();
+        };
+        await expectLater(prepare(), throwsA(isA<CloudSyncFailure>().having(
+          (failure) => failure.safeCode, 'code', 'cloud_sync_outbound_parent_context_changed')));
+        expect(proofReads, 2);
+        expect(groupBindings.reconcileCalls, 1);
+        expect(groupBindings.prepareCalls, 0);
+        requireNoMutation();
+      });
+    }
+
+    test('authenticated group opener refusal is terminal before prepare', () async {
+      replacement = () async {
+        await Future<void>.value();
+        throw StateError('cloud_sync_attachment_parent_group_changed');
+      };
+      await expectLater(prepare(), throwsStateError);
+      expect(proofReads, 2);
+      expect(groupBindings.reconcileCalls, 1);
+      expect(groupBindings.prepareCalls, 0);
+      requireNoMutation();
+    });
+
+    for (final invalid in ['null', 'cached', 'disposed']) {
+      test('$invalid replacement cannot reach prepare', () async {
+        replacement = () async {
+          if (invalid == 'null') {
+            return null;
+          }
+          if (invalid == 'cached') {
+            return proofs.first;
+          }
+          return freshProof()..dispose();
+        };
+        await expectLater(prepare(), throwsA(isA<CloudSyncFailure>().having(
+          (failure) => failure.safeCode, 'code', 'cloud_sync_attachment_parent_group_changed')));
+        expect(proofReads, 2);
+        expect(groupBindings.reconcileCalls, 1);
+        expect(groupBindings.prepareCalls, 0);
+        requireNoMutation();
+      });
+    }
+
+    for (final parentPresent in [false, true]) {
+      test('${parentPresent ? 'direct parent' : 'no parent'} keeps null-group input behavior', () async {
+        direct = true;
+        if (!parentPresent) {
+          currentContext = null;
+        }
+        final prepared = await prepare();
+        expect(proofReads, parentPresent ? 1 : 0);
+        expect(groupBindings.preparedInputs.single, same(groupBindings.reconcileInput));
+        expect(groupBindings.preparedInputs.single.attachmentParentGroupProof, isNull);
+        expect(groupBindings.reconcileCalls, 1);
+        expect(groupBindings.prepareCalls, 1);
+        await transport.releasePreparedSubmission(prepared);
+        requireNoMutation();
+      });
+    }
+
+    test('exact confirmed receipt needs no replacement proof or prepare', () async {
+      groupBindings.reconcileResult = frb_api.CloudSyncOutboundReconcileResult(
+        disposition: frb_api.CloudSyncOutboundReconcileDisposition.committed,
+        protectedProofReference: operation.encryptedPayloadReference,
+        serverRecordIdHash: operation.serverRecordIdHash, etagHash: _hash('E'));
+      final prepared = await prepare();
+      expect(proofReads, 1);
+      expect(proofs.single.isDisposed, isTrue);
+      expect(groupBindings.reconcileCalls, 1);
+      expect(groupBindings.prepareCalls, 0);
+      expect(await transport.releasePreparedSubmission(prepared), isFalse);
+      expect(groupBindings.releaseCalls, 0);
+      requireNoMutation();
+    });
+  });
+
   group('create preflight diagnostics', () {
     late List<Map<String, Object?>> diagnostics;
 
@@ -5307,6 +5486,61 @@ final class _ReceivedBindings extends _FakeBindings implements NativeProtectedPr
     final error = releaseError;
     if (error != null) { throw error; }
     return true;
+  }
+}
+
+/// Models generated owned-argument encoding without a native Arc or account.
+final class _ConsumingGroupProof implements frb_api.CloudSyncAttachmentParentGroupProof {
+  @override
+  bool isDisposed = false;
+
+  void consume() {
+    if (isDisposed) {
+      throw StateError('synthetic_group_proof_already_consumed');
+    }
+    isDisposed = true;
+  }
+
+  @override
+  void dispose() { isDisposed = true; }
+}
+
+final class _ConsumingGroupBindings extends _ReceivedBindings {
+  @override
+  Future<frb_api.CloudSyncOutboundReconcileResult> reconcileMessageCreate({
+    required Object cloudMessagesClient,
+    required String storageDirectory,
+    required String expectedAccountFingerprint,
+    required String expectedProtectedStoreIdentity,
+    required String requestUuid,
+    required frb_api.CloudSyncPreparedMessageCreateInput input,
+  }) {
+    (input.attachmentParentGroupProof as _ConsumingGroupProof?)?.consume();
+    return super.reconcileMessageCreate(
+      cloudMessagesClient: cloudMessagesClient, storageDirectory: storageDirectory,
+      expectedAccountFingerprint: expectedAccountFingerprint,
+      expectedProtectedStoreIdentity: expectedProtectedStoreIdentity,
+      requestUuid: requestUuid, input: input);
+  }
+
+  @override
+  Future<frb_api.CloudSyncPreparedMessageCreateResult> prepareMessageCreate({
+    required Object cloudMessagesClient,
+    required String storageDirectory,
+    required String expectedAccountFingerprint,
+    required String expectedProtectedStoreIdentity,
+    required String requestUuid,
+    required Duration requestTimeout,
+    required List<frb_api.CloudSyncPreparedMessageCreateInput> inputs,
+  }) {
+    for (final input in inputs) {
+      (input.attachmentParentGroupProof as _ConsumingGroupProof?)?.consume();
+    }
+    return super.prepareMessageCreate(
+      cloudMessagesClient: cloudMessagesClient, storageDirectory: storageDirectory,
+      expectedAccountFingerprint: expectedAccountFingerprint,
+      expectedProtectedStoreIdentity: expectedProtectedStoreIdentity,
+      requestUuid: requestUuid, requestTimeout: requestTimeout, inputs: inputs);
   }
 }
 
