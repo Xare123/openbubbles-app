@@ -4053,7 +4053,7 @@ fn retry_after_seconds(error: &PushError) -> Option<u64> {
     }
 }
 
-fn map_fetch_failure(error: &PushError) -> CloudNativeFetchFailure {
+pub(crate) fn map_fetch_failure(error: &PushError) -> CloudNativeFetchFailure {
     let retry_after = retry_after_seconds(error);
     let (category, safe_code) = match error {
         PushError::CloudKitChangeTokenExpired => (

@@ -1,6 +1,7 @@
 import 'package:bluebubbles/database/models.dart' show Store;
 import 'package:bluebubbles/src/rust/api/api.dart' as api;
 import 'package:bluebubbles/src/rust/lib.dart' as native;
+import 'package:bluebubbles/utils/logger/logger.dart';
 
 import 'cloud_protected_page_lease_lifecycle.dart';
 import 'cloud_sync_manual_shadow_sampler.dart';
@@ -223,6 +224,13 @@ Future<CloudSyncExactMessageReadDisposition> retainCloudSyncKnownMessage({
         await validate();
         if (result.absent && result.failure == null) {
           return CloudSyncExactMessageReadDisposition.absent;
+        }
+        final failure = result.failure;
+        if (failure != null) {
+          // Only the existing closed enums are observable. Never log the
+          // native exception, selector, protected reference, or record.
+          Logger.warn('Cloud Sync V2 exact read unresolved '
+              '${failure.category.name}/${failure.safeCode.name}');
         }
         return CloudSyncExactMessageReadDisposition.unresolved;
       }),

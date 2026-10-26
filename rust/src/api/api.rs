@@ -9841,6 +9841,98 @@ fn local_cloud_sync_protected_failure(
     }
 }
 
+fn cloud_sync_exact_lookup_error(error: &PushError) -> CloudSyncProtectedFailure {
+    map_cloud_sync_protected_failure(
+        &crate::cloud_sync_native_fetch::map_fetch_failure(error),
+    )
+}
+
+fn cloud_sync_exact_lookup_unresolved(
+    failure_class: Option<CloudKitFailureClass>,
+    retry_after: Option<Duration>,
+) -> CloudSyncProtectedFailure {
+    use CloudSyncProtectedFailureCategory as Category;
+    use CloudSyncProtectedSafeCode as Code;
+    let (category, code) = match failure_class {
+        Some(CloudKitFailureClass::Throttled) => (Category::Throttled, Code::CloudKitThrottled),
+        Some(CloudKitFailureClass::TransientServer) => (Category::Server, Code::CloudKitServer),
+        Some(CloudKitFailureClass::Authentication) => (Category::Authorization, Code::CloudKitAuthorization),
+        Some(CloudKitFailureClass::Conflict) => (Category::Conflict, Code::CloudKitConflict),
+        Some(CloudKitFailureClass::ResetRequired) => (Category::Unknown, Code::CloudKitResetRequired),
+        Some(CloudKitFailureClass::Permanent) => (Category::Unknown, Code::CloudKitPermanent),
+        Some(CloudKitFailureClass::Unknown) | None => (Category::Unknown, Code::CloudKitUnknown),
+    };
+    let mut failure = local_cloud_sync_protected_failure(category, code);
+    failure.retry_after_seconds = retry_after
+        .filter(|duration| !duration.is_zero())
+        .map(|duration| duration.as_secs().max(1));
+    failure
+}
+
+#[cfg(test)]
+mod cloud_sync_exact_lookup_failure_tests {
+    use super::*;
+
+    #[test]
+    fn protocol_and_scope_failures_are_not_reported_as_network() {
+        for (error, category, code) in [
+            (PushError::BadMsg, CloudSyncProtectedFailureCategory::MalformedRecord,
+                CloudSyncProtectedSafeCode::MalformedResponse),
+            (PushError::CloudKitSemanticOperationDenied, CloudSyncProtectedFailureCategory::Authorization,
+                CloudSyncProtectedSafeCode::ReadAuthenticationScope),
+            (PushError::CloudKitWarmAuthenticationRequired, CloudSyncProtectedFailureCategory::Authorization,
+                CloudSyncProtectedSafeCode::CloudKitAuthorization),
+            (PushError::PCSRecordKeyMissing, CloudSyncProtectedFailureCategory::PcsUnavailable,
+                CloudSyncProtectedSafeCode::PcsUnavailable),
+        ] {
+            let failure = cloud_sync_exact_lookup_error(&error);
+            assert_eq!(failure.category, category);
+            assert_eq!(failure.safe_code, code);
+            assert!(failure.protected_reset_proof_reference.is_none());
+        }
+    }
+
+    #[test]
+    fn actual_network_failure_remains_network() {
+        let failure = cloud_sync_exact_lookup_error(&PushError::NotConnected);
+        assert_eq!(failure.category, CloudSyncProtectedFailureCategory::Network);
+        assert_eq!(failure.safe_code, CloudSyncProtectedSafeCode::Network);
+    }
+
+    #[test]
+    fn unknown_lookup_is_not_promoted_to_network_or_absence() {
+        for class in [None, Some(CloudKitFailureClass::Unknown)] {
+            let failure = cloud_sync_exact_lookup_unresolved(class, None);
+            assert_eq!(failure.category, CloudSyncProtectedFailureCategory::Unknown);
+            assert_eq!(failure.safe_code, CloudSyncProtectedSafeCode::CloudKitUnknown);
+            assert!(failure.retry_after_seconds.is_none());
+        }
+    }
+
+    #[test]
+    fn known_upstream_class_and_retry_are_preserved_without_a_reset_grant() {
+        let failure = cloud_sync_exact_lookup_unresolved(
+            Some(CloudKitFailureClass::Throttled), Some(Duration::from_millis(250)),
+        );
+        assert_eq!(failure.category, CloudSyncProtectedFailureCategory::Throttled);
+        assert_eq!(failure.safe_code, CloudSyncProtectedSafeCode::CloudKitThrottled);
+        assert_eq!(failure.retry_after_seconds, Some(1));
+        let reset = cloud_sync_exact_lookup_unresolved(Some(CloudKitFailureClass::ResetRequired), None);
+        assert_eq!(reset.safe_code, CloudSyncProtectedSafeCode::CloudKitResetRequired);
+        assert!(reset.protected_reset_proof_reference.is_none());
+    }
+
+    #[test]
+    fn private_error_text_cannot_reach_the_safe_result() {
+        let private_marker = "private-exact-lookup-error-detail";
+        let failure = cloud_sync_exact_lookup_error(&PushError::IoError(std::io::Error::new(
+            ErrorKind::Other, private_marker,
+        )));
+        assert!(!format!("{failure:?}").contains(private_marker));
+        assert!(failure.protected_reset_proof_reference.is_none());
+    }
+}
+
 fn map_cloud_sync_protected_change(
     change: &crate::cloud_sync_native_fetch::CloudNativeProtectedChange,
 ) -> CloudSyncProtectedChange {
@@ -9942,6 +10034,7 @@ pub async fn cloud_sync_fetch_known_message_exact(
     let request = prepare_discovery(&message_guid, &snapshot, &hasher)
         .map_err(|_| anyhow!("cloud_sync_exact_read_invalid_request"))?;
     let mut raw_found = None;
+    let mut lookup_failure = None;
     let outcome = match cloud_messages_client
         .lookup_received_message_record(&permit, &request.record_name)
         .await
@@ -9967,7 +10060,14 @@ pub async fn cloud_sync_fetch_known_message_exact(
                 raw_bytes: wire,
             }
         }
-        _ => DiscoveryLookupOutcome::TransportFailure,
+        Ok(CloudMessageRecordVersionLookup::Unresolved { failure_class, retry_after }) => {
+            lookup_failure = Some(cloud_sync_exact_lookup_unresolved(failure_class, retry_after));
+            DiscoveryLookupOutcome::TransportFailure
+        }
+        Err(error) => {
+            lookup_failure = Some(cloud_sync_exact_lookup_error(&error));
+            DiscoveryLookupOutcome::TransportFailure
+        }
     };
     // NotFound is usable only in the same account, session, store and container.
     let after = cloud_sync_capture_auth_snapshot(cloud_messages_client, storage_directory.clone())
@@ -10006,10 +10106,7 @@ pub async fn cloud_sync_fetch_known_message_exact(
         return Ok(CloudSyncExactMessageReadResult {
             found: None,
             absent: false,
-            failure: Some(local_cloud_sync_protected_failure(
-                CloudSyncProtectedFailureCategory::Network,
-                CloudSyncProtectedSafeCode::Network,
-            )),
+            failure: Some(lookup_failure.unwrap_or_else(|| cloud_sync_exact_lookup_unresolved(None, None))),
         });
     }
     let (record, wire) =
