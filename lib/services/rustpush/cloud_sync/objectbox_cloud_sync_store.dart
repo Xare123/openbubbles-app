@@ -31,6 +31,8 @@ import 'cloud_sync_outbound_group_origin.dart';
 import 'cloud_sync_fresh_group_recovery_origin.dart';
 import 'cloud_sync_fresh_group_recovery_snapshot.dart';
 import 'cloud_sync_fresh_group_recovery_binding.dart';
+import 'cloud_sync_message_preparation_recovery_origin.dart';
+import 'cloud_sync_message_preparation_recovery_binding.dart';
 import 'cloud_sync_persistent_keys.dart';
 import 'cloud_sync_record_maps.dart';
 import 'cloud_sync_protector.dart';
@@ -745,18 +747,26 @@ class ObjectBoxCloudSyncStore
       }
       final sources = _store
           .box<CloudSyncLocalSendIntentEntity>()
-          .query(
-            CloudSyncLocalSendIntentEntity_.protectedSourceBinding.notNull(),
-          )
+          // Include every audit owner. A corrupt missing source field must
+          // fail validation rather than hide its fresh lease from recovery.
+          .query()
           .build();
       try {
-        if (sources.count() > maximumCount) {
+        if (sources.count() > 131072) {
           throw _storageFailure(
             'protected_outbound_lease_recovery_bound_exceeded',
           );
         }
         for (final intent in sources.find()) {
-          final source = _localSendSource(intent)!;
+          final recovery = _validatedMessagePreparationAuditLocked(intent);
+          if (recovery != null) {
+            references.addAll(messagePreparationRecoveryAuditLeaseReferences(recovery.encode()));
+            if (references.length > maximumCount) {
+              throw _storageFailure('protected_outbound_lease_recovery_bound_exceeded');
+            }
+          }
+          final source = _localSendSource(intent);
+          if (source == null) continue;
           // Exact readback is committed atomically with final outbox receipt
           // release. The protected source blob remains in the complete
           // liveness snapshot, but its crash-handoff lease is no longer an
@@ -1282,7 +1292,7 @@ class ObjectBoxCloudSyncStore
           _outbox.count() +
           (_recordMaps.count() * 2) +
           _writerAuthorities.count() +
-          _store.box<CloudSyncLocalSendIntentEntity>().count() +
+          (_store.box<CloudSyncLocalSendIntentEntity>().count() * 3) +
           (_store.box<CloudSyncReceivedArchiveIntentEntity>().count() * 2) +
           _store.box<CloudSyncHistoricalArchiveIntentEntity>().count() +
           activeMutationCount +
@@ -1374,7 +1384,15 @@ class ObjectBoxCloudSyncStore
         (_store.box<CloudSyncLocalSendIntentEntity>().query()
               ..order(CloudSyncLocalSendIntentEntity_.id))
             .build(),
-        (intent) => capture(_localSendSource(intent)?.protectedReference),
+        (intent) {
+          capture(_localSendSource(intent)?.protectedReference);
+          final recovery = _validatedMessagePreparationAuditLocked(intent);
+          if (recovery != null) {
+            for (final reference in messagePreparationRecoveryAuditProtectedReferences(recovery.encode())) {
+              capture(reference);
+            }
+          }
+        },
       );
       scanPaged(
         (_store.box<CloudSyncReceivedArchiveIntentEntity>().query()
@@ -2875,6 +2893,129 @@ class ObjectBoxCloudSyncStore
     }
     return _outboxFromEntity(scope, row);
   });
+
+  /// A held Message remains quarantined. This read set can support one exact
+  /// preparation-only stage, never a resend, upload, outbox retry or save.
+  CloudSyncMessagePreparationRecoveryClaim captureMessagePreparationRecovery(
+    CloudSyncScope scope, {
+    required String operationId,
+    required int chatId,
+    required int intentId,
+    required CloudSyncNativeAuthSnapshot currentAuth,
+  }) => _store.runInTransaction(TxMode.read, () {
+    final row = _findOutboxByOperationIdLocked(operationId);
+    final checkpoint = _findCheckpointByKeyLocked(_scopeKey(scope));
+    if (!_isMessagesCloudSemanticScope(scope) || scope.zone != 'messageManateeZone' ||
+        row == null || row.scopeKey != _scopeKey(scope) || row.accountFingerprint != scope.accountFingerprint ||
+        row.zone != scope.zone || row.state != CloudOutboxStatus.quarantined.index ||
+        row.action != CloudOutboxAction.save.index || row.localChatOrigin != null ||
+        row.payloadVersion != cloudSyncOutboundPayloadVersion || row.dependencyOperationIdsJson != '[]' ||
+        row.leaseIdHash != null || row.leaseExpiresAtMs != 0 ||
+        checkpoint == null || checkpoint.generation != row.checkpointGeneration) {
+      throw _storageFailure(messagePreparationRecoveryChangedCode);
+    }
+    _validateCheckpointScope(checkpoint, scope);
+    final operation = _outboxFromEntity(scope, row);
+    final mapping = cloudSyncFindRecordMap(store: _store, scope: scope,
+      generation: row.checkpointGeneration, logicalEntityKeyHash: row.logicalEntityKeyHash,
+      serverRecordIdHash: row.serverRecordIdHash);
+    if (mapping == null || mapping.encryptedServerRecordId != row.encryptedPayloadRef ||
+        mapping.etagHash != null || mapping.encryptedRawRecordRef != null ||
+        mapping.rawRecordGeneration != 0 || mapping.protectedReadbackLeaseReference != null ||
+        mapping.pendingUpdateOperationId != null || mapping.pendingUpdatePredecessorEtagHash != null) {
+      throw _storageFailure(messagePreparationRecoveryChangedCode);
+    }
+    final source = _requireChatCreateJournal().captureMessagePreparationRecoverySource(
+      _store, operation, chatId: chatId, intentId: intentId, currentAuth: currentAuth);
+    return CloudSyncMessagePreparationRecoveryClaim(operation: operation,
+      operationSnapshot: freshGroupRecoveryOperationSnapshot(row),
+      recordMapSnapshot: freshGroupRecoveryMapSnapshot(mapping), sourceSnapshot: source,
+      chatId: chatId, intentId: intentId);
+  });
+
+  CloudSyncMessagePreparationRecoveryOrigin adoptMessagePreparationRecovery({
+    required CloudSyncMessagePreparationRecoveryClaim claim,
+    required CloudSyncProtectedOutboundStageData stage,
+    required CloudSyncNativeAuthSnapshot currentAuth,
+    required DateTime now,
+  }) => _store.runInTransaction(TxMode.write, () {
+    final actual = captureMessagePreparationRecovery(claim.operation.scope,
+      operationId: claim.operation.operationId, chatId: claim.chatId,
+      intentId: claim.intentId, currentAuth: currentAuth);
+    if (!actual.operation.sameDurableSnapshotAs(claim.operation) ||
+        freshGroupRecoverySnapshotFingerprint(actual.operationSnapshot) !=
+          freshGroupRecoverySnapshotFingerprint(claim.operationSnapshot) ||
+        freshGroupRecoverySnapshotFingerprint(actual.recordMapSnapshot) !=
+          freshGroupRecoverySnapshotFingerprint(claim.recordMapSnapshot) ||
+        freshGroupRecoverySnapshotFingerprint(actual.sourceSnapshot) !=
+          freshGroupRecoverySnapshotFingerprint(claim.sourceSnapshot)) {
+      throw _storageFailure(messagePreparationRecoveryChangedCode);
+    }
+    final origin = _requireChatCreateJournal().adoptMessagePreparationRecoveryOwner(_store,
+      claim: claim, stage: stage, currentAuth: currentAuth, now: now);
+    // The audit owns the fresh stage before native commit. Op/map stay exact.
+    _validatedMessagePreparationAuditLocked(
+      _store.box<CloudSyncLocalSendIntentEntity>().get(claim.intentId)!);
+    return origin;
+  });
+
+  CloudSyncMessagePreparationRecoveryOrigin? readMessagePreparationRecovery(
+    CloudSyncScope scope, {
+    required String operationId,
+    required int chatId,
+    required int intentId,
+    required CloudSyncNativeAuthSnapshot currentAuth,
+  }) => _store.runInTransaction(TxMode.read, () {
+    final intent = _store.box<CloudSyncLocalSendIntentEntity>().get(intentId);
+    if (intent == null) throw _storageFailure(messagePreparationRecoveryChangedCode);
+    final origin = _validatedMessagePreparationAuditLocked(intent);
+    if (origin == null) return null;
+    final row = _findOutboxByOperationIdLocked(operationId);
+    final checkpoint = _findCheckpointByKeyLocked(_scopeKey(scope));
+    if (origin.operationId != operationId || row == null || row.scopeKey != _scopeKey(scope) ||
+        checkpoint == null || checkpoint.generation != row.checkpointGeneration) {
+      throw _storageFailure(messagePreparationRecoveryChangedCode);
+    }
+    _validateCheckpointScope(checkpoint, scope);
+    return _requireChatCreateJournal().validateMessagePreparationRecoveryOwner(_store,
+      _outboxFromEntity(scope, row), chatId: chatId, intentId: intentId, currentAuth: currentAuth);
+  });
+
+  CloudSyncMessagePreparationRecoveryOrigin advanceMessagePreparationRecoveryPhase(
+    CloudSyncScope scope, {
+    required CloudSyncMessagePreparationRecoveryOrigin expected,
+    required CloudSyncMessagePreparationRecoveryPhase next,
+    required CloudSyncNativeAuthSnapshot currentAuth,
+  }) => _store.runInTransaction(TxMode.write, () {
+    final actual = readMessagePreparationRecovery(scope, operationId: expected.operationId,
+      chatId: expected.binding['chatId']! as int, intentId: expected.binding['intentId']! as int,
+      currentAuth: currentAuth);
+    if (actual == null || actual.encode() != expected.encode()) {
+      throw _storageFailure(messagePreparationRecoveryChangedCode);
+    }
+    return _requireChatCreateJournal().advanceMessagePreparationRecoveryPhase(_store,
+      _outboxFromEntity(scope, _findOutboxByOperationIdLocked(expected.operationId)!),
+      expected: expected, next: next, currentAuth: currentAuth);
+  });
+
+  CloudSyncMessagePreparationRecoveryOrigin? _validatedMessagePreparationAuditLocked(
+    CloudSyncLocalSendIntentEntity intent,
+  ) {
+    final origin = CloudSyncLocalSendJournal.messagePreparationRecoveryAuditForLiveness(intent,
+      originalOperation: intent.admittedOperationId == null ? null
+        : _findOutboxByOperationIdLocked(intent.admittedOperationId!));
+    if (origin == null) return null;
+    final row = _outbox.get(origin.operation['id']! as int);
+    final mapping = _recordMaps.get(origin.recordMap['id']! as int);
+    if (row == null || mapping == null ||
+        freshGroupRecoverySnapshotFingerprint(freshGroupRecoveryOperationSnapshot(row)) !=
+          freshGroupRecoverySnapshotFingerprint(origin.operation) ||
+        freshGroupRecoverySnapshotFingerprint(freshGroupRecoveryMapSnapshot(mapping)) !=
+          freshGroupRecoverySnapshotFingerprint(origin.recordMap)) {
+      throw _storageFailure(messagePreparationRecoveryChangedCode);
+    }
+    return origin;
+  }
 
   /// Cancel only proven, never-submitted Chat dependencies whose original
   /// Message was removed/edited. All immutable evidence and the adopted native

@@ -574,6 +574,24 @@ abstract interface class NativeProtectedCloudSyncFreshGroupRecoveryBindings {
   });
 }
 
+abstract interface class NativeProtectedCloudSyncMessagePreparationRecoveryBindings {
+  Future<frb_api.CloudSyncExactAttachmentParentRecoveryResult> stageExactMessagePreparationRecovery({
+    required Object cloudMessagesClient,
+    required frb_api.CloudSyncNativeSendReceiptContext context,
+    required frb_api.CloudSyncRetainedAttachmentParentRecoveryInput original,
+    required frb_api.CloudSyncAttachmentParentGroupProof? groupProof,
+  });
+}
+
+/// Closed native phase plus an existing fixed safe code, never native text.
+final class CloudSyncMessagePreparationStageFailure extends StateError {
+  CloudSyncMessagePreparationStageFailure._(this.phase, String safeCode) : super(safeCode);
+  final frb_api.CloudSyncExactAttachmentParentRecoveryPhase phase;
+
+  @override
+  String toString() => 'CloudSyncMessagePreparationStageFailure(phase=${phase.name}, redacted)';
+}
+
 /// Explicit opt-in: existing Message- and Chat-only bindings do not acquire
 /// Attachment authority.
 ///
@@ -918,6 +936,7 @@ final class NativeProtectedCloudSyncTransport
         CloudSyncOutboundChatStagingTransport,
         CloudSyncOutboundGroupChatStagingTransport,
         CloudSyncFreshGroupRecoveryStagingTransport,
+        CloudSyncMessagePreparationRecoveryStagingTransport,
         CloudSyncOutboundAttachmentParentStagingTransport,
         CloudSyncMessageUpdateTransport,
         CloudSyncReceivedMessageUpdateTransport,
@@ -1518,6 +1537,70 @@ final class NativeProtectedCloudSyncTransport
       throw _localStorage('cloud_sync_fresh_group_recovery_changed');
     }
     return stage;
+  }
+
+  @override
+  Future<CloudSyncProtectedOutboundStageData> stageExactMessagePreparationRecovery(
+    CloudSyncScope scope, {
+    required CloudOutboxOperation original,
+    required frb_api.CloudSyncNativeAuthMetadata expectedAuth,
+  }) async {
+    _requireV2WriterInterlock();
+    _validateOutboundMessageScope(scope);
+    final bindings = _bindings;
+    if (bindings is! NativeProtectedCloudSyncMessagePreparationRecoveryBindings) {
+      throw _readOnlyFailure();
+    }
+    if (scope.persistenceLane != CloudSyncPersistenceLane.semantic ||
+        original.scope != scope || original.status != CloudOutboxStatus.quarantined ||
+        original.action != CloudOutboxAction.save || original.payloadVersion != 2 ||
+        original.encryptedPayloadReference == null || original.payloadSha256 == null ||
+        original.serverRecordIdHash == null || original.leaseId != null ||
+        original.leaseExpiresAt != null || expectedAuth.accountFingerprint != scope.accountFingerprint ||
+        expectedAuth.protectedStoreIdentity != _protectedStoreIdentity ||
+        !_nativeDigestPattern.hasMatch(expectedAuth.nativeSessionId)) {
+      throw _localStorage('cloud_sync_message_preparation_recovery_changed');
+    }
+    return _runProtectedStoreOperation(() async {
+      final context = _readParentContextForPrepare(scope, original.operationId);
+      if (context == null || context.sourceBinding == null ||
+          context.nativeSessionId != expectedAuth.nativeSessionId) {
+        throw _localStorage('cloud_sync_outbound_parent_context_invalid');
+      }
+      // The existing opener owns its read pause/resume. Writer acquisition
+      // occurs natively only after it returns; never warm the writer in pause.
+      final proof = await _readParentGroupProofForPrepare(scope, original.operationId, context);
+      if (_readParentContextForPrepare(scope, original.operationId) != context) {
+        throw _localStorage('cloud_sync_outbound_parent_context_changed');
+      }
+      final result = await (bindings as NativeProtectedCloudSyncMessagePreparationRecoveryBindings)
+        .stageExactMessagePreparationRecovery(cloudMessagesClient: _cloudMessagesClient,
+          context: context, groupProof: proof,
+          original: frb_api.CloudSyncRetainedAttachmentParentRecoveryInput(
+            localOperationId: original.operationId, logicalEntityKeyHash: original.logicalEntityKeyHash,
+            protectedPayloadReference: original.encryptedPayloadReference!,
+            payloadSha256: original.payloadSha256!, serverRecordIdHash: original.serverRecordIdHash!));
+      if ((result.stage == null) == (result.failure == null) ||
+          (result.phase == frb_api.CloudSyncExactAttachmentParentRecoveryPhase.complete) != (result.stage != null)) {
+        throw _localStorage('cloud_sync_outbound_stage_envelope_invalid');
+      }
+      if (result.failure case final failure?) {
+        throw CloudSyncMessagePreparationStageFailure._(result.phase,
+          _mapOutboundFailure(failure).safeCode ?? 'cloud_sync_outbound_stage_envelope_invalid');
+      }
+      final stage = _toMessageSizedOutboundStageData(
+        frb_api.CloudSyncProtectedOutboundStageResult(stage: result.stage));
+      if (stage.payloadSha256 != original.payloadSha256 ||
+          stage.logicalEntityKeyHash != original.logicalEntityKeyHash ||
+          stage.serverRecordIdHash != original.serverRecordIdHash ||
+          stage.protectedEnvelopeReference == original.encryptedPayloadReference ||
+          stage.protectedEnvelopeReference == context.sourceBinding!.protectedReference ||
+          stage.leaseReference == original.protectedLeaseReference ||
+          stage.leaseReference == context.sourceBinding!.leaseReference) {
+        throw _localStorage('cloud_sync_message_preparation_recovery_changed');
+      }
+      return stage;
+    });
   }
 
   CloudSyncProtectedOutboundStageData _toChatSizedOutboundStageData(
@@ -4409,6 +4492,7 @@ final class FrbNativeProtectedCloudSyncBindings
         NativeProtectedCloudSyncChatWriteBindings,
         NativeProtectedCloudSyncGroupChatWriteBindings,
         NativeProtectedCloudSyncFreshGroupRecoveryBindings,
+        NativeProtectedCloudSyncMessagePreparationRecoveryBindings,
         NativeProtectedCloudSyncAttachmentParentWriteBindings,
         NativeProtectedCloudSyncAttachmentWriteBindings,
         NativeProtectedPreparedReleaseBindings,
@@ -4905,6 +4989,16 @@ final class FrbNativeProtectedCloudSyncBindings
       attachmentParentGroupProof: groupProof,
     );
   }
+
+  @override
+  Future<frb_api.CloudSyncExactAttachmentParentRecoveryResult> stageExactMessagePreparationRecovery({
+    required Object cloudMessagesClient,
+    required frb_api.CloudSyncNativeSendReceiptContext context,
+    required frb_api.CloudSyncRetainedAttachmentParentRecoveryInput original,
+    required frb_api.CloudSyncAttachmentParentGroupProof? groupProof,
+  }) => _api.crateApiApiCloudSyncWindowsStageExactAttachmentParentRecovery(
+    cloudMessagesClient: _requireCloudMessagesClient(cloudMessagesClient),
+    context: context, original: original, attachmentParentGroupProof: groupProof);
 
   @override
   Future<bool> releasePreparedMessageCreate({

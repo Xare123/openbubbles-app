@@ -4,6 +4,7 @@ import 'package:bluebubbles/database/models.dart';
 import 'package:crypto/crypto.dart';
 
 import 'cloud_sync_models.dart';
+import 'cloud_sync_message_preparation_recovery_origin.dart';
 import 'cloud_sync_outbound_chat_binding.dart';
 import 'cloud_sync_outbound_group_binding.dart';
 import 'cloud_sync_persistent_keys.dart';
@@ -427,6 +428,12 @@ void requireCloudSyncAdoptedLocalSendDependencies({
     category: CloudFailureCategory.dependency,
     safeCode: 'cloud_sync_local_send_parent_not_ready',
   );
+  // The journal authenticates the audit before this dependency-only check.
+  // Preserve the exact old v4 proof and still require its journal callback.
+  if (binding != null && CloudSyncMessagePreparationRecoveryOrigin.isEncoded(binding)) {
+    if (requireAttachmentReadback == null) reject();
+    binding = CloudSyncMessagePreparationRecoveryOrigin.decode(binding).legacyBinding;
+  }
   // Attachment parents wrap the unchanged Chat dependency and the complete
   // source-derived child proof. Never accept a wrapper without its journal.
   // This is not recursive: a nested wrapper remains invalid below.

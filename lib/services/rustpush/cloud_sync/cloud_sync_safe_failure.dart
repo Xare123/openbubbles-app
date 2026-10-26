@@ -520,6 +520,8 @@ const _cloudSyncV2SafeFailureCodes = <String>{
   'cloud_sync_fresh_group_recovery_origin_invalid',
   'cloud_sync_fresh_group_recovery_unavailable',
   'cloud_sync_fresh_group_recovery_archive_enabled',
+  'cloud_sync_message_preparation_recovery_changed',
+  'cloud_sync_message_preparation_recovery_origin_invalid',
   'cloud_sync_local_send_chat_journal_missing',
   'cloud_sync_outbound_chat_source_retired',
   'cloud_sync_outbound_chat_retirement_bound_exceeded',

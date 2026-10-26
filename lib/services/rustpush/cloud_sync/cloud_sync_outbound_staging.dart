@@ -68,6 +68,18 @@ abstract interface class CloudSyncFreshGroupRecoveryStagingTransport
   });
 }
 
+/// Windows engineering-only recovery of exact retained Message bytes. The
+/// source reader supplies genuine IDS/group proof; no headers are regenerated.
+/// Returning a stage grants neither native commit nor remote mutation.
+abstract interface class CloudSyncMessagePreparationRecoveryStagingTransport
+    implements CloudSyncOutboundStagingTransport {
+  Future<CloudSyncProtectedOutboundStageData> stageExactMessagePreparationRecovery(
+    CloudSyncScope scope, {
+    required CloudOutboxOperation original,
+    required frb_api.CloudSyncNativeAuthMetadata expectedAuth,
+  });
+}
+
 /// Attachment-parent staging is an explicit capability; implementing the
 /// existing Message transport alone cannot admit an attachment-parent
 /// message. This covers only the parent message envelope staged under the

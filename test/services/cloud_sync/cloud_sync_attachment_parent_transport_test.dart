@@ -96,6 +96,94 @@ void main() {
     );
   }
 
+  CloudOutboxOperation heldOriginal() => _messageOperation(scope).copyWith(
+    status: CloudOutboxStatus.quarantined, clearProtectedLeaseReference: true);
+
+  frb_api.CloudSyncNativeAuthMetadata recoveryAuth() => frb_api.CloudSyncNativeAuthMetadata(
+    accountFingerprint: scope.accountFingerprint, protectedStoreIdentity: _storeIdentity,
+    nativeSessionId: _hash('N'));
+
+  void recoverySuccess() {
+    bindings.recoveryResult = frb_api.CloudSyncExactAttachmentParentRecoveryResult(
+      phase: frb_api.CloudSyncExactAttachmentParentRecoveryPhase.complete,
+      stage: frb_api.CloudSyncProtectedOutboundStage(
+        logicalEntityKeyHash: _hash('L'), protectedPayloadReference: _reference('Q'),
+        payloadSha256: _sha('b'), payloadLength: BigInt.from(256),
+        protectedServerRecordReference: _reference('Q'), serverRecordIdHash: _hash('S'),
+        leaseReference: _lease('f')));
+  }
+
+  test('exact recovery forwards original metadata and current source/group proof without headers', () async {
+    scope = _semanticScope(zone: 'messageManateeZone');
+    recoverySuccess();
+    final context = parentContext();
+    final proof = _FakeGroupProof();
+    final original = heldOriginal();
+    final transport = buildTransport(reader: (_, _) => context, proofReader: (_, _) async => proof);
+    final stage = await runV2(() => transport.stageExactMessagePreparationRecovery(scope,
+      original: original, expectedAuth: recoveryAuth()));
+    expect(stage.protectedEnvelopeReference, _reference('Q'));
+    expect(stage.payloadSha256, original.payloadSha256);
+    expect(stage.leaseReference, _lease('f'));
+    expect(bindings.recoveryCalls, 1);
+    expect(bindings.parentContext, context);
+    expect(identical(bindings.parentGroupProof, proof), isTrue);
+    expect(bindings.recoveryOriginal!.localOperationId, original.operationId);
+    expect(bindings.recoveryOriginal!.protectedPayloadReference, original.encryptedPayloadReference);
+    expect(bindings.recoveryOriginal!.payloadSha256, original.payloadSha256);
+    expect(bindings.parentStageCalls, 0);
+    expect(bindings.stageCalls, 0);
+    expect(bindings.prepareCalls, 0);
+    expect(bindings.reconcileCalls, 0);
+  });
+
+  test('exact recovery refuses missing or changed source context before native stage', () async {
+    scope = _semanticScope(zone: 'messageManateeZone');
+    recoverySuccess();
+    for (final changedDuringProof in [false, true]) {
+      var reads = 0;
+      final exact = parentContext();
+      final transport = buildTransport(reader: (_, _) => ++reads == 1 && changedDuringProof ? exact : null,
+        proofReader: (_, _) async => _FakeGroupProof());
+      await expectLater(runV2(() => transport.stageExactMessagePreparationRecovery(scope,
+        original: heldOriginal(), expectedAuth: recoveryAuth())), throwsA(isA<CloudSyncFailure>()));
+    }
+    expect(bindings.recoveryCalls, 0);
+  });
+
+  test('exact recovery keeps fixed native phase failure and no remote authority', () async {
+    scope = _semanticScope(zone: 'messageManateeZone');
+    bindings.recoveryResult = const frb_api.CloudSyncExactAttachmentParentRecoveryResult(
+      phase: frb_api.CloudSyncExactAttachmentParentRecoveryPhase.originalOpen,
+      failure: frb_api.CloudSyncOutboundSafeCode.invalidScope);
+    final transport = buildTransport(reader: (_, _) => parentContext());
+    await expectLater(runV2(() => transport.stageExactMessagePreparationRecovery(scope,
+      original: heldOriginal(), expectedAuth: recoveryAuth())),
+      throwsA(isA<CloudSyncMessagePreparationStageFailure>().having((e) => e.phase,
+        'closed native phase', frb_api.CloudSyncExactAttachmentParentRecoveryPhase.originalOpen)));
+    expect(bindings.prepareCalls, 0);
+  });
+
+  test('exact recovery rejects a newly staged payload with changed original identity', () async {
+    scope = _semanticScope(zone: 'messageManateeZone');
+    stageSuccess();
+    bindings.recoveryResult = frb_api.CloudSyncExactAttachmentParentRecoveryResult(
+      phase: frb_api.CloudSyncExactAttachmentParentRecoveryPhase.complete, stage: bindings.stageResult.stage);
+    final transport = buildTransport(reader: (_, _) => parentContext());
+    // The mock returned the original/source reference and lease, not a fresh owner.
+    await expectLater(runV2(() => transport.stageExactMessagePreparationRecovery(scope,
+      original: heldOriginal(), expectedAuth: recoveryAuth())), throwsA(isA<CloudSyncFailure>()));
+    expect(bindings.recoveryCalls, 1);
+    expect(bindings.prepareCalls, 0);
+  });
+
+  test('exact recovery requires explicit bindings capability', () async {
+    scope = _semanticScope(zone: 'messageManateeZone');
+    final transport = buildTransport(overrideBindings: _MessageOnlyBindings(), reader: (_, _) => parentContext());
+    await expectLater(runV2(() => transport.stageExactMessagePreparationRecovery(scope,
+      original: heldOriginal(), expectedAuth: recoveryAuth())), throwsA(isA<CloudSyncFailure>()));
+  });
+
   test(
     'staging forwards the exact source receipt context and headers',
     () async {
@@ -1102,10 +1190,17 @@ final class _MessageOnlyBindings
 final class _ParentBindings extends _MessageOnlyBindings
     implements
         NativeProtectedCloudSyncAttachmentParentWriteBindings,
+        NativeProtectedCloudSyncMessagePreparationRecoveryBindings,
         NativeProtectedCloudSyncChatWriteBindings,
         NativeProtectedCloudSyncAttachmentWriteBindings,
         NativeProtectedCloudSyncMessageCreateReadbackBindings {
   int parentStageCalls = 0;
+  int recoveryCalls = 0;
+  frb_api.CloudSyncRetainedAttachmentParentRecoveryInput? recoveryOriginal;
+  frb_api.CloudSyncExactAttachmentParentRecoveryResult recoveryResult =
+      const frb_api.CloudSyncExactAttachmentParentRecoveryResult(
+        phase: frb_api.CloudSyncExactAttachmentParentRecoveryPhase.input,
+        failure: frb_api.CloudSyncOutboundSafeCode.invalidScope);
   int stageCalls = 0;
   int reconcileCalls = 0;
   int prepareCalls = 0;
@@ -1136,6 +1231,20 @@ final class _ParentBindings extends _MessageOnlyBindings
   frb_api.CloudSyncPreparedMessageCreateInput? attachmentReconcileInput;
   List<frb_api.CloudSyncPreparedMessageCreateInput> attachmentPreparedInputs =
       const [];
+
+  @override
+  Future<frb_api.CloudSyncExactAttachmentParentRecoveryResult> stageExactMessagePreparationRecovery({
+    required Object cloudMessagesClient,
+    required frb_api.CloudSyncNativeSendReceiptContext context,
+    required frb_api.CloudSyncRetainedAttachmentParentRecoveryInput original,
+    required frb_api.CloudSyncAttachmentParentGroupProof? groupProof,
+  }) async {
+    recoveryCalls++;
+    recoveryOriginal = original;
+    parentContext = context;
+    parentGroupProof = groupProof;
+    return recoveryResult;
+  }
 
   @override
   Future<frb_api.CloudSyncProtectedOutboundStageResult>
