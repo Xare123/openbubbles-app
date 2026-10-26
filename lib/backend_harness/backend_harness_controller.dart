@@ -63,6 +63,71 @@ BackendHarnessOperation backendHarnessRegistrationLifetimeOperation(
   },
 );
 
+/// Only exact, controlled StateError messages from the exact reader and its
+/// admission/preflight guards are public diagnostics. Never stringify errors.
+String? backendHarnessExactReadFailureCode(Object error) {
+  if (error is! StateError) return null;
+  return switch (error.message) {
+    'cloud_sync_exact_read_disabled' ||
+    'cloud_sync_semantic_pull_disabled' ||
+    'cloud_sync_canary_package_required' => 'backend_disabled',
+    'cloud_sync_exact_read_busy' ||
+    'cloud_sync_semantic_pull_active' ||
+    'cloud_sync_v2_pcs_preparation_active' ||
+    'cloud_sync_v2_pcs_preparation_quiescing' ||
+    'coordinator_active' => 'backend_busy',
+    'cloud_sync_exact_read_identity_changed' ||
+    'cloud_sync_v2_pcs_account_changed' ||
+    'account_changed' || 'logout_active' => 'backend_identity_changed',
+    'unsupported_platform' => 'backend_not_supported',
+    'account_unavailable' => 'backend_read_auth_failed',
+    'cloud_sync_exact_read_archive_enabled' => 'backend_exact_read_archive_enabled',
+    'cloud_sync_exact_read_cancelled' => 'backend_exact_read_cancelled',
+    'cloud_sync_exact_read_checkpoint_changed' => 'backend_exact_read_checkpoint_changed',
+    'cloud_sync_exact_read_record_mismatch' => 'backend_exact_read_record_mismatch',
+    'cloud_sync_exact_read_outbox_unsettled' ||
+    'outbox_not_empty' => 'backend_exact_read_outbox_unsettled',
+    'cloud_sync_semantic_remote_write_tripwire' => 'backend_exact_read_tripwire_failed',
+    'not_ui_isolate' ||
+    'cloud_sync_v2_pcs_ui_required' => 'backend_exact_read_ui_required',
+    'rustpush_not_ready' => 'backend_exact_read_rustpush_not_ready',
+    'objectbox_not_ready' => 'backend_exact_read_objectbox_not_ready',
+    'storage_unavailable' => 'backend_exact_read_storage_unavailable',
+    'legacy_sync_active' => 'backend_exact_read_legacy_sync_active',
+    'protector_unavailable' => 'backend_exact_read_protector_unavailable',
+    'cloud_sync_v2_pcs_preparation_unavailable' ||
+    'cloud_sync_v2_pcs_client_unavailable' => 'backend_exact_read_pcs_unavailable',
+    _ => null,
+  };
+}
+
+BackendHarnessOperation backendHarnessExactReadOperation({
+  required Future<CloudSyncExactMessageReadDisposition> Function(String) fetch,
+  required BackendHarnessPayload Function() snapshot,
+}) => BackendHarnessOperation(
+  background: true,
+  validate: BackendHarnessEvidence.validFetch,
+  snapshot: snapshot,
+  handler: (args) async {
+    final CloudSyncExactMessageReadDisposition result;
+    try {
+      result = await fetch(args['messageGuid']! as String);
+    } on StateError catch (error) {
+      final code = backendHarnessExactReadFailureCode(error);
+      if (code == null) rethrow;
+      throw BackendHarnessFailure(code);
+    }
+    return BackendHarnessPayload(flags: {
+      'exact_read_found': result == CloudSyncExactMessageReadDisposition.projected ||
+          result == CloudSyncExactMessageReadDisposition.retained,
+      'exact_read_projected': result == CloudSyncExactMessageReadDisposition.projected,
+      'exact_read_absent': result == CloudSyncExactMessageReadDisposition.absent,
+      'exact_read_unresolved': result == CloudSyncExactMessageReadDisposition.unresolved,
+      'exact_read_tripwires_intact': true,
+    });
+  },
+);
+
 final class BackendHarnessController {
   BackendHarnessController({this.retainedRecoveryOwner}) {
     if (retainedRecoveryOwner != null &&
@@ -196,24 +261,12 @@ final class BackendHarnessController {
             }
           },
         ),
-        'fixture.fetch': BackendHarnessOperation(
-          background: true,
-          validate: BackendHarnessEvidence.validFetch,
+        'fixture.fetch': backendHarnessExactReadOperation(
           snapshot: snapshot,
-          handler: (args) async {
-            final result = await pushService.fetchCloudSyncV2BackendMessage(
-              messageGuid: args['messageGuid']! as String,
-              recoveryInput: recovery.input,
-            );
-            return BackendHarnessPayload(flags: {
-              'exact_read_found': result == CloudSyncExactMessageReadDisposition.projected ||
-                  result == CloudSyncExactMessageReadDisposition.retained,
-              'exact_read_projected': result == CloudSyncExactMessageReadDisposition.projected,
-              'exact_read_absent': result == CloudSyncExactMessageReadDisposition.absent,
-              'exact_read_unresolved': result == CloudSyncExactMessageReadDisposition.unresolved,
-              'exact_read_tripwires_intact': true,
-            });
-          },
+          fetch: (messageGuid) => pushService.fetchCloudSyncV2BackendMessage(
+            messageGuid: messageGuid,
+            recoveryInput: recovery.input,
+          ),
         ),
         'fixture.inspect': BackendHarnessOperation(
           background: true,

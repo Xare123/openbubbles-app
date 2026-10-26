@@ -18,6 +18,25 @@ enum CloudSyncExactMessageReadDisposition {
   unresolved,
 }
 
+/// Keep the complete, settled outbox snapshot pinned around one exact read.
+/// Audit retention is not upload permission; changed or uncertain rows refuse.
+Future<T> withCloudSyncExactReadOutbox<T>({
+  required CloudSyncShadowPreflightReader readPreflight,
+  required bool Function() stillCurrent,
+  required Future<T> Function() read,
+}) async {
+  final before = await readPreflight();
+  if (!before.allowsSemanticRead) {
+    throw StateError('cloud_sync_exact_read_outbox_unsettled');
+  }
+  final result = await read();
+  final after = await readPreflight();
+  if (!stillCurrent() || !before.hasSameSettledOutboxAs(after)) {
+    throw StateError('cloud_sync_semantic_remote_write_tripwire');
+  }
+  return result;
+}
+
 /// Adopts the actual native fetched bytes without inventing a sent, received or
 /// historical source. Success means retained reader work, not projection/head.
 Future<void> adoptCloudSyncExactMessageFound({

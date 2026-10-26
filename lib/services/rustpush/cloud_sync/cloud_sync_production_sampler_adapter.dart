@@ -735,10 +735,11 @@ final class CloudSyncProductionSemanticPullAdapter {
           !identical(objectBox, Database.store)) {
         throw StateError('cloud_sync_exact_read_identity_changed');
       }
-      final before = await readPreflight();
-      if (before.outboxCount != 0) throw StateError('cloud_sync_exact_read_outbox_unsettled');
       CloudInboxApplier? applier;
-      final result = await retainCloudSyncKnownMessage(
+      return withCloudSyncExactReadOutbox(
+        readPreflight: readPreflight,
+        stillCurrent: stillCurrent,
+        read: () => retainCloudSyncKnownMessage(
         messageGuid: messageGuid, auth: auth, pauseToken: pause,
         objectBox: objectBox, privateStorageDirectory: privateStorageDirectory,
         readCurrentBoundAuth: readBound,
@@ -749,12 +750,8 @@ final class CloudSyncProductionSemanticPullAdapter {
           applier ??= await createInboxApplier(auth, entry.scope, entry.generation, pause);
           return applier!.apply(entry, leaseFence: coordinator);
         },
+        ),
       );
-      final after = await readPreflight();
-      if (!stillCurrent() || !before.hasSameSettledOutboxAs(after)) {
-        throw StateError('cloud_sync_semantic_remote_write_tripwire');
-      }
-      return result;
     });
   }
 
