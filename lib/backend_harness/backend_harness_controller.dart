@@ -106,6 +106,13 @@ final class BackendHarnessController {
           handler: account.repair,
           snapshot: snapshot,
         ),
+        'auth.read': BackendHarnessOperation(
+          background: true,
+          uncertainOnFailure: true,
+          validate: (args) => args.isEmpty && Platform.isWindows && retainedRecoveryOwner != null,
+          handler: account.readAuthenticate,
+          snapshot: account.snapshot,
+        ),
         'auth.login': BackendHarnessOperation(
           background: true,
           uncertainOnFailure: true,
@@ -269,7 +276,7 @@ final class BackendHarnessController {
       }.map((action, operation) => MapEntry(
         action,
         backendHarnessRegistrationLifetimeOperation(action, operation,
-          restartRequired: () => pushService.backendRegistrationRestartRequired),
+          restartRequired: () => pushService.backendAuthenticationRestartRequired),
       )),
     );
   }
@@ -414,7 +421,7 @@ final class BackendHarnessController {
         'projection_complete': progress.projectionComplete,
         'has_report': progress.hasReport,
         'failure_present': progress.safeFailure != null,
-        'restart_required': service.backendRegistrationRestartRequired,
+        'restart_required': service.backendAuthenticationRestartRequired,
       },
       counts: {
         'pages': progress.pages,

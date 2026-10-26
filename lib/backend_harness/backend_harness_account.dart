@@ -6,6 +6,7 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_operation_inte
 import 'package:bluebubbles/services/rustpush/setup_interaction_port.dart';
 import 'package:bluebubbles/services/services.dart';
 import 'package:bluebubbles/src/rust/api/api.dart' as api;
+import 'package:bluebubbles/src/rust/lib.dart' as rustlib;
 
 import 'backend_harness_interactions.dart';
 import 'backend_harness_protocol.dart';
@@ -276,6 +277,106 @@ final class BackendHarnessAccount implements SetupInteractionPort {
     }
   }
 
+  /// Authenticate only this retained host's read session. A successful fresh
+  /// account is followed by independent verification on the original client.
+  Future<BackendHarnessPayload> readAuthenticate(Map<String, Object?> args) async {
+    if (args.isNotEmpty || !Platform.isWindows) {
+      throw BackendHarnessFailure('backend_invalid_arguments', effectNotEntered: true);
+    }
+    rustlib.ArcMutexAppleAccountDefaultAnisetteProvider? heldAccount;
+    phase = BackendHarnessPhase.configuring;
+    try {
+      await pushService.authenticateWindowsBackendRead((current) async {
+        final storage = pushService.statePath;
+        bool stillCurrent() => identical(current, pushService.state) &&
+            storage == pushService.statePath && ss.settings.finishedSetup.value;
+        void validate() {
+          if (!stillCurrent()) throw BackendHarnessFailure('backend_identity_changed');
+        }
+        validate();
+        // Omitted credentials use the saved encrypted digest. Native Windows
+        // profile admission avoids onboarding and retained-state replacement.
+        final result = await api.tryAuth(
+          path: storage, conf: current.osConfig,
+          conn: current.conn, anisette: current.anisette,
+        );
+        final account = result.$1;
+        heldAccount = account;
+        validate();
+        var login = result.$2;
+        if (login is api.LoginState_NeedsDevice2FA || login is api.LoginState_NeedsSMS2FA) {
+          // Match the existing Windows read harness's normal SMS choice path.
+          final options = await api.get2FaSmsOpts(state: account);
+          validate();
+          final pending = options.$2;
+          if (pending != null) {
+            login = pending;
+          } else {
+            final phones = options.$1;
+            if (phones.isEmpty || phones.length > 64) {
+              throw BackendHarnessFailure('backend_read_auth_rejected');
+            }
+            phase = BackendHarnessPhase.needs_sms_2fa;
+            final index = phones.length == 1 ? 0 : await interactions.chooseDevice(
+              count: phones.length, kind: BackendHarnessChallengeKind.smsDestination,
+              stillCurrent: stillCurrent,
+            );
+            validate();
+            if (index == null) throw BackendHarnessFailure('backend_not_ready');
+            login = await api.send2FaSms(account: account, phoneId: phones[index].id);
+            validate();
+          }
+        }
+        (api.LoginState, api.IdsUser?)? verified;
+        if (login is api.LoginState_Needs2FAVerification ||
+            login is api.LoginState_NeedsSMS2FAVerification) {
+          phase = login is api.LoginState_NeedsSMS2FAVerification
+              ? BackendHarnessPhase.needs_sms_2fa : BackendHarnessPhase.needs_2fa;
+          final code = await interactions.secret(
+            BackendHarnessChallengeKind.verificationCode, stillCurrent: stillCurrent,
+          );
+          validate();
+          if (code == null) throw BackendHarnessFailure('backend_not_ready');
+          phase = BackendHarnessPhase.configuring;
+          if (login is api.LoginState_NeedsSMS2FAVerification) {
+            verified = await api.verify2FaSms(
+              path: storage, accountMut: account, anisette: current.anisette,
+              config: current.osConfig, body: login.field0, code: code,
+            );
+          } else {
+            verified = await api.verify2FaDirect(
+              path: storage, account: account, osConfig: current.osConfig, code: code,
+            );
+          }
+          validate();
+          login = verified.$1;
+          if (verified.$2 != null) {
+            verified.$2!.dispose();
+            throw BackendHarnessFailure('backend_identity_changed');
+          }
+        }
+        if (login is! api.LoginState_LoggedIn) {
+          throw BackendHarnessFailure('backend_read_auth_rejected');
+        }
+      });
+      phase = BackendHarnessPhase.idle;
+      return BackendHarnessPayload(phase: phase, flags: const {
+        'read_auth_ready': true,
+        'existing_native_client_retained': true,
+      });
+    } catch (error) {
+      phase = BackendHarnessPhase.blocked;
+      if (error is BackendHarnessFailure) rethrow;
+      final changed = error is StateError &&
+          error.message == 'cloud_sync_retained_read_auth_changed';
+      throw BackendHarnessFailure(changed ? 'backend_identity_changed' : 'backend_read_auth_failed');
+    } finally {
+      // Keep the fresh account alive through the original client's proof;
+      // do not replace or dispose any of the retained service's handles.
+      heldAccount?.dispose();
+    }
+  }
+
   Future<BackendHarnessPayload> repair(Map<String, Object?> args) async {
     if (args.isNotEmpty) {
       throw BackendHarnessFailure('backend_invalid_arguments', effectNotEntered: true);
@@ -427,8 +528,9 @@ final class BackendHarnessAccount implements SetupInteractionPort {
       throw BackendHarnessFailure('backend_identity_changed');
     }
     final validIdentity = identity != null && validCachedIdentity(identity);
-    final restartRequired = pushService.backendRegistrationRestartRequired;
-    final registered = registration is api.RegisterState_Registered && !restartRequired;
+    final restartRequired = pushService.backendAuthenticationRestartRequired;
+    final registered = registration is api.RegisterState_Registered &&
+        !pushService.backendRegistrationRestartRequired;
     // Native metadata binds identity; it does not prove fresh network auth.
     // The normal semantic read still owns read-auth refresh under its interlock.
     phase = registered && validIdentity

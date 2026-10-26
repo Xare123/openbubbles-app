@@ -44,6 +44,7 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_android_back
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_background_read_preference.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_background_registration.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_automatic_archive_preference.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_retained_read_auth.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_dev_gate.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_composer_admission.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_send_journal.dart';
@@ -8805,8 +8806,89 @@ class RustPushService extends GetxService {
   final _cloudSyncV2BackendArchiveSession =
       CloudSyncArchiveSessionAcknowledgment();
 
+  final _windowsBackendReadAuthentication = CloudSyncRetainedReadAuthentication();
+
+  bool get backendAuthenticationRestartRequired =>
+      backendRegistrationRestartRequired ||
+      _windowsBackendReadAuthentication.restartRequired;
+
+  /// Explicit saved-credential read authentication for an idle test host.
+  /// The supplied login owns its verification prompts and temporary account.
+  /// The original native client must independently authenticate before return.
+  Future<void> authenticateWindowsBackendRead(
+    Future<void> Function(api.SharedPushState) authenticate,
+  ) async {
+    final expected = state;
+    final client = expected?.icloudServices?.cloudMessagesClient;
+    final storage = statePath;
+    final store = Database.store;
+    bool current() => _isolatedWindowsBackendHost && expected != null &&
+        client != null && ss.settings.finishedSetup.value &&
+        !backendAuthenticationRestartRequired &&
+        identical(expected, state) && storage == statePath &&
+        identical(client, state?.icloudServices?.cloudMessagesClient) &&
+        identical(store, Database.store) && !store.isClosed() &&
+        !_serviceClosing && !loggingOut && !_cloudSyncV2OutboundQuiescing &&
+        !cloudSyncV2HistoryReadActive && !cloudSyncV2Progress.active &&
+        !_cloudSyncV2AutomaticArchiveActive && !_cloudSyncV2BackendArchiveSession.ready &&
+        _cloudSyncV2AutomaticArchiveSetting == null &&
+        _cloudSyncV2AutomaticArchiveAdmission == null &&
+        _cloudSyncV2OutboundProvisioningInFlight == null &&
+        _cloudSyncV2OutboundInFlight == null &&
+        _cloudSyncV2MessageUpdateInFlight == null &&
+        !ss.settings.cloudSyncingEnabled.value && isSyncing.value == null;
+    void validate() {
+      if (!current()) throw StateError('cloud_sync_retained_read_auth_unavailable');
+    }
+    validate();
+    // This is the same exact marker recognized by native tryAuth/verification.
+    // Outside that profile their ordinary onboarding path may replace state.
+    final marker = File('$storage/.openbubbles-cloud-sync-v2-windows-dev');
+    if (await marker.readAsString() != 'openbubbles-cloud-sync-v2-windows-dev-profile:v1') {
+      throw StateError('cloud_sync_retained_read_auth_unavailable');
+    }
+    validate();
+    await _cloudSyncV2LocalSourceOperations.run(validate: validate, action: () async {
+      await _createCloudKitOperationInterlock().runExclusive(
+        kind: CloudKitOperationKind.v2ReadWrite,
+        action: () => _windowsBackendReadAuthentication.run(
+          stillCurrent: current,
+          capturePersistedOwner: () async {
+            final owner = await api.cloudSyncCaptureReceivedIdentity(
+              cloudMessagesClient: client!, storageDirectory: storage,
+            );
+            validate();
+            await ss.prefs.reload();
+            validate();
+            final identity = CloudSyncAutomaticArchiveIdentity(
+              accountFingerprint: owner.accountFingerprint,
+              protectedStoreIdentity: owner.protectedStoreIdentity,
+              ownershipEpoch: 0,
+            );
+            final saved = ss.prefs.get(identity.preferenceKey);
+            if (saved != null && saved != jsonEncode([1, 'off'])) {
+              throw StateError('cloud_sync_retained_read_auth_unavailable');
+            }
+            return (owner.accountFingerprint, owner.protectedStoreIdentity);
+          },
+          authenticate: () => authenticate(expected!),
+          verifyActiveOwner: () async {
+            await FrbCloudSyncNativeAuthBinding().ensureReadAuthentication(
+              cloudMessagesClient: client!, privateStorageDirectory: storage,
+            );
+            validate();
+            final owner = await api.cloudSyncCaptureAuthSnapshot(
+              cloudMessagesClient: client, storageDirectory: storage,
+            );
+            return (owner.accountFingerprint, owner.protectedStoreIdentity);
+          },
+        ),
+      );
+    });
+  }
+
   bool get cloudSyncV2BackendArchiveSessionReady =>
-      !backendRegistrationRestartRequired &&
+      !backendAuthenticationRestartRequired &&
       (!_isolatedWindowsBackendHost || _cloudSyncV2BackendArchiveSession.ready);
 
   bool cloudSyncV2BackendArchiveScopeCurrent(
