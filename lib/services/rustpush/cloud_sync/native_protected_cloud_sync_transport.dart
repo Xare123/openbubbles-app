@@ -1,9 +1,11 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:bluebubbles/src/rust/api/api.dart' as frb_api;
 import 'package:bluebubbles/src/rust/frb_generated.dart';
 import 'package:bluebubbles/src/rust/lib.dart' as frb_lib;
 import 'package:bluebubbles/utils/logger/logger.dart';
+import 'package:flutter_rust_bridge/flutter_rust_bridge.dart' show AnyhowException;
 
 import 'cloud_operation_identity.dart';
 import 'cloud_sync_local_mutation_journal.dart';
@@ -686,6 +688,83 @@ typedef _AttachmentRecordContext = ({
 
 enum _CreatePreflightDisposition { absent, alreadyPresent }
 
+enum _CreatePreflightStep {
+  input,
+  parentContext,
+  parentGroup,
+  receivedOrigin,
+  historicalOrigin,
+  historicalChatOrigin,
+  reconcile,
+  classify,
+  prepare,
+  prepareResult,
+  release,
+}
+
+/// One call owns its trace. Only fixed enums and reviewed codes reach a sink;
+/// protected references, account data and arbitrary exception text never do.
+final class _CreatePreflightTrace {
+  _CreatePreflightTrace(this.record, CloudSyncScope scope, int count)
+    : entity = switch (scope.zone) {
+        'messageManateeZone' => 'message',
+        'chatManateeZone' => 'chat',
+        'attachmentManateeZone' => 'attachment',
+        _ => 'other',
+      },
+      operationCount = count.clamp(0, _maximumChangesPerPage).toInt();
+
+  final void Function(Map<String, Object?>) record;
+  final String entity;
+  final int operationCount;
+  var step = _CreatePreflightStep.input;
+  String? operationId;
+  frb_api.CloudSyncOutboundReconcileResult? lookup;
+  frb_api.CloudSyncOutboundSafeCode? prepareFailure;
+
+  void at(_CreatePreflightStep value, {String? operationId}) {
+    step = value;
+    this.operationId = operationId != null &&
+            _outboundOperationIdPattern.hasMatch(operationId)
+        ? operationId : null;
+  }
+
+  void reconciled(frb_api.CloudSyncOutboundReconcileResult result) {
+    lookup = result;
+    _emit('returned');
+  }
+
+  void failed(Object error) => _emit('failed', error: error);
+
+  void _emit(String result, {Object? error}) {
+    try {
+      _emitChecked(result, error: error);
+    } catch (_) {
+      // Even a malformed diagnostic accessor cannot replace the real result.
+    }
+  }
+
+  void _emitChecked(String result, {Object? error}) {
+    final nativeFailure = prepareFailure ?? lookup?.failure;
+    final diagnostic = Map<String, Object?>.unmodifiable({
+      'schema': 1,
+      'entity': entity,
+      'stage': step.name,
+      'result': result,
+      'operationCount': operationCount,
+      if (operationId != null) 'operationId': operationId,
+      if (lookup?.disposition != null) 'disposition': lookup!.disposition!.name,
+      if (lookup?.failureClass != null) 'failureClass': lookup!.failureClass!.name,
+      if (nativeFailure != null) 'nativeFailure': nativeFailure.name,
+      if (error is CloudSyncFailure) 'category': error.category.name,
+      if (error != null) 'safeCode': error is AnyhowException
+          ? cloudSyncV2SafeFailureCodeForCandidate(error.message)
+          : cloudSyncV2SafeFailureCode(error),
+    });
+    record(diagnostic);
+  }
+}
+
 final class _NativeCloudSyncPreparedSubmission
     extends CloudSyncPreparedSubmission {
   // Named superclass construction keeps the native handle and the exact
@@ -866,6 +945,7 @@ final class NativeProtectedCloudSyncTransport
     this.readHistoricalChatSource,
     this.validateMutationAdmission,
     this.validateReceivedMutationAdmission,
+    this.recordCreatePreflightDiagnostic,
     Object? receivedMutationClient,
   }) : _storageDirectory = storageDirectory,
        _protectedStoreIdentity = protectedStoreIdentity,
@@ -928,6 +1008,26 @@ final class NativeProtectedCloudSyncTransport
   /// compositions use it to observe revoked scoped consent before submission.
   final void Function()? validateMutationAdmission;
   final void Function()? validateReceivedMutationAdmission;
+
+  /// Synchronous, content-free observation of create preparation. A failing
+  /// observer cannot change admission, retry policy or native owner cleanup.
+  final void Function(Map<String, Object?>)? recordCreatePreflightDiagnostic;
+
+  void _recordCreatePreflightDiagnostic(Map<String, Object?> diagnostic) {
+    try {
+      final recorder = recordCreatePreflightDiagnostic;
+      if (recorder != null) {
+        recorder(diagnostic);
+      } else if (diagnostic['result'] == 'failed' ||
+          diagnostic['nativeFailure'] != null ||
+          diagnostic['disposition'] == 'unresolved' ||
+          diagnostic['disposition'] == 'diverged') {
+        Logger.warn('Cloud Sync V2 create preflight ${jsonEncode(diagnostic)}');
+      }
+    } catch (_) {
+      // Reporting is never authority and must not replace the real outcome.
+    }
+  }
   final Set<Future<void>> _activeNativeOperations = {};
   Future<void>? _nativeQuiescence;
   bool _nativeAdmissionClosed = false;
@@ -1172,10 +1272,22 @@ final class NativeProtectedCloudSyncTransport
 
   Future<bool> _releasePreparedHandle(
     frb_api.CloudSyncPreparedMessageCreateHandle handle,
-  ) => _runPreparedReleaseOperation(
-    () =>
-        _requireReleaseBindings().releasePreparedMessageCreate(handle: handle),
-  );
+  ) async {
+    try {
+      return await _runPreparedReleaseOperation(
+        () => _requireReleaseBindings().releasePreparedMessageCreate(handle: handle),
+      );
+    } catch (error) {
+      _recordCreatePreflightDiagnostic(Map<String, Object?>.unmodifiable({
+        'schema': 1,
+        'entity': 'other',
+        'stage': _CreatePreflightStep.release.name,
+        'result': 'failed',
+        'safeCode': cloudSyncV2SafeFailureCode(error),
+      }));
+      rethrow;
+    }
+  }
 
   /// Dedicated exact-handle cleanup under the protected-store gate.
   ///
@@ -2049,6 +2161,24 @@ final class NativeProtectedCloudSyncTransport
     required CloudOutboxSubmissionIdentity submissionIdentity,
     required List<CloudSyncProtectedWriteOperation> operations,
   }) async {
+    final trace = _CreatePreflightTrace(
+      _recordCreatePreflightDiagnostic, scope, operations.length,
+    );
+    try {
+      return await _prepareSubmission(scope,
+        submissionIdentity: submissionIdentity, operations: operations, trace: trace);
+    } catch (error) {
+      trace.failed(error);
+      rethrow;
+    }
+  }
+
+  Future<CloudSyncPreparedSubmission> _prepareSubmission(
+    CloudSyncScope scope, {
+    required CloudOutboxSubmissionIdentity submissionIdentity,
+    required List<CloudSyncProtectedWriteOperation> operations,
+    required _CreatePreflightTrace trace,
+  }) async {
     _requireV2WriterInterlock();
     final payloadVersion = _outboundCreatePayloadVersion(scope);
     final isChat = scope.zone == 'chatManateeZone';
@@ -2103,35 +2233,42 @@ final class NativeProtectedCloudSyncTransport
       // the await fails closed instead of pairing a proof with a new source.
       final inputs = <frb_api.CloudSyncPreparedMessageCreateInput>[];
       for (final operation in operations) {
+        trace.at(_CreatePreflightStep.parentContext, operationId: operation.operationId);
         final parentContext = _readParentContextForPrepare(
           scope,
           operation.operationId,
         );
+        trace.at(_CreatePreflightStep.parentGroup, operationId: operation.operationId);
+        final parentGroupProof = await _readParentGroupProofForPrepare(
+          scope, operation.operationId, parentContext,
+        );
+        trace.at(_CreatePreflightStep.receivedOrigin, operationId: operation.operationId);
+        final receivedArchiveProof = scope.zone == 'messageManateeZone'
+            ? await readReceivedArchiveProof?.call(scope, operation.operationId) : null;
+        trace.at(_CreatePreflightStep.historicalOrigin, operationId: operation.operationId);
+        final historicalArchiveProof = scope.zone == 'messageManateeZone'
+            ? await readHistoricalArchiveProof?.call(scope, operation.operationId) : null;
+        trace.at(_CreatePreflightStep.historicalChatOrigin, operationId: operation.operationId);
+        final historicalChatSource = scope.zone == 'chatManateeZone'
+            ? await _readHistoricalChatSourceForPrepare(scope, operation.operationId) : null;
+        trace.at(_CreatePreflightStep.input, operationId: operation.operationId);
         inputs.add(
           _preparedCreateInput(
             operation,
             submissionIdentity: submissionIdentity,
             attachmentParentContext: parentContext,
-            attachmentParentGroupProof: await _readParentGroupProofForPrepare(
-              scope,
-              operation.operationId,
-              parentContext,
-            ),
-            receivedArchiveProof: scope.zone == 'messageManateeZone'
-                ? await readReceivedArchiveProof?.call(scope, operation.operationId)
-                : null,
-            historicalArchiveProof: scope.zone == 'messageManateeZone'
-                ? await readHistoricalArchiveProof?.call(scope, operation.operationId)
-                : null,
-            historicalChatSource: scope.zone == 'chatManateeZone'
-                ? await _readHistoricalChatSourceForPrepare(scope, operation.operationId)
-                : null,
+            attachmentParentGroupProof: parentGroupProof,
+            receivedArchiveProof: receivedArchiveProof,
+            historicalArchiveProof: historicalArchiveProof,
+            historicalChatSource: historicalChatSource,
           ),
         );
       }
       final remoteInputs = <frb_api.CloudSyncPreparedMessageCreateInput>[];
       final preconfirmedReceipts = <CloudOutboxCreateReceipt>[];
       for (final input in inputs) {
+        trace.at(_CreatePreflightStep.reconcile, operationId: input.localOperationId);
+        trace.lookup = null;
         final lookup = await reconcile(
           cloudMessagesClient: _cloudMessagesClient,
           storageDirectory: _storageDirectory,
@@ -2140,6 +2277,8 @@ final class NativeProtectedCloudSyncTransport
           requestUuid: submissionIdentity.requestUuid,
           input: input,
         );
+        trace.reconciled(lookup);
+        trace.at(_CreatePreflightStep.classify, operationId: input.localOperationId);
         switch (_classifyCreatePreflight(
           lookup,
           expectedProtectedProofReference: input.protectedPayloadReference,
@@ -2152,6 +2291,8 @@ final class NativeProtectedCloudSyncTransport
             );
         }
       }
+      trace.lookup = null;
+      trace.at(_CreatePreflightStep.prepare);
       final result = remoteInputs.isEmpty
           ? null
           : await prepare(
@@ -2163,6 +2304,8 @@ final class NativeProtectedCloudSyncTransport
               requestTimeout: const Duration(seconds: 45),
               inputs: remoteInputs,
             );
+      trace.prepareFailure = result?.failure;
+      trace.at(_CreatePreflightStep.prepareResult);
       if (_nativeAdmissionClosed) {
         // Admission closed while this preparation was in flight (engine
         // timeout/cancellation followed by quiescence, or a prior release

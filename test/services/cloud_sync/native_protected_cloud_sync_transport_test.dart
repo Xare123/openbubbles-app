@@ -12,6 +12,7 @@ import 'package:bluebubbles/src/rust/frb_generated.dart';
 import 'package:bluebubbles/src/rust/lib.dart' as frb_lib;
 import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_rust_bridge/flutter_rust_bridge.dart' show AnyhowException;
 
 void main() {
   late _FakeBindings bindings;
@@ -28,6 +29,9 @@ void main() {
     CloudSyncHistoricalArchiveProofReader? historicalReader,
     void Function()? validateMutationAdmission,
     Future<void> Function()? beforeMutationAuthCapture,
+    CloudSyncAttachmentParentContextReader? parentContextReader,
+    CloudSyncAttachmentParentGroupProofReader? parentGroupReader,
+    void Function(Map<String, Object?>)? recordPreflight,
   }) => NativeProtectedCloudSyncTransport(
     cloudMessagesClient: activeClient,
     storageDirectory: 'private-storage',
@@ -38,6 +42,9 @@ void main() {
     readReceivedArchiveProof: receivedReader,
     readHistoricalArchiveProof: historicalReader,
     validateMutationAdmission: validateMutationAdmission,
+    readAttachmentParentContext: parentContextReader,
+    readAttachmentParentGroupProof: parentGroupReader,
+    recordCreatePreflightDiagnostic: recordPreflight,
     writerMutationGuard: CloudKitWriterMutationGuard.forTest(
       store: writerStore,
       readActiveClient: () => activeClient,
@@ -2229,6 +2236,201 @@ void main() {
       expect(bindings.prepareCalls, 0);
     },
   );
+
+  group('create preflight diagnostics', () {
+    late List<Map<String, Object?>> diagnostics;
+
+    setUp(() {
+      diagnostics = [];
+      transport = buildTransport(recordPreflight: diagnostics.add);
+    });
+
+    Future<CloudSyncPreparedSubmission> prepare() {
+      final operation = _writeOperation(scope);
+      return runV2(() => transport.prepareSubmission(scope,
+        submissionIdentity: _submissionIdentity(operation.operationId),
+        operations: [_protectedWriteOperation(operation)]));
+    }
+
+    frb_api.CloudSyncNativeSendReceiptContext parentContext() =>
+        frb_api.CloudSyncNativeSendReceiptContext(
+          storageDirectory: 'private-storage', guidHash: _sha('8'),
+          accountFingerprint: scope.accountFingerprint, protectedStoreIdentity: _storeIdentity,
+          nativeSessionId: _hash('N'),
+          sourceBinding: frb_api.CloudSyncNativeSendSourceBinding(
+            kind: frb_api.CloudSyncNativeSendSourceKind.attachment,
+            sourceSha256: _sha('6'), protectedReference: _reference('M'),
+            leaseReference: _lease('c'), payloadSha256: _sha('7'), payloadLength: BigInt.from(512)));
+
+    void requireNoPrivateMaterial() {
+      final encoded = jsonEncode(diagnostics);
+      for (final private in ['PRIVATE', _reference('P'), _reference('M'), _lease('c'), _storeIdentity,
+        scope.accountFingerprint, _submissionIdentity(_writeOperation(scope).operationId).requestUuid]) {
+        expect(encoded, isNot(contains(private)));
+      }
+    }
+
+    test('typed unknown reconcile remains distinct from a thrown exception', () async {
+      bindings.reconcileResult = const frb_api.CloudSyncOutboundReconcileResult(
+        disposition: frb_api.CloudSyncOutboundReconcileDisposition.unresolved,
+        failureClass: frb_api.CloudSyncOutboundFailureClass.unknown);
+      await expectLater(prepare(), throwsA(isA<CloudSyncFailure>().having(
+        (e) => e.safeCode, 'code', 'cloud_sync_outbound_create_preflight_unresolved')));
+      expect(diagnostics, hasLength(2));
+      expect(diagnostics.first, containsPair('stage', 'reconcile'));
+      expect(diagnostics.first, containsPair('result', 'returned'));
+      expect(diagnostics.last, containsPair('stage', 'classify'));
+      expect(diagnostics.last, containsPair('result', 'failed'));
+      expect(diagnostics.last, containsPair('disposition', 'unresolved'));
+      expect(diagnostics.last, containsPair('failureClass', 'unknown'));
+      expect(diagnostics.last, containsPair('category', 'unknown'));
+      expect(diagnostics.last, containsPair('safeCode', 'cloud_sync_outbound_create_preflight_unresolved'));
+      expect(bindings.prepareCalls, 0);
+      expect(bindings.consumeCalls, 0);
+      requireNoPrivateMaterial();
+    });
+
+    for (final origin in ['received', 'historical']) {
+      test('$origin callback failure is observed before any native reconcile', () async {
+        final original = StateError('PRIVATE-TOKEN PRIVATE-CONTENT');
+        transport = buildTransport(recordPreflight: diagnostics.add,
+          receivedReader: origin == 'received' ? (_, _) async => throw original : null,
+          historicalReader: origin == 'historical' ? (_, _) async => throw original : null);
+        await expectLater(prepare(), throwsA(same(original)));
+        expect(diagnostics.single, containsPair('stage', '${origin}Origin'));
+        expect(diagnostics.single, containsPair('safeCode', 'cloud_sync_unknown_failure'));
+        expect(bindings.reconcileCalls, 0);
+        expect(bindings.prepareCalls, 0);
+        expect(bindings.consumeCalls, 0);
+        requireNoPrivateMaterial();
+      });
+    }
+
+    test('native parent-group failure retains only its exact reviewed code', () async {
+      transport = buildTransport(recordPreflight: diagnostics.add,
+        parentContextReader: (_, _) => parentContext(),
+        parentGroupReader: (_, _) async => throw AnyhowException(
+          'cloud_sync_attachment_parent_group_proof_unavailable'));
+      await expectLater(prepare(), throwsA(isA<AnyhowException>()));
+      expect(diagnostics.single, containsPair('stage', 'parentGroup'));
+      expect(diagnostics.single, containsPair('safeCode', 'cloud_sync_attachment_parent_group_proof_unavailable'));
+      expect(bindings.reconcileCalls, 0);
+      expect(bindings.consumeCalls, 0);
+      requireNoPrivateMaterial();
+    });
+
+    test('thrown reconcile is distinct and does not stringify private data', () async {
+      final original = ArgumentError.value('PRIVATE-TOKEN', 'PRIVATE-NAME', 'PRIVATE-MESSAGE');
+      bindings.beforeOperation = (step) async {
+        if (step == 'reconcileOutbound') { throw original; }
+      };
+      await expectLater(prepare(), throwsA(same(original)));
+      expect(diagnostics.single, containsPair('stage', 'reconcile'));
+      expect(diagnostics.single, containsPair('result', 'failed'));
+      expect(diagnostics.single, isNot(contains('disposition')));
+      expect(diagnostics.single, containsPair('safeCode', 'cloud_sync_unknown_failure'));
+      expect(bindings.prepareCalls, 0);
+      expect(bindings.consumeCalls, 0);
+      requireNoPrivateMaterial();
+    });
+
+    test('typed prepare failure retains enum without stale reconcile metadata', () async {
+      final operation = _writeOperation(scope);
+      bindings.reconcileResult = frb_api.CloudSyncOutboundReconcileResult(
+        disposition: frb_api.CloudSyncOutboundReconcileDisposition.notApplied,
+        protectedProofReference: operation.encryptedPayloadReference);
+      bindings.prepareResult = const frb_api.CloudSyncPreparedMessageCreateResult(
+        failure: frb_api.CloudSyncOutboundSafeCode.nativePrepareFailed);
+      await expectLater(prepare(), throwsA(isA<CloudSyncFailure>()));
+      expect(diagnostics.last, containsPair('stage', 'prepareResult'));
+      expect(diagnostics.last, containsPair('nativeFailure', 'nativePrepareFailed'));
+      expect(diagnostics.last, containsPair('category', 'server'));
+      expect(diagnostics.last, isNot(contains('disposition')));
+      expect(bindings.prepareCalls, 1);
+      expect(bindings.consumeCalls, 0);
+      requireNoPrivateMaterial();
+    });
+
+    test('thrown prepare cannot publish a known-code prefix plus private text', () async {
+      final operation = _writeOperation(scope);
+      bindings.reconcileResult = frb_api.CloudSyncOutboundReconcileResult(
+        disposition: frb_api.CloudSyncOutboundReconcileDisposition.notApplied,
+        protectedProofReference: operation.encryptedPayloadReference);
+      final original = AnyhowException('cloud_sync_attachment_parent_group_proof_unavailable PRIVATE-TOKEN');
+      bindings.beforeOperation = (step) async {
+        if (step == 'prepareOutbound') { throw original; }
+      };
+      await expectLater(prepare(), throwsA(same(original)));
+      expect(diagnostics.last, containsPair('stage', 'prepare'));
+      expect(diagnostics.last, containsPair('safeCode', 'cloud_sync_unknown_failure'));
+      expect(bindings.consumeCalls, 0);
+      requireNoPrivateMaterial();
+    });
+
+    test('observer failure cannot replace the actual preflight failure', () async {
+      final original = StateError('PRIVATE-ACTUAL-FAILURE');
+      transport = buildTransport(recordPreflight: (_) => throw StateError('PRIVATE-OBSERVER'));
+      bindings.beforeOperation = (step) async {
+        if (step == 'reconcileOutbound') { throw original; }
+      };
+      await expectLater(prepare(), throwsA(same(original)));
+      expect(bindings.prepareCalls, 0);
+      expect(bindings.consumeCalls, 0);
+    });
+
+    test('success preserves origin ordering and releases its owner without consume', () async {
+      bindings = _ReceivedBindings();
+      final order = <String>[];
+      final operation = _writeOperation(scope);
+      bindings.reconcileResult = frb_api.CloudSyncOutboundReconcileResult(
+        disposition: frb_api.CloudSyncOutboundReconcileDisposition.notApplied,
+        protectedProofReference: operation.encryptedPayloadReference);
+      bindings.prepareResult = frb_api.CloudSyncPreparedMessageCreateResult(
+        handle: _FakePreparedHandle(), handleBindingSha256: _sha('a'));
+      bindings.beforeOperation = (step) async { order.add(step); };
+      transport = buildTransport(recordPreflight: (value) {
+        diagnostics.add(value);
+        expect(() => value['PRIVATE-EXTRA'] = 'PRIVATE', throwsUnsupportedError);
+      },
+        parentContextReader: (_, _) {
+          order.add('parentContext');
+          return parentContext();
+        },
+        parentGroupReader: (_, _) async { order.add('group'); return null; },
+        receivedReader: (_, _) async { order.add('received'); return null; },
+        historicalReader: (_, _) async { order.add('historical'); return null; });
+      final prepared = await prepare();
+      await transport.releasePreparedSubmission(prepared);
+      expect(order, ['parentContext', 'group', 'received', 'historical',
+        'reconcileOutbound', 'prepareOutbound', 'releasePrepared']);
+      expect(bindings.prepareCalls, 1);
+      expect(bindings.consumeCalls, 0);
+      expect((bindings as _ReceivedBindings).releaseCalls, 1);
+      requireNoPrivateMaterial();
+    });
+
+    test('release failure retains memoized cleanup and its fixed failure code', () async {
+      final releaseBindings = _ReceivedBindings()..releaseError = StateError('PRIVATE-RELEASE');
+      bindings = releaseBindings;
+      transport = buildTransport(recordPreflight: diagnostics.add);
+      final operation = _writeOperation(scope);
+      bindings.reconcileResult = frb_api.CloudSyncOutboundReconcileResult(
+        disposition: frb_api.CloudSyncOutboundReconcileDisposition.notApplied,
+        protectedProofReference: operation.encryptedPayloadReference);
+      bindings.prepareResult = frb_api.CloudSyncPreparedMessageCreateResult(
+        handle: _FakePreparedHandle(), handleBindingSha256: _sha('a'));
+      final prepared = await prepare();
+      for (var attempt = 0; attempt < 2; attempt++) {
+        await expectLater(transport.releasePreparedSubmission(prepared), throwsA(
+          isA<CloudSyncFailure>().having((e) => e.safeCode, 'code', 'cloud_sync_prepared_release_failed')));
+      }
+      expect(releaseBindings.releaseCalls, 1);
+      expect(diagnostics.where((e) => e['stage'] == 'release'), hasLength(1));
+      expect(diagnostics.last, containsPair('safeCode', 'cloud_sync_prepared_release_failed'));
+      expect(bindings.consumeCalls, 0);
+      requireNoPrivateMaterial();
+    });
+  });
 
   test('indeterminate create preflight remains pre-submit retryable', () async {
     final operation = _writeOperation(scope);
@@ -5096,8 +5298,16 @@ final class _FakeReceivedProof implements frb_api.CloudSyncReceivedArchiveCreate
 }
 
 final class _ReceivedBindings extends _FakeBindings implements NativeProtectedPreparedReleaseBindings {
+  int releaseCalls = 0;
+  Object? releaseError;
   @override
-  Future<bool> releasePreparedMessageCreate({required frb_api.CloudSyncPreparedMessageCreateHandle handle}) async => true;
+  Future<bool> releasePreparedMessageCreate({required frb_api.CloudSyncPreparedMessageCreateHandle handle}) async {
+    await _before('releasePrepared');
+    releaseCalls++;
+    final error = releaseError;
+    if (error != null) { throw error; }
+    return true;
+  }
 }
 
 final class _FakePreparedHandle
