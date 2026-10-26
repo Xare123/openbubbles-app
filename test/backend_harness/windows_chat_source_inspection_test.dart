@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_manual_semantic_pull_sampler.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_outbound_group_binding.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_outbound_staging.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_operation_interlock.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/in_memory_cloud_sync_store.dart';
 import 'package:bluebubbles/src/rust/api/api.dart' as api;
@@ -83,6 +84,63 @@ void main() {
       'group-proof-before', 'group-proof-after',
     ]));
     requireWindowsChatSourceGroupBinding(request: group, row: row(), proof: proof());
+  });
+
+  Map<String, Object?> parentRequest() => {
+    ...request(schema: 2), 'schema': 3, 'intentId': 19, 'messageId': 14222,
+    'rowId': 24436, 'generation': 1, 'sequence': 1430,
+    'operationRowId': 30, 'recordMapId': 29119,
+    'operationId': 'op1:76ebc32305d883c0cb6dc5feb9a34280cb2eccb1eb0bf1d50f6796e46eaf0f0e',
+    'parentSnapshotSha256': 'a' * 64, 'claimSha256': 'b' * 64,
+    'claimSource': 'c' * 40, 'sourceSha256': 'd' * 64,
+  };
+  test('schema3 pins only the original parent and retains the exact Chat request', () {
+    final pinned = parentRequest();
+    expect(validWindowsChatSourceRequest(pinned), isTrue);
+    for (final key in ['intentId', 'messageId', 'operationRowId', 'recordMapId', 'groupChatId',
+      'rowId', 'generation', 'sequence']) {
+      for (final replacement in <Object?>[null, 0, -1, (pinned[key]! as int) + 1,
+        (pinned[key]! as int).toDouble(), pinned[key].toString()]) {
+        expect(validWindowsChatSourceRequest({...pinned, key: replacement}), isFalse);
+      }
+    }
+    for (final key in ['parentSnapshotSha256', 'claimSha256', 'sourceSha256', 'claimSource']) {
+      expect(validWindowsChatSourceRequest({...pinned, key: 'PRIVATE'}), isFalse);
+      expect(validWindowsChatSourceRequest(Map<String, Object?>.from(pinned)..remove(key)), isFalse);
+    }
+    expect(validWindowsChatSourceRequest({...pinned, 'schema': 3.0}), isFalse);
+    expect(validWindowsChatSourceRequest({...pinned, 'operationId': 'op1:${'e' * 64}'}), isFalse);
+    expect(validWindowsChatSourceRequest({...pinned, 'replacementOperation': true}), isFalse);
+    expect(validWindowsChatSourceRequest({...pinned, 'referenceSha256': 'bad'}), isFalse);
+    expect(windowsChatSourceInspectionStages, containsAll([
+      'parent-encoder', 'parent-stage', 'parent-compare', 'parent-rollback', 'parent-rolled-back',
+    ]));
+  });
+
+  test('parent snapshot includes terminal cleanup and all adoption metadata', () {
+    final intent = CloudSyncLocalSendIntentEntity(intentKey: 'intent', accountFingerprint: 'A' * 43,
+      writerEpoch: 2, localMessageId: 14222, messageGuidHash: 'G' * 43,
+      sourceSha256: 's' * 64, createdAtMs: 1, updatedAtMs: 2);
+    final operation = CloudOutboxOperationEntity(operationId: 'operation', scopeKey: 'scope',
+      accountFingerprint: 'A' * 43, zone: 'messageManateeZone', logicalEntityKeyHash: 'L' * 43,
+      action: 0, mutationRevision: 1, createdAtMs: 1, updatedAtMs: 2, state: 4);
+    final mapping = CloudRecordMapEntity(mapKey: 'map', scopeKey: 'scope',
+      accountFingerprint: 'A' * 43, zone: operation.zone, logicalEntityKeyHash: operation.logicalEntityKeyHash,
+      serverRecordIdHash: 'R' * 43, encryptedServerRecordId: reference, updatedAtMs: 1);
+    String capture() => windowsParentStageSnapshotSha256(
+      intent: intent, operation: operation, mapping: mapping);
+    final before = capture();
+    operation.protectedLeaseReference = 'obcs2.lease.${'a' * 32}';
+    expect(capture(), isNot(before));
+    operation.protectedLeaseReference = null;
+    expect(capture(), before);
+    intent.admittedChatBinding = 'different';
+    expect(capture(), isNot(before));
+    intent.admittedChatBinding = null;
+    mapping.pendingUpdateOperationId = 'different';
+    expect(capture(), isNot(before));
+    expect(before, matches(RegExp(r'^[a-f0-9]{64}$')));
+    expect(before, isNot(contains(reference)));
   });
 
   for (final field in [
@@ -497,6 +555,151 @@ void main() {
       expect(result, 'content-free-result');
       expect(pause.calls, ['pause', 'resume']);
       expect(pause.active, isFalse);
+    });
+
+    test('parent stage runs after resume and rolls back before proof and outer release', () async {
+      final events = <String>[];
+      final proof = Object();
+      final lease = 'obcs2.lease.${'e' * 32}';
+      var outerHeld = false;
+      final result = await interlock.runExclusive(kind: CloudKitOperationKind.v2ReadWrite, action: () async {
+        outerHeld = true;
+        try {
+          return await inspectWindowsParentStage<Object, String>(
+            validate: () async { expect(outerHeld, isTrue); },
+            openProofAfterReadSession: () => runWindowsChatSourceReadWindow(
+              exclusion: interlock, nativePause: pause, validate: () async {},
+              ensureReadAuthentication: () async {}, warmReadAuthentication: (_) async {},
+              observe: (_) async { expect(pause.active, isTrue); events.add('proof-open'); return proof; },
+            ),
+            disposeProof: (value) { expect(identical(value, proof), isTrue); events.add('proof-disposed'); },
+            encode: () { expect(pause.active, isFalse); events.add('encode'); return 'private-headers'; },
+            stage: (value, headers, capture) async {
+              expect(pause.active, isFalse, reason: 'native writer must not stage under read pause');
+              expect(outerHeld, isTrue);
+              expect(identical(value, proof), isTrue);
+              events.add('stage'); capture(lease);
+              return CloudSyncProtectedOutboundStageData(logicalEntityKeyHash: 'L' * 43,
+                protectedEnvelopeReference: reference, payloadSha256: 'f' * 64,
+                serverRecordIdHash: 'R' * 43, leaseReference: lease);
+            },
+            matches: (_) => true,
+            rollback: (value) async { expect(outerHeld, isTrue); expect(value, lease); events.add('rollback'); },
+            poison: () => fail('successful rollback must not poison'), onStage: (_) {},
+          );
+        } finally {
+          outerHeld = false;
+          events.add('outer-released');
+        }
+      });
+      expect(events, ['proof-open', 'encode', 'stage', 'rollback', 'proof-disposed', 'outer-released']);
+      expect(pause.calls, ['pause', 'resume']);
+      expect(result['rollbackCompleted'], isTrue);
+      expect(result['stageMatched'], isTrue);
+      expect(jsonEncode(result), isNot(contains('private-headers')));
+      expect(jsonEncode(result), isNot(contains(lease)));
+    });
+
+    for (final failurePoint in ['before-proof', 'after-proof', 'encoder', 'compare',
+      'after-stage-validation', 'after-rollback-validation', 'rejected-stage',
+      'unknown-stage', 'invalid-lease', 'rollback']) {
+      test('parent $failurePoint refuses without losing fresh lease ownership', () async {
+        final events = <String>[];
+        final lease = 'obcs2.lease.${'e' * 32}';
+        var staged = false;
+        var proofOpened = false;
+        var poisoned = false;
+        var rollbackCalls = 0;
+        final code = await failureOf(interlock.runExclusive(
+          kind: CloudKitOperationKind.v2ReadWrite,
+          action: () => inspectWindowsParentStage<Object, String>(
+            validate: () async {
+              if (failurePoint == 'before-proof' ||
+                  failurePoint == 'after-proof' && proofOpened ||
+                  failurePoint == 'after-stage-validation' && staged ||
+                  failurePoint == 'after-rollback-validation' && rollbackCalls > 0) {
+                throw StateError('backend_windows_chat_source_binding_changed');
+              }
+            },
+            openProofAfterReadSession: () async { proofOpened = true; return Object(); },
+            disposeProof: (_) { events.add('disposed'); },
+            encode: () {
+              events.add('encoded');
+              if (failurePoint == 'encoder') {
+                throw StateError('PRIVATE-ENCODER-CONTENT');
+              }
+              return 'private-headers';
+            },
+            stage: (_, __, capture) async {
+              staged = true;
+              if (failurePoint == 'unknown-stage') {
+                throw AnyhowException('PRIVATE-BRIDGE-FAILURE');
+              }
+              if (failurePoint == 'invalid-lease') {
+                capture('PRIVATE-INVALID-LEASE');
+              }
+              capture(lease);
+              if (failurePoint == 'rejected-stage') {
+                throw StateError('PRIVATE-VALIDATION-FAILURE');
+              }
+              return CloudSyncProtectedOutboundStageData(logicalEntityKeyHash: 'L' * 43,
+                protectedEnvelopeReference: reference, payloadSha256: 'f' * 64,
+                serverRecordIdHash: 'R' * 43, leaseReference: lease);
+            },
+            matches: (_) => failurePoint != 'compare',
+            rollback: (_) async {
+              rollbackCalls++; events.add('rollback');
+              if (failurePoint == 'rollback') {
+                throw StateError('PRIVATE-ROLLBACK-DETAILS');
+              }
+            },
+            poison: () { poisoned = true; interlock.poisonUntilProcessRestart(); },
+            onStage: (_) {},
+          ),
+        ));
+        final ownsLease = ['compare', 'after-stage-validation', 'after-rollback-validation',
+          'rejected-stage', 'rollback']
+            .contains(failurePoint);
+        expect(rollbackCalls, ownsLease ? 1 : 0);
+        expect(events.where((event) => event == 'disposed').length, proofOpened ? 1 : 0);
+        if (ownsLease) {
+          expect(events.indexOf('rollback'), lessThan(events.indexOf('disposed')));
+        }
+        expect(poisoned, ['rollback', 'unknown-stage', 'invalid-lease'].contains(failurePoint));
+        expect(code, startsWith('backend_windows_parent_'));
+        expect(code, isNot(contains('PRIVATE')));
+        if (failurePoint == 'encoder') {
+          expect(code, startsWith('backend_windows_parent_encoder__'));
+        }
+        if (failurePoint == 'compare') {
+          expect(code, contains('compare__backend_windows_parent_stage_mismatch'));
+        }
+        if (poisoned) {
+          expect(code, startsWith('backend_windows_parent_rollback__'));
+          await expectLater(interlock.runExclusive(kind: CloudKitOperationKind.v2ReadWrite,
+            action: () async => fail('uncertain cleanup must retain exclusion')),
+            throwsA(isA<CloudKitOperationInterlockException>()));
+        }
+      });
+    }
+
+    test('typed native stage refusal has no fresh lease and does not poison', () async {
+      var rollbacks = 0;
+      var disposed = 0;
+      final code = await failureOf(inspectWindowsParentStage<Object, String>(
+        validate: () async {}, openProofAfterReadSession: () async => Object(),
+        disposeProof: (_) { disposed++; }, encode: () => 'headers',
+        stage: (_, __, capture) async {
+          capture(null);
+          throw AnyhowException('cloud_sync_outbound_native_auth_unavailable');
+        },
+        matches: (_) => fail('no native stage to compare'),
+        rollback: (_) async { rollbacks++; },
+        poison: () => fail('a typed no-stage refusal owns no uncertain lease'), onStage: (_) {},
+      ));
+      expect(code, 'backend_windows_parent_stage__cloud_sync_outbound_native_auth_unavailable');
+      expect(rollbacks, 0);
+      expect(disposed, 1);
     });
   });
 
