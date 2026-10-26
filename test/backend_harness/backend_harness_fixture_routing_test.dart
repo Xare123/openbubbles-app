@@ -5,8 +5,13 @@ import 'package:bluebubbles/backend_harness/backend_harness_fixture_routing.dart
 import 'package:bluebubbles/backend_harness/backend_harness_fixtures.dart';
 import 'package:bluebubbles/backend_harness/backend_harness_protocol.dart';
 import 'package:bluebubbles/database/models.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_outbound_group_binding.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/objectbox_cloud_sync_store.dart';
 import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
+
+import '../services/cloud_sync/cloud_sync_restored_chat_test_fixture.dart';
 
 const first = '+16177106179';
 const second = '+19079786948';
@@ -299,6 +304,38 @@ void main() {
     expect(store.box<Message>().count(), 0);
   });
 
+  test('group preflight validates the persisted Chat without a transient Message', () async {
+    final existing = chat(group: true);
+    final now = DateTime.utc(2026, 10, 26);
+    CloudSyncScope scope(String zone) => CloudSyncScope(accountFingerprint: 'A' * 43,
+      container: 'com.apple.messages.cloud', database: 'private', zone: zone,
+      persistenceLane: CloudSyncPersistenceLane.semantic);
+    final sync = ObjectBoxCloudSyncStore(store: store, protector: _RouteProofProtector(), clock: () => now);
+    final source = await seedSyntheticRestoredChatAppliedSource(
+      objectBox: store, store: sync, chatScope: scope('chatManateeZone'), now: now);
+    await seedSyntheticRestoredChatProof(objectBox: store, store: sync,
+      chatScope: scope('chatManateeZone'), chat: existing, appliedSource: source, now: now);
+
+    // Reproduce the old live callback: its unbound ToOne cannot resolve even
+    // this valid stored Chat. No throw means the original bug is not reproduced.
+    final transient = Message(isFromMe: true)..chat.target = existing;
+    expect(() => requireCloudSyncRestoredGroupChatProof(store: store,
+      messageScope: scope('messageManateeZone'), message: transient), throwsStateError);
+
+    void requireParent() => requireBackendHarnessFixtureChatDependency(store: store,
+      messageScope: scope('messageManateeZone'), chat: existing, group: true);
+    expect(requireParent, returnsNormally);
+    expect(store.box<Message>().count(), 0);
+    expect(store.box<Chat>().count(), 1);
+    expect(store.box<Chat>().get(existing.id!)!.guid, existing.guid);
+
+    final latest = store.box<CloudInboxChangeEntity>().get(source.id)!
+      ..status = CloudInboxStatus.retainedUnprojected.index;
+    store.box<CloudInboxChangeEntity>().put(latest);
+    expect(requireParent, throwsA(isA<CloudSyncFailure>()));
+    expect(store.box<Message>().count(), 0);
+  });
+
   test('a stale group cannot hide the one current protected route', () {
     final stale = chat(group: true, suffix: 'stale');
     final current = chat(group: true, suffix: 'current');
@@ -339,4 +376,15 @@ void main() {
     expect(store.box<Chat>().count(), 1);
     expect(store.box<Message>().count(), 0);
   });
+}
+
+final class _RouteProofProtector implements CloudSyncProtector {
+  @override
+  Future<String> protect({required CloudSyncScope scope, required CloudSyncProtectedValueKind kind,
+    required String plaintext}) async => 'test:$plaintext';
+  @override
+  Future<String> unprotect({required CloudSyncScope scope, required CloudSyncProtectedValueKind kind,
+    required String ciphertext}) async => ciphertext.substring(5);
+  @override
+  Future<String> fingerprintAccount(String rawAccountIdentifier) async => 'A' * 43;
 }

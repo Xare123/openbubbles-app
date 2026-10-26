@@ -118,6 +118,25 @@ Chat selectBackendHarnessFixtureChat({
   return qualified.single;
 });
 
+/// Preflight has a persisted Chat, not a Message relation attached to ObjectBox.
+/// Use the existing exact-parent proof without fabricating a transient Message.
+void requireBackendHarnessFixtureChatDependency({
+  required Store store,
+  required CloudSyncScope messageScope,
+  required Chat chat,
+  required bool group,
+}) {
+  final chatId = chat.id;
+  if (chatId == null || chatId <= 0) _refuse();
+  if (group) {
+    requireCloudSyncRestoredGroupChatProofForId(
+      store: store, messageScope: messageScope, chatId: chatId);
+  } else {
+    requireCloudSyncRestoredDirectChatProofForId(
+      store: store, messageScope: messageScope, chatId: chatId);
+  }
+}
+
 Future<Chat> resolveBackendHarnessFixtureChat({
   required Store store,
   required CloudSyncNativeAuthSnapshot auth,
@@ -162,20 +181,8 @@ Future<Chat> resolveBackendHarnessFixtureChat({
     senderHandles: handles.toSet(),
     expectedChatGuidSha256: expectedChatGuidSha256,
     requireDependency: (chat, group) {
-      final target = Message(isFromMe: true)..chat.target = chat;
-      if (group) {
-        requireCloudSyncRestoredGroupChatProof(
-          store: store,
-          messageScope: scope,
-          message: target,
-        );
-      } else {
-        requireCloudSyncRestoredDirectChatProofForId(
-          store: store,
-          messageScope: scope,
-          chatId: chat.id!,
-        );
-      }
+      requireBackendHarnessFixtureChatDependency(
+        store: store, messageScope: scope, chat: chat, group: group);
     },
   );
 }
