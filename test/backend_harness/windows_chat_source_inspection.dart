@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_models.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_outbound_group_binding.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_persistent_keys.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_production_sampler_adapter.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_protector.dart';
@@ -11,6 +12,7 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/objectbox_cloud_sync_st
 import 'package:bluebubbles/src/rust/api/api.dart' as api;
 import 'package:bluebubbles/src/rust/lib.dart' as rustlib;
 import 'package:crypto/crypto.dart';
+import 'package:flutter_rust_bridge/flutter_rust_bridge.dart' show AnyhowException;
 
 /// Test-host-only inspection of ONE original protected journal source. This
 /// neither projects its decoded payload nor substitutes a newer record map.
@@ -31,9 +33,13 @@ bool validWindowsChatSourceRequest(Map<String, Object?> request) {
   };
   final digest = RegExp(r'^[A-Za-z0-9_-]{43}$');
   final sha = RegExp(r'^[a-f0-9]{64}$');
-  return request.length == keys.length &&
-      request.keys.every(keys.contains) &&
-      request['schema'] == 1 &&
+  final groupProbe = request['schema'] is int && request['schema'] == 2;
+  final allowed = {...keys, if (groupProbe) 'groupChatId'};
+  return request.length == allowed.length &&
+      request.keys.every(allowed.contains) &&
+      (request['schema'] == 1 || groupProbe) &&
+      (!groupProbe || request['groupChatId'] is int &&
+          (request['groupChatId']! as int) > 0) &&
       request['launchId'] is String &&
       RegExp(r'^[a-f0-9]{32}$').hasMatch(request['launchId']! as String) &&
       request['source'] is String &&
@@ -63,10 +69,93 @@ const windowsChatSourceInspectionStages = {
   'auth-prepare',
   'auth-bound',
   'read-window',
+  'group-proof-before',
   'decode-started',
   'decode-finished',
+  'group-proof-after',
   'read-released',
 };
+
+/// Refuse a newer/other retained Chat even when it has the same participants.
+void requireWindowsChatSourceGroupBinding({
+  required Map<String, Object?> request,
+  required CloudInboxChangeEntity row,
+  required CloudSyncRestoredGroupChatProof proof,
+}) {
+  final source = proof.source;
+  if (row.id != request['rowId'] || row.fetchSequence != request['sequence'] ||
+      row.generation != request['generation'] || proof.generation != row.generation ||
+      source.changeIdHash != request['changeIdHash'] ||
+      source.changeIdHash != row.changeIdHash ||
+      source.recordIdHash != request['recordIdHash'] ||
+      source.recordIdHash != row.serverRecordIdHash ||
+      source.etagHash != request['etagHash'] || source.etagHash != row.etagHash ||
+      source.payloadSha256 != request['payloadSha256'] ||
+      source.payloadSha256 != row.payloadSha256 ||
+      _sha(source.protectedRawEnvelopeReference) != request['referenceSha256'] ||
+      source.protectedRawEnvelopeReference != row.encryptedPayloadRef) {
+    throw StateError('backend_windows_chat_source_binding_changed');
+  }
+}
+
+/// Exact native codes only. Unknown exception text never enters the result.
+String windowsChatSourceGroupProofOutcome(Object error) {
+  final message = error is AnyhowException
+      ? error.message
+      : error is StateError ? error.message : null;
+  const outcomes = {
+    'cloud_sync_attachment_parent_group_proof_unavailable': 'unavailable',
+    'cloud_sync_attachment_parent_group_proof_auth': 'auth',
+    'cloud_sync_attachment_parent_group_proof_scope': 'scope',
+    'cloud_sync_attachment_parent_group_proof_invalid': 'invalid',
+    'cloud_sync_attachment_parent_group_proof_mismatch': 'mismatch',
+  };
+  return outcomes[message] ?? 'other';
+}
+
+/// Runs inside the caller's ONE read pause. Injection keeps the ordering test
+/// independent of native/account clients; binding failures remain terminal.
+Future<Map<String, Object?>> decodeWindowsChatSourceWithGroupProofs<T extends Object>({
+  required Map<String, Object?> request,
+  required Future<void> Function() validate,
+  required Future<Map<String, Object?>> Function() decode,
+  required void Function(String stage) onStage,
+  Future<T> Function()? openProof,
+  void Function(T proof)? disposeProof,
+}) async {
+  if (!validWindowsChatSourceRequest(request)) {
+    throw StateError('backend_windows_chat_source_request_invalid');
+  }
+  if (request['schema'] == 1) {
+    return decode(); // Preserve schema1's summary, stages and call sequence.
+  }
+  if (openProof == null || disposeProof == null) {
+    throw StateError('backend_windows_chat_source_request_invalid');
+  }
+  Future<String> probe(String stage) async {
+    await validate();
+    onStage(stage);
+    T? proof;
+    var outcome = 'ready';
+    try {
+      proof = await openProof();
+    } catch (error) {
+      outcome = windowsChatSourceGroupProofOutcome(error);
+    } finally {
+      if (proof != null) {
+        disposeProof(proof);
+      }
+    }
+    await validate();
+    return outcome;
+  }
+
+  final before = await probe('group-proof-before');
+  final summary = await decode();
+  await validate();
+  final after = await probe('group-proof-after');
+  return {...summary, 'groupProofBefore': before, 'groupProofAfter': after};
+}
 
 /// A restored native client is cold until read authentication establishes its
 /// account binding. Do not ask capture() to prove that binding first.
@@ -286,18 +375,55 @@ Future<Map<String, Object?>> inspectWindowsChatSource({
       }
 
       final original = jsonEncode(source().toMapForChatSourceInspection());
-      final counts = [
+      final groupProbe = request['schema'] == 2;
+      CloudSyncRestoredGroupChatProof captureGroupProof() {
+        final proof = requireCloudSyncRestoredGroupChatProofForId(
+          store: store,
+          messageScope: CloudSyncScope(
+            accountFingerprint: auth.accountFingerprint,
+            container: scope.container, database: scope.database,
+            zone: 'messageManateeZone', streamKind: scope.streamKind,
+            schemaVersion: scope.schemaVersion, persistenceLane: scope.persistenceLane,
+          ),
+          chatId: request['groupChatId']! as int,
+        );
+        requireWindowsChatSourceGroupBinding(request: request, row: source(), proof: proof);
+        return proof;
+      }
+      final pinnedGroup = groupProbe ? captureGroupProof() : null;
+      List<int> currentCounts() => [
         store.box<Chat>().count(),
         store.box<Message>().count(),
         store.box<Attachment>().count(),
         store.box<CloudOutboxOperationEntity>().count(),
+        if (groupProbe) ...[
+          store.box<CloudInboxChangeEntity>().count(),
+          store.box<CloudSemanticSnapshotEntity>().count(),
+          store.box<CloudSemanticChatAliasEntity>().count(),
+          store.box<CloudRecordMapEntity>().count(),
+          store.box<CloudSyncCheckpointEntity>().count(),
+        ],
       ];
+      final counts = currentCounts();
       Future<void> validate() async {
         await requireIdle();
         if (store.isClosed() ||
             !auth.sameIdentity(await provider.capture()) ||
             jsonEncode(source().toMapForChatSourceInspection()) != original) {
           throw StateError('backend_windows_chat_source_binding_changed');
+        }
+        if (pinnedGroup != null) {
+          final current = captureGroupProof();
+          if (current.binding != pinnedGroup.binding ||
+              current.generation != pinnedGroup.generation ||
+              current.routingMetadataDigest != pinnedGroup.routingMetadataDigest ||
+              current.logicalEntityKeyHash != pinnedGroup.logicalEntityKeyHash ||
+              current.source != pinnedGroup.source) {
+            throw StateError('backend_windows_chat_source_binding_changed');
+          }
+          if (jsonEncode(counts) != jsonEncode(currentCounts())) {
+            throw StateError('backend_windows_chat_source_projection_changed');
+          }
         }
       }
 
@@ -318,7 +444,7 @@ Future<Map<String, Object?>> inspectWindowsChatSource({
               pauseToken: token,
             ),
       );
-      final result = await session.run((token) async {
+      Future<Map<String, Object?>> decode(BigInt token) async {
         final row = source();
         onStage('decode-started');
         final decoded = await api.cloudSyncDecodeProtectedChange(
@@ -361,20 +487,30 @@ Future<Map<String, Object?>> inspectWindowsChatSource({
         final summary = summarizeWindowsChatSource(decoded);
         onStage('decode-finished');
         return summary;
-      });
+      }
+      final result = await session.run((token) =>
+        decodeWindowsChatSourceWithGroupProofs<api.CloudSyncAttachmentParentGroupProof>(
+          request: request, validate: validate, decode: () => decode(token), onStage: onStage,
+          openProof: pinnedGroup == null ? null : () => api.cloudSyncOpenAttachmentParentGroupProof(
+            cloudMessagesClient: client, nativeWriterPauseToken: token,
+            storageDirectory: profile,
+            expectedAccountFingerprint: auth.accountFingerprint,
+            expectedProtectedStoreIdentity: auth.protectedStoreIdentity,
+            generation: BigInt.from(pinnedGroup.generation),
+            routingMetadataDigest: pinnedGroup.routingMetadataDigest,
+            source: pinnedGroup.source,
+          ),
+          // Generated RustOpaqueInterface.dispose releases this proof's Arc.
+          disposeProof: (proof) => proof.dispose(),
+        ));
       onStage('read-released');
       await validate();
-      final after = [
-        store.box<Chat>().count(),
-        store.box<Message>().count(),
-        store.box<Attachment>().count(),
-        store.box<CloudOutboxOperationEntity>().count(),
-      ];
+      final after = currentCounts();
       if (jsonEncode(counts) != jsonEncode(after)) {
         throw StateError('backend_windows_chat_source_projection_changed');
       }
       return {
-        'schema': 1,
+        'schema': groupProbe ? 2 : 1,
         'completed': true,
         'rowId': request['rowId'],
         'generation': request['generation'],
