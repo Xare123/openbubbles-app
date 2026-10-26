@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:bluebubbles/database/models.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_manual_semantic_pull_sampler.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_models.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_outbound_group_binding.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_persistent_keys.dart';
@@ -165,21 +166,106 @@ Future<T> prepareWindowsChatSourceAuthentication<T>({
   required Future<void> Function() ensure,
   required Future<T?> Function() capture,
 }) async {
-  if (!identical(client, readActiveClient())) {
-    throw StateError('backend_windows_chat_source_binding_changed');
+  try {
+    if (!identical(client, readActiveClient())) {
+      throw StateError('backend_windows_chat_source_binding_changed');
+    }
+    await ensure();
+    if (!identical(client, readActiveClient())) {
+      throw StateError('backend_windows_chat_source_binding_changed');
+    }
+    final auth = await capture();
+    if (auth == null || !identical(client, readActiveClient())) {
+      throw StateError('backend_windows_chat_source_auth_missing');
+    }
+    return auth;
+  } catch (error) {
+    throw _WindowsChatSourceFailure(_WindowsChatSourcePhase.preparation, error);
   }
-  await ensure();
-  if (!identical(client, readActiveClient())) {
-    throw StateError('backend_windows_chat_source_binding_changed');
-  }
-  final auth = await capture();
-  if (auth == null || !identical(client, readActiveClient())) {
-    throw StateError('backend_windows_chat_source_auth_missing');
-  }
-  return auth;
 }
 
-String safeWindowsChatSourceFailure(Object error) {
+enum _WindowsChatSourcePhase {
+  preparation('preparation'),
+  readValidation('read_validation'),
+  readEnsure('read_ensure'),
+  readPause('read_pause'),
+  readWarm('read_warm'),
+  readObserve('read_observe'),
+  readResume('read_resume');
+
+  const _WindowsChatSourcePhase(this.code);
+  final String code;
+}
+
+/// Only a fixed phase and a previously filtered code survive the callback.
+final class _WindowsChatSourceFailure extends StateError {
+  _WindowsChatSourceFailure(this.phase, Object error)
+      : super(_windowsChatSourceFailureCode(error));
+
+  final _WindowsChatSourcePhase phase;
+}
+
+final class _WindowsChatSourceReadTrace {
+  var failedPhase = _WindowsChatSourcePhase.readValidation;
+
+  Future<T> call<T>(
+    _WindowsChatSourcePhase phase, Future<T> Function() action,
+  ) async {
+    try {
+      return await action();
+    } catch (_) {
+      failedPhase = phase;
+      rethrow; // Preserve pause-uncertainty types until the session unwinds.
+    }
+  }
+}
+
+final class _WindowsChatSourceObservedPause implements CloudSyncNativeWriterPause {
+  _WindowsChatSourceObservedPause(this.delegate, this.trace);
+  final CloudSyncNativeWriterPause delegate;
+  final _WindowsChatSourceReadTrace trace;
+
+  @override
+  Future<Object> pause() => trace.call(_WindowsChatSourcePhase.readPause, delegate.pause);
+
+  @override
+  Future<void> resume(Object token) => trace.call(
+    _WindowsChatSourcePhase.readResume, () => delegate.resume(token),
+  );
+}
+
+/// Uses the production session unchanged. Annotation happens only after its
+/// resume/poison path settles; a successful resume cannot hide an earlier phase.
+Future<T> runWindowsChatSourceReadWindow<T>({
+  required CloudKitOperationExclusion exclusion,
+  required CloudSyncNativeWriterPause nativePause,
+  required Future<void> Function() validate,
+  required Future<void> Function() ensureReadAuthentication,
+  required Future<void> Function(BigInt token) warmReadAuthentication,
+  required Future<T> Function(BigInt token) observe,
+}) async {
+  final trace = _WindowsChatSourceReadTrace();
+  final session = CloudSyncWriteChatIdentitySession(
+    exclusion: exclusion,
+    nativePause: _WindowsChatSourceObservedPause(nativePause, trace),
+    validate: () => trace.call(_WindowsChatSourcePhase.readValidation, validate),
+    ensureReadAuthentication: () => trace.call(
+      _WindowsChatSourcePhase.readEnsure, ensureReadAuthentication,
+    ),
+    warmReadAuthentication: (token) => trace.call(
+      _WindowsChatSourcePhase.readWarm, () => warmReadAuthentication(token),
+    ),
+  );
+  try {
+    return await session.run((token) => trace.call(
+      _WindowsChatSourcePhase.readObserve, () => observe(token),
+    ));
+  } catch (error) {
+    throw _WindowsChatSourceFailure(trace.failedPhase, error);
+  }
+}
+
+String _windowsChatSourceFailureCode(Object error) {
   const safe = {
     'backend_windows_chat_source_request_invalid',
     'backend_windows_chat_source_auth_missing',
@@ -187,10 +273,67 @@ String safeWindowsChatSourceFailure(Object error) {
     'backend_windows_chat_source_result_mismatch',
     'backend_windows_chat_source_projection_changed',
     'backend_windows_chat_source_requires_idle',
+    'cloud_sync_native_auth_account_unavailable',
+    'cloud_sync_native_auth_account_changed',
+    'cloud_sync_native_auth_client_type_invalid',
+    'cloud_sync_native_auth_storage_invalid',
+    'cloud_sync_native_auth_metadata_invalid',
+    'cloud_sync_native_auth_warm_failed',
+    'cloud_sync_native_auth_warm_timeout',
+    'cloud_sync_native_auth_writer_pause_scope_failed',
+    'cloud_sync_native_auth_messages_container_failed',
+    'cloud_sync_native_auth_keychain_container_failed',
+    'cloud_sync_native_auth_security_container_failed',
+    'cloud_sync_native_auth_pcs_zones_failed',
+    'cloud_sync_native_auth_cloudkit_token_failed',
+    'cloud_sync_native_auth_credentials_unavailable',
+    'cloud_sync_native_auth_credentials_rejected',
+    'cloud_sync_native_auth_transport_failed',
+    'cloud_sync_native_auth_refresh_session_missing',
+    'cloud_sync_native_auth_refresh_credentials_rejected',
+    'cloud_sync_native_auth_refresh_relay_unavailable',
+    'cloud_sync_native_auth_refresh_transport_failed',
+    'cloud_sync_native_auth_refresh_state_failed',
+    'cloud_sync_native_auth_refresh_timeout',
+    'cloud_sync_native_auth_refresh_failed',
+    'cloud_sync_native_auth_refresh_unsupported',
+    'cloud_sync_native_auth_refresh_writer_busy',
+    'cloud_sync_native_auth_identity_mismatch',
+    'cloud_sync_native_auth_account_fingerprint_failed',
+    'cloud_sync_native_auth_session_fingerprint_failed',
+    'cloud_sync_native_auth_store_identity_failed',
+    'cloud_sync_native_auth_bridge_failed',
+    'cloud_sync_native_writer_pause_already_active',
+    'cloud_sync_native_writer_pause_failed',
+    'cloud_sync_native_writer_pause_timeout',
+    'cloud_sync_native_writer_pause_token_invalid',
+    'cloud_sync_native_writer_pause_bridge_failed',
+    'cloud_sync_native_writer_pause_resume_unconfirmed',
+    'cloud_sync_native_writer_resume_failed',
+    'cloud_sync_native_writer_resume_token_invalid',
+    'cloudkit_interlock_required',
+    'cloudkit_interlock_mode_violation',
+    'cloudkit_interlock_profile_mismatch',
+    'cloudkit_interlock_fence_lost',
+    'cloudkit_interlock_busy',
+    'cloudkit_interlock_unavailable',
+    'cloudkit_interlock_reservation_lost',
   };
-  return error is StateError && safe.contains(error.message)
-      ? error.message
-      : 'backend_windows_chat_source_observation_failed';
+  final candidate = switch (error) {
+    StateError() => error.message,
+    AnyhowException() => error.message,
+    CloudKitOperationInterlockException() => error.safeCode,
+    CloudSyncNativeWriterPauseUncertain() => 'cloud_sync_native_writer_pause_resume_unconfirmed',
+    _ => null,
+  };
+  return safe.contains(candidate)
+      ? candidate! : 'backend_windows_chat_source_observation_failed';
+}
+
+String safeWindowsChatSourceFailure(Object error) {
+  final code = _windowsChatSourceFailureCode(error);
+  return error is _WindowsChatSourceFailure
+      ? 'backend_windows_chat_source_${error.phase.code}__$code' : code;
 }
 
 /// Closed format class using the app's existing participant projection grammar.
@@ -430,7 +573,9 @@ Future<Map<String, Object?>> inspectWindowsChatSource({
       // The existing identity session tolerates a preserved queued outbox. Its
       // v2ReadWrite lock is exclusion only; this callback has no write operation.
       onStage('read-window');
-      final session = CloudSyncWriteChatIdentitySession(
+      Future<Map<String, Object?>> readWindow(
+        Future<Map<String, Object?>> Function(BigInt token) observe,
+      ) => runWindowsChatSourceReadWindow(
         exclusion: interlock,
         nativePause: FrbCloudSyncNativeWriterPause(),
         validate: validate,
@@ -443,6 +588,7 @@ Future<Map<String, Object?>> inspectWindowsChatSource({
               cloudMessagesClient: auth.cloudMessagesClient,
               pauseToken: token,
             ),
+        observe: observe,
       );
       Future<Map<String, Object?>> decode(BigInt token) async {
         final row = source();
@@ -488,7 +634,7 @@ Future<Map<String, Object?>> inspectWindowsChatSource({
         onStage('decode-finished');
         return summary;
       }
-      final result = await session.run((token) =>
+      final result = await readWindow((token) =>
         decodeWindowsChatSourceWithGroupProofs<api.CloudSyncAttachmentParentGroupProof>(
           request: request, validate: validate, decode: () => decode(token), onStage: onStage,
           openProof: pinnedGroup == null ? null : () => api.cloudSyncOpenAttachmentParentGroupProof(

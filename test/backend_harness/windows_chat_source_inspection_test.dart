@@ -1,7 +1,11 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:bluebubbles/database/models.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_manual_semantic_pull_sampler.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_outbound_group_binding.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_operation_interlock.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/in_memory_cloud_sync_store.dart';
 import 'package:bluebubbles/src/rust/api/api.dart' as api;
 import 'package:bluebubbles/src/rust/api/cloud_sync_chat_identity.dart';
 import 'package:crypto/crypto.dart';
@@ -275,6 +279,227 @@ void main() {
     );
   });
 
+  Future<String> failureOf<T>(Future<T> action) async {
+    Object? failure;
+    try {
+      await action;
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure, isNotNull);
+    return safeWindowsChatSourceFailure(failure!);
+  }
+
+  test('preparation failure publishes only a fixed phase and known auth code', () async {
+    final client = Object();
+    var captured = false;
+    final code = await failureOf(prepareWindowsChatSourceAuthentication<String>(
+      client: client,
+      readActiveClient: () => client,
+      ensure: () async {
+        throw StateError('cloud_sync_native_auth_refresh_session_missing');
+      },
+      capture: () async { captured = true; return 'unused'; },
+    ));
+    expect(code, 'backend_windows_chat_source_preparation__cloud_sync_native_auth_refresh_session_missing');
+    expect(captured, isFalse);
+  });
+
+  test('known bridge and interlock codes survive only exact matches', () {
+    for (final code in [
+      'cloud_sync_native_auth_messages_container_failed',
+      'cloud_sync_native_auth_keychain_container_failed',
+      'cloud_sync_native_auth_security_container_failed',
+      'cloud_sync_native_auth_pcs_zones_failed',
+      'cloud_sync_native_auth_cloudkit_token_failed',
+      'cloud_sync_native_auth_warm_timeout',
+      'cloud_sync_native_auth_writer_pause_scope_failed',
+      'cloud_sync_native_writer_pause_already_active',
+      'cloud_sync_native_writer_pause_timeout',
+      'cloud_sync_native_writer_resume_token_invalid',
+    ]) {
+      expect(safeWindowsChatSourceFailure(StateError(code)), code);
+      expect(safeWindowsChatSourceFailure(AnyhowException(code)), code);
+      expect(safeWindowsChatSourceFailure(AnyhowException('$code PRIVATE-TOKEN')),
+        'backend_windows_chat_source_observation_failed');
+    }
+    expect(safeWindowsChatSourceFailure(const CloudKitOperationInterlockException(
+      'cloudkit_interlock_fence_lost',
+    )), 'cloudkit_interlock_fence_lost');
+    for (final error in <Object>[
+      AnyhowException('PRIVATE-PAYLOAD'), Exception('PRIVATE-TOKEN'),
+      StateError('cloud_sync_native_auth_pcs_zones_failed\nPRIVATE-HANDLE'),
+      const CloudKitOperationInterlockException('PRIVATE-PROFILE'),
+    ]) {
+      expect(safeWindowsChatSourceFailure(error), 'backend_windows_chat_source_observation_failed');
+    }
+  });
+
+  group('read-window diagnostic callbacks use the real identity session', () {
+    late Directory scratch;
+    late CloudKitOperationInterlock interlock;
+    late _InspectionPause pause;
+    setUp(() {
+      scratch = Directory.systemTemp.createTempSync('chat-source-diagnostic-');
+      interlock = CloudKitOperationInterlock(
+        privateStorageDirectory: scratch.path, fenceStore: InMemoryCloudSyncStore(),
+      );
+      pause = _InspectionPause();
+    });
+    tearDown(() async {
+      await CloudKitOperationInterlock.debugResetPoisonedLocksForTesting();
+      scratch.deleteSync(recursive: true);
+    });
+    Future<T> read<T>({
+      Future<void> Function()? validate,
+      Future<void> Function()? ensure,
+      Future<void> Function(BigInt)? warm,
+      required Future<T> Function(BigInt) observe,
+    }) => interlock.runExclusive(
+      kind: CloudKitOperationKind.v2ReadWrite,
+      action: () => runWindowsChatSourceReadWindow(
+        exclusion: interlock, nativePause: pause,
+        validate: validate ?? () async {},
+        ensureReadAuthentication: ensure ?? () async {},
+        warmReadAuthentication: warm ?? (_) async {}, observe: observe,
+      ),
+    );
+
+    test('missing interlock is classified before any callback or pause', () async {
+      final code = await failureOf(runWindowsChatSourceReadWindow(
+        exclusion: interlock, nativePause: pause,
+        validate: () async => fail('validation requires interlock'),
+        ensureReadAuthentication: () async => fail('ensure requires interlock'),
+        warmReadAuthentication: (_) async => fail('warm requires interlock'),
+        observe: (_) async => fail('observation requires interlock'),
+      ));
+      expect(code, 'backend_windows_chat_source_read_validation__cloudkit_interlock_required');
+      expect(pause.calls, isEmpty);
+    });
+
+    test('initial validation and ensure failures never pause or observe', () async {
+      for (final step in ['validation', 'ensure']) {
+        var observed = false;
+        final code = await failureOf(read(
+          validate: () async {
+            if (step == 'validation') {
+              throw StateError('cloud_sync_native_auth_metadata_invalid');
+            }
+          },
+          ensure: () async {
+            throw StateError('cloud_sync_native_auth_refresh_writer_busy');
+          },
+          observe: (_) async { observed = true; return 'unused'; },
+        ));
+        expect(code, step == 'validation'
+          ? 'backend_windows_chat_source_read_validation__cloud_sync_native_auth_metadata_invalid'
+          : 'backend_windows_chat_source_read_ensure__cloud_sync_native_auth_refresh_writer_busy');
+        expect(observed, isFalse);
+        expect(pause.calls, isEmpty);
+      }
+    });
+
+    test('pause rejection never warms or enters observation', () async {
+      pause.pauseError = StateError('cloud_sync_native_writer_pause_already_active');
+      var warmed = false;
+      var observed = false;
+      final code = await failureOf(read(
+        warm: (_) async { warmed = true; },
+        observe: (_) async { observed = true; return 'unused'; },
+      ));
+      expect(code, 'backend_windows_chat_source_read_pause__cloud_sync_native_writer_pause_already_active');
+      expect(pause.calls, ['pause']);
+      expect(warmed || observed, isFalse);
+    });
+
+    test('warm failure before proof observation survives successful resume', () async {
+      final stages = <String>[];
+      var nativeProofCalls = 0;
+      final code = await failureOf(read(
+        warm: (token) async {
+          expect(pause.active, isTrue);
+          expect(token, pause.token);
+          throw StateError('cloud_sync_native_auth_pcs_zones_failed');
+        },
+        observe: (_) => decodeWindowsChatSourceWithGroupProofs<Object>(
+          request: request(schema: 2), validate: () async {},
+          decode: () async => {}, onStage: stages.add,
+          openProof: () async { nativeProofCalls++; return Object(); },
+          disposeProof: (_) {},
+        ),
+      ));
+      expect(code, 'backend_windows_chat_source_read_warm__cloud_sync_native_auth_pcs_zones_failed');
+      expect(pause.calls, ['pause', 'resume']);
+      expect(pause.active, isFalse);
+      expect(stages, isEmpty);
+      expect(nativeProofCalls, 0);
+    });
+
+    test('validation after pause releases without reporting resume as the fault', () async {
+      var validations = 0;
+      var observed = false;
+      final code = await failureOf(read(
+        validate: () async {
+          if (++validations == 3) {
+            throw StateError('backend_windows_chat_source_binding_changed');
+          }
+        },
+        observe: (_) async { observed = true; return 'unused'; },
+      ));
+      expect(code, 'backend_windows_chat_source_read_validation__backend_windows_chat_source_binding_changed');
+      expect(pause.calls, ['pause', 'resume']);
+      expect(pause.active || observed, isFalse);
+    });
+
+    test('resume failure overrides warm failure and retains the poisoned exclusion', () async {
+      pause.resumeError = StateError('cloud_sync_native_writer_resume_failed');
+      final code = await failureOf(read(
+        warm: (_) async { throw StateError('cloud_sync_native_auth_warm_timeout'); },
+        observe: (_) async => fail('observation must not run'),
+      ));
+      expect(code, 'backend_windows_chat_source_read_resume__cloud_sync_native_writer_resume_failed');
+      expect(pause.active, isTrue);
+      await expectLater(interlock.runExclusive(
+        kind: CloudKitOperationKind.v2ReadWrite,
+        action: () async => fail('poisoned exclusion must not reenter'),
+      ), throwsA(isA<CloudKitOperationInterlockException>()));
+    });
+
+    test('uncertain pause retains its type until the real session poisons', () async {
+      pause.pauseError = const CloudSyncNativeWriterPauseUncertain();
+      final code = await failureOf(read(
+        observe: (_) async => fail('observation must not run'),
+      ));
+      expect(code, 'backend_windows_chat_source_read_pause__cloud_sync_native_writer_pause_resume_unconfirmed');
+      await expectLater(interlock.runExclusive(
+        kind: CloudKitOperationKind.v2ReadWrite,
+        action: () async => fail('uncertain pause must poison exclusion'),
+      ), throwsA(isA<CloudKitOperationInterlockException>()));
+    });
+
+    test('unknown callback errors expose only their fixed phase and generic code', () async {
+      final code = await failureOf(read(
+        warm: (_) async { throw AnyhowException('PRIVATE-TOKEN PRIVATE-PAYLOAD'); },
+        observe: (_) async => fail('observation must not run'),
+      ));
+      expect(code, 'backend_windows_chat_source_read_warm__backend_windows_chat_source_observation_failed');
+      expect(code, isNot(contains('PRIVATE')));
+      expect(code, isNot(contains(pause.token.toString())));
+      expect(pause.active, isFalse);
+    });
+
+    test('successful observation keeps the same token and releases before returning', () async {
+      final result = await read(observe: (token) async {
+        expect(token, pause.token);
+        expect(pause.active, isTrue);
+        return 'content-free-result';
+      });
+      expect(result, 'content-free-result');
+      expect(pause.calls, ['pause', 'resume']);
+      expect(pause.active, isFalse);
+    });
+  });
+
   test('transient content never enters the closed source summary', () {
     const chat = api.CloudSyncTransientChatPayload(
       logicalEntityKeyHash: 'PRIVATE-LOGICAL',
@@ -356,4 +581,34 @@ void main() {
     expect(summary['failure'], 'pcsUnavailable');
     expect(jsonEncode(summary), isNot(contains('arbitrary native')));
   });
+}
+
+final class _InspectionPause implements CloudSyncNativeWriterPause {
+  final token = BigInt.from(424242);
+  final calls = <String>[];
+  Object? pauseError;
+  Object? resumeError;
+  var active = false;
+
+  @override
+  Future<Object> pause() async {
+    calls.add('pause');
+    final error = pauseError;
+    if (error != null) {
+      throw error;
+    }
+    active = true;
+    return token;
+  }
+
+  @override
+  Future<void> resume(Object value) async {
+    expect(value, token);
+    calls.add('resume');
+    final error = resumeError;
+    if (error != null) {
+      throw error;
+    }
+    active = false;
+  }
 }
