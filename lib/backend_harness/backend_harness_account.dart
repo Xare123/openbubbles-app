@@ -360,10 +360,7 @@ final class BackendHarnessAccount implements SetupInteractionPort {
         }
       });
       phase = BackendHarnessPhase.idle;
-      return BackendHarnessPayload(phase: phase, flags: const {
-        'read_auth_ready': true,
-        'existing_native_client_retained': true,
-      });
+      return readAuthenticationReady();
     } catch (error) {
       phase = BackendHarnessPhase.blocked;
       if (error is BackendHarnessFailure) rethrow;
@@ -376,6 +373,12 @@ final class BackendHarnessAccount implements SetupInteractionPort {
       heldAccount?.dispose();
     }
   }
+
+  static BackendHarnessPayload readAuthenticationReady() =>
+      const BackendHarnessPayload(flags: {
+        'read_auth_ready': true,
+        'existing_native_client_retained': true,
+      });
 
   Future<BackendHarnessPayload> repair(Map<String, Object?> args) async {
     if (args.isNotEmpty) {

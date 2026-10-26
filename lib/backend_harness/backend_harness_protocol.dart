@@ -199,6 +199,8 @@ final class BackendHarnessPayload {
   static const flagNames = {
     'setup_finished',
     'auth_ready',
+    'read_auth_ready',
+    'existing_native_client_retained',
     'native_client_present',
     'native_identity_available',
     'registration_ready',
