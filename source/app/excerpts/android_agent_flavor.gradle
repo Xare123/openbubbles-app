@@ -1,0 +1,7 @@
+        agent {
+            dimension "app"
+            resValue "string", "app_name_en", "OpenBubbles Backend Lab"
+            resValue "color", "ic_launcher_background", "#455a64"
+            resValue "string", "file_provider", "com.bluebubbles.messaging.backendtest.fileprovider"
+            applicationId "com.bluebubbles.messaging.backendtest"
+        }

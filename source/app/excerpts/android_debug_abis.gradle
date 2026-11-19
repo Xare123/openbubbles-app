@@ -1,0 +1,11 @@
+            def cargoOutputDir = "${project.buildDir}/jniLibs/${buildType}";
+            def jniLibs = project.android.sourceSets.maybeCreate(buildType).jniLibs;
+            jniLibs.srcDir(new File(cargoOutputDir))
+
+            def platforms = flutterTargetPlatforms(flutterProject).collect()
+
+            // Same thing addFlutterDependencies does in flutter.gradle
+            if (buildType == "debug") {
+                platforms.add("android-x86")
+                platforms.add("android-x64")
+            }

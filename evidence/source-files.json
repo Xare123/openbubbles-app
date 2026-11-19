@@ -1,0 +1,488 @@
+{
+  "date": "2026-11-19",
+  "hash_algorithm": "SHA-256",
+  "line_ranges": "one-based, inclusive",
+  "files": [
+    {
+      "path": "LICENSE",
+      "origin": "app working tree",
+      "original_path": "LICENSE",
+      "selection": "whole file",
+      "original_file_sha256": "1eb85fc97224598dad1852b5d6483bbcf0aa8608790dcc657a5a2a761ae9c8c6",
+      "published_sha256": "1eb85fc97224598dad1852b5d6483bbcf0aa8608790dcc657a5a2a761ae9c8c6",
+      "bytes": 11558,
+      "line_endings": "original",
+      "purpose": "Original license or exception text."
+    },
+    {
+      "path": "fixtures/coordinator-shutdown/worker.rs",
+      "origin": "isolated synthetic component",
+      "original_path": "20261118-async-coordinator-shutdown-candidate/worker.rs",
+      "selection": "whole file",
+      "original_file_sha256": "664f38232e5c867e838f2616d3d02d63f097c93ad715b5e4c71754ecb4054333",
+      "published_sha256": "664f38232e5c867e838f2616d3d02d63f097c93ad715b5e4c71754ecb4054333",
+      "bytes": 37712,
+      "line_endings": "original",
+      "purpose": "Standalone standard-library coordinator and 17 synthetic tests."
+    },
+    {
+      "path": "fixtures/native-owner/model.rs",
+      "origin": "isolated synthetic component",
+      "original_path": "20261118-native-owner-model-verification/model.rs",
+      "selection": "whole file",
+      "original_file_sha256": "46b335b8e7261a9ba45e29e2b1e94964fa907e8e9aaab3c635998f036ba485c9",
+      "published_sha256": "46b335b8e7261a9ba45e29e2b1e94964fa907e8e9aaab3c635998f036ba485c9",
+      "bytes": 28870,
+      "line_endings": "original",
+      "purpose": "Standalone standard-library model and six synthetic owner tests."
+    },
+    {
+      "path": "source/app/excerpts/android_agent_flavor.gradle",
+      "origin": "app working tree",
+      "original_path": "android/app/build.gradle",
+      "selection": [
+        156,
+        162
+      ],
+      "original_file_sha256": "72d9a8e2274b3a9486169a767d68552893716ac61bea4f0885d1512044c539de",
+      "published_sha256": "ef2bcaa3c5f0c9827e5b13cdcf0c047808d7c80ccaf7de7fb869a7f3e8a578a1",
+      "bytes": 366,
+      "line_endings": "original",
+      "purpose": "Agent variant under review, without signing or private configuration."
+    },
+    {
+      "path": "source/app/excerpts/android_debug_abis.gradle",
+      "origin": "app working tree",
+      "original_path": "rust_builder/cargokit/gradle/plugin.gradle",
+      "selection": [
+        153,
+        163
+      ],
+      "original_file_sha256": "973de91761a59442c7df890f2d3dfcfc51c59ea46b959a3cd1b9f2e094d34438",
+      "published_sha256": "fb01e6a9123ca61dc416e4e54cf014c6311bd19e02193b20c696af0f2a05ed03",
+      "bytes": 521,
+      "line_endings": "original",
+      "purpose": "Cargokit debug JNI output and extra ABIs from static preflight."
+    },
+    {
+      "path": "source/app/excerpts/classify_fetched_readback.rs",
+      "origin": "app working tree",
+      "original_path": "rust/src/api/api.rs",
+      "selection": [
+        22033,
+        22050
+      ],
+      "original_file_sha256": "fbd798c583702b9c38aff6ed6fceda892baaeb321bace3d3869eaed484f4b057",
+      "published_sha256": "4d4abdfea93e32fb0c9cccc60b8f52b84bb9a611ebd0c6638da7d0f59c88d163",
+      "bytes": 879,
+      "line_endings": "original",
+      "purpose": "Production readback consumer requires original wire."
+    },
+    {
+      "path": "source/app/excerpts/classify_fetched_readback_test.rs",
+      "origin": "app working tree",
+      "original_path": "rust/src/api/api.rs",
+      "selection": [
+        25669,
+        25748
+      ],
+      "original_file_sha256": "fbd798c583702b9c38aff6ed6fceda892baaeb321bace3d3869eaed484f4b057",
+      "published_sha256": "890386d1a45d85b8f68e5b48488b37d0f9b890d7076e3609b6dbd909316fe771",
+      "bytes": 5094,
+      "line_endings": "original",
+      "purpose": "Exact consumer test with synthetic input and no network client."
+    },
+    {
+      "path": "source/app/excerpts/message_source_hint_bridge.rs",
+      "origin": "app working tree",
+      "original_path": "rust/src/api/api.rs",
+      "selection": [
+        11014,
+        11063
+      ],
+      "original_file_sha256": "fbd798c583702b9c38aff6ed6fceda892baaeb321bace3d3869eaed484f4b057",
+      "published_sha256": "b37baa854e059fb5788b8ebf121ca93ac1188215ec3b2ad68317410302f5d779",
+      "bytes": 2290,
+      "line_endings": "original",
+      "purpose": "Non-authorizing descriptor and test-only checks."
+    },
+    {
+      "path": "source/app/excerpts/staged_lineage_readback.rs",
+      "origin": "app working tree",
+      "original_path": "rust/src/cloud_sync_staged_lineage.rs",
+      "selection": [
+        103,
+        111
+      ],
+      "original_file_sha256": "aa049171c867e0bba1aeccdca8ce98cf9957345fde3b60991470ea274d9a1573",
+      "published_sha256": "eaaa4ecadb985763f3f16166da07221af18fc5286ce58b4b94b254cd251fa40d",
+      "bytes": 578,
+      "line_endings": "original",
+      "purpose": "Readback call and explicit missing authority prerequisites."
+    },
+    {
+      "path": "source/app/lib/services/rustpush/cloud_sync/cloud_sync_committed_mutation_presentation.dart",
+      "origin": "app working tree",
+      "original_path": "lib/services/rustpush/cloud_sync/cloud_sync_committed_mutation_presentation.dart",
+      "selection": "whole file",
+      "original_file_sha256": "6c2c96ee2c392ee6f536c42743b6baf5fcebdba79a033b701daafd66f6daaada",
+      "published_sha256": "6c2c96ee2c392ee6f536c42743b6baf5fcebdba79a033b701daafd66f6daaada",
+      "bytes": 672,
+      "line_endings": "original",
+      "purpose": "Post-commit UI notification only."
+    },
+    {
+      "path": "source/app/lib/services/rustpush/cloud_sync/cloud_sync_immediate_mutation_confirmation.dart",
+      "origin": "app working tree",
+      "original_path": "lib/services/rustpush/cloud_sync/cloud_sync_immediate_mutation_confirmation.dart",
+      "selection": "whole file",
+      "original_file_sha256": "ffc56a9312b0ea88099ff75a8fa71641e601ed3f02c9d2b4f7936390c08586c8",
+      "published_sha256": "ffc56a9312b0ea88099ff75a8fa71641e601ed3f02c9d2b4f7936390c08586c8",
+      "bytes": 662,
+      "line_endings": "original",
+      "purpose": "Callback lifetime and revalidation."
+    },
+    {
+      "path": "source/app/lib/services/rustpush/cloud_sync/cloud_sync_legacy_write_freeze.dart",
+      "origin": "app working tree",
+      "original_path": "lib/services/rustpush/cloud_sync/cloud_sync_legacy_write_freeze.dart",
+      "selection": "whole file",
+      "original_file_sha256": "491b8397a6b2224a72b11732324dbf855a7dd37001d7a9e4e300bd922edc917e",
+      "published_sha256": "491b8397a6b2224a72b11732324dbf855a7dd37001d7a9e4e300bd922edc917e",
+      "bytes": 1096,
+      "line_endings": "original",
+      "purpose": "Write refusal for unproven legacy source."
+    },
+    {
+      "path": "source/app/lib/services/rustpush/cloud_sync/cloud_sync_local_source_operations.dart",
+      "origin": "app working tree",
+      "original_path": "lib/services/rustpush/cloud_sync/cloud_sync_local_source_operations.dart",
+      "selection": "whole file",
+      "original_file_sha256": "694c45275d02445a533d23320f297e413b63e76190e1cfaac848f0db035db499",
+      "published_sha256": "694c45275d02445a533d23320f297e413b63e76190e1cfaac848f0db035db499",
+      "bytes": 2869,
+      "line_endings": "original",
+      "purpose": "Local work lifetime and fail-closed cleanup."
+    },
+    {
+      "path": "source/app/rust/src/classification_discard_tests.rs",
+      "origin": "app working tree",
+      "original_path": "rust/src/classification_discard_tests.rs",
+      "selection": "whole file",
+      "original_file_sha256": "e3007069d34b78116a75805df9278f02c0d360e485e5e325767996649847e808",
+      "published_sha256": "e3007069d34b78116a75805df9278f02c0d360e485e5e325767996649847e808",
+      "bytes": 9712,
+      "line_endings": "original",
+      "purpose": "Eight synthetic classifier tests integrated under cfg(test)."
+    },
+    {
+      "path": "source/app/rust/src/cloud_sync_message_update_stage.rs",
+      "origin": "app working tree",
+      "original_path": "rust/src/cloud_sync_message_update_stage.rs",
+      "selection": "whole file",
+      "original_file_sha256": "07d42dc1af08215c1d44a455c952b2f3885d2b9b35846bd32bf778c6d03e95a0",
+      "published_sha256": "07d42dc1af08215c1d44a455c952b2f3885d2b9b35846bd32bf778c6d03e95a0",
+      "bytes": 58348,
+      "line_endings": "original",
+      "purpose": "Exact outgoing-stage readback, metadata-presence comparison and synthetic tests."
+    },
+    {
+      "path": "source/app/rust/src/cloud_sync_received_message_update_stage.rs",
+      "origin": "app working tree",
+      "original_path": "rust/src/cloud_sync_received_message_update_stage.rs",
+      "selection": "whole file",
+      "original_file_sha256": "fc90aaa774f199709f51a6f5b45d8626387dfd16e3519e67fbb4a5f0fa0387c9",
+      "published_sha256": "fc90aaa774f199709f51a6f5b45d8626387dfd16e3519e67fbb4a5f0fa0387c9",
+      "bytes": 28585,
+      "line_endings": "original",
+      "purpose": "Received-stage envelope, legacy witness refusal, field 34 preservation and tests."
+    },
+    {
+      "path": "source/app/test/services/cloud_sync/message_hint_frb_adapter_test.dart",
+      "origin": "app working tree",
+      "original_path": "test/services/cloud_sync/message_hint_frb_adapter_test.dart",
+      "selection": "whole file",
+      "original_file_sha256": "78b5988255f24eedaa3a06b25201f7181b60ecb4efd742d1063918554e22b095",
+      "published_sha256": "78b5988255f24eedaa3a06b25201f7181b60ecb4efd742d1063918554e22b095",
+      "bytes": 3091,
+      "line_endings": "original",
+      "purpose": "Synthetic mapping across the generated Flutter Rust Bridge adapter."
+    },
+    {
+      "path": "source/app/test/services/cloud_sync/message_hint_loaded_ffi_test.dart",
+      "origin": "app working tree",
+      "original_path": "test/services/cloud_sync/message_hint_loaded_ffi_test.dart",
+      "selection": "whole file",
+      "original_file_sha256": "5989c673079a6e6e9cb6922de63384ab2cc9b3fa2050b5d6203a6146e25e407d",
+      "published_sha256": "5989c673079a6e6e9cb6922de63384ab2cc9b3fa2050b5d6203a6146e25e407d",
+      "bytes": 9452,
+      "line_endings": "original",
+      "purpose": "Historical offline test source. Requires the matching local library and synthetic fixture."
+    },
+    {
+      "path": "source/app/windows/runner/flutter_window.cpp",
+      "origin": "app working tree",
+      "original_path": "windows/runner/flutter_window.cpp",
+      "selection": "whole file",
+      "original_file_sha256": "d615eedc06ae37321e59c2c00c7687d1887dcd97904eb7225fafd8dcb5b83da6",
+      "published_sha256": "d615eedc06ae37321e59c2c00c7687d1887dcd97904eb7225fafd8dcb5b83da6",
+      "bytes": 2193,
+      "line_endings": "original",
+      "purpose": "Current Windows runner source pinned by the final-close assessment."
+    },
+    {
+      "path": "source/app/windows/runner/main.cpp",
+      "origin": "app working tree",
+      "original_path": "windows/runner/main.cpp",
+      "selection": "whole file",
+      "original_file_sha256": "54285d9fea8a338670258d9f74d5a3e1ed678c3ab333bf729a33062f8807ce89",
+      "published_sha256": "54285d9fea8a338670258d9f74d5a3e1ed678c3ab333bf729a33062f8807ce89",
+      "bytes": 1449,
+      "line_endings": "original",
+      "purpose": "Current Windows runner source pinned by the final-close assessment."
+    },
+    {
+      "path": "source/app/windows/runner/win32_window.cpp",
+      "origin": "app working tree",
+      "original_path": "windows/runner/win32_window.cpp",
+      "selection": "whole file",
+      "original_file_sha256": "e04d7228f50c27e67662cc2abfdea1e423a655206deea50f85f3a8f0a12014d2",
+      "published_sha256": "e04d7228f50c27e67662cc2abfdea1e423a655206deea50f85f3a8f0a12014d2",
+      "bytes": 11768,
+      "line_endings": "original",
+      "purpose": "Current Windows runner source pinned by the final-close assessment."
+    },
+    {
+      "path": "source/native/LICENSE",
+      "origin": "rustpush working tree",
+      "original_path": "LICENSE",
+      "selection": "whole file",
+      "original_file_sha256": "a4cb956b39d0d667c343cace3f0e590aa8b4371ee776f492a7a024d3f947fa44",
+      "published_sha256": "a4cb956b39d0d667c343cace3f0e590aa8b4371ee776f492a7a024d3f947fa44",
+      "bytes": 29550,
+      "line_endings": "original",
+      "purpose": "Original license or exception text."
+    },
+    {
+      "path": "source/native/LICENSE.exceptions",
+      "origin": "rustpush working tree",
+      "original_path": "LICENSE.exceptions",
+      "selection": "whole file",
+      "original_file_sha256": "ea58b41b9a39e0850194eded040146b978eb3fd350c08d0ee85b2647cf3655ca",
+      "published_sha256": "ea58b41b9a39e0850194eded040146b978eb3fd350c08d0ee85b2647cf3655ca",
+      "bytes": 342,
+      "line_endings": "original",
+      "purpose": "Original license or exception text."
+    },
+    {
+      "path": "source/native/diagnostics/lib.L122-150.rs",
+      "origin": "rustpush working tree",
+      "original_path": "cloudkit-proto/src/lib.rs",
+      "selection": [
+        122,
+        150
+      ],
+      "original_file_sha256": "7c5a8ad368126b8444ca5bb27cfca744909cd2e9c0a78ce47a91d0fb8e14e1f3",
+      "published_sha256": "4f2f9c4a1e998290a41567c31f7eefe4ed75fee5ba9c09dde7fd327354806451",
+      "bytes": 1053,
+      "line_endings": "LF-normalized",
+      "purpose": "Remove decrypted input from protobuf diagnostic and plist panic; preserve original default/panic semantics."
+    },
+    {
+      "path": "source/native/diagnostics/lib.L458-494.rs",
+      "origin": "rustpush working tree",
+      "original_path": "cloudkit-proto/src/lib.rs",
+      "selection": [
+        458,
+        494
+      ],
+      "original_file_sha256": "7c5a8ad368126b8444ca5bb27cfca744909cd2e9c0a78ce47a91d0fb8e14e1f3",
+      "published_sha256": "4ddd53ab8056056b65d62d298d0b81c3066fd7ae8d2a9e81ce2b6c47a644f22e",
+      "bytes": 1289,
+      "line_endings": "LF-normalized",
+      "purpose": "Remove decrypted input from protobuf diagnostic and plist panic; preserve original default/panic semantics."
+    },
+    {
+      "path": "source/native/paging/cloudkit.L2433-2441.rs",
+      "origin": "rustpush working tree",
+      "original_path": "src/icloud/cloudkit.rs",
+      "selection": [
+        2433,
+        2441
+      ],
+      "original_file_sha256": "ec61a692cf200c2dbf3b5c99d52472f268ed156c1017dfd3d6252d21a02dec82",
+      "published_sha256": "e43871c2ec11770070ce90fc94e3738449fd3346631de001fd1dc663832850b0",
+      "bytes": 377,
+      "line_endings": "LF-normalized",
+      "purpose": "Private ordered original-wire sidecar; reject missing sidecar, count mismatch or raw/typed mismatch before delivery."
+    },
+    {
+      "path": "source/native/paging/cloudkit.L2448-2457.rs",
+      "origin": "rustpush working tree",
+      "original_path": "src/icloud/cloudkit.rs",
+      "selection": [
+        2448,
+        2457
+      ],
+      "original_file_sha256": "ec61a692cf200c2dbf3b5c99d52472f268ed156c1017dfd3d6252d21a02dec82",
+      "published_sha256": "c44824020dec69d0b1d63abb3037edcc3052fe80aac07e9caf25789bb5493226",
+      "bytes": 491,
+      "line_endings": "LF-normalized",
+      "purpose": "Private ordered original-wire sidecar; reject missing sidecar, count mismatch or raw/typed mismatch before delivery."
+    },
+    {
+      "path": "source/native/paging/cloudkit.L2502-2515.rs",
+      "origin": "rustpush working tree",
+      "original_path": "src/icloud/cloudkit.rs",
+      "selection": [
+        2502,
+        2515
+      ],
+      "original_file_sha256": "ec61a692cf200c2dbf3b5c99d52472f268ed156c1017dfd3d6252d21a02dec82",
+      "published_sha256": "43da6b511ea9cb02486ae8acfd8675678bd4455761a7083bb9b218b7bccf2e49",
+      "bytes": 701,
+      "line_endings": "LF-normalized",
+      "purpose": "Pure raw/typed Record equality and outer identifier/ETag/type consistency."
+    },
+    {
+      "path": "source/native/paging/cloudkit_page_wire_coverage.L185-231.rs",
+      "origin": "rustpush working tree",
+      "original_path": "src/icloud/cloudkit_page_wire_coverage.rs",
+      "selection": [
+        185,
+        231
+      ],
+      "original_file_sha256": "fa1bbdfad081995a1877ec15eea566df6e4cba885c1575a843e318ea658c48c0",
+      "published_sha256": "6c5bccb82adb78f9fa6a128a7055d817768ac90869ae400548092c44ebeac5bb",
+      "bytes": 2506,
+      "line_endings": "LF-normalized",
+      "purpose": "Synthetic page byte/count/work budgets without request construction or authentication override."
+    },
+    {
+      "path": "source/native/paging/cloudkit_page_wire_coverage.L236-244.rs",
+      "origin": "rustpush working tree",
+      "original_path": "src/icloud/cloudkit_page_wire_coverage.rs",
+      "selection": [
+        236,
+        244
+      ],
+      "original_file_sha256": "fa1bbdfad081995a1877ec15eea566df6e4cba885c1575a843e318ea658c48c0",
+      "published_sha256": "3c8ba41457b59b46948227109589d7734815bc4c8b2eca69d5a4a526414dab11",
+      "bytes": 421,
+      "line_endings": "LF-normalized",
+      "purpose": "Synthetic page byte/count/work budgets without request construction or authentication override."
+    },
+    {
+      "path": "source/native/paging/cloudkit_page_wire_tests.L3-8.rs",
+      "origin": "rustpush working tree",
+      "original_path": "src/icloud/cloudkit_page_wire_tests.rs",
+      "selection": [
+        3,
+        8
+      ],
+      "original_file_sha256": "e6365b6e89d638786d8405364ba6ebcfc8b224f4372ede44d8feee29c33d27f1",
+      "published_sha256": "ae829fa53339b12881b2f280d043834cb495d2b560ee31bbcf03887a57f6c5d7",
+      "bytes": 261,
+      "line_endings": "LF-normalized",
+      "purpose": "Synthetic wire encoding helpers used by pure page tests."
+    },
+    {
+      "path": "source/native/paging/cloudkit_received_wire.L457-601.rs",
+      "origin": "rustpush working tree",
+      "original_path": "src/icloud/cloudkit_received_wire.rs",
+      "selection": [
+        457,
+        601
+      ],
+      "original_file_sha256": "894fbd904c15be5de8ee9fd15efa85ce57b1870d0deea1424e48d1f7415fd598",
+      "published_sha256": "f3d1c727a58bf3c0b7b5c2ef61e472c71e04e520df79c3033a0e6ac84e6359c7",
+      "bytes": 7293,
+      "line_endings": "LF-normalized",
+      "purpose": "Bounded original page Record slices and refusal of ambiguous/protection metadata before typed delivery."
+    },
+    {
+      "path": "source/native/schema/cloudkit.L1067-1079.proto",
+      "origin": "rustpush working tree",
+      "original_path": "cloudkit-proto/src/cloudkit.proto",
+      "selection": [
+        [
+          1069,
+          1078
+        ]
+      ],
+      "original_file_sha256": "13db4d7f83ab9db01b673e4ac76a741900c086352fc252c775a3ca60fe879370",
+      "published_sha256": "41a70e62e37b158edaa3157453bc866c85ccd7df93ef9234c29bfcea963895a8",
+      "bytes": 279,
+      "line_endings": "LF-normalized",
+      "purpose": "Independent optional timestamp/version fields and Record field34, with no epoch or authority claim."
+    },
+    {
+      "path": "source/native/schema/cloudkit.L1205-1205.proto",
+      "origin": "rustpush working tree",
+      "original_path": "cloudkit-proto/src/cloudkit.proto",
+      "selection": [
+        1205,
+        1205
+      ],
+      "original_file_sha256": "13db4d7f83ab9db01b673e4ac76a741900c086352fc252c775a3ca60fe879370",
+      "published_sha256": "af9928fa9ed01a3e074efebb3c893f28dbb26e06f1938d9903ee443d48f10530",
+      "bytes": 49,
+      "line_endings": "LF-normalized",
+      "purpose": "Independent optional timestamp/version fields and Record field34, with no epoch or authority claim."
+    },
+    {
+      "path": "source/native/validation/cloudkit_received_wire.L1-200.rs",
+      "origin": "rustpush working tree",
+      "original_path": "src/icloud/cloudkit_received_wire.rs",
+      "selection": [
+        1,
+        200
+      ],
+      "original_file_sha256": "894fbd904c15be5de8ee9fd15efa85ce57b1870d0deea1424e48d1f7415fd598",
+      "published_sha256": "9158cbaada0a1459ef66f8cb4e5e88fad2dac6bdad8e4af6387b690986fb203f",
+      "bytes": 6914,
+      "line_endings": "LF-normalized",
+      "purpose": "Pure bounded strict record validation, timestamp presence, original-byte preservation and synthetic defensive tests. Paging function separated."
+    },
+    {
+      "path": "source/native/validation/cloudkit_received_wire.L206-456.rs",
+      "origin": "rustpush working tree",
+      "original_path": "src/icloud/cloudkit_received_wire.rs",
+      "selection": [
+        [
+          206,
+          212
+        ],
+        [
+          218,
+          456
+        ]
+      ],
+      "original_file_sha256": "894fbd904c15be5de8ee9fd15efa85ce57b1870d0deea1424e48d1f7415fd598",
+      "published_sha256": "819e8cc9f8898fba32bbabb67b75f0c94b9325f7ce45064d9b44c33ecd0b3848",
+      "bytes": 10108,
+      "line_endings": "LF-normalized",
+      "purpose": "Pure bounded strict record validation, timestamp presence, original-byte preservation and synthetic defensive tests. Paging function separated."
+    },
+    {
+      "path": "source/native/validation/cloudkit_received_wire.L602-1633.rs",
+      "origin": "rustpush working tree",
+      "original_path": "src/icloud/cloudkit_received_wire.rs",
+      "selection": [
+        [
+          602,
+          823
+        ],
+        [
+          827,
+          1633
+        ]
+      ],
+      "original_file_sha256": "894fbd904c15be5de8ee9fd15efa85ce57b1870d0deea1424e48d1f7415fd598",
+      "published_sha256": "af87f74aee625b2299d6010effbc1216d60adddafc8f12cd3983fabcbc1012f8",
+      "bytes": 46128,
+      "line_endings": "LF-normalized",
+      "purpose": "Pure bounded strict record validation, timestamp presence, original-byte preservation and synthetic defensive tests. Paging function separated."
+    }
+  ]
+}

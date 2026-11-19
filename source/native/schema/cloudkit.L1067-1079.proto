@@ -1,0 +1,10 @@
+  message RecordTimestamps {
+    message Version {
+      optional int64 timestamp = 1;
+      optional bytes versionstamp = 2;
+      optional int32 incarnation = 3;
+    }
+    optional int32 domain = 1;
+    optional Version creation = 2;
+    optional Version modification = 3;
+  }

@@ -1,0 +1,1499 @@
+//! Retain one exact conditional message update under a committed protected lease.
+//! No network, claims, IDS resend, ETag refresh, or save authority lives here.
+//! The caller must prove mutation source/receipt and current account before
+//! staging, then bind this immutable attempt into its journal before commit.
+#![cfg_attr(not(test), allow(dead_code))]
+
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+use prost::Message;
+use rustpush::cloudkit_proto::{record::field::value::Type, Record, RecordSaveRequest};
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+use std::{collections::HashSet, path::PathBuf};
+
+use crate::cloud_sync_native_fetch::{
+    cloud_sync_open_protected_message_update, cloud_sync_stage_protected_message_update,
+    cloud_sync_verify_committed_lease_exact,
+};
+use crate::cloud_sync_outbound::CloudSyncOutboundFailure as Failure;
+
+const MAX_RECORD_BYTES: usize = 4 * 1024 * 1024;
+// Envelope base64 plus the protector's outer base64 must fit its 18 MiB file
+// limit. Keep room for the authenticated context, cipher overhead and lease.
+const MAX_ENVELOPE_BYTES: usize = 9 * 1024 * 1024;
+const MAX_FIELDS: usize = 4096;
+const CURRENT_ENVELOPE_VERSION: u32 = 2;
+
+// Content-free exact context. Hashes must come from the native-validated
+// mutation journal, not be inferred from matching message text.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct MessageUpdateBinding {
+    pub(crate) logical_entity_key_hash: String,
+    pub(crate) server_record_id_hash: String,
+    pub(crate) predecessor_etag_hash: String,
+    pub(crate) mutation_source_sha256: String,
+    pub(crate) ids_receipt_binding_sha256: String,
+    pub(crate) reflected_snapshot_sha256: String,
+    pub(crate) auth_binding_sha256: String,
+    pub(crate) writer_epoch: u64,
+    pub(crate) raw_generation: u64,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Envelope {
+    v: u32,
+    binding: MessageUpdateBinding,
+    predecessor_b64: String,
+    request_b64: String,
+}
+
+#[derive(Clone)]
+pub(crate) struct StagedMessageUpdate {
+    pub(crate) protected_reference: String,
+    pub(crate) lease_reference: String,
+    pub(crate) payload_sha256: String,
+}
+
+// Deliberately not Debug/Serialize. Raw identifiers, ETags and payloads stay native.
+pub(crate) struct OpenedMessageUpdate {
+    predecessor: Record,
+    request: RecordSaveRequest,
+    binding: MessageUpdateBinding,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum MessageUpdateReadbackState {
+    Committed,
+    NotApplied,
+    Diverged,
+}
+
+impl OpenedMessageUpdate {
+    pub(crate) fn predecessor(&self) -> &Record {
+        &self.predecessor
+    }
+    pub(crate) fn request(&self) -> &RecordSaveRequest {
+        &self.request
+    }
+    pub(crate) fn binding(&self) -> &MessageUpdateBinding {
+        &self.binding
+    }
+
+    /// Field-order-independent comparison against the immutable conditional
+    /// update. CloudKit's server-owned metadata may change, but the record
+    /// identity, type, PCS metadata and full application field set may not.
+    pub(crate) fn classify_readback(&self, remote: &Record) -> MessageUpdateReadbackState {
+        classify_without_source_metadata_witness(&self.predecessor, &self.request, remote)
+    }
+}
+
+// Read-only metadata sidecar for reconciliation. Current admission permits
+// field31 only as one empty submessage; nonempty31 and every33 remain held by
+// the original-wire validator.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct ProtectionMetadataPresence {
+    pub(crate) field31_present: bool,
+}
+
+fn metadata_varint(raw: &[u8], pos: &mut usize) -> Result<u64, Failure> {
+    let mut value = 0u64;
+    for shift in (0..70).step_by(7) {
+        let byte = *raw.get(*pos).ok_or(Failure::MalformedMessage)?;
+        *pos += 1;
+        if shift == 63 && byte > 1 {
+            return Err(Failure::MalformedMessage);
+        }
+        value |= u64::from(byte & 0x7f) << shift;
+        if byte < 0x80 {
+            return Ok(value);
+        }
+    }
+    Err(Failure::MalformedMessage)
+}
+
+fn skip_metadata_value(raw: &[u8], pos: &mut usize, wire: u8) -> Result<(), Failure> {
+    let len = match wire {
+        0 => {
+            metadata_varint(raw, pos)?;
+            return Ok(());
+        }
+        1 => 8usize,
+        2 => usize::try_from(metadata_varint(raw, pos)?)
+            .map_err(|_| Failure::MalformedMessage)?,
+        5 => 4usize,
+        _ => return Err(Failure::MalformedMessage),
+    };
+    *pos = pos
+        .checked_add(len)
+        .filter(|end| *end <= raw.len())
+        .ok_or(Failure::MalformedMessage)?;
+    Ok(())
+}
+
+pub(crate) fn protection_metadata_presence(
+    raw: &[u8],
+) -> Result<ProtectionMetadataPresence, Failure> {
+    rustpush::cloudkit::validate_record_timestamps_wire(raw)
+        .map_err(|_| Failure::MalformedMessage)?;
+    let mut pos = 0usize;
+    let mut field31_present = false;
+    while pos < raw.len() {
+        let key = metadata_varint(raw, &mut pos)?;
+        let tag = key >> 3;
+        let wire = (key & 7) as u8;
+        if tag == 0 || tag > 0x1fff_ffff {
+            return Err(Failure::MalformedMessage);
+        }
+        if tag == 33 {
+            return Err(Failure::MalformedMessage);
+        }
+        if tag == 31 {
+            if field31_present || wire != 2 {
+                return Err(Failure::MalformedMessage);
+            }
+            field31_present = true;
+            let len = usize::try_from(metadata_varint(raw, &mut pos)?)
+                .map_err(|_| Failure::MalformedMessage)?;
+            if len != 0 {
+                return Err(Failure::MalformedMessage);
+            }
+        } else {
+            skip_metadata_value(raw, &mut pos, wire)?;
+        }
+    }
+    Ok(ProtectionMetadataPresence { field31_present })
+}
+
+pub(crate) fn classify_without_source_metadata_witness(
+    _predecessor: &Record,
+    _request: &RecordSaveRequest,
+    _remote: &Record,
+) -> MessageUpdateReadbackState {
+    // Legacy typed stages discarded unknown protobuf fields. Without the
+    // original field31-presence witness, neither a predecessor match nor a
+    // committed match can prove field31 remained unchanged.
+    MessageUpdateReadbackState::Diverged
+}
+
+pub(crate) fn classify_conditional_update_readback_with_presence(
+    predecessor: &Record,
+    request: &RecordSaveRequest,
+    remote: &Record,
+    predecessor_metadata: ProtectionMetadataPresence,
+    remote_wire: &[u8],
+) -> MessageUpdateReadbackState {
+    let Ok(decoded_remote) = Record::decode(remote_wire) else {
+        return MessageUpdateReadbackState::Diverged;
+    };
+    if decoded_remote != *remote {
+        return MessageUpdateReadbackState::Diverged;
+    }
+    let Ok(remote_metadata) = protection_metadata_presence(remote_wire) else {
+        return MessageUpdateReadbackState::Diverged;
+    };
+    if predecessor_metadata != remote_metadata {
+        return MessageUpdateReadbackState::Diverged;
+    }
+    classify_conditional_update_readback(predecessor, request, remote)
+}
+
+// Standalone exact-wire helper used for fixtures and callers that still hold
+// both original Record encodings. Production lineage stores only the parsed
+// sidecar alongside its existing SHA-bound source proof.
+pub(crate) fn classify_conditional_update_readback_with_wire(
+    predecessor: &Record,
+    request: &RecordSaveRequest,
+    remote: &Record,
+    predecessor_wire: &[u8],
+    remote_wire: &[u8],
+) -> MessageUpdateReadbackState {
+    let Ok(decoded_predecessor) = Record::decode(predecessor_wire) else {
+        return MessageUpdateReadbackState::Diverged;
+    };
+    if decoded_predecessor != *predecessor {
+        return MessageUpdateReadbackState::Diverged;
+    }
+    let Ok(predecessor_metadata) = protection_metadata_presence(predecessor_wire) else {
+        return MessageUpdateReadbackState::Diverged;
+    };
+    classify_conditional_update_readback_with_presence(
+        predecessor,
+        request,
+        remote,
+        predecessor_metadata,
+        remote_wire,
+    )
+}
+
+/// Shared conditional transport evidence, independent of outgoing/received
+/// source authority. Each caller must first open its own exact proof envelope.
+pub(crate) fn classify_conditional_update_readback(
+    predecessor: &Record,
+    request: &RecordSaveRequest,
+    remote: &Record,
+) -> MessageUpdateReadbackState {
+    if predecessor_matches_remote(predecessor, remote) {
+        return MessageUpdateReadbackState::NotApplied;
+    }
+    let Some(request_record) = request.record.as_ref() else {
+        return MessageUpdateReadbackState::Diverged;
+    };
+    if predecessor.record_identifier != remote.record_identifier
+        || predecessor.r#type != remote.r#type
+        || predecessor.pcs_key != remote.pcs_key
+        || predecessor.protection_info != remote.protection_info
+        || remote
+            .etag
+            .as_deref()
+            .is_none_or(|etag| etag.trim().is_empty())
+        || remote.etag == predecessor.etag
+    {
+        return MessageUpdateReadbackState::Diverged;
+    }
+    let mut expected_names = HashSet::new();
+    for predecessor_field in &predecessor.record_field {
+        let Some(name) = field_name(predecessor_field) else {
+            return MessageUpdateReadbackState::Diverged;
+        };
+        if !expected_names.insert(name) {
+            return MessageUpdateReadbackState::Diverged;
+        }
+        let desired = exact_field(&request_record.record_field, name).unwrap_or(predecessor_field);
+        if exact_field(&remote.record_field, name) != Some(desired) {
+            return MessageUpdateReadbackState::Diverged;
+        }
+    }
+    for requested_field in &request_record.record_field {
+        let Some(name) = field_name(requested_field) else {
+            return MessageUpdateReadbackState::Diverged;
+        };
+        if expected_names.insert(name)
+            && exact_field(&remote.record_field, name) != Some(requested_field)
+        {
+            return MessageUpdateReadbackState::Diverged;
+        }
+    }
+    let mut remote_names = HashSet::new();
+    if remote.record_field.len() != expected_names.len()
+        || remote
+            .record_field
+            .iter()
+            .any(|field| field_name(field).is_none_or(|name| !remote_names.insert(name)))
+    {
+        return MessageUpdateReadbackState::Diverged;
+    }
+    MessageUpdateReadbackState::Committed
+}
+
+fn field_name(field: &rustpush::cloudkit_proto::record::Field) -> Option<&str> {
+    field
+        .identifier
+        .as_ref()
+        .and_then(|identifier| identifier.name.as_deref())
+        .filter(|name| !name.is_empty())
+}
+
+fn exact_field<'a>(
+    fields: &'a [rustpush::cloudkit_proto::record::Field],
+    name: &str,
+) -> Option<&'a rustpush::cloudkit_proto::record::Field> {
+    let mut matches = fields
+        .iter()
+        .filter(|candidate| field_name(candidate) == Some(name));
+    let found = matches.next()?;
+    matches.next().is_none().then_some(found)
+}
+
+/// Shared original predecessor decode used by API preparation and offline
+/// persistence/restart tests. Admission remains with the original-wire reader.
+pub(crate) fn decode_message_update_predecessor(raw: &[u8]) -> Result<Record, Failure> {
+    if raw.is_empty() {
+        return Err(Failure::MalformedMessage);
+    }
+    rustpush::cloudkit::validate_record_timestamps_wire(raw)
+        .map_err(|_| Failure::MalformedMessage)?;
+    Record::decode(raw).map_err(|_| Failure::MalformedMessage)
+}
+
+pub(crate) fn predecessor_matches_remote(reflected: &Record, remote: &Record) -> bool {
+    if reflected.record_identifier != remote.record_identifier
+        || reflected.r#type != remote.r#type
+        || reflected.etag != remote.etag
+        || reflected.pcs_key != remote.pcs_key
+        || reflected.protection_info != remote.protection_info
+        || reflected.timestamps != remote.timestamps
+        || reflected.record_field.len() != remote.record_field.len()
+    {
+        return false;
+    }
+    let mut names = HashSet::with_capacity(reflected.record_field.len());
+    for field in &reflected.record_field {
+        let Some(name) = field_name(field) else {
+            return false;
+        };
+        if !names.insert(name) || exact_field(&remote.record_field, name) != Some(field) {
+            return false;
+        }
+    }
+    true
+}
+
+pub(crate) fn stage_message_update(
+    directory: PathBuf,
+    account_fingerprint: String,
+    binding: MessageUpdateBinding,
+    predecessor: &Record,
+    request: &RecordSaveRequest,
+) -> Result<StagedMessageUpdate, Failure> {
+    validate_binding(&binding)?;
+    validate_request(predecessor, request)?;
+    let envelope = Envelope {
+        v: CURRENT_ENVELOPE_VERSION,
+        binding,
+        predecessor_b64: URL_SAFE_NO_PAD.encode(predecessor.encode_to_vec()),
+        request_b64: URL_SAFE_NO_PAD.encode(request.encode_to_vec()),
+    };
+    let bytes = serde_json::to_vec(&envelope).map_err(|_| Failure::MalformedMessage)?;
+    if bytes.len() > MAX_ENVELOPE_BYTES {
+        return Err(Failure::OversizedMessage);
+    }
+    let staged = cloud_sync_stage_protected_message_update(
+        directory,
+        account_fingerprint,
+        URL_SAFE_NO_PAD.encode(&bytes),
+    )
+    .map_err(|_| Failure::ProtectedStorage)?;
+    Ok(StagedMessageUpdate {
+        protected_reference: staged.protected_envelope_reference,
+        lease_reference: staged.lease_reference,
+        payload_sha256: digest(&bytes),
+    })
+}
+
+pub(crate) fn open_message_update(
+    directory: PathBuf,
+    account_fingerprint: String,
+    expected: &MessageUpdateBinding,
+    stage: &StagedMessageUpdate,
+) -> Result<OpenedMessageUpdate, Failure> {
+    validate_binding(expected)?;
+    if !is_digest(&stage.payload_sha256) {
+        return Err(Failure::MalformedMessage);
+    }
+    cloud_sync_verify_committed_lease_exact(
+        directory.clone(),
+        &stage.lease_reference,
+        std::slice::from_ref(&stage.protected_reference),
+    )
+    .map_err(|_| Failure::ProtectedStorage)?;
+    let encoded = cloud_sync_open_protected_message_update(
+        directory,
+        account_fingerprint,
+        &stage.protected_reference,
+    )
+    .map_err(|_| Failure::ProtectedStorage)?;
+    let bytes = decode_bounded(&encoded, MAX_ENVELOPE_BYTES)?;
+    if digest(&bytes) != stage.payload_sha256 {
+        log::warn!("Cloud Sync message update stage open failed phase=payload-digest");
+        log::logger().flush();
+        return Err(Failure::BindingMismatch);
+    }
+    let envelope: Envelope =
+        serde_json::from_slice(&bytes).map_err(|_| Failure::MalformedMessage)?;
+    if !matches!(envelope.v, 1 | CURRENT_ENVELOPE_VERSION)
+        || serde_json::to_vec(&envelope).map_err(|_| Failure::MalformedMessage)? != bytes
+    {
+        return Err(Failure::MalformedMessage);
+    }
+    validate_binding(&envelope.binding)?;
+    let exact_binding = &envelope.binding == expected;
+    // Version 1 used the SHA-256 of the encoded mutation envelope in this
+    // otherwise redundant field. The exact IDS receipt binding already binds
+    // the canonical source digest, protected source, lease and payload. Permit
+    // only that historical source-field difference so an adopted pre-submit
+    // attempt can survive an upgrade without another IDS send. Version 2 and
+    // every other binding field remain exact.
+    let legacy_source_only = envelope.v == 1
+        && envelope.binding.logical_entity_key_hash == expected.logical_entity_key_hash
+        && envelope.binding.server_record_id_hash == expected.server_record_id_hash
+        && envelope.binding.predecessor_etag_hash == expected.predecessor_etag_hash
+        && envelope.binding.ids_receipt_binding_sha256 == expected.ids_receipt_binding_sha256
+        && envelope.binding.reflected_snapshot_sha256 == expected.reflected_snapshot_sha256
+        && envelope.binding.auth_binding_sha256 == expected.auth_binding_sha256
+        && envelope.binding.writer_epoch == expected.writer_epoch
+        && envelope.binding.raw_generation == expected.raw_generation;
+    if !exact_binding && !legacy_source_only {
+        log::warn!(
+            "Cloud Sync message update stage open failed phase=binding logical={} server={} etag={} source={} receipt={} snapshot={} auth={} epoch={} generation={}",
+            envelope.binding.logical_entity_key_hash == expected.logical_entity_key_hash,
+            envelope.binding.server_record_id_hash == expected.server_record_id_hash,
+            envelope.binding.predecessor_etag_hash == expected.predecessor_etag_hash,
+            envelope.binding.mutation_source_sha256 == expected.mutation_source_sha256,
+            envelope.binding.ids_receipt_binding_sha256 == expected.ids_receipt_binding_sha256,
+            envelope.binding.reflected_snapshot_sha256 == expected.reflected_snapshot_sha256,
+            envelope.binding.auth_binding_sha256 == expected.auth_binding_sha256,
+            envelope.binding.writer_epoch == expected.writer_epoch,
+            envelope.binding.raw_generation == expected.raw_generation,
+        );
+        log::logger().flush();
+        return Err(Failure::BindingMismatch);
+    }
+    let predecessor_bytes = decode_bounded(&envelope.predecessor_b64, MAX_RECORD_BYTES)?;
+    let request_bytes = decode_bounded(&envelope.request_b64, MAX_RECORD_BYTES)?;
+    let predecessor = decode_message_update_predecessor(predecessor_bytes.as_slice())?;
+    let request = RecordSaveRequest::decode(request_bytes.as_slice())
+        .map_err(|_| Failure::MalformedMessage)?;
+    // The staged operation must be exactly replayable. Never silently strip
+    // unknown request fields or canonicalize a changed recovered attempt.
+    if predecessor.encode_to_vec() != predecessor_bytes || request.encode_to_vec() != request_bytes
+    {
+        return Err(Failure::MalformedMessage);
+    }
+    validate_request(&predecessor, &request)?;
+    Ok(OpenedMessageUpdate {
+        predecessor,
+        request,
+        binding: envelope.binding,
+    })
+}
+
+pub(crate) fn validate_binding(binding: &MessageUpdateBinding) -> Result<(), Failure> {
+    if !is_keyed_hash(&binding.logical_entity_key_hash)
+        || !is_keyed_hash(&binding.server_record_id_hash)
+        || !is_keyed_hash(&binding.predecessor_etag_hash)
+    {
+        return Err(Failure::MalformedMessage);
+    }
+    if [
+        &binding.mutation_source_sha256,
+        &binding.ids_receipt_binding_sha256,
+        &binding.reflected_snapshot_sha256,
+        &binding.auth_binding_sha256,
+    ]
+    .iter()
+    .any(|value| !is_digest(value))
+        || binding.writer_epoch == 0
+        || binding.raw_generation == 0
+    {
+        return Err(Failure::MalformedMessage);
+    }
+    Ok(())
+}
+
+fn is_keyed_hash(value: &str) -> bool {
+    value.len() == 43
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+}
+
+/// This lane may replace only encrypted msgProto and the unencrypted update
+/// clock. All server-only metadata and other fields remain server-owned via
+/// merge=true. It cannot express create, delete, PCS rotation or an override.
+pub(crate) fn validate_request(
+    previous: &Record,
+    request: &RecordSaveRequest,
+) -> Result<(), Failure> {
+    if previous.encoded_len() > MAX_RECORD_BYTES || request.encoded_len() > MAX_RECORD_BYTES {
+        return Err(Failure::OversizedMessage);
+    }
+    rustpush::cloudkit::validate_record_timestamps_wire(&previous.encode_to_vec())
+        .map_err(|_| Failure::MalformedMessage)?;
+    let id = previous
+        .record_identifier
+        .as_ref()
+        .ok_or(Failure::MalformedMessage)?;
+    let zone = id
+        .zone_identifier
+        .as_ref()
+        .ok_or(Failure::MalformedMessage)?;
+    let nonblank =
+        |value: Option<&str>| value.is_some_and(|s| !s.trim().is_empty() && s.len() <= 4096);
+    if !nonblank(id.value.as_ref().and_then(|v| v.name.as_deref()))
+        || id.value.as_ref().and_then(|v| v.r#type) != Some(1)
+        || zone.value.as_ref().and_then(|v| v.name.as_deref()) != Some("messageManateeZone")
+        || zone.value.as_ref().and_then(|v| v.r#type) != Some(6)
+        || !nonblank(
+            zone.owner_identifier
+                .as_ref()
+                .and_then(|v| v.name.as_deref()),
+        )
+        || zone.owner_identifier.as_ref().and_then(|v| v.r#type) != Some(7)
+        || previous.r#type.as_ref().and_then(|v| v.name.as_deref()) != Some("MessageEncryptedV3")
+        || !nonblank(previous.etag.as_deref())
+        || previous.protection_info.is_some()
+        || previous.pcs_key.as_ref().is_none_or(|v| v.len() != 4)
+        || previous.record_field.len() > MAX_FIELDS
+        || request.merge != Some(true)
+        || request.save_semantics != Some(1)
+        || request.etag != previous.etag
+        || !request.fields_to_delete_if_exist_on_merge.is_empty()
+    {
+        return Err(Failure::MalformedMessage);
+    }
+    let record = request.record.as_ref().ok_or(Failure::MalformedMessage)?;
+    let expected = Record {
+        record_identifier: previous.record_identifier.clone(),
+        r#type: previous.r#type.clone(),
+        pcs_key: previous.pcs_key.clone(),
+        record_field: record.record_field.clone(),
+        ..Default::default()
+    };
+    if record != &expected || record.record_field.is_empty() || record.record_field.len() > 2 {
+        return Err(Failure::MalformedMessage);
+    }
+    let mut previous_names = HashSet::new();
+    for field in &previous.record_field {
+        let name = field
+            .identifier
+            .as_ref()
+            .and_then(|v| v.name.as_deref())
+            .ok_or(Failure::MalformedMessage)?;
+        if name.is_empty() || !previous_names.insert(name) {
+            return Err(Failure::MalformedMessage);
+        }
+    }
+    if !previous_names.contains("msgProto") {
+        return Err(Failure::MalformedMessage);
+    }
+    let mut fields = HashSet::new();
+    for field in &record.record_field {
+        let name = field
+            .identifier
+            .as_ref()
+            .and_then(|v| v.name.as_deref())
+            .ok_or(Failure::MalformedMessage)?;
+        let value = field.value.as_ref().ok_or(Failure::MalformedMessage)?;
+        if !fields.insert(name) {
+            return Err(Failure::MalformedMessage);
+        }
+        let mut expected_value = rustpush::cloudkit_proto::record::field::Value::default();
+        match name {
+            "msgProto" => {
+                if value.bytes_value.as_ref().is_none_or(|b| b.is_empty()) {
+                    return Err(Failure::MalformedMessage);
+                }
+                expected_value.r#type = Some(Type::EncryptedBytesType as i32);
+                expected_value.is_encrypted = Some(true);
+                expected_value.bytes_value = value.bytes_value.clone();
+            }
+            "utm" => {
+                let time = value
+                    .date_value
+                    .as_ref()
+                    .and_then(|d| d.time)
+                    .ok_or(Failure::MalformedMessage)?;
+                if !time.is_finite() || time <= 0.0 || time > MAX_UTM_TIME {
+                    return Err(Failure::MalformedMessage);
+                }
+                expected_value.r#type = Some(Type::DateType as i32);
+                expected_value.date_value = value.date_value.clone();
+            }
+            _ => return Err(Failure::UnsupportedMessage),
+        }
+        if value != &expected_value {
+            return Err(Failure::MalformedMessage);
+        }
+    }
+    if !fields.contains("msgProto") {
+        return Err(Failure::MalformedMessage);
+    }
+    // A staged attempt must actually change the ciphertext. Saving byte-
+    // identical payload bytes would be a no-op write, never a message update.
+    // A missing or empty predecessor payload is malformed, never treated as
+    // absent to skip this comparison.
+    let before = message_bytes(previous, "msgProto").ok_or(Failure::MalformedMessage)?;
+    if before.is_empty() {
+        return Err(Failure::MalformedMessage);
+    }
+    let after = message_bytes(record, "msgProto").ok_or(Failure::MalformedMessage)?;
+    if before == after {
+        return Err(Failure::MalformedMessage);
+    }
+    // The update clock must not move backwards. A present predecessor clock
+    // must be a finite in-range timestamp; a malformed stored clock is
+    // rejected instead of treated as absent. Either side may omit the clock;
+    // only two parseable clocks are ordered numerically. Equal clocks are
+    // explicitly allowed.
+    let stored_clock = validated_predecessor_clock(previous)?;
+    if let (Some(before), Some(after)) = (stored_clock, update_clock(record)) {
+        if after < before {
+            return Err(Failure::MalformedMessage);
+        }
+    }
+    Ok(())
+}
+
+fn message_bytes<'a>(record: &'a Record, name: &str) -> Option<&'a [u8]> {
+    record
+        .record_field
+        .iter()
+        .find(|field| {
+            field
+                .identifier
+                .as_ref()
+                .and_then(|identifier| identifier.name.as_deref())
+                == Some(name)
+        })?
+        .value
+        .as_ref()?
+        .bytes_value
+        .as_deref()
+}
+
+/// Accepted `utm` bound shared by the request shape check and the stored
+/// predecessor check.
+const MAX_UTM_TIME: f64 = 252_423_993_599.0;
+
+/// Fail-closed numeric view of the stored predecessor `utm` clock.
+/// Returns `Ok(None)` only when the predecessor omits the clock entirely.
+/// A present predecessor clock must carry a finite in-range timestamp;
+/// non-finite, missing, or out-of-range stored clocks are rejected instead
+/// of being treated as absent.
+fn validated_predecessor_clock(previous: &Record) -> Result<Option<f64>, Failure> {
+    let field = previous.record_field.iter().find(|field| {
+        field
+            .identifier
+            .as_ref()
+            .and_then(|identifier| identifier.name.as_deref())
+            == Some("utm")
+    });
+    let Some(field) = field else {
+        return Ok(None);
+    };
+    let time = field
+        .value
+        .as_ref()
+        .and_then(|value| value.date_value.as_ref())
+        .and_then(|date| date.time);
+    match time {
+        Some(time) if time.is_finite() && time > 0.0 && time <= MAX_UTM_TIME => Ok(Some(time)),
+        _ => Err(Failure::MalformedMessage),
+    }
+}
+
+/// Best-effort numeric view of the unencrypted `utm` update clock on the
+/// request side. Returns `None` when the clock is absent; a malformed
+/// request clock is already rejected by the request shape check above, so
+/// only absence reaches the comparison. The raw timestamp is compared
+/// directly so fractional values cannot slip backwards inside one integer
+/// second through truncation.
+fn update_clock(record: &Record) -> Option<f64> {
+    let time = record
+        .record_field
+        .iter()
+        .find(|field| {
+            field
+                .identifier
+                .as_ref()
+                .and_then(|identifier| identifier.name.as_deref())
+                == Some("utm")
+        })?
+        .value
+        .as_ref()?
+        .date_value
+        .as_ref()?
+        .time?;
+    if !time.is_finite() {
+        return None;
+    }
+    Some(time)
+}
+
+fn is_digest(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_digit() || matches!(b, b'a'..=b'f'))
+}
+fn digest(bytes: &[u8]) -> String {
+    Sha256::digest(bytes)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
+}
+fn decode_bounded(encoded: &str, max: usize) -> Result<Vec<u8>, Failure> {
+    if encoded.is_empty() || encoded.len() > max.div_ceil(3) * 4 {
+        return Err(Failure::OversizedMessage);
+    }
+    let bytes = URL_SAFE_NO_PAD
+        .decode(encoded)
+        .map_err(|_| Failure::MalformedMessage)?;
+    if bytes.is_empty() || bytes.len() > max {
+        return Err(Failure::OversizedMessage);
+    }
+    if URL_SAFE_NO_PAD.encode(&bytes) != encoded {
+        return Err(Failure::MalformedMessage);
+    }
+    Ok(bytes)
+}
+
+#[cfg(test)]
+pub(crate) mod tests {
+    use super::*;
+    use crate::cloud_sync_native_fetch::{
+        cloud_sync_commit_protected_page_lease, cloud_sync_open_protected_outbound_message,
+        cloud_sync_stage_protected_outbound_envelope,
+    };
+    use rustpush::cloudkit_proto::{record, Identifier, RecordIdentifier, RecordZoneIdentifier};
+
+    fn binding() -> MessageUpdateBinding {
+        MessageUpdateBinding {
+            logical_entity_key_hash: "L".repeat(43),
+            server_record_id_hash: "S".repeat(43),
+            predecessor_etag_hash: "E".repeat(43),
+            mutation_source_sha256: "a".repeat(64),
+            ids_receipt_binding_sha256: "b".repeat(64),
+            reflected_snapshot_sha256: "c".repeat(64),
+            auth_binding_sha256: "d".repeat(64),
+            writer_epoch: 1,
+            raw_generation: 7,
+        }
+    }
+
+    fn field(name: &str, bytes: &[u8]) -> record::Field {
+        record::Field {
+            identifier: Some(record::field::Identifier {
+                name: Some(name.into()),
+            }),
+            value: Some(record::field::Value {
+                r#type: Some(Type::EncryptedBytesType as i32),
+                is_encrypted: Some(true),
+                bytes_value: Some(bytes.to_vec()),
+                ..Default::default()
+            }),
+        }
+    }
+
+    pub(crate) fn fixture() -> (Record, RecordSaveRequest) {
+        let predecessor = Record {
+            record_identifier: Some(RecordIdentifier {
+                value: Some(Identifier {
+                    name: Some("synthetic-record".into()),
+                    r#type: Some(1),
+                }),
+                zone_identifier: Some(RecordZoneIdentifier {
+                    value: Some(Identifier {
+                        name: Some("messageManateeZone".into()),
+                        r#type: Some(6),
+                    }),
+                    owner_identifier: Some(Identifier {
+                        name: Some("synthetic-owner".into()),
+                        r#type: Some(7),
+                    }),
+                    ..Default::default()
+                }),
+            }),
+            r#type: Some(record::Type {
+                name: Some("MessageEncryptedV3".into()),
+            }),
+            etag: Some("synthetic-predecessor-version".into()),
+            pcs_key: Some(vec![1, 2, 3, 4]),
+            record_field: vec![
+                field("msgProto", b"original-ciphertext"),
+                field("future-field", b"opaque"),
+            ],
+            ..Default::default()
+        };
+        let request = RecordSaveRequest {
+            record: Some(Record {
+                record_identifier: predecessor.record_identifier.clone(),
+                r#type: predecessor.r#type.clone(),
+                pcs_key: predecessor.pcs_key.clone(),
+                record_field: vec![field("msgProto", b"prepared-ciphertext")],
+                ..Default::default()
+            }),
+            merge: Some(true),
+            save_semantics: Some(1),
+            etag: predecessor.etag.clone(),
+            ..Default::default()
+        };
+        (predecessor, request)
+    }
+
+    fn commit(path: &std::path::Path, stage: &StagedMessageUpdate) {
+        cloud_sync_commit_protected_page_lease(
+            path.to_path_buf(),
+            &stage.lease_reference,
+            std::slice::from_ref(&stage.protected_reference),
+        )
+        .unwrap();
+    }
+
+    fn stage_version(
+        path: PathBuf,
+        account: String,
+        version: u32,
+        binding: MessageUpdateBinding,
+        predecessor: &Record,
+        request: &RecordSaveRequest,
+    ) -> StagedMessageUpdate {
+        validate_binding(&binding).unwrap();
+        validate_request(predecessor, request).unwrap();
+        let envelope = Envelope {
+            v: version,
+            binding,
+            predecessor_b64: URL_SAFE_NO_PAD.encode(predecessor.encode_to_vec()),
+            request_b64: URL_SAFE_NO_PAD.encode(request.encode_to_vec()),
+        };
+        let bytes = serde_json::to_vec(&envelope).unwrap();
+        let staged = cloud_sync_stage_protected_message_update(
+            path,
+            account,
+            URL_SAFE_NO_PAD.encode(&bytes),
+        )
+        .unwrap();
+        StagedMessageUpdate {
+            protected_reference: staged.protected_envelope_reference,
+            lease_reference: staged.lease_reference,
+            payload_sha256: digest(&bytes),
+        }
+    }
+
+    #[test]
+    fn exact_committed_update_reopens_without_reencrypting_or_refreshing_version() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().to_path_buf();
+        let account = "A".repeat(43);
+        let (previous, request) = fixture();
+        let stage = stage_message_update(
+            path.clone(),
+            account.clone(),
+            binding(),
+            &previous,
+            &request,
+        )
+        .unwrap();
+        assert_eq!(
+            open_message_update(path.clone(), account.clone(), &binding(), &stage).err(),
+            Some(Failure::ProtectedStorage)
+        );
+        commit(&path, &stage);
+        commit(&path, &stage);
+        for _ in 0..2 {
+            let recovered =
+                open_message_update(path.clone(), account.clone(), &binding(), &stage).unwrap();
+            assert_eq!(
+                recovered.predecessor().encode_to_vec(),
+                previous.encode_to_vec()
+            );
+            assert_eq!(recovered.request().encode_to_vec(), request.encode_to_vec());
+            assert!(recovered.binding() == &binding());
+        }
+    }
+
+    #[test]
+    fn update_rejects_changed_authority_source_attempt_or_descriptor() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().to_path_buf();
+        let account = "A".repeat(43);
+        let (previous, request) = fixture();
+        let stage = stage_message_update(
+            path.clone(),
+            account.clone(),
+            binding(),
+            &previous,
+            &request,
+        )
+        .unwrap();
+        commit(&path, &stage);
+        assert!(open_message_update(path.clone(), "B".repeat(43), &binding(), &stage).is_err());
+        for mode in 0..9 {
+            let mut changed = binding();
+            match mode {
+                0 => changed.logical_entity_key_hash = "F".repeat(43),
+                1 => changed.server_record_id_hash = "F".repeat(43),
+                2 => changed.predecessor_etag_hash = "F".repeat(43),
+                3 => changed.mutation_source_sha256 = "f".repeat(64),
+                4 => changed.ids_receipt_binding_sha256 = "f".repeat(64),
+                5 => changed.reflected_snapshot_sha256 = "f".repeat(64),
+                6 => changed.auth_binding_sha256 = "f".repeat(64),
+                7 => changed.writer_epoch += 1,
+                _ => changed.raw_generation += 1,
+            }
+            assert_eq!(
+                open_message_update(path.clone(), account.clone(), &changed, &stage).err(),
+                Some(Failure::BindingMismatch),
+                "binding field {mode}"
+            );
+        }
+        let other = stage_message_update(
+            path.clone(),
+            account.clone(),
+            binding(),
+            &previous,
+            &request,
+        )
+        .unwrap();
+        commit(&path, &other);
+        for mode in 0..3 {
+            let mut changed = stage.clone();
+            match mode {
+                0 => changed.payload_sha256 = "f".repeat(64),
+                1 => changed.protected_reference = other.protected_reference.clone(),
+                _ => changed.lease_reference = other.lease_reference.clone(),
+            }
+            assert!(
+                open_message_update(path.clone(), account.clone(), &binding(), &changed).is_err(),
+                "descriptor {mode}"
+            );
+        }
+    }
+
+    #[test]
+    fn legacy_v1_stage_allows_only_the_historical_source_digest_difference() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().to_path_buf();
+        let account = "A".repeat(43);
+        let (previous, request) = fixture();
+        let mut legacy = binding();
+        legacy.mutation_source_sha256 = "f".repeat(64);
+        let stage = stage_version(
+            path.clone(),
+            account.clone(),
+            1,
+            legacy,
+            &previous,
+            &request,
+        );
+        commit(&path, &stage);
+
+        let recovered = open_message_update(path.clone(), account.clone(), &binding(), &stage)
+            .expect("v1 source-digest migration must reopen the adopted stage");
+        assert_eq!(recovered.request().encode_to_vec(), request.encode_to_vec());
+
+        let mut changed_receipt = binding();
+        changed_receipt.ids_receipt_binding_sha256 = "e".repeat(64);
+        assert_eq!(
+            open_message_update(path, account, &changed_receipt, &stage).err(),
+            Some(Failure::BindingMismatch)
+        );
+    }
+
+    #[test]
+    fn update_storage_cannot_be_relabelled_as_a_create() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().to_path_buf();
+        let account = "A".repeat(43);
+        let (previous, request) = fixture();
+        let stage = stage_message_update(
+            path.clone(),
+            account.clone(),
+            binding(),
+            &previous,
+            &request,
+        )
+        .unwrap();
+        commit(&path, &stage);
+        assert!(cloud_sync_open_protected_outbound_message(
+            path.clone(),
+            account.clone(),
+            &stage.protected_reference
+        )
+        .is_err());
+        let envelope = cloud_sync_open_protected_message_update(
+            path.clone(),
+            account.clone(),
+            &stage.protected_reference,
+        )
+        .unwrap();
+        let create =
+            cloud_sync_stage_protected_outbound_envelope(path.clone(), account.clone(), envelope)
+                .unwrap();
+        let relabelled = StagedMessageUpdate {
+            protected_reference: create.protected_envelope_reference,
+            lease_reference: create.lease_reference,
+            ..stage
+        };
+        commit(&path, &relabelled);
+        assert_eq!(
+            open_message_update(path, account, &binding(), &relabelled).err(),
+            Some(Failure::ProtectedStorage)
+        );
+    }
+
+    #[test]
+    fn only_exact_versioned_merge_of_message_fields_is_stageable() {
+        let (previous, request) = fixture();
+        validate_request(&previous, &request).unwrap();
+        for mode in 0..15 {
+            let mut changed = request.clone();
+            match mode {
+                0 => changed.etag = None,
+                1 => changed.etag = Some("different-version".into()),
+                2 => changed.save_semantics = Some(0),
+                3 => changed.save_semantics = Some(3),
+                4 => changed.merge = Some(false),
+                5 => changed
+                    .fields_to_delete_if_exist_on_merge
+                    .push("future-field".into()),
+                6 => changed.record.as_mut().unwrap().pcs_key = Some(vec![5; 4]),
+                7 => {
+                    changed
+                        .record
+                        .as_mut()
+                        .unwrap()
+                        .record_identifier
+                        .as_mut()
+                        .unwrap()
+                        .value
+                        .as_mut()
+                        .unwrap()
+                        .name = Some("another-record".into())
+                }
+                8 => {
+                    changed
+                        .record
+                        .as_mut()
+                        .unwrap()
+                        .record_identifier
+                        .as_mut()
+                        .unwrap()
+                        .zone_identifier
+                        .as_mut()
+                        .unwrap()
+                        .owner_identifier
+                        .as_mut()
+                        .unwrap()
+                        .name = Some("another-owner".into())
+                }
+                9 => changed
+                    .record
+                    .as_mut()
+                    .unwrap()
+                    .record_field
+                    .push(field("future-field", b"replace")),
+                10 => changed
+                    .record
+                    .as_mut()
+                    .unwrap()
+                    .record_field
+                    .push(field("msgProto", b"duplicate")),
+                11 => changed.record.as_mut().unwrap().record_field.clear(),
+                12 => {
+                    changed.record.as_mut().unwrap().record_field[0]
+                        .value
+                        .as_mut()
+                        .unwrap()
+                        .is_encrypted = Some(false)
+                }
+                13 => {
+                    changed.record.as_mut().unwrap().record_field[0]
+                        .value
+                        .as_mut()
+                        .unwrap()
+                        .bytes_value = Some(vec![])
+                }
+                _ => changed.record.as_mut().unwrap().etag = previous.etag.clone(),
+            }
+            assert!(
+                validate_request(&previous, &changed).is_err(),
+                "request shape {mode}"
+            );
+        }
+        for mode in 0..5 {
+            let mut changed = previous.clone();
+            match mode {
+                0 => changed.etag = Some(" ".into()),
+                1 => changed.pcs_key = Some(vec![1; 5]),
+                2 => changed.record_field.push(field("msgProto", b"duplicate")),
+                3 => {
+                    changed.record_field.remove(0);
+                }
+                _ => {
+                    changed
+                        .record_identifier
+                        .as_mut()
+                        .unwrap()
+                        .zone_identifier
+                        .as_mut()
+                        .unwrap()
+                        .value
+                        .as_mut()
+                        .unwrap()
+                        .name = Some("chatManateeZone".into());
+                }
+            };
+            assert!(
+                validate_request(&changed, &request).is_err(),
+                "predecessor shape {mode}"
+            );
+        }
+    }
+
+    #[test]
+    fn bounded_payload_and_binding_validation_precedes_any_staging() {
+        for mode in 0..7 {
+            let mut changed = binding();
+            match mode {
+                0 => changed.logical_entity_key_hash.clear(),
+                1 => changed.server_record_id_hash = "!".repeat(43),
+                2 => changed.predecessor_etag_hash = "E".repeat(42),
+                3 => changed.mutation_source_sha256 = "A".repeat(64),
+                4 => changed.ids_receipt_binding_sha256 = "A".repeat(64),
+                5 => changed.reflected_snapshot_sha256 = "A".repeat(64),
+                _ => changed.auth_binding_sha256 = "A".repeat(64),
+            }
+            assert!(validate_binding(&changed).is_err(), "binding shape {mode}");
+        }
+        assert!(decode_bounded("", 4).is_err());
+        assert!(decode_bounded("YQ==", 4).is_err());
+        assert!(decode_bounded(&URL_SAFE_NO_PAD.encode(b"12345"), 4).is_err());
+        let (previous, mut request) = fixture();
+        request.record.as_mut().unwrap().record_field[0]
+            .value
+            .as_mut()
+            .unwrap()
+            .bytes_value = Some(vec![0; MAX_RECORD_BYTES + 1]);
+        assert_eq!(
+            validate_request(&previous, &request).err(),
+            Some(Failure::OversizedMessage)
+        );
+    }
+
+    fn utm_field(time: f64) -> record::Field {
+        let mut value = record::field::Value::default();
+        value.r#type = Some(Type::DateType as i32);
+        value.date_value.get_or_insert_with(Default::default).time = Some(time);
+        record::Field {
+            identifier: Some(record::field::Identifier {
+                name: Some("utm".into()),
+            }),
+            value: Some(value),
+        }
+    }
+
+    fn utm_field_without_time() -> record::Field {
+        let mut value = record::field::Value::default();
+        value.r#type = Some(Type::DateType as i32);
+        record::Field {
+            identifier: Some(record::field::Identifier {
+                name: Some("utm".into()),
+            }),
+            value: Some(value),
+        }
+    }
+
+    #[test]
+    fn update_rejects_identical_ciphertext_bytes() {
+        let (previous, request) = fixture();
+        // The prepared fixture changes the bytes, so it stays valid.
+        validate_request(&previous, &request).unwrap();
+        // Replaying the predecessor bytes verbatim is a no-op, never an update.
+        let mut replay = request.clone();
+        replay.record.as_mut().unwrap().record_field[0]
+            .value
+            .as_mut()
+            .unwrap()
+            .bytes_value = previous.record_field[0]
+            .value
+            .as_ref()
+            .unwrap()
+            .bytes_value
+            .clone();
+        assert_eq!(
+            validate_request(&previous, &replay).err(),
+            Some(Failure::MalformedMessage)
+        );
+    }
+
+    #[test]
+    fn update_clock_never_moves_backwards() {
+        let (previous, request) = fixture();
+        // No clocks on either side keeps the existing optional behavior.
+        validate_request(&previous, &request).unwrap();
+
+        let mut before = previous.clone();
+        before.record_field.push(utm_field(1_720_000_000.0));
+
+        // A request clock behind the stored clock is rejected.
+        let mut behind = request.clone();
+        behind
+            .record
+            .as_mut()
+            .unwrap()
+            .record_field
+            .push(utm_field(1_719_999_999.0));
+        assert_eq!(
+            validate_request(&before, &behind).err(),
+            Some(Failure::MalformedMessage)
+        );
+
+        // An equal clock is explicitly allowed.
+        let mut equal = request.clone();
+        equal
+            .record
+            .as_mut()
+            .unwrap()
+            .record_field
+            .push(utm_field(1_720_000_000.0));
+        validate_request(&before, &equal).unwrap();
+
+        // A clock only on the request side is still accepted.
+        validate_request(&previous, &equal).unwrap();
+
+        // A clock only on the stored side is still accepted.
+        validate_request(&before, &request).unwrap();
+
+        // A non-finite stored clock is malformed, never treated as absent.
+        let mut unparseable = previous.clone();
+        unparseable.record_field.push(utm_field(f64::NAN));
+        assert_eq!(
+            validate_request(&unparseable, &behind).err(),
+            Some(Failure::MalformedMessage)
+        );
+    }
+
+    #[test]
+    fn update_rejects_out_of_range_predecessor_clock() {
+        let (previous, request) = fixture();
+        for time in [
+            f64::NAN,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+            0.0,
+            -1.0,
+            MAX_UTM_TIME + 1.0,
+        ] {
+            let mut malformed = previous.clone();
+            malformed.record_field.push(utm_field(time));
+            assert_eq!(
+                validate_request(&malformed, &request).err(),
+                Some(Failure::MalformedMessage),
+                "predecessor clock {time:?} must be rejected"
+            );
+        }
+        // A predecessor clock with no timestamp is malformed, not absent.
+        let mut missing = previous.clone();
+        missing.record_field.push(utm_field_without_time());
+        assert_eq!(
+            validate_request(&missing, &request).err(),
+            Some(Failure::MalformedMessage)
+        );
+    }
+
+    #[test]
+    fn update_rejects_missing_or_empty_predecessor_ciphertext() {
+        let (previous, request) = fixture();
+        // A predecessor without the payload field stays malformed.
+        let mut missing = previous.clone();
+        missing.record_field.remove(0);
+        assert_eq!(
+            validate_request(&missing, &request).err(),
+            Some(Failure::MalformedMessage)
+        );
+        // An empty predecessor payload is malformed, never skipped.
+        let mut empty = previous.clone();
+        empty.record_field[0].value.as_mut().unwrap().bytes_value = Some(vec![]);
+        assert_eq!(
+            validate_request(&empty, &request).err(),
+            Some(Failure::MalformedMessage)
+        );
+        // A predecessor payload without bytes is malformed, never skipped.
+        let mut unparseable = previous.clone();
+        unparseable.record_field[0]
+            .value
+            .as_mut()
+            .unwrap()
+            .bytes_value = None;
+        assert_eq!(
+            validate_request(&unparseable, &request).err(),
+            Some(Failure::MalformedMessage)
+        );
+    }
+
+    #[test]
+    fn readback_distinguishes_exact_predecessor_from_exact_commit() {
+        let (previous, request) = fixture();
+        let opened = OpenedMessageUpdate {
+            predecessor: previous.clone(),
+            request: request.clone(),
+            binding: binding(),
+        };
+        let mut unchanged = previous.clone();
+        unchanged.record_field.reverse();
+        assert_eq!(
+            opened.classify_readback(&unchanged),
+            MessageUpdateReadbackState::Diverged,
+            "typed legacy stages cannot prove unknown field31 presence"
+        );
+
+        let mut committed = previous.clone();
+        committed.etag = Some("synthetic-committed-version".into());
+        committed.record_field[0] = request.record.as_ref().unwrap().record_field[0].clone();
+        committed.record_field.reverse();
+        assert_eq!(
+            opened.classify_readback(&committed),
+            MessageUpdateReadbackState::Diverged,
+            "typed legacy stages cannot prove a commit without raw metadata presence"
+        );
+
+        let mut clocked_request = request;
+        clocked_request
+            .record
+            .as_mut()
+            .unwrap()
+            .record_field
+            .push(utm_field(1_720_000_100.0));
+        let clocked = OpenedMessageUpdate {
+            predecessor: previous.clone(),
+            request: clocked_request.clone(),
+            binding: binding(),
+        };
+        let mut clocked_remote = committed;
+        clocked_remote
+            .record_field
+            .push(clocked_request.record.unwrap().record_field[1].clone());
+        assert_eq!(
+            clocked.classify_readback(&clocked_remote),
+            MessageUpdateReadbackState::Diverged,
+            "typed legacy stages cannot prove a clocked commit without raw metadata presence"
+        );
+    }
+
+    #[test]
+    fn readback_treats_every_mixed_or_third_version_as_diverged() {
+        let (previous, request) = fixture();
+        let opened = OpenedMessageUpdate {
+            predecessor: previous.clone(),
+            request: request.clone(),
+            binding: binding(),
+        };
+
+        let mut cases = Vec::new();
+        let mut new_payload_old_etag = previous.clone();
+        new_payload_old_etag.record_field[0] =
+            request.record.as_ref().unwrap().record_field[0].clone();
+        cases.push(new_payload_old_etag);
+
+        let mut old_payload_new_etag = previous.clone();
+        old_payload_new_etag.etag = Some("synthetic-third-version".into());
+        cases.push(old_payload_new_etag);
+
+        let mut changed_opaque_field = previous.clone();
+        changed_opaque_field.etag = Some("synthetic-third-version".into());
+        changed_opaque_field.record_field[0] =
+            request.record.as_ref().unwrap().record_field[0].clone();
+        changed_opaque_field.record_field[1] = field("future-field", b"changed");
+        cases.push(changed_opaque_field);
+
+        let mut extra_field = previous.clone();
+        extra_field.etag = Some("synthetic-third-version".into());
+        extra_field.record_field[0] = request.record.unwrap().record_field[0].clone();
+        extra_field
+            .record_field
+            .push(field("unexpected", b"opaque"));
+        cases.push(extra_field);
+
+        let mut rotated_pcs = previous;
+        rotated_pcs.etag = Some("synthetic-third-version".into());
+        rotated_pcs.pcs_key = Some(vec![9, 9, 9, 9]);
+        cases.push(rotated_pcs);
+
+        for (index, remote) in cases.iter().enumerate() {
+            assert_eq!(
+                opened.classify_readback(remote),
+                MessageUpdateReadbackState::Diverged,
+                "readback case {index}"
+            );
+        }
+    }
+
+    #[test]
+    fn present_empty31_is_not_the_same_predecessor_as_absent31() {
+        let (record, request) = fixture();
+        let absent_raw = record.encode_to_vec();
+        let mut present_empty_raw = vec![0xfa, 0x01, 0x00];
+        present_empty_raw.extend_from_slice(&absent_raw);
+        let reflected = decode_message_update_predecessor(&present_empty_raw).unwrap();
+        let remote = Record::decode(absent_raw.as_slice()).unwrap();
+
+        assert_ne!(present_empty_raw, absent_raw);
+        assert_eq!(reflected, remote, "prost drops unknown present-empty field31");
+        assert!(validate_request(&reflected, &request).is_ok(),
+            "the local shape validator accepts an absent-vs-empty31 normalized predecessor");
+        let opened = OpenedMessageUpdate { predecessor: reflected, request, binding: binding() };
+        assert_eq!(opened.classify_readback(&remote), MessageUpdateReadbackState::Diverged,
+            "readback must not label a raw metadata presence mismatch as NotApplied");
+    }
+
+    fn record_wire_with_control(record: &Record, control: &[u8], prefix: bool) -> Vec<u8> {
+        let encoded = record.encode_to_vec();
+        if prefix {
+            [control, encoded.as_slice()].concat()
+        } else {
+            [encoded.as_slice(), control].concat()
+        }
+    }
+
+    #[test]
+    fn wire_readback_distinguishes_absent31_from_present_empty31() {
+        let (previous, request) = fixture();
+        let absent = previous.encode_to_vec();
+        let present = record_wire_with_control(&previous, &[0xfa, 0x01, 0x00], true);
+        let reflected = decode_message_update_predecessor(&present).unwrap();
+        let remote = Record::decode(absent.as_slice()).unwrap();
+        assert_eq!(reflected, remote);
+        assert!(validate_request(&reflected, &request).is_ok());
+        assert_eq!(
+            classify_conditional_update_readback_with_wire(
+                &reflected, &request, &remote, &present, &absent,
+            ),
+            MessageUpdateReadbackState::Diverged
+        );
+    }
+
+    #[test]
+    fn wire_readback_accepts_identical_empty31_across_outer_field_reordering() {
+        let (previous, request) = fixture();
+        let prefix = record_wire_with_control(&previous, &[0xfa, 0x01, 0x00], true);
+        let suffix = record_wire_with_control(&previous, &[0xfa, 0x01, 0x00], false);
+        let reflected = decode_message_update_predecessor(&prefix).unwrap();
+        let remote = Record::decode(suffix.as_slice()).unwrap();
+        assert_eq!(
+            classify_conditional_update_readback_with_wire(
+                &reflected, &request, &remote, &prefix, &suffix,
+            ),
+            MessageUpdateReadbackState::NotApplied
+        );
+    }
+
+    #[test]
+    fn wire_readback_keeps_field33_blocked_even_when_empty() {
+        let (previous, request) = fixture();
+        let base = previous.encode_to_vec();
+        let chained = record_wire_with_control(&previous, &[0x8a, 0x02, 0x00], true);
+        let remote = Record::decode(base.as_slice()).unwrap();
+        assert_eq!(
+            classify_conditional_update_readback_with_wire(
+                &previous, &request, &remote, &chained, &base,
+            ),
+            MessageUpdateReadbackState::Diverged
+        );
+    }
+
+    #[test]
+    fn wire_readback_rejects_nonempty_duplicate_wrong_wire_and_truncated31() {
+        let (previous, request) = fixture();
+        let absent = previous.encode_to_vec();
+        let remote = Record::decode(absent.as_slice()).unwrap();
+        for metadata in [
+            vec![0xfa, 0x01, 0x01, 0x00],
+            vec![0xfa, 0x01, 0x00, 0xfa, 0x01, 0x00],
+            vec![0xf8, 0x01, 0x00],
+            vec![0xfa, 0x01],
+        ] {
+            let remote_wire = [absent.as_slice(), metadata.as_slice()].concat();
+            assert_eq!(
+                classify_conditional_update_readback_with_wire(
+                    &previous, &request, &remote, &absent, &remote_wire,
+                ),
+                MessageUpdateReadbackState::Diverged,
+                "field31 shape {metadata:?} must remain closed",
+            );
+        }
+    }
+
+}
