@@ -1,0 +1,324 @@
+{
+  "schema": 1,
+  "scope": "Sanitized historical observations. Original reports retained privately.",
+  "prepared": "2026-11-19",
+  "runs": [
+    {
+      "id": "timestamp-storage",
+      "date": "2026-10-28",
+      "tier": "integrated offline",
+      "label": "Field 34 synthetic storage round trip",
+      "original_receipt": "field34-storage-fixture-cm/INTEGRATION_RESULT.json",
+      "cases": [
+        {
+          "case": "absent",
+          "result": "MATCHED"
+        },
+        {
+          "case": "present-empty",
+          "result": "MATCHED"
+        },
+        {
+          "case": "domain-zero",
+          "result": "MATCHED"
+        },
+        {
+          "case": "creation-empty",
+          "result": "MATCHED"
+        },
+        {
+          "case": "modification-empty",
+          "result": "MATCHED"
+        },
+        {
+          "case": "creation-timestamp-zero",
+          "result": "MATCHED"
+        },
+        {
+          "case": "creation-versionstamp-empty",
+          "result": "MATCHED"
+        },
+        {
+          "case": "creation-incarnation-zero",
+          "result": "MATCHED"
+        },
+        {
+          "case": "controlled-metadata-loss",
+          "result": "CONTROLLED_METADATA_LOSS"
+        }
+      ],
+      "boundary": "Two Dart processes with real ObjectBox and a matched native fixture. Synthetic ingress."
+    },
+    {
+      "id": "page-wire",
+      "date": "2026-10-28",
+      "tier": "native synthetic plus separate Dart store checks",
+      "label": "Selected V2 paging",
+      "original_receipt": "record-change-wire-ingress-co/QUALIFICATION_RESULT.json",
+      "before": {
+        "exit": 101,
+        "cases": [
+          {
+            "filter": "icloud::cloudkit::cloud_sync_transport_tests::co_mixed_page_refusal_has_no_adoptable_token",
+            "result": "FAILED"
+          },
+          {
+            "filter": "icloud::cloudkit::cloud_sync_transport_tests::co_page_duplicate_record_wrapper_is_held",
+            "result": "FAILED"
+          },
+          {
+            "filter": "icloud::cloudkit::cloud_sync_transport_tests::co_page_empty31_supported34_and_nested_tag_bytes_remain_exact",
+            "result": "ok"
+          },
+          {
+            "filter": "icloud::cloudkit::cloud_sync_transport_tests::co_page_nonempty31_is_held_before_typed_result",
+            "result": "FAILED"
+          },
+          {
+            "filter": "icloud::cloudkit::cloud_sync_transport_tests::co_page_operation_identity_mismatch_is_not_absent",
+            "result": "ok"
+          },
+          {
+            "filter": "icloud::cloudkit::cloud_sync_transport_tests::co_page_outer33_is_held_before_typed_result",
+            "result": "FAILED"
+          }
+        ]
+      },
+      "after": {
+        "original": 6,
+        "affected": 17,
+        "supplemental": 2
+      },
+      "app_root_compile_exit": 0,
+      "boundary": "Native parser and Dart refusal/store checks used separate fixtures. The prior adopted page survived a same-process database reopen."
+    },
+    {
+      "id": "exact-lookup",
+      "date": "2026-10-31",
+      "tier": "native synthetic",
+      "label": "Request-bound original-wire admission",
+      "original_receipt": "trusted-wire-admission-cu/CLOSEOUT.json",
+      "groups": [
+        {
+          "passed": 5,
+          "failed": 0
+        },
+        {
+          "passed": 1,
+          "failed": 0
+        },
+        {
+          "passed": 1,
+          "failed": 0
+        }
+      ],
+      "boundary": "Two bounded lookup cases and five admission cases. Separate from the app-side consumer."
+    },
+    {
+      "id": "field31-before",
+      "date": "2026-11-15",
+      "tier": "synthetic regression",
+      "label": "Pre-fix presence regression",
+      "original_receipt": "20261115-field31-windows-redgreen/red/TEST_RESULT.json",
+      "filter": "present_empty31_is_not_the_same_predecessor_as_absent31",
+      "exit": 101,
+      "boundary": "Failing historical revision. Later passing cohorts are recorded separately."
+    },
+    {
+      "id": "field31-stages",
+      "date": "2026-11-15",
+      "tier": "integrated offline",
+      "label": "Windows ARM64 app Rust test executable",
+      "original_receipt": "20261115-field31-main-integration/tests/TEST_RESULTS.json",
+      "groups": [
+        {
+          "filter": "cloud_sync_message_update_stage::tests::",
+          "exit": 0,
+          "passed": 17,
+          "failed": 0,
+          "ignored": 0,
+          "filtered": 1275,
+          "seconds": 0.1
+        },
+        {
+          "filter": "cloud_sync_received_message_update_stage::tests::",
+          "exit": 0,
+          "passed": 8,
+          "failed": 0,
+          "ignored": 0,
+          "filtered": 1284,
+          "seconds": 0.23
+        },
+        {
+          "filter": "update_submission_identity_and_reconcile_result_fail_closed",
+          "exit": 0,
+          "passed": 1,
+          "failed": 0,
+          "ignored": 0,
+          "filtered": 1291,
+          "seconds": 0.0
+        },
+        {
+          "filter": "cloud_sync_native_fetch::tests::cx_staged_lineage_tests::cx_",
+          "exit": 0,
+          "passed": 10,
+          "failed": 0,
+          "ignored": 2,
+          "filtered": 1280,
+          "seconds": 0.44
+        },
+        {
+          "filter": "api::api::committed_store_consumer_fk_tests::fp_native_source_use_custody::ft_census_change_after_native_binding_refuses_at_actual_sdk_consumer",
+          "exit": 0,
+          "passed": 1,
+          "failed": 0,
+          "ignored": 0,
+          "filtered": 1291,
+          "seconds": 1.32
+        }
+      ],
+      "boundary": "Within-cohort totals only. The follow-up repeats several November 15 filters."
+    },
+    {
+      "id": "field31-consumer",
+      "date": "2026-11-15",
+      "tier": "integrated offline",
+      "label": "Windows ARM64 app Rust test executable",
+      "original_receipt": "20261115-field31-api-consumer-main-integration/tests/TEST_RESULTS.json",
+      "groups": [
+        {
+          "filter": "api::api::cloud_sync_message_update_prepare_tests::reconcile_consumer_uses_strict_fetched_original_wire_for_staged_classification",
+          "exit": 0,
+          "passed": 1,
+          "failed": 0,
+          "ignored": 0,
+          "filtered": 1292,
+          "seconds": 0.02
+        },
+        {
+          "filter": "api::api::cloud_sync_message_update_prepare_tests::update_submission_identity_and_reconcile_result_fail_closed",
+          "exit": 0,
+          "passed": 1,
+          "failed": 0,
+          "ignored": 0,
+          "filtered": 1292,
+          "seconds": 0.0
+        },
+        {
+          "filter": "cloud_sync_message_update_stage::tests::",
+          "exit": 0,
+          "passed": 17,
+          "failed": 0,
+          "ignored": 0,
+          "filtered": 1276,
+          "seconds": 0.08
+        },
+        {
+          "filter": "cloud_sync_received_message_update_stage::tests::",
+          "exit": 0,
+          "passed": 8,
+          "failed": 0,
+          "ignored": 0,
+          "filtered": 1285,
+          "seconds": 0.17
+        },
+        {
+          "filter": "api::api::committed_store_consumer_fk_tests::fp_native_source_use_custody::ft_census_change_after_native_binding_refuses_at_actual_sdk_consumer",
+          "exit": 0,
+          "passed": 1,
+          "failed": 0,
+          "ignored": 0,
+          "filtered": 1292,
+          "seconds": 1.06
+        }
+      ],
+      "boundary": "Within-cohort totals only. The follow-up repeats several November 15 filters."
+    },
+    {
+      "id": "dart-engine",
+      "date": "2026-11-15",
+      "tier": "integrated offline",
+      "label": "Dart engine and inbox applier",
+      "original_receipt": "20261115-cloudkit-dart-current-main-validation/RESULT.json",
+      "passed": 198,
+      "failed": 0,
+      "ignored": 0,
+      "exit": 0,
+      "concurrency": 2,
+      "boundary": "198 cases from two suites, using synthetic stores."
+    },
+    {
+      "id": "legacy-adoption",
+      "date": "2026-11-16",
+      "tier": "integrated offline",
+      "label": "Twelve held adoption cases",
+      "original_receipt": "20261116-adoption-12-reconciliation/RESULT.json",
+      "passed": 0,
+      "failed": 12,
+      "guard_refused": true,
+      "reached_deeper_assertions": false,
+      "boundary": "Same failures as the November 15 adjacent 200-case batch. No write eligibility established."
+    },
+    {
+      "id": "message-hints",
+      "date": "2026-11-16",
+      "tier": "integrated offline",
+      "label": "Message source hints through the maintenance bridge",
+      "original_receipt": "20261116-message-hint-frb-main-integration/RESULT.json",
+      "passed": 17,
+      "failed": 0,
+      "boundary": "Focused and matched-library cases include synthetic store reopen. The hints grant no authority."
+    },
+    {
+      "id": "app-classifier",
+      "date": "2026-11-17",
+      "tier": "actual app crate, synthetic",
+      "label": "Classifier and discard tests",
+      "original_receipt": "20261117-classify-actual-crate-integration/INTEGRATION.md",
+      "passed": 8,
+      "failed": 0,
+      "ignored": 0,
+      "filtered": 1297,
+      "compile_seconds": 213,
+      "test_seconds": 0.13,
+      "techniques": [
+        "real app crate",
+        "test-only module",
+        "Windows ARM64",
+        "rustc 1.98.1",
+        "offline/locked",
+        "single job"
+      ],
+      "boundary": "No production acquisition, app startup, Android runtime or live read."
+    },
+    {
+      "id": "coordinator",
+      "date": "2026-11-18",
+      "tier": "isolated synthetic",
+      "label": "Standalone native lifetime model",
+      "original_receipt": "20261118-async-coordinator-shutdown-verification/RESULT.md",
+      "passed": 17,
+      "failed": 0,
+      "boundary": "Direct Rust standard-library component. No Flutter engine, real isolate or production shutdown."
+    },
+    {
+      "id": "native-owner",
+      "date": "2026-11-18",
+      "tier": "isolated synthetic",
+      "label": "Standalone native lifetime model",
+      "original_receipt": "20261118-native-owner-model-verification/RESULT.md",
+      "passed": 6,
+      "failed": 0,
+      "boundary": "Direct Rust standard-library component. No Flutter engine, real isolate or production shutdown."
+    },
+    {
+      "id": "windows-broker",
+      "date": "2026-11-18",
+      "tier": "isolated synthetic",
+      "label": "Windows broker component",
+      "original_receipt": "20261118-handoff-broker-component/RESULT.md",
+      "passed": 4,
+      "boundary": "Fake session, message-only window and component DLL. Full-app final close and elapsed timeout pending."
+    }
+  ]
+}
