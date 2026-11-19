@@ -1,0 +1,73 @@
+diff --git a/rust/src/api/offline_native_owner_harness_tests.rs b/rust/src/api/offline_native_owner_harness_tests.rs
+index b963178..219d857 100644
+--- a/rust/src/api/offline_native_owner_harness_tests.rs
++++ b/rust/src/api/offline_native_owner_harness_tests.rs
+@@ -10,0 +11,68 @@ fn context() -> CloudSyncNativeSendReceiptContext {
++#[tokio::test]
++async fn message_create_without_verified_parent_chat_refuses_before_client_or_transport() {
++    use futures::FutureExt;
++    use std::sync::atomic::{AtomicUsize, Ordering};
++    use rustpush::offline_native_owner_harness as offline;
++
++    let client = offline::account_only_fixture().await.unwrap();
++    let storage = tempfile::tempdir().unwrap();
++    let account = "A".repeat(43);
++    let logical = "L".repeat(43);
++    let request_uuid = "11111111-2222-4333-8444-555555555555".to_owned();
++    let operation_uuid = "AAAAAAAA-BBBB-4CCC-8DDD-000000000001".to_owned();
++    let identity = rustpush::cloudkit::CloudKitRequestIdentity::new(
++        request_uuid.clone(), vec![operation_uuid.clone()],
++    ).unwrap();
++    let input = CloudSyncPreparedMessageCreateInput {
++        local_operation_id: crate::cloud_sync_outbound::initial_message_create_operation_id(
++            &account, &logical,
++        ).unwrap(),
++        logical_entity_key_hash: logical,
++        protected_lease_reference: format!("obcs2.lease.{}", "a".repeat(32)),
++        protected_payload_reference: format!("obcs2.ref.{}", "P".repeat(43)),
++        payload_sha256: "a".repeat(64),
++        protected_server_record_reference: format!("obcs2.ref.{}", "P".repeat(43)),
++        server_record_id_hash: "S".repeat(43),
++        apple_operation_uuid: operation_uuid,
++        attachment_parent_context: None,
++        attachment_parent_group_proof: None,
++        received_archive_proof: None,
++        historical_archive_proof: None,
++        historical_chat_source: None,
++    };
++
++    // The descriptor has no verified parent Chat or backing protected payload.
++    // Holding these dependencies makes an unintended auth/writer continuation
++    // return Pending on the first poll, before it can perform external work.
++    let _account_guard = client.client.state.write().await;
++    let _container_guard = client.container.lock().await;
++    let final_check_calls = Arc::new(AtomicUsize::new(0));
++    let observed_calls = final_check_calls.clone();
++    let (result, report) = offline::inspect_consumer_without_dispatch(
++        identity,
++        Box::pin(cloud_sync_prepare_message_create(
++            &client,
++            storage.path().to_string_lossy().into_owned(),
++            account.clone(),
++            format!("obcs2.store.{account}"),
++            request_uuid,
++            30,
++            vec![input],
++        )),
++        move || async move {
++            observed_calls.fetch_add(1, Ordering::SeqCst);
++            Err(rustpush::PushError::BadMsg)
++        },
++    ).now_or_never().expect("provenance rejection must precede client dependencies");
++
++    assert_eq!(result.failure, Some(CloudSyncOutboundSafeCode::BindingMismatch));
++    assert!(result.handle.is_none());
++    assert!(result.handle_binding_sha256.is_none());
++    assert!(!report.boundary_reached);
++    assert_eq!(report.captured_request_body_bytes, 0);
++    assert!(!report.final_check_passed);
++    assert!(report.no_dispatch && report.actual_consumer_completed);
++    assert_eq!(final_check_calls.load(Ordering::SeqCst), 0);
++    assert!(std::fs::read_dir(storage.path()).unwrap().next().is_none());
++}
++
