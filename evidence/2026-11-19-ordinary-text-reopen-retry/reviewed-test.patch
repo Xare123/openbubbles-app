@@ -1,0 +1,139 @@
+diff --git a/test/services/cloud_sync/cloud_sync_outbound_admission_test.dart b/test/services/cloud_sync/cloud_sync_outbound_admission_test.dart
+index c8d78fc..b85a36b 100644
+--- a/test/services/cloud_sync/cloud_sync_outbound_admission_test.dart
++++ b/test/services/cloud_sync/cloud_sync_outbound_admission_test.dart
+@@ -683,0 +684,134 @@ void main() {
++    test(
++      'ordinary text rejection survives close reopen and one retry',
++      () async {
++        final originalIntent = intent();
++        final messageId = originalIntent.localMessageId;
++        final ownerBefore = authority.read(writerScope)!;
++
++        List<List<Object?>> recordMapSnapshot() {
++          final rows = objectBox.box<CloudRecordMapEntity>().getAll()
++            ..sort((left, right) => left.id.compareTo(right.id));
++          return rows.map((row) => <Object?>[
++            row.id, row.mapKey, row.scopeKey, row.accountFingerprint, row.zone,
++            row.logicalEntityKeyHash, row.serverRecordIdHash, row.generation,
++            row.encryptedServerRecordId, row.etagHash, row.encryptedRawRecordRef,
++            row.rawRecordGeneration, row.protectedReadbackLeaseReference,
++            row.pendingUpdateOperationId, row.pendingUpdatePredecessorEtagHash,
++            row.updatedAtMs,
++          ]).toList();
++        }
++
++        final mapsBefore = recordMapSnapshot();
++        expect(mapsBefore, isNotEmpty);
++        void expectSavedReadyState() {
++          expect(objectBox.box<Message>().count(), 1);
++          expect(objectBox.box<CloudSyncLocalSendIntentEntity>().count(), 1);
++          final saved = objectBox.box<Message>().get(messageId)!;
++          expect(saved.id, messageId);
++          expect(saved.guid, _localGuid);
++          expect(saved.stagingGuid, isNull);
++          expect(saved.text, 'synthetic local message');
++          expect(saved.ckRecordId, isNull);
++          final retained = intent();
++          expect(retained.id, originalIntent.id);
++          expect(retained.intentKey, originalIntent.intentKey);
++          expect(retained.localMessageId, messageId);
++          expect(retained.writerEpoch, originalIntent.writerEpoch);
++          expect(retained.sourceSha256, originalIntent.sourceSha256);
++          expect(retained.state, 1);
++          expect(retained.idsConfirmationVersion, cloudSyncIdsConfirmationVersion);
++          expect(retained.admittedOperationId, isNull);
++          expect(journal.readReady().map((row) => row.id), [intentId]);
++          expect(objectBox.box<CloudOutboxOperationEntity>().count(), 0);
++          expect(recordMapSnapshot(), mapsBefore);
++        }
++
++        Future<void> expectRefusal(CloudSyncProtectedOutboundStageData stage) async {
++          store = ObjectBoxCloudSyncStore(
++            store: objectBox,
++            protector: _Protector(),
++            clock: () => testEpoch,
++            localSendJournal: journal,
++          );
++          coordinator = CloudSyncOutboundAdmissionCoordinator(
++            store: store,
++            transport: transport,
++            ensureProtectedStoreRecovered: () async => timeline.add('recover'),
++          );
++          transport.stages.add(stage);
++          await expectLater(
++            coordinator.admitLocalSend(
++              scope,
++              intentId: intentId,
++              journal: journal,
++              authFence: authFence,
++            ),
++            throwsA(isA<StateError>().having(
++              (error) => error.message,
++              'provenance refusal',
++              'cloud_sync_legacy_original_wire_unproven',
++            )),
++          );
++          expect(transport.messageStageCalls, 1);
++          expect(transport.parentStageCalls, 0);
++          final staged = transport.stagedMessages.single;
++          expect(staged.guid, _localGuid);
++          expect(staged.chatId,
++              objectBox.box<Message>().get(messageId)!.chat.target!.guid);
++          expect(staged.type, 1);
++          expect(staged.service, 'iMessage');
++          expect(frb_api.decodeMessageproto(wrapped: staged.msgProto).text,
++              'synthetic local message');
++          expect(timeline, ['recover', 'stage', 'rollback:${stage.leaseReference}']);
++          expect(transport.rolledBack, [stage.leaseReference]);
++          expect(transport.committed, isEmpty);
++          expect(await store.readOutboxEntries(scope), isEmpty);
++          expectSavedReadyState();
++          expect(nativeBridge.idsSendCalls, 0);
++          expect(nativeBridge.cloudKitWriterCalls, isEmpty);
++        }
++
++        expectSavedReadyState();
++        final firstStage = _stage('a', 'P', 'L', 'S');
++        await expectRefusal(firstStage);
++        final firstTransport = transport;
++
++        // Reopen the same database and reconstruct from durable rows only.
++        // Require its owner before bindJournal can provision any test owner.
++        final closedStore = objectBox;
++        objectBox.close();
++        objectBox = await openStore(directory: directory.path);
++        expect(closedStore.isClosed(), isTrue);
++        expect(identical(closedStore, objectBox), isFalse);
++        final reopenedOwner = ObjectBoxCloudKitWriterAuthority.forTest(
++          store: objectBox,
++          buildDecision: CloudKitWriterOwnership.resolve('v2'),
++        ).read(writerScope);
++        expect(reopenedOwner, isNotNull);
++        expect(reopenedOwner!.epoch, ownerBefore.epoch);
++        expect(reopenedOwner.owner, ownerBefore.owner);
++        currentAuth = CloudSyncNativeAuthSnapshot.fromNative(
++          nativeSessionId: 'synthetic-reopened-session',
++          accountFingerprint: testAccountFingerprintA,
++          protectedStoreIdentity: 'obcs2.store.$testAccountFingerprintA',
++          cloudMessagesClient: Object(),
++        );
++        bindJournal(auth: currentAuth);
++        authFence = CloudSyncLocalSendAuthFence(
++          expected: currentAuth,
++          capture: () async => currentAuth,
++          stillCurrent: () => true,
++        );
++        timeline = [];
++        transport = _StagingTransport(timeline);
++        expectSavedReadyState();
++
++        final retryStage = _stage('b', 'Q', 'L', 'S');
++        await expectRefusal(retryStage);
++        expect(firstTransport.messageStageCalls + transport.messageStageCalls, 2);
++        expect([...firstTransport.rolledBack, ...transport.rolledBack],
++            [firstStage.leaseReference, retryStage.leaseReference]);
++        expect(firstTransport.committed, isEmpty);
++      },
++    );
++
