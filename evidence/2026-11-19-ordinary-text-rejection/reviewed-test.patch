@@ -1,0 +1,109 @@
+diff --git a/test/services/cloud_sync/cloud_sync_outbound_admission_test.dart b/test/services/cloud_sync/cloud_sync_outbound_admission_test.dart
+index be2aeb5fd..fd59465f1 100644
+--- a/test/services/cloud_sync/cloud_sync_outbound_admission_test.dart
++++ b/test/services/cloud_sync/cloud_sync_outbound_admission_test.dart
+@@ -68,0 +69 @@ void main() {
++    nativeBridge.cloudKitWriterCalls.clear();
+@@ -595,0 +597,87 @@ void main() {
++    test(
++      'confirmed ordinary text is held at provenance adoption',
++      () async {
++        final confirmed = intent();
++        final messageId = confirmed.localMessageId;
++        final persisted = objectBox.box<Message>().get(messageId)!;
++        expect(objectBox.box<Message>().count(), 1);
++        expect(persisted.guid, _localGuid);
++        expect(persisted.stagingGuid, isNull);
++        expect(persisted.text, 'synthetic local message');
++        expect(persisted.ckRecordId, isNull);
++        expect(confirmed.state, 1);
++        expect(confirmed.idsConfirmationVersion, cloudSyncIdsConfirmationVersion);
++        expect(confirmed.admittedOperationId, isNull);
++        expect(journal.readReady().map((row) => row.id), [intentId]);
++        expect(await store.readOutboxEntries(scope), isEmpty);
++
++        store = ObjectBoxCloudSyncStore(
++          store: objectBox,
++          protector: _Protector(),
++          clock: () => testEpoch,
++          localSendJournal: journal,
++        );
++        coordinator = CloudSyncOutboundAdmissionCoordinator(
++          store: store,
++          transport: transport,
++          ensureProtectedStoreRecovered: () async => timeline.add('recover'),
++        );
++        final stage = _stage('a', 'P', 'L', 'S');
++        transport.stages.add(stage);
++
++        // Exercise production Dart encoding and admission with synthetic
++        // confirmation/auth/Chat evidence and mocked native codecs/staging.
++        await expectLater(
++          coordinator.admitLocalSend(
++            scope,
++            intentId: intentId,
++            journal: journal,
++            authFence: authFence,
++          ),
++          throwsA(
++            isA<StateError>().having(
++              (error) => error.message,
++              'provenance refusal',
++              'cloud_sync_legacy_original_wire_unproven',
++            ),
++          ),
++        );
++
++        expect(transport.messageStageCalls, 1);
++        expect(transport.parentStageCalls, 0);
++        final stagedMessage = transport.stagedMessages.single;
++        expect(stagedMessage.guid, _localGuid);
++        expect(stagedMessage.chatId, persisted.chat.target!.guid);
++        expect(stagedMessage.type, 1);
++        expect(stagedMessage.service, 'iMessage');
++        expect(
++          frb_api.decodeMessageproto(wrapped: stagedMessage.msgProto).text,
++          persisted.text,
++        );
++        expect(timeline, ['recover', 'stage', 'rollback:${stage.leaseReference}']);
++        expect(transport.committed, isEmpty);
++        expect(transport.rolledBack, [stage.leaseReference]);
++        expect(await store.readOutboxEntries(scope), isEmpty);
++        expect(objectBox.box<CloudOutboxOperationEntity>().count(), 0);
++        expect(
++          objectBox
++              .box<CloudRecordMapEntity>()
++              .getAll()
++              .where((row) => row.zone == scope.zone),
++          isEmpty,
++        );
++        expect(objectBox.box<Message>().count(), 1);
++        final retained = objectBox.box<Message>().get(messageId)!;
++        expect(retained.guid, persisted.guid);
++        expect(retained.text, persisted.text);
++        expect(retained.ckRecordId, isNull);
++        expect(intent().state, confirmed.state);
++        expect(intent().sourceSha256, confirmed.sourceSha256);
++        expect(intent().idsConfirmationVersion, confirmed.idsConfirmationVersion);
++        expect(intent().admittedOperationId, isNull);
++        expect(journal.readReady().map((row) => row.id), [intentId]);
++        expect(nativeBridge.idsSendCalls, 0);
++        expect(nativeBridge.cloudKitWriterCalls, isEmpty);
++      },
++    );
++
+@@ -4161,0 +4250 @@ final class _StagingTransport
++  final List<frb_api.CloudMessage> stagedMessages = [];
+@@ -4197,0 +4287 @@ final class _StagingTransport
++    stagedMessages.add(message);
+@@ -4265,0 +4356 @@ final class _AttachmentParentBridge implements RustLibApi {
++  final List<Symbol> cloudKitWriterCalls = [];
+@@ -4298,0 +4390,8 @@ final class _AttachmentParentBridge implements RustLibApi {
++    if (const {
++      #crateApiApiCloudSyncPrepareMessageCreate,
++      #crateApiApiCloudSyncConsumePreparedMessageCreate,
++      #crateApiApiSaveMessages,
++    }.contains(invocation.memberName)) {
++      cloudKitWriterCalls.add(invocation.memberName);
++      throw StateError('unexpected CloudKit writer');
++    }
